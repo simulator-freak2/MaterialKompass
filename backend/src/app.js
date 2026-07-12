@@ -18,6 +18,7 @@ function createApp() {
   const subcategories = seedData.subcategories;
   const materials = seedData.materials;
   const clothingItems = seedData.clothingItems;
+  const deletedClothingItems = [];
   const issueTransactions = seedData.issueTransactions;
   const defectReports = seedData.defectReports;
   const procurementRequests = seedData.procurementRequests;
@@ -203,16 +204,85 @@ function createApp() {
   });
 
   app.post('/api/clothing', authMiddleware, requirePermission('clothing.write'), (req, res) => {
-    const item = { id: `clothing-${clothingItems.length + 1}`, ...req.body, createdAt: new Date().toISOString() };
+    const inventoryNumber = req.body.inventoryNumber || `KK-${String(clothingItems.length + 1).padStart(4, '0')}`;
+    const item = { id: `clothing-${clothingItems.length + 1}`, inventoryNumber, ...req.body, createdAt: new Date().toISOString() };
     clothingItems.push(item);
-    logEvent('create', 'ClothingItem', { id: item.id }, req.user.email);
+    logEvent('create', 'ClothingItem', { id: item.id, inventoryNumber }, req.user.email);
     res.status(201).json(item);
   });
 
+  app.put('/api/clothing/:id', authMiddleware, requirePermission('clothing.write'), (req, res) => {
+    const item = clothingItems.find((entry) => entry.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Clothing item not found' });
+    }
+
+    const updatedItem = {
+      ...item,
+      ...req.body,
+      id: item.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const index = clothingItems.findIndex((entry) => entry.id === req.params.id);
+    clothingItems[index] = updatedItem;
+
+    logEvent('update', 'ClothingItem', { id: updatedItem.id, inventoryNumber: updatedItem.inventoryNumber }, req.user.email);
+    res.json(updatedItem);
+  });
+
+  app.delete('/api/clothing/:id', authMiddleware, requirePermission('clothing.write'), (req, res) => {
+    const index = clothingItems.findIndex((entry) => entry.id === req.params.id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Clothing item not found' });
+    }
+
+    const removedItem = clothingItems.splice(index, 1)[0];
+    deletedClothingItems.push({
+      ...removedItem,
+      deletedAt: new Date().toISOString(),
+      deletedBy: req.user.email,
+    });
+    logEvent('delete', 'ClothingItem', { id: removedItem.id, inventoryNumber: removedItem.inventoryNumber }, req.user.email);
+    res.json({ success: true, id: removedItem.id });
+  });
+
+  app.get('/api/clothing/history', authMiddleware, requirePermission('clothing.read'), (req, res) => {
+    res.json(deletedClothingItems.slice().reverse());
+  });
+
+  app.get('/api/transactions', authMiddleware, requirePermission('transactions.write'), (req, res) => {
+    res.json(issueTransactions.slice().reverse());
+  });
+
   app.post('/api/transactions', authMiddleware, requirePermission('transactions.write'), (req, res) => {
+    const clothingId = req.body.clothingId;
+    const clothingItem = clothingItems.find((item) => item.id === clothingId);
+
+    if (!clothingItem) {
+      return res.status(404).json({ error: 'Clothing item not found' });
+    }
+
+    if (req.body.action === 'ausgegeben' && clothingItem.status === 'Ausgegeben') {
+      return res.status(409).json({ error: 'Item already issued' });
+    }
+
+    if (req.body.action === 'zurückgegeben' && clothingItem.status !== 'Ausgegeben') {
+      return res.status(409).json({ error: 'Item is not currently issued' });
+    }
+
     const transaction = { id: `txn-${issueTransactions.length + 1}`, ...req.body, createdAt: new Date().toISOString() };
     issueTransactions.push(transaction);
-    logEvent('transaction', 'IssueTransaction', { id: transaction.id }, req.user.email);
+
+    if (req.body.action === 'ausgegeben') {
+      clothingItem.status = 'Ausgegeben';
+      clothingItem.assignedPerson = req.body.personName || clothingItem.assignedPerson || null;
+    } else if (req.body.action === 'zurückgegeben') {
+      clothingItem.status = 'Lagernd';
+      clothingItem.assignedPerson = null;
+    }
+
+    logEvent('transaction', 'IssueTransaction', { id: transaction.id, action: transaction.action }, req.user.email);
     res.status(201).json(transaction);
   });
 
