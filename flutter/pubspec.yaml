@@ -1,0 +1,13 @@
+name: materialkompass
+version: 1.0.0+1
+publish_to: 'none'
+description: MaterialKompass for DLRG material management.
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  provider: ^6.0.0
+flutter:
+  uses-material-design: true
