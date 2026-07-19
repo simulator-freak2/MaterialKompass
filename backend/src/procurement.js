@@ -1,0 +1,392 @@
+const ALLOWED_STATUSES = [
+  'Entwurf', 'Beantragt', 'Genehmigt', 'Abgelehnt', 'Bestellt',
+  'Teilweise geliefert', 'Geliefert', 'Abgeschlossen', 'Storniert',
+];
+const REQUEST_ROLES = ['Fachbereichsleiter', 'Materialwart', 'Kleiderwart', 'Vorsitz'];
+const APPROVAL_ROLES = ['Vorsitz', 'Schatzmeister'];
+const ORDER_ROLES = ['Materialwart', 'Kleiderwart'];
+const FILE_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'ods'];
+const { nextInventoryNumber } = require('./inventory-number');
+
+function registerProcurementRoutes({
+  app, authMiddleware, requirePermission, data, categories, locations,
+  stockStructures, materials, clothingItems, logEvent, nextId, XLSX,
+  nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
+  addMonths,
+}) {
+  const requests = data.procurementRequests;
+  const offers = data.procurementOffers;
+  const orders = data.procurementOrders;
+  const receipts = data.procurementReceipts;
+  const procurementDocuments = data.procurementDocuments;
+  const suppliers = data.suppliers;
+
+  const roles = (user) => new Set(user?.roles || []);
+  const isAdmin = (user) => roles(user).has('Admin');
+  const hasRole = (user, allowed) => isAdmin(user) || allowed.some((role) => roles(user).has(role));
+  const number = (value) => {
+    if (typeof value === 'string' && value.includes(',')) {
+      return Number(value.trim().replace(/\./g, '').replace(',', '.')) || 0;
+    }
+    return Number(value) || 0;
+  };
+  const money = (value) => Math.round(number(value) * 100) / 100;
+  const now = () => new Date().toISOString();
+  const yearSequence = (prefix, entries) => {
+    const year = new Date().getFullYear();
+    const count = entries.filter((entry) => String(entry.number || '').startsWith(`${prefix}-${year}-`)).length + 1;
+    return `${prefix}-${year}-${String(count).padStart(4, '0')}`;
+  };
+  const event = (request, action, actor, details = {}) => {
+    request.history.push({ id: `history-${request.history.length + 1}`, action, actor, details, createdAt: now() });
+    request.updatedAt = now();
+    logEvent(action, 'ProcurementRequest', { id: request.id, ...details }, actor);
+  };
+  const categoryExists = (id) => categories.some((entry) => entry.id === id);
+  const normalizeItems = (input = []) => input.map((item, index) => ({
+    id: item.id || `item-${index + 1}`,
+    name: String(item.name || '').trim(),
+    categoryId: String(item.categoryId || '').trim(),
+    subcategoryId: String(item.subcategoryId || '').trim() || null,
+    size: String(item.size || '').trim(),
+    quantity: money(item.quantity),
+    unit: String(item.unit || 'Stück').trim(),
+    taxRate: Number.isFinite(Number(item.taxRate)) ? Number(item.taxRate) : 19,
+    notes: String(item.notes || '').trim(),
+  }));
+  const validateItems = (items) => {
+    if (!items.length) return 'Mindestens eine Position ist erforderlich.';
+    for (const item of items) {
+      if (!item.name || item.quantity <= 0) return 'Positionen benötigen Bezeichnung und eine positive Menge.';
+      if (!item.categoryId || !categoryExists(item.categoryId)) return 'Jede Position benötigt eine gültige Hauptkategorie.';
+      if (item.subcategoryId) {
+        const child = categories.find((entry) => entry.id === item.subcategoryId);
+        if (!child || child.parentId !== item.categoryId) return 'Die Unterkategorie gehört nicht zur Hauptkategorie.';
+      }
+      const main = categories.find((entry) => entry.id === item.categoryId);
+      if (main?.useInWardrobe === true) {
+        const allowedSizes = categorySizes(item.subcategoryId || item.categoryId);
+        if (allowedSizes.length && !allowedSizes.includes(item.size)) {
+          return `Für ${item.name} muss eine vordefinierte Größe ausgewählt werden.`;
+        }
+      }
+      if (![0, 7, 19].includes(item.taxRate)) return 'Der Steuersatz muss 0, 7 oder 19 Prozent betragen.';
+    }
+    return null;
+  };
+  const canSee = (user, request) => {
+    if (isAdmin(user) || hasRole(user, ['Vorsitz', 'Schatzmeister'])) return true;
+    return request.requestedByEmail === user.email || (request.department && request.department === user.department);
+  };
+  const findVisible = (req, res) => {
+    const request = requests.find((entry) => entry.id === req.params.id);
+    if (!request) { res.status(404).json({ error: 'Beschaffungsantrag nicht gefunden.' }); return null; }
+    if (!canSee(req.user, request)) { res.status(403).json({ error: 'Keine Berechtigung für diesen Fachbereich.' }); return null; }
+    return request;
+  };
+  const detail = (request) => ({
+    ...request,
+    offers: offers.filter((entry) => entry.requestId === request.id),
+    orders: orders.filter((entry) => entry.requestId === request.id).map((order) => ({
+      ...order,
+      receipts: receipts.filter((entry) => entry.orderId === order.id),
+    })),
+    documents: procurementDocuments.filter((entry) => entry.requestId === request.id).map(({ fileBase64, ...metadata }) => metadata),
+  });
+
+  app.get('/api/procurement', authMiddleware, requirePermission('procurement.read'), (req, res) => {
+    const status = String(req.query.status || '');
+    const query = String(req.query.q || '').toLowerCase();
+    const visible = requests.filter((entry) => canSee(req.user, entry)).filter((entry) =>
+      (!status || entry.status === status) && (!query || [entry.number, entry.title, entry.department, entry.costCenter, entry.requestedBy].join(' ').toLowerCase().includes(query))
+    );
+    res.json(visible.map(detail));
+  });
+
+  app.get('/api/procurement/:id', authMiddleware, requirePermission('procurement.read'), (req, res) => {
+    const request = findVisible(req, res); if (request) res.json(detail(request));
+  });
+
+  app.post('/api/procurement', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    if (!hasRole(req.user, REQUEST_ROLES)) return res.status(403).json({ error: 'Diese Rolle darf keine Beschaffung beantragen.' });
+    const items = normalizeItems(req.body.items);
+    const itemError = validateItems(items);
+    const requestedBudgetGross = money(req.body.requestedBudgetGross);
+    if (!String(req.body.title || '').trim() || !String(req.body.reason || '').trim() || requestedBudgetGross <= 0 || itemError) {
+      return res.status(400).json({ error: itemError || 'Titel, Begründung und ein beantragtes Budget größer als null sind erforderlich.' });
+    }
+    const request = {
+      id: nextId('proc', requests), number: yearSequence('BA', requests), status: 'Entwurf',
+      title: String(req.body.title).trim(), reason: String(req.body.reason).trim(),
+      requestedBy: req.user.name, requestedByEmail: req.user.email,
+      department: String(req.body.department || '').trim(), costCenter: String(req.body.costCenter || '').trim(),
+      desiredDeliveryDate: req.body.desiredDeliveryDate || null,
+      priority: String(req.body.priority || 'Normal'), notes: String(req.body.notes || '').trim(),
+      preferredSupplierId: req.body.preferredSupplierId || null, items,
+      requestedBudgetGross, approvedBudgetGross: null,
+      approvals: [], selectedOfferId: null,
+      history: [], createdAt: now(), updatedAt: now(),
+    };
+    requests.push(request); event(request, 'Entwurf angelegt', req.user.email, { requestedBudgetGross });
+    res.status(201).json(detail(request));
+  });
+
+  app.put('/api/procurement/:id', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (request.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können bearbeitet werden.' });
+    if (!isAdmin(req.user) && request.requestedByEmail !== req.user.email) return res.status(403).json({ error: 'Nur der Antragsteller darf den Entwurf bearbeiten.' });
+    const items = normalizeItems(req.body.items ?? request.items);
+    const itemError = validateItems(items); if (itemError) return res.status(400).json({ error: itemError });
+    for (const field of ['title', 'reason', 'department', 'costCenter', 'desiredDeliveryDate', 'priority', 'notes', 'preferredSupplierId']) {
+      if (Object.hasOwn(req.body, field)) request[field] = typeof req.body[field] === 'string' ? req.body[field].trim() : req.body[field];
+    }
+    const requestedBudgetGross = money(req.body.requestedBudgetGross ?? request.requestedBudgetGross);
+    if (requestedBudgetGross <= 0) return res.status(400).json({ error: 'Das beantragte Budget muss größer als null sein.' });
+    request.items = items; request.requestedBudgetGross = requestedBudgetGross;
+    event(request, 'Entwurf bearbeitet', req.user.email, { requestedBudgetGross }); res.json(detail(request));
+  });
+
+  app.delete('/api/procurement/:id', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (request.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können gelöscht werden.' });
+    if (!isAdmin(req.user) && request.requestedByEmail !== req.user.email) return res.status(403).json({ error: 'Nur der Antragsteller darf den Entwurf löschen.' });
+    requests.splice(requests.indexOf(request), 1); logEvent('Entwurf gelöscht', 'ProcurementRequest', { id: request.id }, req.user.email); res.json({ success: true });
+  });
+
+  app.post('/api/procurement/:id/submit', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (request.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können beantragt werden.' });
+    request.status = 'Beantragt'; event(request, 'Freigabe beantragt', req.user.email); res.json(detail(request));
+  });
+
+  app.post('/api/procurement/:id/approval', authMiddleware, requirePermission('procurement.approve'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (!hasRole(req.user, APPROVAL_ROLES)) return res.status(403).json({ error: 'Nur Vorsitz oder Schatzmeister dürfen freigeben.' });
+    if (request.status !== 'Beantragt') return res.status(409).json({ error: 'Der Antrag wartet nicht auf eine Freigabe.' });
+    if (request.approvals.some((entry) => entry.email === req.user.email)) return res.status(409).json({ error: 'Diese Person hat bereits entschieden.' });
+    const decision = req.body.decision === 'reject' ? 'Abgelehnt' : 'Genehmigt';
+    const approverRole = isAdmin(req.user) ? String(req.body.role || 'Vorsitz') : [...roles(req.user)].find((role) => APPROVAL_ROLES.includes(role));
+    const approvedBudgetGross = approverRole === 'Vorsitz' && decision === 'Genehmigt' ? money(req.body.approvedBudgetGross) : null;
+    if (approverRole === 'Vorsitz' && decision === 'Genehmigt' && approvedBudgetGross <= 0) return res.status(400).json({ error: 'Der Vorsitz muss ein freigegebenes Budget größer als null festlegen.' });
+    request.approvals.push({ decision, role: approverRole, email: req.user.email, name: req.user.name, notes: String(req.body.notes || '').trim(), boardResolution: String(req.body.boardResolution || '').trim(), approvedBudgetGross, createdAt: now() });
+    if (approvedBudgetGross) request.approvedBudgetGross = approvedBudgetGross;
+    if (decision === 'Abgelehnt') request.status = 'Abgelehnt';
+    else {
+      request.status = 'Genehmigt';
+      if (!request.approvedBudgetGross) request.approvedBudgetGross = request.requestedBudgetGross;
+    }
+    event(request, decision === 'Abgelehnt' ? 'Antrag abgelehnt' : 'Freigabe erteilt', req.user.email, { status: request.status });
+    res.json(detail(request));
+  });
+
+  app.post('/api/procurement/:id/cancel', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (['Abgeschlossen', 'Storniert'].includes(request.status)) return res.status(409).json({ error: 'Der Vorgang kann nicht storniert werden.' });
+    const reason = String(req.body.reason || '').trim(); if (!reason) return res.status(400).json({ error: 'Eine Stornierungsbegründung ist erforderlich.' });
+    request.status = 'Storniert'; event(request, 'Vorgang storniert', req.user.email, { reason }); res.json(detail(request));
+  });
+
+  app.post('/api/procurement/:id/offers', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (!['Beantragt', 'Genehmigt'].includes(request.status)) return res.status(409).json({ error: 'In diesem Status können keine Angebote erfasst werden.' });
+    const supplier = suppliers.find((entry) => entry.id === req.body.supplierId && entry.active !== false);
+    if (!supplier) return res.status(400).json({ error: 'Ein aktiver Lieferant ist erforderlich.' });
+    const offer = { id: nextId('offer', offers), requestId: request.id, supplierId: supplier.id, offerNumber: String(req.body.offerNumber || '').trim(), offerDate: req.body.offerDate || null, validUntil: req.body.validUntil || null, deliveryDays: Number(req.body.deliveryDays) || null, grossTotal: money(req.body.grossTotal), shippingGross: money(req.body.shippingGross), notes: String(req.body.notes || '').trim(), createdAt: now() };
+    if (offer.grossTotal <= 0) return res.status(400).json({ error: 'Die Angebotssumme muss größer als null sein.' });
+    offers.push(offer); event(request, 'Angebot erfasst', req.user.email, { offerId: offer.id, supplierId: supplier.id }); res.status(201).json(offer);
+  });
+
+  app.post('/api/procurement/:id/select-offer', authMiddleware, requirePermission('procurement.order'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    const offer = offers.find((entry) => entry.id === req.body.offerId && entry.requestId === request.id);
+    if (!offer) return res.status(404).json({ error: 'Angebot nicht gefunden.' });
+    const cheapest = Math.min(...offers.filter((entry) => entry.requestId === request.id).map((entry) => entry.grossTotal + entry.shippingGross));
+    const justification = String(req.body.justification || '').trim();
+    if (offer.grossTotal + offer.shippingGross > cheapest && !justification) return res.status(400).json({ error: 'Die Auswahl eines teureren Angebots muss begründet werden.' });
+    request.selectedOfferId = offer.id; request.offerSelectionJustification = justification;
+    event(request, 'Angebot ausgewählt', req.user.email, { offerId: offer.id, justification }); res.json(detail(request));
+  });
+
+  app.post('/api/procurement/:id/orders', authMiddleware, requirePermission('procurement.order'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (!hasRole(req.user, ORDER_ROLES)) return res.status(403).json({ error: 'Nur Materialwart oder Kleiderwart dürfen bestellen.' });
+    if (!['Genehmigt', 'Bestellt'].includes(request.status)) return res.status(409).json({ error: 'Der Antrag ist nicht zur Bestellung freigegeben.' });
+    const supplier = suppliers.find((entry) => entry.id === req.body.supplierId && entry.active !== false);
+    if (!supplier) return res.status(400).json({ error: 'Ein aktiver Lieferant ist erforderlich.' });
+    const orderItems = (req.body.items || []).map((item) => {
+      const quantity = money(item.quantity);
+      const submittedPrice = money(item.grossUnitPrice);
+      const requestOffers = offers.filter((entry) => entry.requestId === request.id);
+      const referenceOffer = requestOffers.find((entry) => entry.id === request.selectedOfferId)
+        || (requestOffers.length === 1 ? requestOffers[0] : null);
+      const legacyLineTotal = item.grossTotal == null
+        && request.items.length === 1
+        && referenceOffer
+        && Math.abs(submittedPrice - referenceOffer.grossTotal) < 0.01;
+      const grossTotal = item.grossTotal != null
+        ? money(item.grossTotal)
+        : legacyLineTotal
+          ? submittedPrice
+          : money(quantity * submittedPrice);
+      return {
+        requestItemId: item.requestItemId,
+        quantity,
+        grossTotal,
+        grossUnitPrice: quantity > 0 ? money(grossTotal / quantity) : 0,
+        deliveredQuantity: 0,
+      };
+    });
+    if (!orderItems.length || orderItems.some((item) => !request.items.some((entry) => entry.id === item.requestItemId) || item.quantity <= 0 || item.grossTotal <= 0)) return res.status(400).json({ error: 'Gültige Bestellpositionen mit positiver Positionssumme sind erforderlich.' });
+    for (const item of orderItems) {
+      const alreadyOrdered = orders.filter((entry) => entry.requestId === request.id).flatMap((entry) => entry.items).filter((entry) => entry.requestItemId === item.requestItemId).reduce((sum, entry) => sum + entry.quantity, 0);
+      const requested = request.items.find((entry) => entry.id === item.requestItemId).quantity;
+      if (alreadyOrdered + item.quantity > requested) return res.status(409).json({ error: 'Die bestellte Menge überschreitet die Antragsmenge.' });
+    }
+    const shippingGross = money(req.body.shippingGross);
+    const grossTotal = money(orderItems.reduce((sum, item) => sum + item.grossTotal, 0) + shippingGross);
+    const approvedBudgetGross = money(request.approvedBudgetGross);
+    const alreadyOrderedGross = orders.filter((entry) => entry.requestId === request.id).reduce((sum, entry) => sum + entry.grossTotal, 0);
+    if (approvedBudgetGross <= 0 || alreadyOrderedGross + grossTotal > approvedBudgetGross) return res.status(409).json({ error: 'Die Bestellung überschreitet das freigegebene Budget.' });
+    const order = { id: nextId('order', orders), number: yearSequence('BE', orders), requestId: request.id, supplierId: supplier.id, orderDate: req.body.orderDate || new Date().toISOString().slice(0, 10), expectedDeliveryDate: req.body.expectedDeliveryDate || null, items: orderItems, shippingGross, grossTotal, netTotal: money(req.body.netTotal), notes: String(req.body.notes || '').trim(), createdBy: req.user.email, createdAt: now() };
+    orders.push(order); request.status = 'Bestellt';
+    if (!supplier.customerNumber && req.body.customerNumber) supplier.customerNumber = String(req.body.customerNumber).trim();
+    event(request, 'Bestellung angelegt', req.user.email, { orderId: order.id, number: order.number }); res.status(201).json(order);
+  });
+
+  app.post('/api/procurement/:id/orders/:orderId/receipts', authMiddleware, requirePermission('procurement.receive'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (!hasRole(req.user, ORDER_ROLES)) return res.status(403).json({ error: 'Nur Materialwart oder Kleiderwart dürfen Wareneingänge buchen.' });
+    const order = orders.find((entry) => entry.id === req.params.orderId && entry.requestId === request.id);
+    if (!order) return res.status(404).json({ error: 'Bestellung nicht gefunden.' });
+    const receiptItems = (req.body.items || []).map((item) => ({ requestItemId: item.requestItemId, quantity: money(item.quantity) }));
+    if (!receiptItems.length || receiptItems.some((item) => item.quantity <= 0)) return res.status(400).json({ error: 'Gelieferte Mengen sind erforderlich.' });
+    for (const item of receiptItems) {
+      const orderItem = order.items.find((entry) => entry.requestItemId === item.requestItemId);
+      if (!orderItem || orderItem.deliveredQuantity + item.quantity > orderItem.quantity) return res.status(409).json({ error: 'Die Lieferung überschreitet die offene Bestellmenge.' });
+    }
+    const contested = req.body.contested === true;
+    const receipt = { id: nextId('receipt', receipts), number: yearSequence('WE', receipts), requestId: request.id, orderId: order.id, deliveryNoteNumber: String(req.body.deliveryNoteNumber || '').trim(), receivedAt: req.body.receivedAt || new Date().toISOString().slice(0, 10), items: receiptItems, status: contested ? 'Beanstandet' : 'Zu prüfen', complaint: contested ? String(req.body.complaint || '').trim() : '', inventoryTransferred: false, createdBy: req.user.email, createdAt: now() };
+    if (contested && !receipt.complaint) return res.status(400).json({ error: 'Eine Beanstandung benötigt eine Beschreibung.' });
+    receipts.push(receipt); receiptItems.forEach((item) => { order.items.find((entry) => entry.requestItemId === item.requestItemId).deliveredQuantity += item.quantity; });
+    const allDelivered = orders.filter((entry) => entry.requestId === request.id).every((entry) => entry.items.every((item) => item.deliveredQuantity >= item.quantity));
+    request.status = allDelivered ? 'Geliefert' : 'Teilweise geliefert';
+    event(request, contested ? 'Lieferung beanstandet' : 'Wareneingang gebucht', req.user.email, { receiptId: receipt.id }); res.status(201).json(receipt);
+  });
+
+  function nextMaterialNumber(categoryId, subcategoryId) {
+    return nextInventoryNumber([...materials, ...clothingItems], categoryId, subcategoryId);
+  }
+
+  app.post('/api/procurement/:id/receipts/:receiptId/transfer', authMiddleware, requirePermission('procurement.receive'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    const receipt = receipts.find((entry) => entry.id === req.params.receiptId && entry.requestId === request.id);
+    if (!receipt) return res.status(404).json({ error: 'Wareneingang nicht gefunden.' });
+    if (receipt.inventoryTransferred) return res.status(409).json({ error: 'Der Wareneingang wurde bereits übernommen.' });
+    if (receipt.status === 'Beanstandet' && req.body.complaintResolved !== true) return res.status(409).json({ error: 'Die Beanstandung muss vor der Übernahme geklärt werden.' });
+    const mappings = req.body.items || [];
+    const created = [];
+    for (const receiptItem of receipt.items) {
+      const source = request.items.find((entry) => entry.id === receiptItem.requestItemId);
+      const sourceOrder = orders.find((entry) => entry.id === receipt.orderId);
+      const purchaseUnitPrice = sourceOrder?.items.find((entry) => entry.requestItemId === receiptItem.requestItemId)?.grossUnitPrice || null;
+      const mapping = mappings.find((entry) => entry.requestItemId === receiptItem.requestItemId) || {};
+      if (!source || !locations.some((entry) => entry.id === mapping.locationId)) return res.status(400).json({ error: 'Für jede Position ist ein gültiger Standort erforderlich.' });
+      if (mapping.stockStructureId && !stockStructures.some((entry) => entry.id === mapping.stockStructureId && entry.locationId === mapping.locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum Standort.' });
+      const mainCategory = categories.find((entry) => entry.id === source.categoryId);
+      const wardrobe = mainCategory?.useInWardrobe === true;
+      if (wardrobe) {
+        const clothingCategoryId = source.subcategoryId || source.categoryId;
+        const allowedSizes = categorySizes(clothingCategoryId);
+        const size = String(mapping.size || source.size || '').trim();
+        if (allowedSizes.length && !allowedSizes.includes(size)) {
+          return res.status(400).json({
+            error: `Für ${source.name} muss eine vordefinierte Größe ausgewählt werden.`,
+          });
+        }
+        const inspectionIntervalMonths = categoryInspectionInterval(clothingCategoryId);
+        const count = Math.max(1, Math.floor(receiptItem.quantity));
+        for (let index = 0; index < count; index += 1) {
+          const item = { id: nextId('clothing', clothingItems), inventoryNumber: nextClothingInventoryNumber(clothingCategoryId), name: source.name, categoryId: clothingCategoryId, size, locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', assignedPerson: null, purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, inspectionIntervalMonths, lastInspectionDate: null, nextInspectionDate: addMonths(receipt.receivedAt, inspectionIntervalMonths), createdAt: now() };
+          clothingItems.push(item); created.push({ entity: 'clothing', id: item.id, inventoryNumber: item.inventoryNumber });
+        }
+      } else if (mapping.itemType === 'bulk') {
+        const item = { id: nextId('material', materials), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'bulk', quantity: receiptItem.quantity, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: '', purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
+        materials.push(item); created.push({ entity: 'material', id: item.id, inventoryNumber: item.inventoryNumber });
+      } else {
+        const count = Math.max(1, Math.floor(receiptItem.quantity));
+        for (let index = 0; index < count; index += 1) {
+          const item = { id: nextId('material', materials), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'individual', quantity: 1, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: String((mapping.serialNumbers || [])[index] || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
+          materials.push(item); created.push({ entity: 'material', id: item.id, inventoryNumber: item.inventoryNumber });
+        }
+      }
+    }
+    receipt.inventoryTransferred = true; receipt.status = 'Übernommen'; receipt.transferredAt = now(); receipt.createdInventory = created;
+    const requestReceipts = receipts.filter((entry) => entry.requestId === request.id);
+    if (request.status === 'Geliefert' && requestReceipts.length && requestReceipts.every((entry) => entry.inventoryTransferred)) request.status = 'Abgeschlossen';
+    event(request, 'Wareneingang ins Inventar übernommen', req.user.email, { receiptId: receipt.id, created: created.length }); res.json({ receipt, created });
+  });
+
+  app.get('/api/suppliers', authMiddleware, requirePermission('procurement.read'), (req, res) => res.json(suppliers));
+  app.post('/api/suppliers', authMiddleware, requirePermission('suppliers.write'), (req, res) => {
+    const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Name ist erforderlich.' });
+    const supplier = { id: nextId('supplier', suppliers), name, contact: String(req.body.contact || '').trim(), address: String(req.body.address || '').trim(), customerNumber: String(req.body.customerNumber || '').trim(), email: String(req.body.email || '').trim(), phone: String(req.body.phone || '').trim(), website: String(req.body.website || '').trim(), paymentTerms: String(req.body.paymentTerms || '').trim(), active: req.body.active !== false, createdAt: now() };
+    suppliers.push(supplier); res.status(201).json(supplier);
+  });
+  app.put('/api/suppliers/:id', authMiddleware, requirePermission('suppliers.write'), (req, res) => {
+    const supplier = suppliers.find((entry) => entry.id === req.params.id); if (!supplier) return res.status(404).json({ error: 'Lieferant nicht gefunden.' });
+    for (const field of ['name', 'contact', 'address', 'customerNumber', 'email', 'phone', 'website', 'paymentTerms', 'active']) if (Object.hasOwn(req.body, field)) supplier[field] = typeof req.body[field] === 'string' ? req.body[field].trim() : req.body[field];
+    res.json(supplier);
+  });
+
+  app.post('/api/procurement/:id/documents', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    const fileName = String(req.body.fileName || '').trim(); const extension = fileName.split('.').pop().toLowerCase(); const fileBase64 = String(req.body.fileBase64 || '');
+    if (!fileName || !FILE_EXTENSIONS.includes(extension) || !fileBase64) return res.status(400).json({ error: 'Erlaubt sind PDF, Bilder, DOCX, XLSX und ODS.' });
+    if (fileBase64.length > 7_000_000) return res.status(413).json({ error: 'Dateien dürfen maximal 5 MB groß sein.' });
+    const document = { id: nextId('proc-document', procurementDocuments), requestId: request.id, entityType: String(req.body.entityType || 'Antrag'), entityId: req.body.entityId || request.id, documentType: String(req.body.documentType || 'Sonstiges'), fileName, mimeType: req.body.mimeType || null, fileBase64, createdBy: req.user.email, createdAt: now() };
+    procurementDocuments.push(document); event(request, 'Dokument hinzugefügt', req.user.email, { documentId: document.id, documentType: document.documentType }); const { fileBase64: omitted, ...metadata } = document; res.status(201).json(metadata);
+  });
+  app.get('/api/procurement/:id/documents/:documentId', authMiddleware, requirePermission('procurement.read'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    const document = procurementDocuments.find((entry) => entry.id === req.params.documentId && entry.requestId === request.id); if (!document) return res.status(404).json({ error: 'Dokument nicht gefunden.' }); res.json(document);
+  });
+
+  app.get('/api/procurement/:id/print/:type', authMiddleware, requirePermission('procurement.export'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    const type = String(req.params.type || '');
+    let title; let lines;
+    if (type === 'orders') {
+      title = 'Bestellungen';
+      lines = orders.filter((entry) => entry.requestId === request.id).flatMap((order) => [
+        `${order.number} | ${suppliers.find((entry) => entry.id === order.supplierId)?.name || ''} | ${order.grossTotal.toFixed(2)} EUR | Freigegeben ${request.approvedBudgetGross.toFixed(2)} EUR`,
+        ...order.items.map((item) => `${request.items.find((entry) => entry.id === item.requestItemId)?.name || ''}: ${item.quantity} Stk. | ${item.grossTotal.toFixed(2)} EUR gesamt | ${item.grossUnitPrice.toFixed(2)} EUR je Einheit`),
+      ]);
+    } else if (type === 'offers') {
+      title = 'Angebotsvergleich';
+      lines = offers.filter((entry) => entry.requestId === request.id).map((offer) => `${suppliers.find((entry) => entry.id === offer.supplierId)?.name || ''} | ${offer.offerNumber || 'ohne Nummer'} | ${(offer.grossTotal + offer.shippingGross).toFixed(2)} EUR | ${offer.deliveryDays || '-'} Tage${request.selectedOfferId === offer.id ? ' | AUSGEWAEHLT' : ''}`);
+    } else if (type === 'receipts') {
+      title = 'Wareneingaenge';
+      lines = receipts.filter((entry) => entry.requestId === request.id).map((receipt) => `${receipt.number} | Lieferschein ${receipt.deliveryNoteNumber || '-'} | ${receipt.receivedAt} | ${receipt.status}`);
+    } else return res.status(400).json({ error: 'Drucktyp muss orders, offers oder receipts sein.' });
+    const buffer = minimalPdf([`MaterialKompass - ${title}`, `${request.number} - ${request.title}`, ...lines]);
+    res.json({ fileName: `${request.number}-${type}.pdf`, fileBase64: buffer.toString('base64') });
+  });
+
+  function minimalPdf(lines) {
+    const escaped = lines.join(' | ').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)').replace(/[^\x20-\x7E]/g, '?');
+    const stream = `BT /F1 10 Tf 40 800 Td (${escaped.slice(0, 7000)}) Tj ET`;
+    const objects = ['1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj', '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj', '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >> endobj', `4 0 obj << /Length ${stream.length} >> stream\n${stream}\nendstream endobj`, '5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj'];
+    let pdf = '%PDF-1.4\n'; const offsets = [0]; objects.forEach((object) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${object}\n`; }); const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`; for (let i = 1; i <= objects.length; i += 1) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`; pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`; return Buffer.from(pdf);
+  }
+  app.get('/api/procurement/export/:format', authMiddleware, requirePermission('procurement.export'), (req, res) => {
+    const format = String(req.params.format).toLowerCase(); const visible = requests.filter((entry) => canSee(req.user, entry));
+    if (format === 'pdf') { const buffer = minimalPdf(['MaterialKompass Beschaffungen', ...visible.map((entry) => `${entry.number} ${entry.title} ${entry.status} beantragt ${entry.requestedBudgetGross.toFixed(2)} EUR freigegeben ${money(entry.approvedBudgetGross).toFixed(2)} EUR`)]); return res.json({ fileName: `Beschaffungen-${new Date().toISOString().slice(0, 10)}.pdf`, fileBase64: buffer.toString('base64') }); }
+    if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx, ods oder pdf sein.' });
+    const rows = visible.map((entry) => ({ Nummer: entry.number, Titel: entry.title, Status: entry.status, Antragsteller: entry.requestedBy, Fachbereich: entry.department, Kostenstelle: entry.costCenter, Priorität: entry.priority, Wunschlieferdatum: entry.desiredDeliveryDate || '', 'Beantragtes Budget': entry.requestedBudgetGross, 'Freigegebenes Budget': entry.approvedBudgetGross ?? '' }));
+    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Beschaffungen'); const buffer = XLSX.write(workbook, { type: 'buffer', bookType: format }); res.json({ fileName: `Beschaffungen-${new Date().toISOString().slice(0, 10)}.${format}`, fileBase64: buffer.toString('base64') });
+  });
+
+  return { ALLOWED_STATUSES };
+}
+
+module.exports = { registerProcurementRoutes, ALLOWED_STATUSES };

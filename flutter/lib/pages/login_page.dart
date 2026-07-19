@@ -14,10 +14,38 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final emailController =
-      TextEditingController(text: 'admin@materialkompass.local');
-  final passwordController = TextEditingController(text: 'Admin123!');
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
   bool loading = false;
+
+  Future<void> requestPasswordReset() async {
+    final controller = TextEditingController(text: emailController.text);
+    final identifier = await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+              title: const Text('Passwort zurücksetzen'),
+              content: TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                      labelText: 'Nutzername oder E-Mail')),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Abbrechen')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(context, controller.text),
+                    child: const Text('Reset-Link anfordern'))
+              ],
+            ));
+    if (identifier == null || identifier.trim().isEmpty) return;
+    await http.post(Uri.parse('$apiBaseUrl/api/auth/password-reset'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'identifier': identifier}));
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content:
+              Text('Wenn das Konto existiert, wurde eine E-Mail versendet.')));
+  }
 
   Future<void> login() async {
     setState(() => loading = true);
@@ -25,7 +53,10 @@ class _LoginPageState extends State<LoginPage> {
       Uri.parse('$apiBaseUrl/api/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(
-        {'email': emailController.text, 'password': passwordController.text},
+        {
+          'identifier': emailController.text,
+          'password': passwordController.text
+        },
       ),
     );
 
@@ -38,9 +69,10 @@ class _LoginPageState extends State<LoginPage> {
       );
     } else {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Login fehlgeschlagen')),
-      );
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(data['error']?.toString() ?? 'Login fehlgeschlagen'),
+      ));
     }
   }
 
@@ -64,7 +96,8 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: emailController,
-                  decoration: const InputDecoration(labelText: 'E-Mail'),
+                  decoration: const InputDecoration(
+                      labelText: 'Nutzername oder E-Mail'),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -79,6 +112,9 @@ class _LoginPageState extends State<LoginPage> {
                       ? const CircularProgressIndicator()
                       : const Text('Anmelden'),
                 ),
+                TextButton(
+                    onPressed: loading ? null : requestPasswordReset,
+                    child: const Text('Passwort vergessen?')),
               ],
             ),
           ),

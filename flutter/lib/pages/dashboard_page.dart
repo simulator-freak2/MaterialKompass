@@ -5,7 +5,13 @@ import 'package:http/http.dart' as http;
 
 import '../constants.dart';
 import '../widgets/stat_card.dart';
+import 'categories_page.dart';
 import 'login_page.dart';
+import 'inventory_page.dart';
+import 'locations_page.dart';
+import 'procurement_page.dart';
+import 'profile_page.dart';
+import 'users_page.dart';
 import 'wardrobe_page.dart';
 
 class DashboardPage extends StatelessWidget {
@@ -14,14 +20,18 @@ class DashboardPage extends StatelessWidget {
   const DashboardPage({required this.token, super.key});
 
   Future<Map<String, dynamic>> loadDashboard() async {
-    final response = await http.get(
-      Uri.parse('$apiBaseUrl/api/dashboard'),
-      headers: {'Authorization': 'Bearer $token'},
-    );
-    if (response.statusCode != 200) {
+    final responses = await Future.wait([
+      http.get(Uri.parse('$apiBaseUrl/api/dashboard'),
+          headers: {'Authorization': 'Bearer $token'}),
+      http.get(Uri.parse('$apiBaseUrl/api/auth/me'),
+          headers: {'Authorization': 'Bearer $token'}),
+    ]);
+    if (responses.any((response) => response.statusCode != 200)) {
       throw Exception('Failed to load dashboard');
     }
-    return jsonDecode(response.body);
+    final dashboard = jsonDecode(responses[0].body) as Map<String, dynamic>;
+    dashboard['currentUser'] = jsonDecode(responses[1].body)['user'];
+    return dashboard;
   }
 
   void _logout(BuildContext context) {
@@ -37,6 +47,14 @@ class DashboardPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle_outlined),
+            tooltip: 'Mein Account',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => ProfilePage(
+                  token: token, onAccountDeleted: () => _logout(context)),
+            )),
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Abmelden',
@@ -56,6 +74,12 @@ class DashboardPage extends StatelessWidget {
 
           final data = snapshot.data ?? {};
           final summary = data['summary'] ?? {};
+          final currentUser = data['currentUser'] as Map? ?? {};
+          final isAdmin =
+              (currentUser['roles'] as List? ?? const []).contains('Admin');
+          final canReadLocations =
+              (currentUser['permissions'] as List? ?? const [])
+                  .contains('locations.read');
 
           return Padding(
             padding: const EdgeInsets.all(24),
@@ -76,6 +100,19 @@ class DashboardPage extends StatelessWidget {
                       value: summary['materialCount']?.toString() ?? '0',
                     ),
                     StatCard(
+                      title: 'Material ausgegeben',
+                      value: summary['issuedMaterialCount']?.toString() ?? '0',
+                    ),
+                    StatCard(
+                      title: 'Material defekt',
+                      value:
+                          summary['defectiveMaterialCount']?.toString() ?? '0',
+                    ),
+                    StatCard(
+                      title: 'Prüfungen fällig',
+                      value: summary['dueInspectionCount']?.toString() ?? '0',
+                    ),
+                    StatCard(
                       title: 'Kleidung',
                       value: summary['clothingCount']?.toString() ?? '0',
                     ),
@@ -86,6 +123,22 @@ class DashboardPage extends StatelessWidget {
                     StatCard(
                       title: 'Beschaffungen',
                       value: summary['procurementCount']?.toString() ?? '0',
+                    ),
+                    StatCard(
+                      title: 'Freigaben offen',
+                      value:
+                          summary['pendingProcurementApprovals']?.toString() ??
+                              '0',
+                    ),
+                    StatCard(
+                      title: 'Bestellungen überfällig',
+                      value: summary['overdueProcurementOrders']?.toString() ??
+                          '0',
+                    ),
+                    StatCard(
+                      title: 'Wareneingänge offen',
+                      value:
+                          summary['openProcurementReceipts']?.toString() ?? '0',
                     ),
                   ],
                 ),
@@ -98,17 +151,75 @@ class DashboardPage extends StatelessWidget {
                       style:
                           TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    ElevatedButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => WardrobePage(
-                            token: token,
-                            onLogout: () => _logout(context),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (isAdmin)
+                          ElevatedButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) => UsersPage(token: token)),
+                            ),
+                            icon: const Icon(Icons.manage_accounts_outlined),
+                            label: const Text('Nutzerverwaltung'),
                           ),
+                        ElevatedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ProcurementPage(
+                                token: token,
+                                onLogout: () => _logout(context),
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.shopping_cart_outlined),
+                          label: const Text('Beschaffung'),
                         ),
-                      ),
-                      icon: const Icon(Icons.checkroom),
-                      label: const Text('Kleiderkammer'),
+                        ElevatedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => InventoryPage(
+                                token: token,
+                                onLogout: () => _logout(context),
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.inventory_2_outlined),
+                          label: const Text('Inventar'),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => CategoriesPage(token: token),
+                            ),
+                          ),
+                          icon: const Icon(Icons.category_outlined),
+                          label: const Text('Kategorien'),
+                        ),
+                        if (canReadLocations)
+                          ElevatedButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => LocationsPage(token: token),
+                              ),
+                            ),
+                            icon: const Icon(Icons.warehouse_outlined),
+                            label: const Text('Lagerorte'),
+                          ),
+                        ElevatedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => WardrobePage(
+                                token: token,
+                                onLogout: () => _logout(context),
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.checkroom),
+                          label: const Text('Kleiderkammer'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
