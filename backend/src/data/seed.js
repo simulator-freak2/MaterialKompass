@@ -4,12 +4,16 @@ const permissions = [
   'users.read', 'users.write',
   'roles.read',
   'locations.read', 'locations.write',
-  'categories.read',
+  'categories.read', 'categories.write',
   'material.read', 'material.write',
-  'clothing.read', 'clothing.write',
-  'transactions.write',
+  'inventory.read', 'inventory.write', 'inventory.transactions',
+  'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export',
+  'clothing.read', 'clothing.write', 'clothing.inspect',
+  'transactions.read', 'transactions.write',
   'defects.read', 'defects.write',
-  'procurement.read', 'procurement.write',
+  'procurement.read', 'procurement.write', 'procurement.request',
+  'procurement.approve', 'procurement.order', 'procurement.receive',
+  'procurement.export', 'suppliers.write',
   'documents.read',
   'reports.read',
   'dashboard.read',
@@ -17,44 +21,51 @@ const permissions = [
 
 const roles = [
   { id: 'role-admin', name: 'Admin', permissions },
-  { id: 'role-user', name: 'Nutzer', permissions: ['material.read', 'dashboard.read'] },
-  { id: 'role-materialwart', name: 'Materialwart', permissions: ['material.read', 'material.write', 'transactions.write', 'defects.write'] },
-  { id: 'role-kleiderwart', name: 'Kleiderwart', permissions: ['clothing.read', 'clothing.write', 'transactions.write'] },
-  { id: 'role-fachbereichsleiter', name: 'Fachbereichsleiter', permissions: ['material.read', 'reports.read'] },
-  { id: 'role-vorsitzender', name: 'Vorsitzender', permissions: ['procurement.read', 'procurement.write', 'reports.read'] },
-  { id: 'role-kassenwart', name: 'Kassenwart', permissions: ['procurement.read', 'procurement.write', 'reports.read'] },
+  { id: 'role-user', name: 'Nutzer', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.export', 'dashboard.read'] },
+  { id: 'role-materialwart', name: 'Materialwart', permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.write', 'documents.read', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
+  { id: 'role-kleiderwart', name: 'Kleiderwart', permissions: ['categories.read', 'locations.read', 'clothing.read', 'clothing.write', 'clothing.inspect', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'transactions.read', 'transactions.write', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
+  { id: 'role-fachbereichsleiter', name: 'Fachbereichsleiter', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'procurement.read', 'procurement.request', 'procurement.export', 'reports.read', 'dashboard.read'] },
+  { id: 'role-vorsitz', name: 'Vorsitz', permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
+  { id: 'role-schatzmeister', name: 'Schatzmeister', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
   { id: 'role-jugendvorsitzender', name: 'Jugendvorsitzender', permissions: ['material.read', 'dashboard.read'] },
-  { id: 'role-sachkundiger', name: 'Sachkundiger PSAgE', permissions: ['material.read', 'defects.read'] },
+  { id: 'role-sachkundiger', name: 'Sachkundiger PSAgE', permissions: ['material.read', 'clothing.read', 'clothing.inspect', 'defects.read'] },
 ];
 
 const users = [
   {
     id: 'user-admin',
     name: 'Admin User',
-    email: 'admin@materialkompass.local',
-    passwordHash: bcrypt.hashSync('Admin123!', 10),
+    username: 'admin',
+    email: 'admin@materialkompass.org',
+    passwordHash: bcrypt.hashSync(process.env.INITIAL_ADMIN_PASSWORD || 'MaterialKompass2026!', 12),
     roles: ['Admin'],
     permissions,
     active: true,
     failedLoginAttempts: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
+    lastLoginAt: null,
+    emailVerifiedAt: '2026-01-01T00:00:00.000Z',
   },
   {
     id: 'user-materialwart',
     name: 'Miriam Material',
+    username: 'materialwart',
     email: 'materialwart@materialkompass.local',
     passwordHash: bcrypt.hashSync('Material123!', 10),
     roles: ['Materialwart'],
-    permissions: ['material.read', 'material.write', 'transactions.write', 'defects.write', 'dashboard.read'],
+    permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.write', 'documents.read', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'],
     active: true,
     failedLoginAttempts: 0,
     createdAt: '2026-01-02T00:00:00.000Z',
+    lastLoginAt: null,
+    emailVerifiedAt: '2026-01-02T00:00:00.000Z',
   },
 ];
 
 const locations = [
   { id: 'loc-1', name: 'Hauptlager', code: 'HL', type: 'Lager' },
   { id: 'loc-2', name: 'Kleiderkammer', code: 'KK', type: 'Kleidung' },
+  { id: 'loc-3', name: 'Nebenlager', code: 'NL', type: 'Lager' },
 ];
 
 const stockStructures = [
@@ -63,43 +74,74 @@ const stockStructures = [
 ];
 
 const categories = [
-  { id: 'cat-1', name: 'Werkzeug', code: '02' },
-  { id: 'cat-2', name: 'Kleidung', code: '04' },
-];
-
-const subcategories = [
-  { id: 'sub-1', name: 'Handwerk', categoryId: 'cat-1', code: '02' },
-  { id: 'sub-2', name: 'Schutzkleidung', categoryId: 'cat-2', code: '04' },
+  { id: '02', name: 'Werkzeug', parentId: null, useInWardrobe: false },
+  { id: '02-02', name: 'Handwerk', parentId: '02', useInWardrobe: false },
+  { id: '04', name: 'Kleidung', parentId: null, useInWardrobe: true, sizes: ['XS', 'S', 'M', 'L', 'XL', 'XXL'], inspectionIntervalMonths: null, requiresPsageInspection: false },
+  { id: '04-01', name: 'Einsatzkleidung', parentId: '04', useInWardrobe: false, sizes: ['XS', 'S', 'M', 'L', 'XL', 'XXL'], inspectionIntervalMonths: 12, requiresPsageInspection: false },
+  { id: '04-04', name: 'Schutzkleidung', parentId: '04', useInWardrobe: false, sizes: ['S', 'M', 'L', 'XL'], inspectionIntervalMonths: 12, requiresPsageInspection: true },
+  { id: '04-05', name: 'Zubehör', parentId: '04', useInWardrobe: false, sizes: ['Einheitsgröße'], inspectionIntervalMonths: null, requiresPsageInspection: false },
 ];
 
 const materials = [
   {
     id: 'material-1',
-    inventoryNumber: '10050035-02-02-0001',
+    inventoryNumber: '10050035-02-02-001',
     name: 'Kettensäge',
     categoryCode: '02',
-    subcategoryCode: '02',
+    subcategoryCode: '02-02',
     locationId: 'loc-1',
     status: 'Lagernd',
     description: 'Für Einsätze im Lager',
+    notes: '',
+    itemType: 'individual',
+    quantity: 1,
+    unit: 'Stück',
+    issuedQuantity: 0,
+    stockStructureId: 'stock-1',
+    manufacturer: 'Stihl',
+    model: '',
+    serialNumber: '',
+    purchaseDate: null,
+    purchasePrice: null,
+    department: 'Technik',
+    inspectionIntervalMonths: 12,
+    lastInspectionDate: null,
+    nextInspectionDate: '2027-01-01',
+    archived: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
   },
 ];
+
+const materialMovements = [];
+const materialInspections = [];
+const materialDocuments = [];
+const clothingInspections = [];
 
 const clothingItems = [
   {
     id: 'clothing-1',
+    inventoryNumber: '10050035-04-01-0001',
     name: 'Wetterjacke',
+    categoryId: '04-01',
     size: 'M',
     locationId: 'loc-2',
+    stockStructureId: 'stock-2',
     status: 'Lagernd',
     assignedPerson: null,
+    inspectionIntervalMonths: 12,
+    lastInspectionDate: null,
+    nextInspectionDate: '2027-01-01',
   },
 ];
 
 const issueTransactions = [];
 const defectReports = [];
 const procurementRequests = [];
-const suppliers = [{ id: 'supplier-1', name: 'DLRG Fachhandel', contact: 'info@fachhandel.example' }];
+const procurementOffers = [];
+const procurementOrders = [];
+const procurementReceipts = [];
+const procurementDocuments = [];
+const suppliers = [{ id: 'supplier-1', name: 'DLRG Fachhandel', contact: 'Vertrieb', address: '', customerNumber: '', email: 'info@fachhandel.example', phone: '', website: '', paymentTerms: '14 Tage netto', active: true }];
 const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
 const exportLogs = [];
@@ -112,12 +154,19 @@ module.exports = {
     locations,
     stockStructures,
     categories,
-    subcategories,
     materials,
+    materialMovements,
+    materialInspections,
+    materialDocuments,
     clothingItems,
+    clothingInspections,
     issueTransactions,
     defectReports,
     procurementRequests,
+    procurementOffers,
+    procurementOrders,
+    procurementReceipts,
+    procurementDocuments,
     suppliers,
     documents,
     auditLogs,

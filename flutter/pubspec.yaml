@@ -5,9 +5,15 @@ description: MaterialKompass for DLRG material management.
 environment:
   sdk: '>=3.3.0 <4.0.0'
 dependencies:
+  barcode_widget: ^2.0.4
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  file_picker: ^11.0.2
+  file_saver: ^0.4.0
   http: ^1.2.0
+  mobile_scanner: ^7.2.1
   provider: ^6.0.0
 
 dev_dependencies:

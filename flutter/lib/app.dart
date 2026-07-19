@@ -1,9 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pages/login_page.dart';
+import 'pages/auth_link_page.dart';
 
 class MaterialKompassApp extends StatelessWidget {
   const MaterialKompassApp({super.key});
+
+  Widget _initialPage() {
+    final fragment = Uri.base.fragment.startsWith('/')
+        ? Uri.base.fragment.substring(1)
+        : Uri.base.fragment;
+    final uri = Uri.tryParse(fragment);
+    if (uri != null &&
+        (uri.path == 'verify-email' || uri.path == 'password-reset')) {
+      return AuthLinkPage(
+          action: uri.path, token: uri.queryParameters['token'] ?? '');
+    }
+    return const LoginPage();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,6 +34,13 @@ class MaterialKompassApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'MaterialKompass',
+      locale: const Locale('de', 'DE'),
+      supportedLocales: const [Locale('de', 'DE')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
@@ -59,7 +81,7 @@ class MaterialKompassApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const LoginPage(),
+      home: _initialPage(),
     );
   }
 }
