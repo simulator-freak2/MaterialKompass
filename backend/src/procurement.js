@@ -10,7 +10,7 @@ const { nextInventoryNumber } = require('./inventory-number');
 
 function registerProcurementRoutes({
   app, authMiddleware, requirePermission, data, categories, locations,
-  stockStructures, materials, clothingItems, logEvent, nextId, XLSX,
+  stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
   nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
   addMonths,
 }) {
@@ -127,7 +127,7 @@ function registerProcurementRoutes({
       approvals: [], selectedOfferId: null,
       history: [], createdAt: now(), updatedAt: now(),
     };
-    requests.push(request); event(request, 'Entwurf angelegt', req.user.email, { requestedBudgetGross });
+    requests.push(request); event(request, 'Entwurf angelegt', req.user.username, { requestedBudgetGross });
     res.status(201).json(detail(request));
   });
 
@@ -143,20 +143,20 @@ function registerProcurementRoutes({
     const requestedBudgetGross = money(req.body.requestedBudgetGross ?? request.requestedBudgetGross);
     if (requestedBudgetGross <= 0) return res.status(400).json({ error: 'Das beantragte Budget muss größer als null sein.' });
     request.items = items; request.requestedBudgetGross = requestedBudgetGross;
-    event(request, 'Entwurf bearbeitet', req.user.email, { requestedBudgetGross }); res.json(detail(request));
+    event(request, 'Entwurf bearbeitet', req.user.username, { requestedBudgetGross }); res.json(detail(request));
   });
 
   app.delete('/api/procurement/:id', authMiddleware, requirePermission('procurement.request'), (req, res) => {
     const request = findVisible(req, res); if (!request) return;
     if (request.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können gelöscht werden.' });
     if (!isAdmin(req.user) && request.requestedByEmail !== req.user.email) return res.status(403).json({ error: 'Nur der Antragsteller darf den Entwurf löschen.' });
-    requests.splice(requests.indexOf(request), 1); logEvent('Entwurf gelöscht', 'ProcurementRequest', { id: request.id }, req.user.email); res.json({ success: true });
+    requests.splice(requests.indexOf(request), 1); logEvent('Entwurf gelöscht', 'ProcurementRequest', { id: request.id }, req.user.username); res.json({ success: true });
   });
 
   app.post('/api/procurement/:id/submit', authMiddleware, requirePermission('procurement.request'), (req, res) => {
     const request = findVisible(req, res); if (!request) return;
     if (request.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können beantragt werden.' });
-    request.status = 'Beantragt'; event(request, 'Freigabe beantragt', req.user.email); res.json(detail(request));
+    request.status = 'Beantragt'; event(request, 'Freigabe beantragt', req.user.username); res.json(detail(request));
   });
 
   app.post('/api/procurement/:id/approval', authMiddleware, requirePermission('procurement.approve'), (req, res) => {
@@ -175,7 +175,7 @@ function registerProcurementRoutes({
       request.status = 'Genehmigt';
       if (!request.approvedBudgetGross) request.approvedBudgetGross = request.requestedBudgetGross;
     }
-    event(request, decision === 'Abgelehnt' ? 'Antrag abgelehnt' : 'Freigabe erteilt', req.user.email, { status: request.status });
+    event(request, decision === 'Abgelehnt' ? 'Antrag abgelehnt' : 'Freigabe erteilt', req.user.username, { status: request.status });
     res.json(detail(request));
   });
 
@@ -183,7 +183,7 @@ function registerProcurementRoutes({
     const request = findVisible(req, res); if (!request) return;
     if (['Abgeschlossen', 'Storniert'].includes(request.status)) return res.status(409).json({ error: 'Der Vorgang kann nicht storniert werden.' });
     const reason = String(req.body.reason || '').trim(); if (!reason) return res.status(400).json({ error: 'Eine Stornierungsbegründung ist erforderlich.' });
-    request.status = 'Storniert'; event(request, 'Vorgang storniert', req.user.email, { reason }); res.json(detail(request));
+    request.status = 'Storniert'; event(request, 'Vorgang storniert', req.user.username, { reason }); res.json(detail(request));
   });
 
   app.post('/api/procurement/:id/offers', authMiddleware, requirePermission('procurement.request'), (req, res) => {
@@ -193,7 +193,7 @@ function registerProcurementRoutes({
     if (!supplier) return res.status(400).json({ error: 'Ein aktiver Lieferant ist erforderlich.' });
     const offer = { id: nextId('offer', offers), requestId: request.id, supplierId: supplier.id, offerNumber: String(req.body.offerNumber || '').trim(), offerDate: req.body.offerDate || null, validUntil: req.body.validUntil || null, deliveryDays: Number(req.body.deliveryDays) || null, grossTotal: money(req.body.grossTotal), shippingGross: money(req.body.shippingGross), notes: String(req.body.notes || '').trim(), createdAt: now() };
     if (offer.grossTotal <= 0) return res.status(400).json({ error: 'Die Angebotssumme muss größer als null sein.' });
-    offers.push(offer); event(request, 'Angebot erfasst', req.user.email, { offerId: offer.id, supplierId: supplier.id }); res.status(201).json(offer);
+    offers.push(offer); event(request, 'Angebot erfasst', req.user.username, { offerId: offer.id, supplierId: supplier.id }); res.status(201).json(offer);
   });
 
   app.post('/api/procurement/:id/select-offer', authMiddleware, requirePermission('procurement.order'), (req, res) => {
@@ -204,7 +204,7 @@ function registerProcurementRoutes({
     const justification = String(req.body.justification || '').trim();
     if (offer.grossTotal + offer.shippingGross > cheapest && !justification) return res.status(400).json({ error: 'Die Auswahl eines teureren Angebots muss begründet werden.' });
     request.selectedOfferId = offer.id; request.offerSelectionJustification = justification;
-    event(request, 'Angebot ausgewählt', req.user.email, { offerId: offer.id, justification }); res.json(detail(request));
+    event(request, 'Angebot ausgewählt', req.user.username, { offerId: offer.id, justification }); res.json(detail(request));
   });
 
   app.post('/api/procurement/:id/orders', authMiddleware, requirePermission('procurement.order'), (req, res) => {
@@ -247,10 +247,10 @@ function registerProcurementRoutes({
     const approvedBudgetGross = money(request.approvedBudgetGross);
     const alreadyOrderedGross = orders.filter((entry) => entry.requestId === request.id).reduce((sum, entry) => sum + entry.grossTotal, 0);
     if (approvedBudgetGross <= 0 || alreadyOrderedGross + grossTotal > approvedBudgetGross) return res.status(409).json({ error: 'Die Bestellung überschreitet das freigegebene Budget.' });
-    const order = { id: nextId('order', orders), number: yearSequence('BE', orders), requestId: request.id, supplierId: supplier.id, orderDate: req.body.orderDate || new Date().toISOString().slice(0, 10), expectedDeliveryDate: req.body.expectedDeliveryDate || null, items: orderItems, shippingGross, grossTotal, netTotal: money(req.body.netTotal), notes: String(req.body.notes || '').trim(), createdBy: req.user.email, createdAt: now() };
+    const order = { id: nextId('order', orders), number: yearSequence('BE', orders), requestId: request.id, supplierId: supplier.id, orderDate: req.body.orderDate || new Date().toISOString().slice(0, 10), expectedDeliveryDate: req.body.expectedDeliveryDate || null, items: orderItems, shippingGross, grossTotal, netTotal: money(req.body.netTotal), notes: String(req.body.notes || '').trim(), createdBy: req.user.username, createdAt: now() };
     orders.push(order); request.status = 'Bestellt';
     if (!supplier.customerNumber && req.body.customerNumber) supplier.customerNumber = String(req.body.customerNumber).trim();
-    event(request, 'Bestellung angelegt', req.user.email, { orderId: order.id, number: order.number }); res.status(201).json(order);
+    event(request, 'Bestellung angelegt', req.user.username, { orderId: order.id, number: order.number }); res.status(201).json(order);
   });
 
   app.post('/api/procurement/:id/orders/:orderId/receipts', authMiddleware, requirePermission('procurement.receive'), (req, res) => {
@@ -265,16 +265,16 @@ function registerProcurementRoutes({
       if (!orderItem || orderItem.deliveredQuantity + item.quantity > orderItem.quantity) return res.status(409).json({ error: 'Die Lieferung überschreitet die offene Bestellmenge.' });
     }
     const contested = req.body.contested === true;
-    const receipt = { id: nextId('receipt', receipts), number: yearSequence('WE', receipts), requestId: request.id, orderId: order.id, deliveryNoteNumber: String(req.body.deliveryNoteNumber || '').trim(), receivedAt: req.body.receivedAt || new Date().toISOString().slice(0, 10), items: receiptItems, status: contested ? 'Beanstandet' : 'Zu prüfen', complaint: contested ? String(req.body.complaint || '').trim() : '', inventoryTransferred: false, createdBy: req.user.email, createdAt: now() };
+    const receipt = { id: nextId('receipt', receipts), number: yearSequence('WE', receipts), requestId: request.id, orderId: order.id, deliveryNoteNumber: String(req.body.deliveryNoteNumber || '').trim(), receivedAt: req.body.receivedAt || new Date().toISOString().slice(0, 10), items: receiptItems, status: contested ? 'Beanstandet' : 'Zu prüfen', complaint: contested ? String(req.body.complaint || '').trim() : '', inventoryTransferred: false, createdBy: req.user.username, createdAt: now() };
     if (contested && !receipt.complaint) return res.status(400).json({ error: 'Eine Beanstandung benötigt eine Beschreibung.' });
     receipts.push(receipt); receiptItems.forEach((item) => { order.items.find((entry) => entry.requestItemId === item.requestItemId).deliveredQuantity += item.quantity; });
     const allDelivered = orders.filter((entry) => entry.requestId === request.id).every((entry) => entry.items.every((item) => item.deliveredQuantity >= item.quantity));
     request.status = allDelivered ? 'Geliefert' : 'Teilweise geliefert';
-    event(request, contested ? 'Lieferung beanstandet' : 'Wareneingang gebucht', req.user.email, { receiptId: receipt.id }); res.status(201).json(receipt);
+    event(request, contested ? 'Lieferung beanstandet' : 'Wareneingang gebucht', req.user.username, { receiptId: receipt.id }); res.status(201).json(receipt);
   });
 
   function nextMaterialNumber(categoryId, subcategoryId) {
-    return nextInventoryNumber([...materials, ...clothingItems], categoryId, subcategoryId);
+    return nextInventoryNumber([...materials, ...deletedMaterials, ...clothingItems], categoryId, subcategoryId);
   }
 
   app.post('/api/procurement/:id/receipts/:receiptId/transfer', authMiddleware, requirePermission('procurement.receive'), (req, res) => {
@@ -310,12 +310,12 @@ function registerProcurementRoutes({
           clothingItems.push(item); created.push({ entity: 'clothing', id: item.id, inventoryNumber: item.inventoryNumber });
         }
       } else if (mapping.itemType === 'bulk') {
-        const item = { id: nextId('material', materials), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'bulk', quantity: receiptItem.quantity, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: '', purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
+        const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'bulk', quantity: receiptItem.quantity, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: '', purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
         materials.push(item); created.push({ entity: 'material', id: item.id, inventoryNumber: item.inventoryNumber });
       } else {
         const count = Math.max(1, Math.floor(receiptItem.quantity));
         for (let index = 0; index < count; index += 1) {
-          const item = { id: nextId('material', materials), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'individual', quantity: 1, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: String((mapping.serialNumbers || [])[index] || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
+          const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'individual', quantity: 1, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: String((mapping.serialNumbers || [])[index] || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
           materials.push(item); created.push({ entity: 'material', id: item.id, inventoryNumber: item.inventoryNumber });
         }
       }
@@ -323,7 +323,7 @@ function registerProcurementRoutes({
     receipt.inventoryTransferred = true; receipt.status = 'Übernommen'; receipt.transferredAt = now(); receipt.createdInventory = created;
     const requestReceipts = receipts.filter((entry) => entry.requestId === request.id);
     if (request.status === 'Geliefert' && requestReceipts.length && requestReceipts.every((entry) => entry.inventoryTransferred)) request.status = 'Abgeschlossen';
-    event(request, 'Wareneingang ins Inventar übernommen', req.user.email, { receiptId: receipt.id, created: created.length }); res.json({ receipt, created });
+    event(request, 'Wareneingang ins Inventar übernommen', req.user.username, { receiptId: receipt.id, created: created.length }); res.json({ receipt, created });
   });
 
   app.get('/api/suppliers', authMiddleware, requirePermission('procurement.read'), (req, res) => res.json(suppliers));
@@ -343,8 +343,8 @@ function registerProcurementRoutes({
     const fileName = String(req.body.fileName || '').trim(); const extension = fileName.split('.').pop().toLowerCase(); const fileBase64 = String(req.body.fileBase64 || '');
     if (!fileName || !FILE_EXTENSIONS.includes(extension) || !fileBase64) return res.status(400).json({ error: 'Erlaubt sind PDF, Bilder, DOCX, XLSX und ODS.' });
     if (fileBase64.length > 7_000_000) return res.status(413).json({ error: 'Dateien dürfen maximal 5 MB groß sein.' });
-    const document = { id: nextId('proc-document', procurementDocuments), requestId: request.id, entityType: String(req.body.entityType || 'Antrag'), entityId: req.body.entityId || request.id, documentType: String(req.body.documentType || 'Sonstiges'), fileName, mimeType: req.body.mimeType || null, fileBase64, createdBy: req.user.email, createdAt: now() };
-    procurementDocuments.push(document); event(request, 'Dokument hinzugefügt', req.user.email, { documentId: document.id, documentType: document.documentType }); const { fileBase64: omitted, ...metadata } = document; res.status(201).json(metadata);
+    const document = { id: nextId('proc-document', procurementDocuments), requestId: request.id, entityType: String(req.body.entityType || 'Antrag'), entityId: req.body.entityId || request.id, documentType: String(req.body.documentType || 'Sonstiges'), fileName, mimeType: req.body.mimeType || null, fileBase64, createdBy: req.user.username, createdAt: now() };
+    procurementDocuments.push(document); event(request, 'Dokument hinzugefügt', req.user.username, { documentId: document.id, documentType: document.documentType }); const { fileBase64: omitted, ...metadata } = document; res.status(201).json(metadata);
   });
   app.get('/api/procurement/:id/documents/:documentId', authMiddleware, requirePermission('procurement.read'), (req, res) => {
     const request = findVisible(req, res); if (!request) return;

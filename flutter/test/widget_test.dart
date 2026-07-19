@@ -62,6 +62,7 @@ void main() {
     expect(find.text('Neue Kleidung anlegen'), findsOneWidget);
     expect(find.text('Ausgabe-/Rückgabe-Log'), findsOneWidget);
     expect(find.text('Ausgeben/Zurücknehmen'), findsOneWidget);
+    expect(find.text('Kategorie ändern'), findsOneWidget);
     expect(find.text('Scannen'), findsOneWidget);
     expect(find.text('Tabelle importieren'), findsOneWidget);
     expect(find.text('Tabelle exportieren'), findsOneWidget);

@@ -130,7 +130,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     const role = { id: nextId('role', roles), name, permissions: [...new Set(selectedPermissions)] };
     roles.push(role);
     await saveRole(role);
-    logEvent('create', 'Role', { id: role.id }, req.user.email);
+    logEvent('create', 'Role', { id: role.id }, req.user.username);
     return res.status(201).json(role);
   });
 
@@ -157,7 +157,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     });
     await saveRole(role);
     await Promise.all(users.map(saveUser));
-    logEvent('update', 'Role', { id: role.id }, req.user.email);
+    logEvent('update', 'Role', { id: role.id }, req.user.username);
     return res.json(role);
   });
 
@@ -170,7 +170,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     }
     roles.splice(index, 1);
     await deleteStoredRole(role.id);
-    logEvent('delete', 'Role', { id: role.id }, req.user.email);
+    logEvent('delete', 'Role', { id: role.id }, req.user.username);
     return res.status(204).end();
   });
 
@@ -202,7 +202,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     if (!skipEmailVerification) await issueVerification(user);
     if (!hasStartPassword) await issuePasswordReset(user);
     await saveUser(user);
-    logEvent('create', 'User', { id: user.id }, req.user.email);
+    logEvent('create', 'User', { id: user.id }, req.user.username);
     return res.status(201).json(publicUser(user));
   });
 
@@ -229,13 +229,13 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     if (emailChanged) { user.emailVerifiedAt = null; await issueVerification(user); }
     if (nextActive) { user.deactivatedAt = null; user.deactivationReason = null; user.scheduledDeletionAt = null; }
     await saveUser(user);
-    logEvent('update', 'User', { id: user.id }, req.user.email);
+    logEvent('update', 'User', { id: user.id }, req.user.username);
     return res.json(publicUser(user));
   });
 
   app.post('/api/users/:id/password-reset', authMiddleware, requirePermission('users.write'), async (req, res) => {
     const user = users.find((entry) => entry.id === req.params.id);
-    if (user) { await issuePasswordReset(user); await saveUser(user); logEvent('password_reset_requested', 'User', { id: user.id }, req.user.email); }
+    if (user) { await issuePasswordReset(user); await saveUser(user); logEvent('password_reset_requested', 'User', { id: user.id }, req.user.username); }
     return res.status(202).json({ message: 'Wenn das Konto existiert, wurde eine E-Mail versendet.' });
   });
 
@@ -245,7 +245,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     if (isLastAdmin(users[index])) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht gelöscht werden.' });
     const [deleted] = users.splice(index, 1);
     await deleteStoredUser(deleted.id);
-    logEvent('delete', 'User', { id: deleted.id }, req.user.email);
+    logEvent('delete', 'User', { id: deleted.id }, req.user.username);
     return res.status(204).end();
   });
 
@@ -263,7 +263,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
       user.passwordHash = bcrypt.hashSync(req.body.password, 12);
     }
     await saveUser(user);
-    logEvent('self_update', 'User', { id: user.id }, user.email);
+    logEvent('self_update', 'User', { id: user.id }, user.username);
     return res.json(publicUser(user));
   });
 
@@ -272,7 +272,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     if (isLastAdmin(req.user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
     users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);
     await deleteStoredUser(req.user.id);
-    logEvent('self_delete', 'User', { id: req.user.id }, req.user.email);
+    logEvent('self_delete', 'User', { id: req.user.id }, req.user.username);
     return res.status(204).end();
   });
 
@@ -281,7 +281,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     if (user?.active) {
       await issuePasswordReset(user);
       await saveUser(user);
-      logEvent('password_reset_requested', 'User', { id: user.id }, normalize(req.body.email || req.body.identifier));
+      logEvent('password_reset_requested', 'User', { id: user.id }, user.username);
     }
     return res.status(202).json({ message: 'Wenn das Konto existiert, wurde eine E-Mail versendet.' });
   });
@@ -299,7 +299,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
     await saveUser(user);
-    logEvent('password_reset_completed', 'User', { id: user.id }, user.email);
+    logEvent('password_reset_completed', 'User', { id: user.id }, user.username);
     return res.json({ message: 'Das Passwort wurde geändert.' });
   });
 
@@ -313,7 +313,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     user.verificationTokenHash = null;
     user.verificationExpiresAt = null;
     await saveUser(user);
-    logEvent('email_verified', 'User', { id: user.id }, user.email);
+    logEvent('email_verified', 'User', { id: user.id }, user.username);
     return res.json({ message: 'Die E-Mail-Adresse wurde bestätigt.' });
   });
 

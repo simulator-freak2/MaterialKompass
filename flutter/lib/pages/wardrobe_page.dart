@@ -3,11 +3,11 @@ import 'dart:convert';
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../widgets/date_input_field.dart';
 import 'login_page.dart';
@@ -1084,10 +1084,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Future<void> _scanClothing() async {
     final manualController = TextEditingController();
-    final cameraSupported = kIsWeb ||
-        defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS ||
-        defaultTargetPlatform == TargetPlatform.macOS;
+    final cameraSupported = isCameraScanningSupported;
     var completed = false;
     final value = await showDialog<String>(
       context: context,
@@ -1128,7 +1125,7 @@ class _WardrobePageState extends State<WardrobePage> {
                 const Padding(
                   padding: EdgeInsets.only(top: 16),
                   child: Text(
-                    'Auf Windows/Linux bitte einen USB-Handscanner verwenden. Die Kamera wird im Webbrowser unterstützt.',
+                    'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.',
                   ),
                 ),
             ],
@@ -1549,6 +1546,189 @@ class _WardrobePageState extends State<WardrobePage> {
     );
   }
 
+  Future<void> _openBulkCategoryDialog() async {
+    if (_selectedClothingIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Bitte mindestens ein Kleidungsstück auswählen')),
+      );
+      return;
+    }
+
+    final selectedItems = _currentClothing
+        .where((item) =>
+            _selectedClothingIds.contains(item['id']?.toString() ?? ''))
+        .toList();
+    if (selectedItems.length != _selectedClothingIds.length) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Die Auswahl ist nicht mehr aktuell. Bitte neu laden.')),
+      );
+      return;
+    }
+    final sourceCategoryIds = selectedItems
+        .map((item) => item['categoryId']?.toString() ?? '')
+        .toSet();
+    if (sourceCategoryIds.length != 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text('Bitte nur Kleidungsstücke derselben Kategorie auswählen.'),
+        ),
+      );
+      return;
+    }
+
+    final sourceCategoryId = sourceCategoryIds.first;
+    final targetCategories = _selectableCategories
+        .where((category) => category['id']?.toString() != sourceCategoryId)
+        .toList();
+    if (targetCategories.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Es ist keine andere Kleiderkategorie vorhanden.')),
+      );
+      return;
+    }
+
+    String? targetCategoryId = targetCategories.first['id']?.toString();
+    var reassignInventoryNumbers = true;
+    var isSaving = false;
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Kategorie für Auswahl ändern'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${selectedItems.length} Kleidungsstücke aus "${_categoryName(sourceCategoryId)}" werden gemeinsam verschoben.',
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: targetCategoryId,
+                  decoration: const InputDecoration(
+                    labelText: 'Neue Kategorie',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: targetCategories
+                      .map((category) => DropdownMenuItem<String>(
+                            value: category['id']?.toString(),
+                            child: Text(_categoryPath(category)),
+                          ))
+                      .toList(),
+                  onChanged: isSaving
+                      ? null
+                      : (value) =>
+                          setDialogState(() => targetCategoryId = value),
+                ),
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: reassignInventoryNumbers,
+                  title: const Text('Inventarnummern neu vergeben'),
+                  subtitle: const Text(
+                    'Erzeugt für jedes Stück eine fortlaufende Nummer der neuen Kategorie.',
+                  ),
+                  onChanged: isSaving
+                      ? null
+                      : (value) => setDialogState(
+                          () => reassignInventoryNumbers = value ?? true),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton.icon(
+              onPressed: isSaving || targetCategoryId == null
+                  ? null
+                  : () async {
+                      var dialogClosed = false;
+                      setDialogState(() => isSaving = true);
+                      try {
+                        final response = await http.post(
+                          Uri.parse('$apiBaseUrl/api/clothing/bulk-category'),
+                          headers: {
+                            'Authorization': 'Bearer ${widget.token}',
+                            'Content-Type': 'application/json',
+                          },
+                          body: jsonEncode({
+                            'clothingIds': _selectedClothingIds.toList(),
+                            'categoryId': targetCategoryId,
+                            'reassignInventoryNumbers':
+                                reassignInventoryNumbers,
+                          }),
+                        );
+                        if (!dialogContext.mounted) return;
+                        if (response.statusCode == 200) {
+                          dialogClosed = true;
+                          Navigator.of(dialogContext).pop(true);
+                          return;
+                        }
+                        var message =
+                            'Die Kategorie konnte nicht geändert werden.';
+                        try {
+                          final data = jsonDecode(response.body);
+                          if (data is Map && data['error'] != null) {
+                            message = data['error'].toString();
+                          }
+                        } catch (_) {}
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                          SnackBar(content: Text(message)),
+                        );
+                      } catch (_) {
+                        if (dialogContext.mounted) {
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'Der Server ist momentan nicht erreichbar.'),
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (!dialogClosed && dialogContext.mounted) {
+                          setDialogState(() => isSaving = false);
+                        }
+                      }
+                    },
+              icon: isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.drive_file_move_outline),
+              label: const Text('Verschieben'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (changed != true || !mounted) return;
+    final changedCount = _selectedClothingIds.length;
+    setState(() {
+      _selectedClothingIds.clear();
+      _clothingFuture = _fetchClothing();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text('$changedCount Kleidungsstücke wurden verschoben.')),
+    );
+  }
+
   Widget _buildInventoryTab() {
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -1652,6 +1832,17 @@ class _WardrobePageState extends State<WardrobePage> {
                 ),
                 icon: const Icon(Icons.inventory_2, size: 18),
                 label: const Text('Ausgeben/Zurücknehmen'),
+              ),
+              ElevatedButton.icon(
+                onPressed: _openBulkCategoryDialog,
+                style: ElevatedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  backgroundColor: Colors.deepPurple.shade700,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.drive_file_move_outline, size: 18),
+                label: const Text('Kategorie ändern'),
               ),
               ElevatedButton.icon(
                 onPressed: _deleteSelectedClothing,

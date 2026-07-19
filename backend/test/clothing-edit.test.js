@@ -374,6 +374,118 @@ test('posting invalid transaction action returns 400', async () => {
   }
 });
 
+test('bulk category change moves same-category clothing and assigns new inventory numbers', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'admin@materialkompass.org',
+        password: 'MaterialKompass2026!',
+      }),
+    });
+    const token = (await loginResponse.json()).token;
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+    const items = await Promise.all(['1', '2'].map((suffix) =>
+      fetch(`${baseUrl}/api/clothing`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: `Jacke ${suffix}`,
+          inventoryNumber: `BULK-CATEGORY-${suffix}`,
+          categoryId: '04-01',
+          size: 'M',
+          locationId: 'loc-2',
+        }),
+      }).then((response) => response.json())));
+
+    const response = await fetch(`${baseUrl}/api/clothing/bulk-category`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clothingIds: items.map((item) => item.id),
+        categoryId: '04-04',
+        reassignInventoryNumbers: true,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const updated = await response.json();
+    assert.equal(updated.length, 2);
+    assert.equal(updated.every((item) => item.categoryId === '04-04'), true);
+    assert.deepEqual(updated.map((item) => item.inventoryNumber), [
+      '10050035-04-04-0001',
+      '10050035-04-04-0002',
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
+test('bulk category change is atomic for mixed source categories or incompatible sizes', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'admin@materialkompass.org',
+        password: 'MaterialKompass2026!',
+      }),
+    });
+    const token = (await loginResponse.json()).token;
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+    const otherCategoryItem = await fetch(`${baseUrl}/api/clothing`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Andere Kategorie',
+        inventoryNumber: 'BULK-MIXED-CATEGORY',
+        categoryId: '04-04',
+        size: 'M',
+        locationId: 'loc-2',
+      }),
+    }).then((response) => response.json());
+
+    let response = await fetch(`${baseUrl}/api/clothing/bulk-category`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clothingIds: ['clothing-1', otherCategoryItem.id],
+        categoryId: '04-05',
+        reassignInventoryNumbers: true,
+      }),
+    });
+    assert.equal(response.status, 400);
+
+    response = await fetch(`${baseUrl}/api/clothing/bulk-category`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        clothingIds: ['clothing-1'],
+        categoryId: '04-05',
+        reassignInventoryNumbers: true,
+      }),
+    });
+    assert.equal(response.status, 400);
+
+    const clothing = await fetch(`${baseUrl}/api/clothing`, { headers })
+      .then((result) => result.json());
+    const unchanged = clothing.find((item) => item.id === 'clothing-1');
+    assert.equal(unchanged.categoryId, '04-01');
+    assert.equal(unchanged.inventoryNumber, '10050035-04-01-0001');
+  } finally {
+    server.close();
+  }
+});
+
 test('new app instances start with independent seed data', async () => {
   const first = await startServer();
   let token;

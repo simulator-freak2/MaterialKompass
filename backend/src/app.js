@@ -79,6 +79,7 @@ function createApp(options = {}) {
   const stockStructures = appData.stockStructures;
   const categories = appData.categories;
   const materials = appData.materials;
+  const deletedMaterials = [];
   const materialMovements = appData.materialMovements;
   const materialInspections = appData.materialInspections;
   const materialDocuments = appData.materialDocuments;
@@ -175,10 +176,17 @@ function createApp(options = {}) {
   }
 
   function logEvent(action, entity, details, actor = 'system') {
+    const matchedUser = users.find((user) =>
+      [user.email, user.username].some((value) =>
+        String(value || '').toLowerCase() === String(actor || '').toLowerCase()
+      )
+    );
+    const publicActor = matchedUser?.username
+      || (String(actor).includes('@') ? 'unbekannt' : actor);
     auditLogs.push({
       id: `audit-${auditLogs.length + 1}`,
       timestamp: new Date().toISOString(),
-      actor,
+      actor: publicActor,
       action,
       entity,
       details,
@@ -424,7 +432,7 @@ function createApp(options = {}) {
       if (user.failedLoginAttempts >= 5) {
         user.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       }
-      logEvent('login_failed', 'User', { identifier: loginIdentifier }, loginIdentifier);
+      logEvent('login_failed', 'User', { id: user.id }, user.username);
       await options.userStore?.saveUser(user);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -441,7 +449,7 @@ function createApp(options = {}) {
     user.lastLoginAt = new Date().toISOString();
     await options.userStore?.saveUser(user);
     const token = createToken(user);
-    logEvent('login', 'User', { id: user.id }, user.email);
+    logEvent('login', 'User', { id: user.id }, user.username);
     res.json({ token, expiresIn: 3600, user: publicUser(user) });
   });
 
@@ -462,7 +470,7 @@ function createApp(options = {}) {
     if (locations.some((entry) => entry.name.toLowerCase() === name.toLowerCase() || entry.code.toLowerCase() === code.toLowerCase())) return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
     const location = { id: nextId('loc', locations), name, code, type };
     locations.push(location);
-    logEvent('create', 'Location', { id: location.id }, req.user.email);
+    logEvent('create', 'Location', { id: location.id }, req.user.username);
     res.status(201).json(location);
   });
 
@@ -476,7 +484,7 @@ function createApp(options = {}) {
     if (!/^[A-Z0-9_-]{1,16}$/.test(code)) return res.status(400).json({ error: 'Das Kürzel ist ungültig.' });
     if (locations.some((entry) => entry.id !== location.id && (entry.name.toLowerCase() === name.toLowerCase() || entry.code.toLowerCase() === code.toLowerCase()))) return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
     Object.assign(location, { name, code, type, updatedAt: new Date().toISOString() });
-    logEvent('update', 'Location', { id: location.id }, req.user.email);
+    logEvent('update', 'Location', { id: location.id }, req.user.username);
     res.json(location);
   });
 
@@ -486,7 +494,7 @@ function createApp(options = {}) {
     if (materials.some((entry) => entry.locationId === req.params.id) || clothingItems.some((entry) => entry.locationId === req.params.id)) return res.status(409).json({ error: 'Der Lagerort ist noch Inventar oder Kleidung zugeordnet.' });
     for (let i = stockStructures.length - 1; i >= 0; i -= 1) if (stockStructures[i].locationId === req.params.id) stockStructures.splice(i, 1);
     const [removed] = locations.splice(index, 1);
-    logEvent('delete', 'Location', { id: removed.id }, req.user.email);
+    logEvent('delete', 'Location', { id: removed.id }, req.user.username);
     res.status(204).end();
   });
 
@@ -502,7 +510,7 @@ function createApp(options = {}) {
     if (stockStructures.some((entry) => entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.section.toLowerCase() === section.toLowerCase()))) return res.status(409).json({ error: 'Name oder Fach/Abschnitt existiert an diesem Lagerort bereits.' });
     const stock = { id: nextId('stock', stockStructures), name, section, locationId };
     stockStructures.push(stock);
-    logEvent('create', 'StockStructure', { id: stock.id, locationId }, req.user.email);
+    logEvent('create', 'StockStructure', { id: stock.id, locationId }, req.user.username);
     res.status(201).json(stock);
   });
 
@@ -515,7 +523,7 @@ function createApp(options = {}) {
     if (!name || !section || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, Fach/Abschnitt und ein gültiger Lagerort sind erforderlich.' });
     if (stockStructures.some((entry) => entry.id !== stock.id && entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.section.toLowerCase() === section.toLowerCase()))) return res.status(409).json({ error: 'Name oder Fach/Abschnitt existiert an diesem Lagerort bereits.' });
     Object.assign(stock, { name, section, locationId, updatedAt: new Date().toISOString() });
-    logEvent('update', 'StockStructure', { id: stock.id, locationId }, req.user.email);
+    logEvent('update', 'StockStructure', { id: stock.id, locationId }, req.user.username);
     res.json(stock);
   });
 
@@ -524,7 +532,7 @@ function createApp(options = {}) {
     if (index < 0) return res.status(404).json({ error: 'Regal/Fach nicht gefunden.' });
     if (materials.some((entry) => entry.stockStructureId === req.params.id) || clothingItems.some((entry) => entry.stockStructureId === req.params.id)) return res.status(409).json({ error: 'Regal/Fach ist noch Inventar oder Kleidung zugeordnet.' });
     const [removed] = stockStructures.splice(index, 1);
-    logEvent('delete', 'StockStructure', { id: removed.id }, req.user.email);
+    logEvent('delete', 'StockStructure', { id: removed.id }, req.user.username);
     res.status(204).end();
   });
 
@@ -568,7 +576,7 @@ function createApp(options = {}) {
       ),
     };
     categories.push(category);
-    logEvent('create', 'Category', category, req.user.email);
+    logEvent('create', 'Category', category, req.user.username);
     res.status(201).json(category);
   });
 
@@ -618,7 +626,7 @@ function createApp(options = {}) {
       const referenceDate = item.lastInspectionDate || item.createdAt;
       item.nextInspectionDate = addMonths(referenceDate, item.inspectionIntervalMonths);
     });
-    logEvent('update', 'Category', category, req.user.email);
+    logEvent('update', 'Category', category, req.user.username);
     res.json(category);
   });
 
@@ -630,7 +638,7 @@ function createApp(options = {}) {
     if (categories.some((entry) => entry.parentId === req.params.id)) {
       return res.status(409).json({ error: 'Category has subcategories' });
     }
-    const usedByClothing = [...clothingItems, ...deletedClothingItems]
+    const usedByClothing = clothingItems
       .some((item) => item.categoryId === req.params.id);
     const usedByMaterial = materials.some((item) =>
       item.categoryId === req.params.id ||
@@ -644,7 +652,7 @@ function createApp(options = {}) {
     }
 
     const [category] = categories.splice(index, 1);
-    logEvent('delete', 'Category', category, req.user.email);
+    logEvent('delete', 'Category', category, req.user.username);
     res.json({ success: true, id: category.id });
   });
 
@@ -653,7 +661,7 @@ function createApp(options = {}) {
   });
 
   registerInventoryRoutes({
-    app, authMiddleware, requirePermission, materials, materialMovements,
+    app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
     stockStructures, logEvent, nextId, XLSX,
   });
@@ -707,7 +715,7 @@ function createApp(options = {}) {
       createdAt: new Date().toISOString(),
     };
     clothingItems.push(item);
-    logEvent('create', 'ClothingItem', { id: item.id, inventoryNumber }, req.user.email);
+    logEvent('create', 'ClothingItem', { id: item.id, inventoryNumber }, req.user.username);
     res.status(201).json(responseClothing(item));
   });
 
@@ -770,8 +778,96 @@ function createApp(options = {}) {
     const index = clothingItems.findIndex((entry) => entry.id === req.params.id);
     clothingItems[index] = updatedItem;
 
-    logEvent('update', 'ClothingItem', { id: updatedItem.id, inventoryNumber: updatedItem.inventoryNumber }, req.user.email);
+    logEvent('update', 'ClothingItem', { id: updatedItem.id, inventoryNumber: updatedItem.inventoryNumber }, req.user.username);
     res.json(responseClothing(updatedItem));
+  });
+
+  app.post('/api/clothing/bulk-category', authMiddleware, requirePermission('clothing.write'), (req, res) => {
+    const clothingIds = Array.from(new Set(
+      Array.isArray(req.body.clothingIds)
+        ? req.body.clothingIds.map((id) => String(id || '').trim()).filter(Boolean)
+        : [],
+    ));
+    if (clothingIds.length === 0) {
+      return res.status(400).json({ error: 'clothingIds are required' });
+    }
+
+    const selectedItems = clothingIds.map((id) =>
+      clothingItems.find((entry) => entry.id === id));
+    if (selectedItems.some((item) => !item)) {
+      return res.status(404).json({ error: 'Mindestens ein Kleidungsstück wurde nicht gefunden.' });
+    }
+    const sourceCategories = new Set(selectedItems.map((item) => item.categoryId || null));
+    if (sourceCategories.size !== 1) {
+      return res.status(400).json({ error: 'Die ausgewählten Kleidungsstücke müssen derselben Kategorie angehören.' });
+    }
+
+    const categoryId = String(req.body.categoryId || '').trim();
+    if (!categoryId || !isWardrobeCategory(categoryId)) {
+      return res.status(400).json({ error: 'invalid categoryId' });
+    }
+    if (sourceCategories.has(categoryId)) {
+      return res.status(400).json({ error: 'Die neue Kategorie muss sich von der bisherigen Kategorie unterscheiden.' });
+    }
+
+    const allowedSizes = categorySizes(categoryId);
+    const incompatibleItems = selectedItems.filter((item) =>
+      item.size && allowedSizes.length && !allowedSizes.includes(String(item.size)));
+    if (incompatibleItems.length > 0) {
+      return res.status(400).json({
+        error: 'Mindestens eine Größe ist für die neue Kategorie nicht vorgesehen.',
+        incompatibleIds: incompatibleItems.map((item) => item.id),
+      });
+    }
+
+    const reassignInventoryNumbers = req.body.reassignInventoryNumbers === true;
+    const inventoryEntries = [
+      ...materials,
+      ...deletedMaterials,
+      ...clothingItems,
+      ...deletedClothingItems,
+    ];
+    const inventoryNumbers = new Map();
+    if (reassignInventoryNumbers) {
+      const category = categories.find((entry) => entry.id === categoryId);
+      const mainCategoryId = category?.parentId || category?.id || '00';
+      const subcategoryId = category?.parentId ? category.id : '00';
+      selectedItems.forEach((item) => {
+        const inventoryNumber = nextInventoryNumber(
+          inventoryEntries,
+          mainCategoryId,
+          subcategoryId,
+        );
+        inventoryNumbers.set(item.id, inventoryNumber);
+        inventoryEntries.push({ inventoryNumber });
+      });
+    }
+
+    const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
+    const updatedAt = new Date().toISOString();
+    const updatedItems = selectedItems.map((item) => {
+      const updatedItem = {
+        ...item,
+        categoryId,
+        inventoryNumber: inventoryNumbers.get(item.id) || item.inventoryNumber,
+        inspectionIntervalMonths,
+        nextInspectionDate: addMonths(
+          item.lastInspectionDate || item.createdAt,
+          inspectionIntervalMonths,
+        ),
+        updatedAt,
+      };
+      clothingItems[clothingItems.findIndex((entry) => entry.id === item.id)] = updatedItem;
+      return updatedItem;
+    });
+
+    logEvent('bulk-category-update', 'ClothingItem', {
+      ids: clothingIds,
+      sourceCategoryId: [...sourceCategories][0],
+      categoryId,
+      reassignInventoryNumbers,
+    }, req.user.username);
+    res.json(updatedItems.map(responseClothing));
   });
 
   app.post('/api/clothing/:id/inspections', authMiddleware, requirePermission('clothing.inspect'), (req, res) => {
@@ -812,7 +908,7 @@ function createApp(options = {}) {
       id: item.id,
       result,
       psageInspection: inspection.psageInspection,
-    }, req.user.email);
+    }, req.user.username);
     return res.status(201).json(inspection);
   });
 
@@ -830,9 +926,9 @@ function createApp(options = {}) {
     deletedClothingItems.push({
       ...removedItem,
       deletedAt: new Date().toISOString(),
-      deletedBy: req.user.email,
+      deletedBy: req.user.username,
     });
-    logEvent('delete', 'ClothingItem', { id: removedItem.id, inventoryNumber: removedItem.inventoryNumber }, req.user.email);
+    logEvent('delete', 'ClothingItem', { id: removedItem.id, inventoryNumber: removedItem.inventoryNumber }, req.user.username);
     res.json({ success: true, id: removedItem.id });
   });
 
@@ -955,7 +1051,7 @@ function createApp(options = {}) {
       fileName,
       imported: importedItems.length,
       skipped: skippedRows.length,
-    }, req.user.email);
+    }, req.user.username);
     res.json({ imported: importedItems.length, skipped: skippedRows.length, skippedRows });
   });
 
@@ -975,7 +1071,7 @@ function createApp(options = {}) {
       createdAt: new Date().toISOString(),
     };
     exportLogs.push(entry);
-    logEvent('export', 'ClothingItem', { format, itemCount: clothingItems.length }, req.user.email);
+    logEvent('export', 'ClothingItem', { format, itemCount: clothingItems.length }, req.user.username);
     res.json({ fileName, fileBase64: buffer.toString('base64') });
   });
 
@@ -1050,7 +1146,7 @@ function createApp(options = {}) {
       }
     });
 
-    logEvent('transaction', 'IssueTransaction', { ids: clothingIds, action }, req.user.email);
+    logEvent('transaction', 'IssueTransaction', { ids: clothingIds, action }, req.user.username);
     res.status(201).json(transactions.length === 1 ? transactions[0] : transactions);
   });
 
@@ -1061,13 +1157,13 @@ function createApp(options = {}) {
   app.post('/api/defects', authMiddleware, requirePermission('defects.write'), (req, res) => {
     const report = { id: `defect-${defectReports.length + 1}`, ...req.body, createdAt: new Date().toISOString() };
     defectReports.push(report);
-    logEvent('create', 'DefectReport', { id: report.id }, req.user.email);
+    logEvent('create', 'DefectReport', { id: report.id }, req.user.username);
     res.status(201).json(report);
   });
 
   registerProcurementRoutes({
     app, authMiddleware, requirePermission, data: appData, categories, locations,
-    stockStructures, materials, clothingItems, logEvent, nextId, XLSX,
+    stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
     addMonths,
   });
@@ -1106,14 +1202,18 @@ function createApp(options = {}) {
         overdueProcurementOrders: appData.procurementOrders.filter((order) => order.expectedDeliveryDate && new Date(order.expectedDeliveryDate) < new Date() && order.items.some((item) => item.deliveredQuantity < item.quantity)).length,
         openProcurementReceipts: appData.procurementReceipts.filter((receipt) => !receipt.inventoryTransferred).length,
       },
-      recentActivity: auditLogs.slice(-5).reverse(),
+      recentActivity: auditLogs.slice(-5).reverse().map((entry) => ({
+        ...entry,
+        actor: users.find((user) => user.email === entry.actor)?.username
+          || (String(entry.actor).includes('@') ? 'unbekannt' : entry.actor),
+      })),
     });
   });
 
   app.post('/api/export-log', authMiddleware, requirePermission('reports.read'), (req, res) => {
     const entry = { id: `export-${exportLogs.length + 1}`, ...req.body, createdAt: new Date().toISOString() };
     exportLogs.push(entry);
-    logEvent('export', 'ExportLog', { id: entry.id }, req.user.email);
+    logEvent('export', 'ExportLog', { id: entry.id }, req.user.username);
     res.status(201).json(entry);
   });
 
