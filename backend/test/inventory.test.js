@@ -127,3 +127,44 @@ test('inventory bulk operations are atomic and archive is reversible', async () 
     server.close();
   }
 });
+
+test('inventory only permanently deletes archived items and does not reuse their number', async () => {
+  const { server, baseUrl, token } = await serverAndToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+  try {
+    const activeDelete = await fetch(`${baseUrl}/api/material/material-1`, {
+      method: 'DELETE', headers,
+    });
+    assert.equal(activeDelete.status, 409);
+
+    assert.equal((await fetch(`${baseUrl}/api/material/material-1/archive`, {
+      method: 'POST', headers,
+    })).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/material/material-1`, {
+      method: 'DELETE', headers,
+    })).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/material/material-1`, { headers })).status, 404);
+
+    const createdResponse = await fetch(`${baseUrl}/api/material`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Ersatzmaterial',
+        categoryCode: '02',
+        subcategoryCode: '02-02',
+        locationId: 'loc-1',
+        status: 'Lagernd',
+        itemType: 'individual',
+      }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = await createdResponse.json();
+    assert.equal(created.id, 'material-2');
+    assert.equal(created.inventoryNumber, '10050035-02-02-0002');
+  } finally {
+    server.close();
+  }
+});

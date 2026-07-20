@@ -22,7 +22,7 @@ function normalizeHeader(value) {
 }
 
 function registerInventoryRoutes({
-  app, authMiddleware, requirePermission, materials, materialMovements,
+  app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
   materialInspections, materialDocuments, defectReports, categories, locations, stockStructures,
   logEvent, nextId, XLSX,
 }) {
@@ -40,7 +40,7 @@ function registerInventoryRoutes({
   }
 
   function inventoryNumber(categoryCode, subcategoryCode) {
-    return nextInventoryNumber(materials, categoryCode, subcategoryCode);
+    return nextInventoryNumber([...materials, ...deletedMaterials], categoryCode, subcategoryCode);
   }
 
   function validate(body, existing = null) {
@@ -95,9 +95,9 @@ function registerInventoryRoutes({
     const requested = String(req.body.inventoryNumber || '').trim();
     const generated = inventoryNumber(values.categoryCode, values.subcategoryCode);
     const inv = requested || generated;
-    if (materials.some((entry) => entry.inventoryNumber.toLowerCase() === inv.toLowerCase())) return res.status(409).json({ error: 'Die Inventarnummer existiert bereits.' });
+    if ([...materials, ...deletedMaterials].some((entry) => entry.inventoryNumber.toLowerCase() === inv.toLowerCase())) return res.status(409).json({ error: 'Die Inventarnummer existiert bereits.' });
     const item = {
-      ...req.body, ...values, id: nextId('material', materials), inventoryNumber: inv,
+      ...req.body, ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: inv,
       unit: String(req.body.unit || 'Stück').trim() || 'Stück', issuedQuantity: 0,
       manufacturer: String(req.body.manufacturer || '').trim(), model: String(req.body.model || '').trim(),
       serialNumber: String(req.body.serialNumber || '').trim(), purchaseDate: req.body.purchaseDate || null,
@@ -109,7 +109,7 @@ function registerInventoryRoutes({
       archived: false, createdAt: new Date().toISOString(),
     };
     materials.push(item);
-    logEvent('create', 'MaterialItem', { id: item.id, inventoryNumber: inv }, req.user.email);
+    logEvent('create', 'MaterialItem', { id: item.id, inventoryNumber: inv }, req.user.username);
     res.status(201).json(responseItem(item));
   });
 
@@ -124,7 +124,7 @@ function registerInventoryRoutes({
       id: item.id, inventoryNumber: item.inventoryNumber, issuedQuantity: item.issuedQuantity,
       archived: false, updatedAt: new Date().toISOString(),
     });
-    logEvent('update', 'MaterialItem', { id: item.id }, req.user.email);
+    logEvent('update', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
   });
 
@@ -132,8 +132,8 @@ function registerInventoryRoutes({
     const item = materials.find((entry) => entry.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
     if (number(item.issuedQuantity) > 0) return res.status(409).json({ error: 'Ausgegebenes Material kann nicht archiviert werden.' });
-    item.archived = true; item.archivedAt = new Date().toISOString(); item.archivedBy = req.user.email;
-    logEvent('archive', 'MaterialItem', { id: item.id }, req.user.email);
+    item.archived = true; item.archivedAt = new Date().toISOString(); item.archivedBy = req.user.username;
+    logEvent('archive', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
   });
 
@@ -141,8 +141,28 @@ function registerInventoryRoutes({
     const item = materials.find((entry) => entry.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
     item.archived = false; item.archivedAt = null; item.archivedBy = null;
-    logEvent('restore', 'MaterialItem', { id: item.id }, req.user.email);
+    logEvent('restore', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
+  });
+
+  app.delete('/api/material/:id', authMiddleware, requirePermission('inventory.archive'), (req, res) => {
+    const index = materials.findIndex((entry) => entry.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'Material nicht gefunden.' });
+    const item = materials[index];
+    if (!item.archived) return res.status(409).json({ error: 'Material muss vor dem Löschen archiviert werden.' });
+    if (number(item.issuedQuantity) > 0) return res.status(409).json({ error: 'Ausgegebenes Material kann nicht gelöscht werden.' });
+
+    const removedItem = materials.splice(index, 1)[0];
+    deletedMaterials.push({
+      ...removedItem,
+      deletedAt: new Date().toISOString(),
+      deletedBy: req.user.username,
+    });
+    logEvent('delete', 'MaterialItem', {
+      id: removedItem.id,
+      inventoryNumber: removedItem.inventoryNumber,
+    }, req.user.username);
+    res.json({ success: true, id: removedItem.id });
   });
 
   app.post('/api/material/transactions/bulk', authMiddleware, requirePermission('inventory.transactions'), (req, res) => {
@@ -170,11 +190,11 @@ function registerInventoryRoutes({
         id: nextId('movement', materialMovements), materialId: item.id, action, quantity,
         recipientType: action === 'issue' ? String(req.body.recipientType || 'purpose') : null,
         recipient: action === 'issue' ? recipient : null, plannedReturnDate: req.body.plannedReturnDate || null,
-        notes: String(req.body.notes || '').trim(), actor: req.user.email, createdAt: new Date().toISOString(),
+        notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString(),
       };
       materialMovements.push(movement); return movement;
     });
-    logEvent(action, 'MaterialMovement', { materialIds: checked.map((entry) => entry.item.id) }, req.user.email);
+    logEvent(action, 'MaterialMovement', { materialIds: checked.map((entry) => entry.item.id) }, req.user.username);
     res.status(201).json(created);
   });
 
@@ -188,10 +208,10 @@ function registerInventoryRoutes({
     if (!ids.length || !targetLocation || (stockStructureId && !targetStock)) return res.status(400).json({ error: 'Material, Standort oder Lagerplatz ist ungültig.' });
     if (items.some((item) => !item || item.archived || number(item.issuedQuantity) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes oder archiviertes Material ist nicht zulässig.' });
     const created = items.map((item) => {
-      const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.email, createdAt: new Date().toISOString() };
+      const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
       item.locationId = locationId; item.stockStructureId = stockStructureId || null; materialMovements.push(movement); return movement;
     });
-    logEvent('relocate', 'MaterialMovement', { materialIds: ids, locationId }, req.user.email);
+    logEvent('relocate', 'MaterialMovement', { materialIds: ids, locationId }, req.user.username);
     res.status(201).json(created);
   });
 
@@ -203,7 +223,7 @@ function registerInventoryRoutes({
     const inspection = { id: nextId('inspection', materialInspections), materialId: item.id, inspectionDate: req.body.inspectionDate, inspector: String(req.body.inspector).trim(), result, notes: String(req.body.notes || '').trim(), nextInspectionDate: req.body.nextInspectionDate || null, createdAt: new Date().toISOString() };
     materialInspections.push(inspection); item.lastInspectionDate = inspection.inspectionDate; item.nextInspectionDate = inspection.nextInspectionDate;
     if (result === 'Nicht bestanden') item.status = 'Defekt';
-    logEvent('inspection', 'MaterialItem', { id: item.id, result }, req.user.email);
+    logEvent('inspection', 'MaterialItem', { id: item.id, result }, req.user.username);
     res.status(201).json(inspection);
   });
 
@@ -214,7 +234,7 @@ function registerInventoryRoutes({
     if (!String(req.body.fileName || '').trim() || !fileBase64) return res.status(400).json({ error: 'Dateiname und Datei sind erforderlich.' });
     if (fileBase64.length > 7_000_000) return res.status(413).json({ error: 'Die Datei ist zu groß. Maximal 5 MB sind erlaubt.' });
     const document = { id: nextId('material-document', materialDocuments), materialId: item.id, title: String(req.body.title || req.body.fileName).trim(), documentType: String(req.body.documentType || 'Anleitung'), mimeType: req.body.mimeType || null, fileName: String(req.body.fileName).trim(), fileBase64, createdAt: new Date().toISOString() };
-    materialDocuments.push(document); logEvent('document', 'MaterialItem', { id: item.id, documentId: document.id }, req.user.email);
+    materialDocuments.push(document); logEvent('document', 'MaterialItem', { id: item.id, documentId: document.id }, req.user.username);
     const { fileBase64: omitted, ...metadata } = document; res.status(201).json(metadata);
   });
 
@@ -235,11 +255,11 @@ function registerInventoryRoutes({
     const skippedRows = []; const imported = [];
     rows.forEach((row, index) => {
       const values = validate(row); const requested = String(row.inventoryNumber || '').trim();
-      if (values.error || (requested && materials.some((entry) => entry.inventoryNumber === requested))) { skippedRows.push({ row: index + 2, reason: values.error || 'Inventarnummer existiert bereits' }); return; }
-      const item = { ...row, ...values, id: nextId('material', materials), inventoryNumber: requested || inventoryNumber(values.categoryCode, values.subcategoryCode), unit: row.unit || 'Stück', issuedQuantity: 0, archived: false, createdAt: new Date().toISOString() };
+      if (values.error || (requested && [...materials, ...deletedMaterials].some((entry) => entry.inventoryNumber === requested))) { skippedRows.push({ row: index + 2, reason: values.error || 'Inventarnummer existiert bereits' }); return; }
+      const item = { ...row, ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: requested || inventoryNumber(values.categoryCode, values.subcategoryCode), unit: row.unit || 'Stück', issuedQuantity: 0, archived: false, createdAt: new Date().toISOString() };
       materials.push(item); imported.push(item);
     });
-    logEvent('import', 'MaterialItem', { imported: imported.length, skipped: skippedRows.length }, req.user.email);
+    logEvent('import', 'MaterialItem', { imported: imported.length, skipped: skippedRows.length }, req.user.username);
     res.json({ imported: imported.length, skipped: skippedRows.length, skippedRows });
   });
 

@@ -3,11 +3,11 @@ import 'dart:convert';
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../widgets/date_input_field.dart';
 
@@ -433,7 +433,9 @@ class _InventoryPageState extends State<InventoryPage> {
             headers: headers, body: body == null ? null : jsonEncode(body))
         : method == 'PUT'
             ? await http.put(uri, headers: headers, body: jsonEncode(body))
-            : await http.get(uri, headers: headers);
+            : method == 'DELETE'
+                ? await http.delete(uri, headers: headers)
+                : await http.get(uri, headers: headers);
     final data =
         response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -667,6 +669,38 @@ class _InventoryPageState extends State<InventoryPage> {
     if (await _request('/api/material/${item['id']}/$action', method: 'POST') !=
         null) {
       _message(archived ? 'Eintrag wiederhergestellt.' : 'Eintrag archiviert.');
+      await _load();
+    }
+  }
+
+  Future<void> _delete(Map<String, dynamic> item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Inventareintrag endgültig löschen?'),
+        content: Text(
+          '${item['inventoryNumber']} · ${item['name']} wird endgültig aus dem Inventar gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Endgültig löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (await _request('/api/material/${item['id']}', method: 'DELETE') !=
+        null) {
+      _message('Inventareintrag wurde gelöscht.');
       await _load();
     }
   }
@@ -1019,10 +1053,7 @@ class _InventoryPageState extends State<InventoryPage> {
 
   Future<void> _scan() async {
     final manual = TextEditingController();
-    final cameraSupported = kIsWeb ||
-        defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS ||
-        defaultTargetPlatform == TargetPlatform.macOS;
+    final cameraSupported = isCameraScanningSupported;
     var completed = false;
     final value = await showDialog<String>(
       context: context,
@@ -1055,7 +1086,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 const Padding(
                   padding: EdgeInsets.only(top: 16),
                   child: Text(
-                      'Auf Windows/Linux bitte einen USB-Handscanner verwenden. Die Kamera wird im Webbrowser unterstützt.'),
+                      'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.'),
                 ),
             ])),
         actions: [
@@ -1422,6 +1453,12 @@ class _InventoryPageState extends State<InventoryPage> {
                             icon: Icon(archived
                                 ? Icons.unarchive
                                 : Icons.archive_outlined)),
+                      if (can('inventory.archive') && archived)
+                        IconButton(
+                            onPressed: () => _delete(item),
+                            tooltip: 'Endgültig löschen',
+                            color: Colors.red.shade700,
+                            icon: const Icon(Icons.delete_outline)),
                     ])),
                   ],
                 ))
@@ -1473,6 +1510,7 @@ class _InventoryPageState extends State<InventoryPage> {
                     if (action == 'details') _detail(item);
                     if (action == 'edit') _edit(item);
                     if (action == 'archive') _archive(item);
+                    if (action == 'delete') _delete(item);
                   },
                   itemBuilder: (_) => [
                     const PopupMenuItem(
@@ -1498,6 +1536,16 @@ class _InventoryPageState extends State<InventoryPage> {
                               Icon(archived ? Icons.unarchive : Icons.archive),
                           title: Text(
                               archived ? 'Wiederherstellen' : 'Archivieren'),
+                        ),
+                      ),
+                    if (can('inventory.archive') && archived)
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_outline,
+                              color: Colors.red.shade700),
+                          title: Text('Endgültig löschen',
+                              style: TextStyle(color: Colors.red.shade700)),
                         ),
                       ),
                   ],

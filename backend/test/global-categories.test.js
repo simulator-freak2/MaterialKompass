@@ -172,3 +172,53 @@ test('clothing uses global categories and protects referenced categories', async
     server.close();
   }
 });
+
+test('a category can be deleted after its clothing items were deleted', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const token = await login(baseUrl);
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const categoryResponse = await fetch(`${baseUrl}/api/categories`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        id: 'DELETE-AFTER-CLOTHING',
+        name: 'Löschbare Kleidung',
+        useInWardrobe: true,
+      }),
+    });
+    assert.equal(categoryResponse.status, 201);
+
+    const clothingResponse = await fetch(`${baseUrl}/api/clothing`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Vorübergehender Artikel',
+        categoryId: 'DELETE-AFTER-CLOTHING',
+      }),
+    });
+    assert.equal(clothingResponse.status, 201);
+    const clothing = await clothingResponse.json();
+
+    assert.equal((await fetch(
+      `${baseUrl}/api/categories/DELETE-AFTER-CLOTHING`,
+      { method: 'DELETE', headers },
+    )).status, 409);
+
+    assert.equal((await fetch(`${baseUrl}/api/clothing/${clothing.id}`, {
+      method: 'DELETE',
+      headers,
+    })).status, 200);
+
+    assert.equal((await fetch(
+      `${baseUrl}/api/categories/DELETE-AFTER-CLOTHING`,
+      { method: 'DELETE', headers },
+    )).status, 200);
+  } finally {
+    server.close();
+  }
+});
