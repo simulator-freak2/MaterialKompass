@@ -364,3 +364,14 @@ CREATE TABLE export_logs (
   requested_by VARCHAR(255) NOT NULL,
   created_at DATETIME NOT NULL
 );
+
+-- Fachliche Sammlungen werden als atomare JSON-Snapshots gespeichert. Nutzer
+-- und Rollen verbleiben wegen ihrer Login-/Eindeutigkeitsanforderungen in den
+-- normalisierten Tabellen oben.
+CREATE TABLE application_collections (
+  name VARCHAR(64) PRIMARY KEY,
+  data_json LONGTEXT NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ON UPDATE CURRENT_TIMESTAMP(3),
+  CHECK (JSON_VALID(data_json))
+);

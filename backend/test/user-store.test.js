@@ -42,3 +42,36 @@ test('saveUser converts every timestamp before sending it to MariaDB', async () 
   assert.equal(queryValues[10], null);
   await store.close();
 });
+
+test('application collections are loaded and saved in one transaction', async () => {
+  const calls = [];
+  const connection = {
+    async beginTransaction() { calls.push('begin'); },
+    async query(sql, values) { calls.push({ sql, values }); },
+    async commit() { calls.push('commit'); },
+    async rollback() { calls.push('rollback'); },
+    release() { calls.push('release'); },
+  };
+  const database = {
+    createPool() {
+      return {
+        async query(sql) {
+          if (sql.startsWith('SELECT name')) {
+            return [{ name: 'locations', data_json: '[{"id":"loc-db"}]' }];
+          }
+          return [];
+        },
+        async getConnection() { return connection; },
+        async end() {},
+      };
+    },
+  };
+  const store = createUserStore(database);
+
+  assert.deepEqual(await store.loadCollections(), { locations: [{ id: 'loc-db' }] });
+  await store.saveCollections({ locations: [{ id: 'loc-new' }], auditLogs: [] });
+
+  assert.equal(calls[0], 'begin');
+  assert.equal(calls.filter((entry) => entry?.sql?.includes('INSERT INTO application_collections')).length, 2);
+  assert.deepEqual(calls.slice(-2), ['commit', 'release']);
+});

@@ -10,7 +10,7 @@ MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Orts
 - Selbstverwaltung von E-Mail, Passwort und Account-Löschung
 - Automatische Sperre nach fünf Fehlversuchen und Sitzungsablauf nach 60 Minuten
 - DSGVO-Lebenszyklus: Deaktivierung nach 24, Löschung nach 36 Monaten ohne Login
-- Datenbankschema für die Kernentitäten
+- Vollständige, transaktionale MariaDB-Persistenz für alle Anwendungsdaten
 - Flutter-Web-Startseite mit Login und Dashboard
 - Seed-Daten für Rollen, Benutzer, Standorte, Kategorien und Material
 - Globale, in der Software änderbare Kategorien mit Haupt- und Unterkategorien
@@ -41,6 +41,10 @@ cd backend
 npm install
 node server.js
 ```
+
+MariaDB ist auch für die lokale Ausführung erforderlich. Vor dem Start müssen
+mindestens `DB_HOST`, `DB_USER` und `DB_PASSWORD` gesetzt sein; ohne Datenbank startet
+das Backend bewusst nicht, damit keine Änderungen nur im Arbeitsspeicher landen.
 
 Das Backend lauscht standardmäßig auf `0.0.0.0:3001` und stellt dieselbe JSON-API für
 Windows, Linux, Android, iOS und macOS bereit. Für eine lokale App muss
@@ -114,9 +118,10 @@ In Produktion muss `JWT_SECRET` mindestens 32 zufällige Zeichen enthalten und
 `APP_BASE_URL` HTTPS verwenden. `TRUST_PROXY` darf nur auf die tatsächliche Anzahl
 vorgeschalteter Proxy-Hops gesetzt werden; ohne Reverse Proxy bleibt der Wert leer.
 
-Ein vorhandenes MariaDB-System wird einmalig mit
-`backend/src/db/migrations/20260718_user_management.sql` erweitert. Bei einer
-Neuinstallation enthält `backend/src/db/schema.sql` bereits alle Nutzerfelder.
+Ein vorhandenes MariaDB-System wird mit den SQL-Dateien in
+`backend/src/db/migrations` erweitert. Die Tabelle für die fachlichen Snapshots wird
+beim Backend-Start zusätzlich mit `CREATE TABLE IF NOT EXISTS` abgesichert. Bei einer
+Neuinstallation enthält `backend/src/db/schema.sql` bereits das vollständige Schema.
 
 ### Flutter
 
@@ -137,10 +142,66 @@ für `/#/verify-email` und `/#/password-reset` an Flutter gehen. Das Backend bra
 den IONOS-Versand typischerweise `SMTP_HOST=smtp.ionos.de`, Port 587 und TLS über
 STARTTLS (`SMTP_SECURE=false`).
 
+### Installierbare Apps und automatische Update-Prüfung
+
+Der Flutter-Client ist nativ für Windows, Linux und Android eingerichtet. Alle drei Apps
+laden ihre Anwendungsdaten über dieselbe REST-API. Beim Start und danach alle sechs
+Stunden fragt die App automatisch `GET /api/client-updates/<plattform>` ab. Ein neues
+Release wird über den Sicherheitsdialog des Betriebssystems geöffnet; eine konfigurierte
+Mindestversion erzwingt das Update, ohne Betriebssystem-Schutzmechanismen zu umgehen.
+
+Bei der Docker-Bereitstellung erwartet `compose.yaml` diese Release-Dateien:
+
+```text
+releases/MaterialKompass-Windows.zip
+releases/MaterialKompass-Linux.tar.gz
+releases/MaterialKompass-Android.apk
+```
+
+Das Verzeichnis wird schreibgeschützt nach `/app/downloads` in den Backend-Container
+eingebunden. Abweichende Pfade können mit `DOWNLOAD_WINDOWS_PATH`,
+`DOWNLOAD_LINUX_PATH` und `DOWNLOAD_ANDROID_PATH` konfiguriert werden.
+`CLIENT_<PLATTFORM>_VERSION` bezeichnet die aktuelle, `CLIENT_<PLATTFORM>_MIN_VERSION`
+die kleinste noch zulässige Version. `CLIENT_UPDATE_NOTES` enthält optionale Hinweise.
+Release-Binärdateien und Signaturschlüssel werden nicht in Git eingecheckt.
+
+Die Desktop-Pakete müssen auf dem jeweiligen Zielsystem mit der produktiven API-Adresse
+gebaut werden. Vom Repository-Stamm aus beispielsweise:
+
+```powershell
+cd flutter
+flutter build windows --release --dart-define=API_BASE_URL=https://materialkompass.org
+cd ..
+Compress-Archive -Path flutter\build\windows\x64\runner\Release\* -DestinationPath releases\MaterialKompass-Windows.zip -Force
+```
+
+```bash
+cd flutter
+flutter build linux --release --dart-define=API_BASE_URL=https://materialkompass.org
+cd ..
+tar -czf releases/MaterialKompass-Linux.tar.gz -C flutter/build/linux/x64/release/bundle .
+```
+
+Android wird als signiertes APK gebaut. Vor einem produktiven Release muss in
+`flutter/android/app/build.gradle.kts` eine eigene Release-Signatur statt des
+Entwicklungszertifikats konfiguriert werden. Anschließend:
+
+```bash
+cd flutter
+flutter build apk --release --dart-define=API_BASE_URL=https://materialkompass.org
+cp build/app/outputs/flutter-apk/app-release.apk ../releases/MaterialKompass-Android.apk
+```
+
+Nach dem Kopieren werden die passenden `CLIENT_*_VERSION`-Werte in `.env` erhöht und
+der Backend-Container neu gestartet. Release-Builds akzeptieren ausschließlich eine
+HTTPS-API-Adresse. Android verlangt bei direkter APK-Verteilung einmalig die Freigabe
+„Unbekannte Apps installieren“; alternativ kann dasselbe APK/AAB über einen verwalteten
+App-Store verteilt werden.
+
 ## Geplante Erweiterungen
 
 Die Basis deckt Auth, Nutzer, Rollen, Standorte, Kategorien, Material, Kleidung, Mängel,
-Beschaffung, Dokumente, Berichte und Dashboard ab. Nutzer und Rollen werden bei
-gesetztem `DB_HOST` persistent in MariaDB gespeichert. Die übrigen Fachbereiche laufen
-in der aktuellen Entwicklungsstufe noch pro Backend-Prozess im Arbeitsspeicher; ihr
-normalisiertes MariaDB-Schema ist bereits vorhanden.
+Beschaffung, Dokumente, Berichte und Dashboard ab. Alle Anwendungsdaten werden
+verpflichtend in MariaDB gespeichert. Nutzer und Rollen liegen in normalisierten
+Tabellen; die veränderlichen fachlichen Sammlungen werden pro Schreibanfrage als
+konsistenter, transaktionaler Snapshot persistiert.

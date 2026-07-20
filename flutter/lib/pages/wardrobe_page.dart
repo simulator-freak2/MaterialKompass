@@ -1612,7 +1612,7 @@ class _WardrobePageState extends State<WardrobePage> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: targetCategoryId,
+                  initialValue: targetCategoryId,
                   decoration: const InputDecoration(
                     labelText: 'Neue Kategorie',
                     border: OutlineInputBorder(),
@@ -1996,6 +1996,7 @@ class _WardrobePageState extends State<WardrobePage> {
                         ),
                       ),
                     Expanded(
+                      flex: 3,
                       child: filteredClothing.isEmpty
                           ? const Center(
                               child: Text(
@@ -2135,21 +2136,20 @@ class _WardrobePageState extends State<WardrobePage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    FutureBuilder<List<Map<String, dynamic>>>(
-                      future: _transactionsFuture,
-                      builder: (context, transactionSnapshot) {
-                        if (transactionSnapshot.connectionState !=
-                            ConnectionState.done) {
-                          return const SizedBox();
-                        }
-                        if (transactionSnapshot.hasError) {
-                          return Text(transactionSnapshot.error.toString());
-                        }
+                    Flexible(
+                      child: FutureBuilder<List<Map<String, dynamic>>>(
+                        future: _transactionsFuture,
+                        builder: (context, transactionSnapshot) {
+                          if (transactionSnapshot.connectionState !=
+                              ConnectionState.done) {
+                            return const SizedBox();
+                          }
+                          if (transactionSnapshot.hasError) {
+                            return Text(transactionSnapshot.error.toString());
+                          }
 
-                        final transactions = transactionSnapshot.data ?? [];
-                        return SizedBox(
-                          height: 140,
-                          child: transactions.isEmpty
+                          final transactions = transactionSnapshot.data ?? [];
+                          return transactions.isEmpty
                               ? const Center(
                                   child: Text(
                                       'Noch keine Ausgaben oder Rückgaben.'))
@@ -2174,9 +2174,9 @@ class _WardrobePageState extends State<WardrobePage> {
                                       ),
                                     );
                                   },
-                                ),
-                        );
-                      },
+                                );
+                        },
+                      ),
                     ),
                   ],
                 );

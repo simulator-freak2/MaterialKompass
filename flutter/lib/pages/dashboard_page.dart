@@ -41,6 +41,43 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
+  String _formatActivityTime(Object? value) {
+    final parsed = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+    if (parsed == null) return 'Zeitpunkt unbekannt';
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${twoDigits(parsed.day)}.${twoDigits(parsed.month)}.${parsed.year}, '
+        '${twoDigits(parsed.hour)}:${twoDigits(parsed.minute)} Uhr';
+  }
+
+  String _activityTitle(Map<String, dynamic> entry) {
+    final entity = entry['entityLabel']?.toString() ?? 'Eintrag';
+    final itemName = entry['itemName']?.toString();
+    final action = entry['actionLabel']?.toString() ??
+        entry['action']?.toString() ??
+        'bearbeitet';
+    return itemName == null || itemName.isEmpty
+        ? '$entity: $action'
+        : '$entity „$itemName“: $action';
+  }
+
+  String _activityDetails(Map<String, dynamic> entry) {
+    final lines = <String>[
+      '${entry['actor'] ?? 'unbekannt'} · '
+          '${_formatActivityTime(entry['timestamp'])} · ${entry['area'] ?? ''}',
+    ];
+    final facts = <String>[];
+    final category = entry['category']?.toString();
+    final inventoryNumber = entry['inventoryNumber']?.toString();
+    if (category != null && category.isNotEmpty) {
+      facts.add('Kategorie: $category');
+    }
+    if (inventoryNumber != null && inventoryNumber.isNotEmpty) {
+      facts.add('Inventarnummer: $inventoryNumber');
+    }
+    if (facts.isNotEmpty) lines.add(facts.join(' · '));
+    return lines.join('\n');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -80,6 +117,14 @@ class DashboardPage extends StatelessWidget {
           final canReadLocations =
               (currentUser['permissions'] as List? ?? const [])
                   .contains('locations.read');
+          final dashboardButtonStyle = ElevatedButton.styleFrom(
+            minimumSize: const Size(0, 56),
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+            textStyle: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          );
 
           return Padding(
             padding: const EdgeInsets.all(24),
@@ -157,6 +202,7 @@ class DashboardPage extends StatelessWidget {
                       children: [
                         if (isAdmin)
                           ElevatedButton.icon(
+                            style: dashboardButtonStyle,
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute(
                                   builder: (_) => UsersPage(token: token)),
@@ -165,6 +211,7 @@ class DashboardPage extends StatelessWidget {
                             label: const Text('Nutzerverwaltung'),
                           ),
                         ElevatedButton.icon(
+                          style: dashboardButtonStyle,
                           onPressed: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => ProcurementPage(
@@ -177,6 +224,7 @@ class DashboardPage extends StatelessWidget {
                           label: const Text('Beschaffung'),
                         ),
                         ElevatedButton.icon(
+                          style: dashboardButtonStyle,
                           onPressed: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => InventoryPage(
@@ -189,6 +237,7 @@ class DashboardPage extends StatelessWidget {
                           label: const Text('Inventar'),
                         ),
                         ElevatedButton.icon(
+                          style: dashboardButtonStyle,
                           onPressed: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => CategoriesPage(token: token),
@@ -199,6 +248,7 @@ class DashboardPage extends StatelessWidget {
                         ),
                         if (canReadLocations)
                           ElevatedButton.icon(
+                            style: dashboardButtonStyle,
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (_) => LocationsPage(token: token),
@@ -208,6 +258,7 @@ class DashboardPage extends StatelessWidget {
                             label: const Text('Lagerorte'),
                           ),
                         ElevatedButton.icon(
+                          style: dashboardButtonStyle,
                           onPressed: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => WardrobePage(
@@ -225,18 +276,31 @@ class DashboardPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Expanded(
-                  child: ListView.builder(
-                    itemCount: data['recentActivity']?.length ?? 0,
-                    itemBuilder: (_, index) {
-                      final entry = data['recentActivity'][index];
-                      return Card(
-                        child: ListTile(
-                          title: Text(entry['action']),
-                          subtitle: Text(entry['details']?.toString() ?? ''),
+                  child: (data['recentActivity'] as List? ?? const []).isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Noch keine Aktivitäten in deinen freigeschalteten Bereichen.',
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: data['recentActivity']?.length ?? 0,
+                          itemBuilder: (_, index) {
+                            final entry = Map<String, dynamic>.from(
+                              data['recentActivity'][index] as Map,
+                            );
+                            return Card(
+                              child: ListTile(
+                                leading: const CircleAvatar(
+                                  child: Icon(Icons.history),
+                                ),
+                                title: Text(_activityTitle(entry)),
+                                subtitle: Text(_activityDetails(entry)),
+                                isThreeLine: entry['category'] != null ||
+                                    entry['inventoryNumber'] != null,
+                              ),
+                            );
+                          },
                         ),
-                      );
-                    },
-                  ),
                 ),
               ],
             ),

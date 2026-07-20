@@ -1,12 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { createApp } = require('../src/app');
 const {
   createCorsOptions, loadRuntimeConfig, parseOrigins, parsePort, parseTrustProxy,
 } = require('../src/config');
 
-async function withServer(callback) {
-  const app = createApp();
+async function withServer(callback, options = {}) {
+  const app = createApp(options);
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -36,6 +37,44 @@ test('health and API information are available to every client platform', async 
     const missing = await fetch(`${baseUrl}/api/does-not-exist`);
     assert.equal(missing.status, 404);
     assert.equal(typeof (await missing.json()).requestId, 'string');
+  });
+});
+
+test('desktop downloads report availability and stream configured release files', async () => {
+  const fixture = path.resolve(__dirname, '..', 'package.json');
+  await withServer(async (baseUrl) => {
+    const metadataResponse = await fetch(`${baseUrl}/api/downloads`);
+    assert.equal(metadataResponse.status, 200);
+    const metadata = await metadataResponse.json();
+    const windows = metadata.find((entry) => entry.platform === 'windows');
+    const linux = metadata.find((entry) => entry.platform === 'linux');
+    const android = metadata.find((entry) => entry.platform === 'android');
+    assert.equal(windows.available, true);
+    assert.equal(windows.fileName, 'MaterialKompass-Windows.zip');
+    assert.equal(windows.downloadUrl, '/api/downloads/windows');
+    assert.equal(linux.available, false);
+    assert.equal(android.available, false);
+
+    const updateResponse = await fetch(`${baseUrl}/api/client-updates/windows?currentVersion=0.9.0`);
+    assert.equal(updateResponse.status, 200);
+    const update = await updateResponse.json();
+    assert.equal(update.version, '1.0.0');
+    assert.equal(update.updateAvailable, true);
+    assert.equal(update.required, false);
+    assert.equal(update.downloadUrl, '/api/downloads/windows');
+
+    const download = await fetch(`${baseUrl}${windows.downloadUrl}`);
+    assert.equal(download.status, 200);
+    assert.match(download.headers.get('content-disposition'), /MaterialKompass-Windows.zip/);
+    assert.match(await download.text(), /materialkompass-backend/);
+
+    const unavailable = await fetch(`${baseUrl}/api/downloads/linux`);
+    assert.equal(unavailable.status, 404);
+  }, {
+    downloads: {
+      windows: { filePath: fixture, fileName: 'MaterialKompass-Windows.zip' },
+      linux: { filePath: path.resolve(__dirname, 'missing-linux-release.tar.gz') },
+    },
   });
 });
 

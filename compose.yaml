@@ -27,6 +27,18 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: 3306
+      DOWNLOAD_WINDOWS_PATH: /app/downloads/MaterialKompass-Windows.zip
+      DOWNLOAD_LINUX_PATH: /app/downloads/MaterialKompass-Linux.tar.gz
+      DOWNLOAD_ANDROID_PATH: /app/downloads/MaterialKompass-Android.apk
+      CLIENT_WINDOWS_VERSION: ${CLIENT_WINDOWS_VERSION:-1.0.0}
+      CLIENT_LINUX_VERSION: ${CLIENT_LINUX_VERSION:-1.0.0}
+      CLIENT_ANDROID_VERSION: ${CLIENT_ANDROID_VERSION:-1.0.0}
+      CLIENT_WINDOWS_MIN_VERSION: ${CLIENT_WINDOWS_MIN_VERSION:-1.0.0}
+      CLIENT_LINUX_MIN_VERSION: ${CLIENT_LINUX_MIN_VERSION:-1.0.0}
+      CLIENT_ANDROID_MIN_VERSION: ${CLIENT_ANDROID_MIN_VERSION:-1.0.0}
+      CLIENT_UPDATE_NOTES: ${CLIENT_UPDATE_NOTES:-}
+    volumes:
+      - ./releases:/app/downloads:ro
     depends_on:
       db:
         condition: service_healthy

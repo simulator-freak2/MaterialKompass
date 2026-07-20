@@ -9,6 +9,8 @@ const { registerProcurementRoutes } = require('./procurement');
 const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { createHash, randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { SUPPORTED_PLATFORMS, createCorsOptions, parseTrustProxy } = require('./config');
 const { version } = require('../package.json');
 
@@ -20,6 +22,14 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync(randomUUID(), 12);
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_REQUESTS = 10;
 const MAX_IMPORT_ROWS = 1000;
+const PERSISTED_COLLECTIONS = Object.freeze([
+  'permissions', 'locations', 'stockStructures', 'categories', 'materials',
+  'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
+  'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
+  'defectReports', 'procurementRequests', 'procurementOffers', 'procurementOrders',
+  'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
+  'auditLogs', 'exportLogs',
+]);
 
 function createApp(options = {}) {
   if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
@@ -63,7 +73,7 @@ function createApp(options = {}) {
 
   // Every app instance owns its data. Referencing the exported seed arrays
   // directly leaks mutations into later app instances (and into other tests).
-  const appData = structuredClone(seedData);
+  const appData = structuredClone(options.data || seedData);
   if (options.userData) {
     appData.users = structuredClone(options.userData.users);
     appData.roles = structuredClone(options.userData.roles);
@@ -79,13 +89,13 @@ function createApp(options = {}) {
   const stockStructures = appData.stockStructures;
   const categories = appData.categories;
   const materials = appData.materials;
-  const deletedMaterials = [];
+  const deletedMaterials = (appData.deletedMaterials ||= []);
   const materialMovements = appData.materialMovements;
   const materialInspections = appData.materialInspections;
   const materialDocuments = appData.materialDocuments;
   const clothingItems = appData.clothingItems;
   const clothingInspections = appData.clothingInspections || [];
-  const deletedClothingItems = [];
+  const deletedClothingItems = (appData.deletedClothingItems ||= []);
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
   const procurementRequests = appData.procurementRequests;
@@ -93,6 +103,98 @@ function createApp(options = {}) {
   const documents = appData.documents;
   const auditLogs = appData.auditLogs;
   const exportLogs = appData.exportLogs;
+  const defaultDownloadsDirectory = path.resolve(__dirname, '..', 'downloads');
+  const downloadSources = options.downloads || {
+    windows: {
+      filePath: process.env.DOWNLOAD_WINDOWS_PATH
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Windows.zip'),
+      fileName: 'MaterialKompass-Windows.zip',
+    },
+    linux: {
+      filePath: process.env.DOWNLOAD_LINUX_PATH
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Linux.tar.gz'),
+      fileName: 'MaterialKompass-Linux.tar.gz',
+    },
+    android: {
+      filePath: process.env.DOWNLOAD_ANDROID_PATH
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Android.apk'),
+      fileName: 'MaterialKompass-Android.apk',
+    },
+  };
+
+  function desktopDownload(platform) {
+    const configured = downloadSources[platform];
+    const filePath = typeof configured === 'string' ? configured : configured?.filePath;
+    if (!filePath) return null;
+    try {
+      const stats = fs.statSync(filePath);
+      if (!stats.isFile()) return null;
+      return {
+        platform,
+        label: platform === 'windows' ? 'Windows' : platform === 'linux' ? 'Linux' : 'Android',
+        filePath,
+        fileName: configured?.fileName || path.basename(filePath),
+        sizeBytes: stats.size,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function compareClientVersions(left, right) {
+    const parts = (value) => String(value || '0').split(/[+-]/)[0]
+      .split('.').slice(0, 3).map((part) => Number.parseInt(part, 10) || 0);
+    const a = parts(left);
+    const b = parts(right);
+    for (let index = 0; index < 3; index += 1) {
+      const difference = (a[index] || 0) - (b[index] || 0);
+      if (difference !== 0) return Math.sign(difference);
+    }
+    return 0;
+  }
+
+  if (options.dataStore) {
+    let saveQueue = Promise.resolve();
+    const saveState = () => {
+      // Capture immediately so concurrent requests cannot change a queued
+      // snapshot before its database transaction starts.
+      const snapshot = Object.fromEntries(PERSISTED_COLLECTIONS.map((name) => [
+        name, JSON.parse(JSON.stringify(appData[name] || [])),
+      ]));
+      saveQueue = saveQueue.catch(() => {}).then(() => options.dataStore.saveCollections(snapshot));
+      return saveQueue;
+    };
+    app.locals.persistData = saveState;
+    app.use((req, res, next) => {
+      const stateChangingGet = req.method === 'GET'
+        && ['/api/auth/verify-email', '/api/users'].includes(req.path);
+      if (!stateChangingGet && !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+      const originalEnd = res.end.bind(res);
+      let ending = false;
+      res.end = function persistentEnd(chunk, encoding, callback) {
+        if (ending) return res;
+        ending = true;
+        saveState()
+          .then(() => originalEnd(chunk, encoding, callback))
+          .catch((error) => {
+            console.error('MariaDB-Persistenz fehlgeschlagen:', error);
+            if (res.headersSent) return res.destroy(error);
+            const body = JSON.stringify({
+              error: 'Die Daten konnten nicht dauerhaft gespeichert werden.',
+              requestId: req.requestId,
+            });
+            res.statusCode = 503;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('Content-Length', Buffer.byteLength(body));
+            return originalEnd(body, 'utf8', callback);
+          });
+        return res;
+      };
+      return next();
+    });
+  } else {
+    app.locals.persistData = async () => {};
+  }
 
   const jwtSecret = process.env.JWT_SECRET || DEVELOPMENT_JWT_SECRET;
   const authAttempts = new Map();
@@ -191,6 +293,69 @@ function createApp(options = {}) {
       entity,
       details,
     });
+  }
+
+  const activityAreas = Object.freeze({
+    Location: { permission: 'locations.read', label: 'Lagerorte' },
+    StockStructure: { permission: 'locations.read', label: 'Lagerorte' },
+    Category: { permission: 'categories.read', label: 'Kategorien' },
+    MaterialItem: { permission: 'inventory.read', label: 'Inventar' },
+    MaterialMovement: { permission: 'inventory.read', label: 'Inventar' },
+    ClothingItem: { permission: 'clothing.read', label: 'Kleiderkammer' },
+    IssueTransaction: { permission: 'clothing.read', label: 'Kleiderkammer' },
+    DefectReport: { permission: 'defects.read', label: 'Mängel' },
+    ProcurementRequest: { permission: 'procurement.read', label: 'Beschaffung' },
+    ExportLog: { permission: 'reports.read', label: 'Berichte' },
+  });
+
+  function categoryLabel(categoryId) {
+    const category = categories.find((entry) => entry.id === categoryId);
+    if (!category) return categoryId || null;
+    const parent = category.parentId
+      ? categories.find((entry) => entry.id === category.parentId)
+      : null;
+    return parent ? `${parent.name} / ${category.name}` : category.name;
+  }
+
+  function dashboardActivity(entry) {
+    const area = activityAreas[entry.entity];
+    const details = entry.details && typeof entry.details === 'object' ? entry.details : {};
+    let item = null;
+    let categoryId = details.categoryId || details.subcategoryCode || details.categoryCode || null;
+
+    if (entry.entity === 'MaterialItem') {
+      item = [...materials, ...deletedMaterials].find((candidate) => candidate.id === details.id);
+      categoryId ||= item?.subcategoryCode || item?.categoryCode || null;
+    } else if (entry.entity === 'ClothingItem') {
+      item = [...clothingItems, ...deletedClothingItems].find((candidate) => candidate.id === details.id);
+      categoryId ||= item?.categoryId || null;
+    }
+
+    const actionLabels = {
+      create: 'angelegt', update: 'bearbeitet', delete: 'gelöscht', archive: 'archiviert',
+      restore: 'wiederhergestellt', inspection: 'geprüft', import: 'importiert',
+      export: 'exportiert', issue: 'ausgegeben', return: 'zurückgenommen',
+      relocate: 'umgelagert', transaction: 'gebucht', document: 'Dokument hinzugefügt',
+      'bulk-category-update': 'Kategorie geändert',
+    };
+    const entityLabels = {
+      MaterialItem: 'Artikel', ClothingItem: 'Kleidungsartikel', Location: 'Lagerort',
+      StockStructure: 'Lagerplatz', Category: 'Kategorie', MaterialMovement: 'Material',
+      IssueTransaction: 'Kleidungsausgabe', DefectReport: 'Mangel',
+      ProcurementRequest: 'Beschaffung', ExportLog: 'Export',
+    };
+
+    return {
+      ...entry,
+      actor: users.find((user) => user.email === entry.actor)?.username
+        || (String(entry.actor).includes('@') ? 'unbekannt' : entry.actor),
+      area: area.label,
+      actionLabel: actionLabels[entry.action] || entry.action,
+      entityLabel: entityLabels[entry.entity] || entry.entity,
+      itemName: details.itemName || item?.name || null,
+      inventoryNumber: details.inventoryNumber || item?.inventoryNumber || null,
+      category: details.categoryName || categoryLabel(categoryId),
+    };
   }
 
   function nextId(prefix, entries) {
@@ -414,6 +579,56 @@ function createApp(options = {}) {
     apiVersion: API_VERSION,
     supportedClients: SUPPORTED_PLATFORMS,
   }));
+
+  app.get('/api/downloads', (req, res) => res.json(['windows', 'linux', 'android'].map((platform) => {
+    const download = desktopDownload(platform);
+    return {
+      platform,
+      label: platform === 'windows' ? 'Windows' : platform === 'linux' ? 'Linux' : 'Android',
+      available: download !== null,
+      fileName: download?.fileName || null,
+      sizeBytes: download?.sizeBytes || null,
+      downloadUrl: download ? `/api/downloads/${platform}` : null,
+    };
+  })));
+
+  app.get('/api/client-updates/:platform', (req, res) => {
+    const platform = req.params.platform;
+    if (!['windows', 'linux', 'android'].includes(platform)) {
+      return res.status(404).json({ error: 'Unbekannte Plattform.' });
+    }
+    const download = desktopDownload(platform);
+    if (!download) return res.status(204).end();
+
+    const settingName = platform.toUpperCase();
+    const currentVersion = String(req.query.currentVersion || '0.0.0');
+    const latestVersion = process.env[`CLIENT_${settingName}_VERSION`] || version;
+    const minimumVersion = process.env[`CLIENT_${settingName}_MIN_VERSION`] || '0.0.0';
+    return res.json({
+      platform,
+      version: latestVersion,
+      minimumVersion,
+      updateAvailable: compareClientVersions(latestVersion, currentVersion) > 0,
+      required: compareClientVersions(minimumVersion, currentVersion) > 0,
+      downloadUrl: `/api/downloads/${platform}`,
+      notes: process.env.CLIENT_UPDATE_NOTES || null,
+    });
+  });
+
+  app.get('/api/downloads/:platform', (req, res, next) => {
+    if (!['windows', 'linux', 'android'].includes(req.params.platform)) {
+      return res.status(404).json({ error: 'Unbekannte Plattform.' });
+    }
+    const download = desktopDownload(req.params.platform);
+    if (!download) {
+      return res.status(404).json({ error: 'Für diese Plattform ist derzeit kein Download verfügbar.' });
+    }
+    return res.download(download.filePath, download.fileName, (error) => {
+      if (!error) return;
+      if (res.headersSent) return next(error);
+      return res.status(500).json({ error: 'Der Download konnte nicht bereitgestellt werden.' });
+    });
+  });
 
   app.post('/api/auth/login', authRateLimit, async (req, res) => {
     await userManagement.applyRetentionPolicy();
@@ -715,7 +930,13 @@ function createApp(options = {}) {
       createdAt: new Date().toISOString(),
     };
     clothingItems.push(item);
-    logEvent('create', 'ClothingItem', { id: item.id, inventoryNumber }, req.user.username);
+    logEvent('create', 'ClothingItem', {
+      id: item.id,
+      itemName: item.name,
+      inventoryNumber,
+      categoryId: item.categoryId,
+      categoryName: categoryLabel(item.categoryId),
+    }, req.user.username);
     res.status(201).json(responseClothing(item));
   });
 
@@ -1202,11 +1423,14 @@ function createApp(options = {}) {
         overdueProcurementOrders: appData.procurementOrders.filter((order) => order.expectedDeliveryDate && new Date(order.expectedDeliveryDate) < new Date() && order.items.some((item) => item.deliveredQuantity < item.quantity)).length,
         openProcurementReceipts: appData.procurementReceipts.filter((receipt) => !receipt.inventoryTransferred).length,
       },
-      recentActivity: auditLogs.slice(-5).reverse().map((entry) => ({
-        ...entry,
-        actor: users.find((user) => user.email === entry.actor)?.username
-          || (String(entry.actor).includes('@') ? 'unbekannt' : entry.actor),
-      })),
+      recentActivity: auditLogs
+        .filter((entry) => {
+          const area = activityAreas[entry.entity];
+          return area && hasPermission(req.user, area.permission);
+        })
+        .slice(-10)
+        .reverse()
+        .map(dashboardActivity),
     });
   });
 

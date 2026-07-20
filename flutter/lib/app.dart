@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pages/login_page.dart';
 import 'pages/auth_link_page.dart';
+import 'widgets/client_update_gate.dart';
 
 class MaterialKompassApp extends StatelessWidget {
   const MaterialKompassApp({super.key});
@@ -81,7 +82,7 @@ class MaterialKompassApp extends StatelessWidget {
           ),
         ),
       ),
-      home: _initialPage(),
+      home: ClientUpdateGate(child: _initialPage()),
     );
   }
 }

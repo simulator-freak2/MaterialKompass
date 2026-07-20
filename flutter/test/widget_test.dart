@@ -13,6 +13,9 @@ void main() {
 
     expect(find.text('MaterialKompass Login'), findsOneWidget);
     expect(find.text('Interne Materialverwaltung'), findsOneWidget);
+    expect(find.text('Desktop-App herunterladen'), findsOneWidget);
+    expect(find.text('Windows nicht verfügbar'), findsOneWidget);
+    expect(find.text('Linux nicht verfügbar'), findsOneWidget);
   });
 
   testWidgets('Admin user dialog covers accounts and roles',

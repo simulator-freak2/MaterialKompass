@@ -28,6 +28,16 @@ function createUserStore(database = mariadb) {
   });
 
   return {
+    async initialize() {
+      await pool.query(`CREATE TABLE IF NOT EXISTS application_collections (
+        name VARCHAR(64) PRIMARY KEY,
+        data_json LONGTEXT NOT NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+          ON UPDATE CURRENT_TIMESTAMP(3),
+        CHECK (JSON_VALID(data_json))
+      )`);
+    },
+
     async load() {
       const [userRows, roleRows] = await Promise.all([
         pool.query('SELECT * FROM users'),
@@ -81,6 +91,30 @@ function createUserStore(database = mariadb) {
       [role.id, role.name, JSON.stringify(role.permissions || [])]);
     },
     async deleteRole(id) { await pool.query('DELETE FROM roles WHERE id = ?', [id]); },
+    async loadCollections() {
+      const rows = await pool.query('SELECT name, data_json FROM application_collections');
+      return Object.fromEntries(rows.map((row) => [row.name, parseJson(row.data_json)]));
+    },
+    async saveCollections(collections) {
+      const entries = Object.entries(collections);
+      if (entries.length === 0) return;
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        for (const [name, data] of entries) {
+          await connection.query(`INSERT INTO application_collections (name, data_json)
+            VALUES (?, ?) ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)`,
+          [name, JSON.stringify(data)]);
+        }
+        await connection.commit();
+      } catch (error) {
+        if (connection) await connection.rollback();
+        throw error;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
     async close() { await pool.end(); },
   };
 }

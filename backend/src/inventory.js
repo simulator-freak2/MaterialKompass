@@ -109,7 +109,13 @@ function registerInventoryRoutes({
       archived: false, createdAt: new Date().toISOString(),
     };
     materials.push(item);
-    logEvent('create', 'MaterialItem', { id: item.id, inventoryNumber: inv }, req.user.username);
+    logEvent('create', 'MaterialItem', {
+      id: item.id,
+      itemName: item.name,
+      inventoryNumber: inv,
+      categoryCode: item.categoryCode,
+      subcategoryCode: item.subcategoryCode,
+    }, req.user.username);
     res.status(201).json(responseItem(item));
   });
 
