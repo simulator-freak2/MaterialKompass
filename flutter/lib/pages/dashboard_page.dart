@@ -14,17 +14,50 @@ import 'profile_page.dart';
 import 'users_page.dart';
 import 'wardrobe_page.dart';
 
-class DashboardPage extends StatelessWidget {
-  final String token;
+typedef DashboardLoader = Future<Map<String, dynamic>> Function();
 
-  const DashboardPage({required this.token, super.key});
+class DashboardPage extends StatefulWidget {
+  final String token;
+  final DashboardLoader? dashboardLoader;
+
+  const DashboardPage({
+    required this.token,
+    this.dashboardLoader,
+    super.key,
+  });
+
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  late Future<Map<String, dynamic>> _dashboardFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _dashboardFuture = _loadDashboard();
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.token != widget.token ||
+        oldWidget.dashboardLoader != widget.dashboardLoader) {
+      _dashboardFuture = _loadDashboard();
+    }
+  }
+
+  Future<Map<String, dynamic>> _loadDashboard() {
+    return widget.dashboardLoader?.call() ?? loadDashboard();
+  }
 
   Future<Map<String, dynamic>> loadDashboard() async {
     final responses = await Future.wait([
       http.get(Uri.parse('$apiBaseUrl/api/dashboard'),
-          headers: {'Authorization': 'Bearer $token'}),
+          headers: {'Authorization': 'Bearer ${widget.token}'}),
       http.get(Uri.parse('$apiBaseUrl/api/auth/me'),
-          headers: {'Authorization': 'Bearer $token'}),
+          headers: {'Authorization': 'Bearer ${widget.token}'}),
     ]);
     if (responses.any((response) => response.statusCode != 200)) {
       throw Exception('Failed to load dashboard');
@@ -39,6 +72,12 @@ class DashboardPage extends StatelessWidget {
       MaterialPageRoute(builder: (_) => const LoginPage()),
       (route) => false,
     );
+  }
+
+  Future<void> _refresh() async {
+    final future = _loadDashboard();
+    setState(() => _dashboardFuture = future);
+    await future;
   }
 
   String _formatActivityTime(Object? value) {
@@ -89,7 +128,8 @@ class DashboardPage extends StatelessWidget {
             tooltip: 'Mein Account',
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => ProfilePage(
-                  token: token, onAccountDeleted: () => _logout(context)),
+                  token: widget.token,
+                  onAccountDeleted: () => _logout(context)),
             )),
           ),
           IconButton(
@@ -100,7 +140,7 @@ class DashboardPage extends StatelessWidget {
         ],
       ),
       body: FutureBuilder<Map<String, dynamic>>(
-        future: loadDashboard(),
+        future: _dashboardFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -126,172 +166,270 @@ class DashboardPage extends StatelessWidget {
             ),
           );
 
-          return Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Willkommen bei MaterialKompass',
-                  style: Theme.of(context).textTheme.headlineSmall,
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final isMobile = constraints.maxWidth < 700;
+              final pagePadding = isMobile ? 16.0 : 24.0;
+              final activities = data['recentActivity'] as List? ?? const [];
+              final actions =
+                  <({IconData icon, String label, VoidCallback onTap})>[
+                if (isAdmin)
+                  (
+                    icon: Icons.manage_accounts_outlined,
+                    label: 'Nutzerverwaltung',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => UsersPage(token: widget.token),
+                        )),
+                  ),
+                (
+                  icon: Icons.shopping_cart_outlined,
+                  label: 'Beschaffung',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => ProcurementPage(
+                          token: widget.token,
+                          onLogout: () => _logout(context),
+                        ),
+                      )),
                 ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
-                  children: [
-                    StatCard(
-                      title: 'Material',
-                      value: summary['materialCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Material ausgegeben',
-                      value: summary['issuedMaterialCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Material defekt',
-                      value:
-                          summary['defectiveMaterialCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Prüfungen fällig',
-                      value: summary['dueInspectionCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Kleidung',
-                      value: summary['clothingCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Mängel',
-                      value: summary['defectCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Beschaffungen',
-                      value: summary['procurementCount']?.toString() ?? '0',
-                    ),
-                    StatCard(
-                      title: 'Freigaben offen',
-                      value:
-                          summary['pendingProcurementApprovals']?.toString() ??
-                              '0',
-                    ),
-                    StatCard(
-                      title: 'Bestellungen überfällig',
-                      value: summary['overdueProcurementOrders']?.toString() ??
-                          '0',
-                    ),
-                    StatCard(
-                      title: 'Wareneingänge offen',
-                      value:
-                          summary['openProcurementReceipts']?.toString() ?? '0',
-                    ),
-                  ],
+                (
+                  icon: Icons.inventory_2_outlined,
+                  label: 'Inventar',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => InventoryPage(
+                          token: widget.token,
+                          onLogout: () => _logout(context),
+                        ),
+                      )),
                 ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Letzte Aktivitäten',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        if (isAdmin)
-                          ElevatedButton.icon(
-                            style: dashboardButtonStyle,
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                  builder: (_) => UsersPage(token: token)),
-                            ),
-                            icon: const Icon(Icons.manage_accounts_outlined),
-                            label: const Text('Nutzerverwaltung'),
-                          ),
-                        ElevatedButton.icon(
-                          style: dashboardButtonStyle,
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => ProcurementPage(
-                                token: token,
-                                onLogout: () => _logout(context),
-                              ),
-                            ),
-                          ),
-                          icon: const Icon(Icons.shopping_cart_outlined),
-                          label: const Text('Beschaffung'),
-                        ),
-                        ElevatedButton.icon(
-                          style: dashboardButtonStyle,
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => InventoryPage(
-                                token: token,
-                                onLogout: () => _logout(context),
-                              ),
-                            ),
-                          ),
-                          icon: const Icon(Icons.inventory_2_outlined),
-                          label: const Text('Inventar'),
-                        ),
-                        ElevatedButton.icon(
-                          style: dashboardButtonStyle,
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => CategoriesPage(token: token),
-                            ),
-                          ),
-                          icon: const Icon(Icons.category_outlined),
-                          label: const Text('Kategorien'),
-                        ),
-                        if (canReadLocations)
-                          ElevatedButton.icon(
-                            style: dashboardButtonStyle,
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => LocationsPage(token: token),
-                              ),
-                            ),
-                            icon: const Icon(Icons.warehouse_outlined),
-                            label: const Text('Lagerorte'),
-                          ),
-                        ElevatedButton.icon(
-                          style: dashboardButtonStyle,
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => WardrobePage(
-                                token: token,
-                                onLogout: () => _logout(context),
-                              ),
-                            ),
-                          ),
-                          icon: const Icon(Icons.checkroom),
-                          label: const Text('Kleiderkammer'),
-                        ),
-                      ],
-                    ),
-                  ],
+                (
+                  icon: Icons.category_outlined,
+                  label: 'Kategorien',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => CategoriesPage(token: widget.token),
+                      )),
                 ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: (data['recentActivity'] as List? ?? const []).isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Noch keine Aktivitäten in deinen freigeschalteten Bereichen.',
+                if (canReadLocations)
+                  (
+                    icon: Icons.warehouse_outlined,
+                    label: 'Lagerorte',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => LocationsPage(token: widget.token),
+                        )),
+                  ),
+                (
+                  icon: Icons.checkroom,
+                  label: 'Kleiderkammer',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => WardrobePage(
+                          token: widget.token,
+                          onLogout: () => _logout(context),
+                        ),
+                      )),
+                ),
+              ];
+              final statCards = [
+                ('Material', summary['materialCount']),
+                ('Material ausgegeben', summary['issuedMaterialCount']),
+                ('Material defekt', summary['defectiveMaterialCount']),
+                ('Prüfungen fällig', summary['dueInspectionCount']),
+                ('Kleidung', summary['clothingCount']),
+                ('Mängel', summary['defectCount']),
+                ('Beschaffungen', summary['procurementCount']),
+                ('Freigaben offen', summary['pendingProcurementApprovals']),
+                (
+                  'Bestellungen überfällig',
+                  summary['overdueProcurementOrders']
+                ),
+                ('Wareneingänge offen', summary['openProcurementReceipts']),
+              ];
+
+              Widget actionButton(
+                ({IconData icon, String label, VoidCallback onTap}) action,
+              ) {
+                if (!isMobile) {
+                  return ElevatedButton.icon(
+                    style: dashboardButtonStyle,
+                    onPressed: action.onTap,
+                    icon: Icon(action.icon),
+                    label: Text(action.label),
+                  );
+                }
+                return ElevatedButton(
+                  style: dashboardButtonStyle.copyWith(
+                    padding: const WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                    ),
+                  ),
+                  onPressed: action.onTap,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(action.icon),
+                      const SizedBox(height: 6),
+                      Text(
+                        action.label,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return RefreshIndicator(
+                onRefresh: _refresh,
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  slivers: [
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        pagePadding,
+                        pagePadding,
+                        pagePadding,
+                        12,
+                      ),
+                      sliver: SliverList.list(
+                        children: [
+                          Text(
+                            'Willkommen bei MaterialKompass',
+                            style: Theme.of(context).textTheme.headlineSmall,
                           ),
-                        )
-                      : ListView.builder(
-                          itemCount: data['recentActivity']?.length ?? 0,
+                          const SizedBox(height: 16),
+                          if (isMobile)
+                            GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 10,
+                                mainAxisSpacing: 10,
+                                childAspectRatio: 1.18,
+                              ),
+                              itemCount: statCards.length,
+                              itemBuilder: (_, index) => StatCard(
+                                title: statCards[index].$1,
+                                value: statCards[index].$2?.toString() ?? '0',
+                                width: double.infinity,
+                                compact: true,
+                              ),
+                            )
+                          else
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 16,
+                              children: [
+                                for (final stat in statCards)
+                                  StatCard(
+                                    title: stat.$1,
+                                    value: stat.$2?.toString() ?? '0',
+                                  ),
+                              ],
+                            ),
+                          SizedBox(height: isMobile ? 24 : 28),
+                          if (isMobile) ...[
+                            const Text(
+                              'Bereiche',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 10,
+                                mainAxisSpacing: 10,
+                                mainAxisExtent: 88,
+                              ),
+                              itemCount: actions.length,
+                              itemBuilder: (_, index) =>
+                                  actionButton(actions[index]),
+                            ),
+                            const SizedBox(height: 28),
+                            const Text(
+                              'Letzte Aktivitäten',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ] else
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 16),
+                                  child: Text(
+                                    'Letzte Aktivitäten',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 24),
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      alignment: WrapAlignment.end,
+                                      children:
+                                          actions.map(actionButton).toList(),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                    if (activities.isEmpty)
+                      const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text(
+                              'Noch keine Aktivitäten in deinen freigeschalteten Bereichen.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      SliverPadding(
+                        padding: EdgeInsets.fromLTRB(
+                          pagePadding,
+                          0,
+                          pagePadding,
+                          pagePadding + MediaQuery.paddingOf(context).bottom,
+                        ),
+                        sliver: SliverList.builder(
+                          itemCount: activities.length,
                           itemBuilder: (_, index) {
                             final entry = Map<String, dynamic>.from(
-                              data['recentActivity'][index] as Map,
+                              activities[index] as Map,
                             );
                             return Card(
                               child: ListTile(
-                                leading: const CircleAvatar(
-                                  child: Icon(Icons.history),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: isMobile ? 12 : 16,
+                                  vertical: isMobile ? 4 : 8,
+                                ),
+                                leading: CircleAvatar(
+                                  radius: isMobile ? 18 : 20,
+                                  child: const Icon(Icons.history),
                                 ),
                                 title: Text(_activityTitle(entry)),
                                 subtitle: Text(_activityDetails(entry)),
@@ -301,9 +439,11 @@ class DashboardPage extends StatelessWidget {
                             );
                           },
                         ),
+                      ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           );
         },
       ),

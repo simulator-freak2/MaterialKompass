@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:materialkompass/main.dart';
+import 'package:materialkompass/pages/dashboard_page.dart';
 import 'package:materialkompass/pages/users_page.dart';
+import 'package:materialkompass/widgets/stat_card.dart';
 
 void main() {
   test('default API base URL points to the backend port', () {
@@ -18,6 +20,83 @@ void main() {
     expect(find.text('Linux nicht verfügbar'), findsOneWidget);
   });
 
+  testWidgets('Dashboard is usable on a narrow phone screen',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    var loadCount = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        token: 'demo',
+        dashboardLoader: () async {
+          loadCount += 1;
+          return {
+            'summary': {
+              'materialCount': 42,
+              'issuedMaterialCount': 7,
+              'defectiveMaterialCount': 2,
+              'dueInspectionCount': 3,
+              'clothingCount': 18,
+              'defectCount': 1,
+              'procurementCount': 5,
+              'pendingProcurementApprovals': 2,
+              'overdueProcurementOrders': 1,
+              'openProcurementReceipts': 4,
+            },
+            'currentUser': {
+              'roles': ['Admin'],
+              'permissions': ['locations.read'],
+            },
+            'recentActivity': [
+              {
+                'entityLabel': 'Material',
+                'itemName': 'Rettungsweste',
+                'actionLabel': 'aktualisiert',
+                'actor': 'Testnutzer',
+                'timestamp': '2026-07-23T10:00:00Z',
+                'area': 'Inventar',
+              },
+            ],
+          };
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(loadCount, 1);
+    expect(find.text('Material'), findsWidgets);
+    expect(find.text('Material ausgegeben'), findsOneWidget);
+
+    final firstCard = tester.getTopLeft(find.byWidgetPredicate(
+      (widget) => widget is StatCard && widget.title == 'Material',
+    ));
+    final secondCard = tester.getTopLeft(find.byWidgetPredicate(
+      (widget) => widget is StatCard && widget.title == 'Material ausgegeben',
+    ));
+    expect((firstCard.dy - secondCard.dy).abs(), lessThan(5));
+    expect(secondCard.dx, greaterThan(firstCard.dx));
+
+    await tester.scrollUntilVisible(
+      find.text('Bereiche'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Bereiche'), findsOneWidget);
+    expect(find.text('Nutzerverwaltung'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.textContaining('Rettungsweste'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('Rettungsweste'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Admin user dialog covers accounts and roles',
       (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(
@@ -27,7 +106,7 @@ void main() {
     ));
 
     expect(find.text('Nutzer anlegen'), findsOneWidget);
-   expect(find.text('Name'), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
     expect(find.text('Nutzername *'), findsOneWidget);
     expect(find.text('E-Mail *'), findsOneWidget);
     expect(find.text('Admin'), findsOneWidget);
