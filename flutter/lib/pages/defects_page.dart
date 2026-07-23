@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/file_save_mime_type.dart';
 import '../widgets/date_input_field.dart';
 
 const _statuses = <String>[
@@ -28,8 +29,15 @@ const _nextStatus = <String, String>{
 
 class DefectsPage extends StatefulWidget {
   final String token;
+  final String? initialEntityType;
+  final String? initialEntityId;
 
-  const DefectsPage({required this.token, super.key});
+  const DefectsPage({
+    required this.token,
+    this.initialEntityType,
+    this.initialEntityId,
+    super.key,
+  });
 
   @override
   State<DefectsPage> createState() => _DefectsPageState();
@@ -47,6 +55,7 @@ class _DefectsPageState extends State<DefectsPage> {
   List<Map<String, dynamic>> _notifications = [];
   Set<String> _permissions = {};
   Set<String> _roles = {};
+  bool _initialCreateOpened = false;
 
   Map<String, String> get _headers => {
         'Authorization': 'Bearer ${widget.token}',
@@ -160,6 +169,17 @@ class _DefectsPageState extends State<DefectsPage> {
       _items = loadedItems;
       _loading = false;
     });
+    if (!_initialCreateOpened && widget.initialEntityId != null) {
+      _initialCreateOpened = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _create(
+            initialEntityType: widget.initialEntityType,
+            initialEntityId: widget.initialEntityId,
+          );
+        }
+      });
+    }
   }
 
   List<Map<String, dynamic>> get _filtered => _defects.where((defect) {
@@ -170,6 +190,9 @@ class _DefectsPageState extends State<DefectsPage> {
           defect['entityName'],
           defect['inventoryNumber'],
           defect['assignee'],
+          defect['contactName'],
+          defect['contactEmail'],
+          defect['contactPhone'],
         ].join(' ').toLowerCase();
         return haystack.contains(_search.toLowerCase()) &&
             (_status == 'Alle' || defect['status'] == _status) &&
@@ -177,16 +200,33 @@ class _DefectsPageState extends State<DefectsPage> {
             (_entityType == 'Alle' || defect['entityType'] == _entityType);
       }).toList();
 
-  Future<void> _create() async {
+  Future<void> _create(
+      {String? initialEntityType, String? initialEntityId}) async {
     final payload = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _DefectFormDialog(items: _items),
+      builder: (_) => _DefectFormDialog(
+        items: _items,
+        initialEntityType: initialEntityType,
+        initialEntityId: initialEntityId,
+      ),
     );
     if (payload == null) return;
+    final pendingImages =
+        (payload.remove('_pendingImages') as List? ?? const [])
+            .map((entry) => Map<String, dynamic>.from(entry as Map))
+            .toList();
     final created =
         await _request('/api/defects', method: 'POST', body: payload);
-    if (created != null) {
-      _message('Mangel wurde erfasst und der Artikel als defekt markiert.');
+    if (created is Map) {
+      var uploadedImages = 0;
+      for (final image in pendingImages) {
+        final uploaded = await _request('/api/defects/${created['id']}/images',
+            method: 'POST', body: image);
+        if (uploaded != null) uploadedImages += 1;
+      }
+      _message(pendingImages.isEmpty
+          ? 'Mangel wurde erfasst und der Artikel als defekt markiert.'
+          : 'Mangel wurde erfasst; $uploadedImages von ${pendingImages.length} Bildern wurden hochgeladen.');
       await _load();
     }
   }
@@ -201,6 +241,7 @@ class _DefectsPageState extends State<DefectsPage> {
       bytes: base64Decode(data['fileBase64'].toString()),
       fileExtension: dot > 0 ? fileName.substring(dot + 1) : format,
       mimeType: MimeType.custom,
+      customMimeType: data['mimeType']?.toString() ?? fileMimeType(format),
     );
     if (mounted) _message('$fileName wurde erstellt.');
   }
@@ -757,9 +798,12 @@ class _DefectsPageState extends State<DefectsPage> {
       'Schadensart': defect['damageType'],
       'Ursache': defect['cause'],
       'Gefährdung': defect['riskLevel'],
-      'Einsatzsicherheit': defect['operationalSafety'],
+      'Einsatzbereitschaft': defect['operationalSafety'],
       'Verantwortlich': defect['assignee'],
       'Fachbereich': defect['responsibleDepartment'],
+      'Kontakt': defect['contactName'],
+      'Kontakt E-Mail': defect['contactEmail'],
+      'Kontakt Telefon': defect['contactPhone'],
       'Frist': defect['dueDate'],
       'Geschätzte Kosten': defect['estimatedCost'] == null
           ? null
@@ -948,8 +992,15 @@ class _DefectsPageState extends State<DefectsPage> {
 class _DefectFormDialog extends StatefulWidget {
   final List<Map<String, dynamic>> items;
   final Map<String, dynamic>? defect;
+  final String? initialEntityType;
+  final String? initialEntityId;
 
-  const _DefectFormDialog({required this.items, this.defect});
+  const _DefectFormDialog({
+    required this.items,
+    this.defect,
+    this.initialEntityType,
+    this.initialEntityId,
+  });
 
   @override
   State<_DefectFormDialog> createState() => _DefectFormDialogState();
@@ -969,6 +1020,10 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
   late final TextEditingController resolution;
   late final TextEditingController recurrence;
   late final TextEditingController duplicate;
+  late final TextEditingController contactName;
+  late final TextEditingController contactEmail;
+  late final TextEditingController contactPhone;
+  final List<Map<String, dynamic>> pendingImages = [];
   String priority = 'Normal';
   String risk = 'Keine Angabe';
   String operationalSafety = 'Nicht einsatzfähig';
@@ -1003,15 +1058,22 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
         TextEditingController(text: value['recurrenceOfId']?.toString() ?? '');
     duplicate =
         TextEditingController(text: value['duplicateOfId']?.toString() ?? '');
+    contactName =
+        TextEditingController(text: value['contactName']?.toString() ?? '');
+    contactEmail =
+        TextEditingController(text: value['contactEmail']?.toString() ?? '');
+    contactPhone =
+        TextEditingController(text: value['contactPhone']?.toString() ?? '');
     priority = value['priority']?.toString() ?? 'Normal';
     risk = value['riskLevel']?.toString() ?? 'Keine Angabe';
     operationalSafety =
         value['operationalSafety']?.toString() ?? 'Nicht einsatzfähig';
     entityType = value['entityType']?.toString() ??
+        widget.initialEntityType ??
         (widget.items.isEmpty
             ? null
             : widget.items.first['entityType']?.toString());
-    entityId = value['entityId']?.toString();
+    entityId = value['entityId']?.toString() ?? widget.initialEntityId;
   }
 
   @override
@@ -1030,6 +1092,9 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
       resolution,
       recurrence,
       duplicate,
+      contactName,
+      contactEmail,
+      contactPhone,
     ]) {
       controller.dispose();
     }
@@ -1048,13 +1113,51 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
         'riskLevel': risk,
         'operationalSafety': operationalSafety,
         'responsibleDepartment': department.text.trim(),
+        'contactName': contactName.text.trim(),
+        'contactEmail': contactEmail.text.trim(),
+        'contactPhone': contactPhone.text.trim(),
         'dueDate': dateInputToIso(dueDate.text),
         'estimatedCost': estimatedCost.text.trim(),
         if (editing) 'actualCost': actualCost.text.trim(),
         if (editing) 'resolution': resolution.text.trim(),
         'recurrenceOfId': recurrence.text.trim(),
         'duplicateOfId': duplicate.text.trim(),
+        if (!editing) '_pendingImages': pendingImages,
       };
+
+  Future<void> _selectImages() async {
+    final remaining = 10 - pendingImages.length;
+    if (remaining <= 0) return;
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null) return;
+    final selected = result.files.take(remaining);
+    var rejected = 0;
+    for (final file in selected) {
+      if (file.bytes == null || file.size > 8 * 1024 * 1024) {
+        rejected += 1;
+        continue;
+      }
+      final extension = file.extension?.toLowerCase();
+      pendingImages.add({
+        'fileName': file.name,
+        'mimeType': extension == 'png' ? 'image/png' : 'image/jpeg',
+        'fileBase64': base64Encode(file.bytes!),
+      });
+    }
+    if (mounted) {
+      setState(() {});
+      if (rejected > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                '$rejected Bild(er) wurden wegen fehlender Daten oder mehr als 8 MB übersprungen.')));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1121,6 +1224,11 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
                 maxLines: 4,
                 decoration: const InputDecoration(labelText: 'Beschreibung *')),
             const SizedBox(height: 10),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Einstufung',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
             Wrap(spacing: 12, runSpacing: 12, children: [
               SizedBox(
                 width: 200,
@@ -1152,7 +1260,7 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
                 child: DropdownButtonFormField<String>(
                   initialValue: operationalSafety,
                   decoration:
-                      const InputDecoration(labelText: 'Einsatzsicherheit'),
+                      const InputDecoration(labelText: 'Einsatzbereitschaft'),
                   items: const [
                     'Einsatzfähig',
                     'Eingeschränkt',
@@ -1166,6 +1274,37 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
                 ),
               ),
             ]),
+            if (!editing) ...[
+              const SizedBox(height: 14),
+              Row(children: [
+                const Expanded(
+                    child: Text('Bilder zum Mangel',
+                        style: TextStyle(fontWeight: FontWeight.bold))),
+                OutlinedButton.icon(
+                  onPressed: pendingImages.length >= 10 ? null : _selectImages,
+                  icon: const Icon(Icons.add_photo_alternate),
+                  label: const Text('JPEG/PNG auswählen'),
+                ),
+              ]),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Maximal 10 Bilder, jeweils höchstens 8 MB.'),
+              ),
+              if (pendingImages.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 6,
+                    children: pendingImages
+                        .map((image) => InputChip(
+                              label: Text(image['fileName'].toString()),
+                              onDeleted: () =>
+                                  setState(() => pendingImages.remove(image)),
+                            ))
+                        .toList(),
+                  ),
+                ),
+            ],
             TextField(
                 controller: damageType,
                 decoration: const InputDecoration(labelText: 'Schadensart')),
@@ -1177,6 +1316,23 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
                 controller: department,
                 decoration: const InputDecoration(
                     labelText: 'Zuständiger Fachbereich')),
+            const SizedBox(height: 14),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Kontaktdaten',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            TextField(
+                controller: contactName,
+                decoration: const InputDecoration(labelText: 'Kontaktname')),
+            TextField(
+                controller: contactEmail,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Kontakt-E-Mail')),
+            TextField(
+                controller: contactPhone,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'Kontakttelefon')),
             DateInputField(controller: dueDate, label: 'Frist'),
             TextField(
                 controller: estimatedCost,

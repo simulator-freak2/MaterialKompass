@@ -35,7 +35,7 @@ function permissionsForRoles(roleNames, roles) {
   return [...new Set(roleNames.flatMap((name) => roles.find((role) => role.name === name)?.permissions || []))];
 }
 
-function registerUserRoutes({ app, users, roles, permissions, authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail }) {
+function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail }) {
   const appBaseUrl = process.env.APP_BASE_URL || 'https://materialkompass.org';
   const saveUser = (user) => userStore?.saveUser(user) || Promise.resolve();
   const deleteStoredUser = (id) => userStore?.deleteUser(id) || Promise.resolve();
@@ -55,6 +55,19 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
 
   function roleNamesAreValid(names) {
     return Array.isArray(names) && names.length > 0 && names.every((name) => roles.some((role) => role.name === name));
+  }
+
+  function departmentIdsAreValid(ids) {
+    return Array.isArray(ids)
+      && ids.every((id) => departments.some((department) => department.id === id && department.active !== false));
+  }
+
+  function validateDepartmentAssignment(roleNames, departmentIds) {
+    if (!departmentIdsAreValid(departmentIds)) return 'Mindestens ein Fachbereich ist ungültig oder deaktiviert.';
+    if (roleNames.includes('Fachbereichsleiter') && departmentIds.length === 0) {
+      return 'Fachbereichsleiter benötigen mindestens einen zugewiesenen Fachbereich.';
+    }
+    return null;
   }
 
   function isLastAdmin(user) {
@@ -115,6 +128,51 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
   }
 
   app.locals.applyUserRetentionPolicy = applyRetentionPolicy;
+
+  app.get('/api/departments', authMiddleware, (_req, res) => res.json(departments));
+
+  app.post('/api/departments', authMiddleware, requirePermission('users.write'), (req, res) => {
+    const name = String(req.body.name || '').trim();
+    const code = String(req.body.code || '').trim().toUpperCase();
+    if (!name || !code) return res.status(400).json({ error: 'Name und Kürzel sind erforderlich.' });
+    if (departments.some((entry) => normalize(entry.name) === normalize(name) || normalize(entry.code) === normalize(code))) {
+      return res.status(409).json({ error: 'Name oder Kürzel ist bereits vergeben.' });
+    }
+    const department = { id: nextId('department', departments), name, code, active: req.body.active !== false };
+    departments.push(department);
+    logEvent('create', 'Department', { id: department.id }, req.user.username);
+    return res.status(201).json(department);
+  });
+
+  app.put('/api/departments/:id', authMiddleware, requirePermission('users.write'), (req, res) => {
+    const department = departments.find((entry) => entry.id === req.params.id);
+    if (!department) return res.status(404).json({ error: 'Fachbereich nicht gefunden.' });
+    const name = String(req.body.name ?? department.name).trim();
+    const code = String(req.body.code ?? department.code).trim().toUpperCase();
+    if (!name || !code) return res.status(400).json({ error: 'Name und Kürzel sind erforderlich.' });
+    if (departments.some((entry) => entry.id !== department.id
+      && (normalize(entry.name) === normalize(name) || normalize(entry.code) === normalize(code)))) {
+      return res.status(409).json({ error: 'Name oder Kürzel ist bereits vergeben.' });
+    }
+    Object.assign(department, { name, code, active: req.body.active ?? department.active });
+    departmentReferences
+      .filter((entry) => entry.departmentId === department.id)
+      .forEach((entry) => { entry.department = name; });
+    logEvent('update', 'Department', { id: department.id }, req.user.username);
+    return res.json(department);
+  });
+
+  app.delete('/api/departments/:id', authMiddleware, requirePermission('users.write'), (req, res) => {
+    const index = departments.findIndex((entry) => entry.id === req.params.id);
+    if (index < 0) return res.status(404).json({ error: 'Fachbereich nicht gefunden.' });
+    if (users.some((user) => user.departmentIds?.includes(req.params.id))
+      || departmentReferences.some((entry) => entry.departmentId === req.params.id)) {
+      return res.status(409).json({ error: 'Zugewiesene oder verwendete Fachbereiche können nicht gelöscht werden. Deaktivieren Sie den Fachbereich stattdessen.' });
+    }
+    const [department] = departments.splice(index, 1);
+    logEvent('delete', 'Department', { id: department.id }, req.user.username);
+    return res.status(204).end();
+  });
 
   app.get('/api/roles', authMiddleware, requirePermission('roles.read'), (_req, res) => res.json(roles));
 
@@ -183,7 +241,7 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
   });
 
   app.post('/api/users', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const { name, username, email, password, roles: roleNames = ['Nutzer'] } = req.body;
+    const { name, username, email, password, roles: roleNames = ['Nutzer'], departmentIds = [] } = req.body;
     if (!String(username || '').trim() || !normalize(email).includes('@')) {
       return res.status(400).json({ error: 'Nutzername und gültige E-Mail-Adresse sind erforderlich.' });
     }
@@ -191,9 +249,12 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     const hasStartPassword = typeof password === 'string' && password.length > 0;
     if (hasStartPassword && !passwordIsValid(password)) return res.status(400).json({ error: 'Das Passwort muss mindestens 12 Zeichen sowie Groß-/Kleinbuchstaben, Zahl und Sonderzeichen enthalten.' });
     if (!roleNamesAreValid(roleNames)) return res.status(400).json({ error: 'Mindestens eine gültige Rolle ist erforderlich.' });
+    const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
+    if (departmentError) return res.status(400).json({ error: departmentError });
     const user = {
       id: nextId('user', users), name: String(name || '').trim(), username: String(username).trim(),
       email: normalize(email), passwordHash: bcrypt.hashSync(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: roleNames,
+      departmentIds: [...new Set(departmentIds)],
       permissions: permissionsForRoles(roleNames, roles), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
       createdAt: new Date().toISOString(), lastLoginAt: null,
@@ -212,16 +273,19 @@ function registerUserRoutes({ app, users, roles, permissions, authMiddleware, re
     const email = normalize(req.body.email ?? user.email);
     const username = String(req.body.username ?? user.username).trim();
     const roleNames = req.body.roles ?? user.roles;
+    const departmentIds = req.body.departmentIds ?? user.departmentIds ?? [];
     if (!username || !email.includes('@')) return res.status(400).json({ error: 'Ungültige Nutzerdaten.' });
     if (users.some((entry) => entry.id !== user.id && (normalize(entry.email) === email || normalize(entry.username) === normalize(username)))) {
       return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
     }
     if (!roleNamesAreValid(roleNames)) return res.status(400).json({ error: 'Ungültige Rolle.' });
+    const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
+    if (departmentError) return res.status(400).json({ error: departmentError });
     const nextActive = req.body.active ?? user.active;
     if ((!nextActive || !roleNames.includes('Admin')) && isLastAdmin(user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht deaktiviert oder herabgestuft werden.' });
     if (req.body.password && !passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
     const emailChanged = email !== normalize(user.email);
-    Object.assign(user, { name: String(req.body.name ?? user.name ?? '').trim(), username, email, roles: roleNames, active: nextActive });
+    Object.assign(user, { name: String(req.body.name ?? user.name ?? '').trim(), username, email, roles: roleNames, departmentIds: [...new Set(departmentIds)], active: nextActive });
     user.permissions = permissionsForRoles(roleNames, roles);
     if (req.body.password) {
       user.passwordHash = bcrypt.hashSync(req.body.password, 12);

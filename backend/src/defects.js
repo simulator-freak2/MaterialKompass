@@ -128,6 +128,9 @@ function registerDefectManagement({
     report.operationalSafety ||= 'Nicht einsatzfähig';
     report.assignee ||= '';
     report.responsibleDepartment ||= '';
+    report.contactName ||= report.reportedByName || '';
+    report.contactEmail ||= '';
+    report.contactPhone ||= '';
     report.dueDate ||= null;
     report.estimatedCost ??= null;
     report.actualCost ??= null;
@@ -221,10 +224,14 @@ function registerDefectManagement({
     const title = text(body.title, 160);
     const description = text(body.description, 10_000);
     const priority = text(body.priority || 'Normal', 32);
+    const contactEmail = text(body.contactEmail, 255).toLowerCase();
     const affectedQuantity = Number(body.affectedQuantity ?? 1);
     if (!ENTITY_TYPES.includes(entityType) || !entity) return { error: 'Der betroffene Artikel ist ungültig.' };
     if (!title || !description) return { error: 'Titel und Beschreibung sind Pflichtfelder.' };
     if (!DEFECT_PRIORITIES.includes(priority)) return { error: 'Die Priorität ist ungültig.' };
+    if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+      return { error: 'Die Kontakt-E-Mail-Adresse ist ungültig.' };
+    }
     const maximum = entityType === 'MaterialItem' ? Number(entity.quantity || 1) : 1;
     if (!Number.isFinite(affectedQuantity) || affectedQuantity <= 0 || affectedQuantity > maximum) return { error: 'Die betroffene Menge ist ungültig.' };
     return { entityType, entityId, entity, title, description, priority, affectedQuantity };
@@ -253,6 +260,9 @@ function registerDefectManagement({
       riskLevel: text(body.riskLevel || 'Keine Angabe', 80),
       operationalSafety: text(body.operationalSafety || 'Nicht einsatzfähig', 80),
       assignee: text(body.assignee, 255), responsibleDepartment: text(body.responsibleDepartment, 255),
+      contactName: text(body.contactName || user.name || user.username, 255),
+      contactEmail: text(body.contactEmail || user.email, 255).toLowerCase(),
+      contactPhone: text(body.contactPhone, 80),
       dueDate: body.dueDate || null, estimatedCost: numberOrNull(body.estimatedCost), actualCost: null,
       resolution: '', reportedAt: createdAt, reportedBy: user.id,
       reportedByName: user.name || user.username, createdAt, updatedAt: createdAt,
@@ -312,6 +322,8 @@ function registerDefectManagement({
         Artikel: entity?.name || '', Inventarnummer: entity?.inventoryNumber || '',
         Menge: report.affectedQuantity, Status: report.status, Priorität: report.priority,
         Verantwortlich: report.assignee, Frist: report.dueDate || '',
+        Kontakt: report.contactName || '', 'Kontakt E-Mail': report.contactEmail || '',
+        'Kontakt Telefon': report.contactPhone || '',
         'Gemeldet am': report.reportedAt, Beschreibung: report.description,
         'Geschätzte Kosten': report.estimatedCost ?? '', 'Tatsächliche Kosten': report.actualCost ?? '',
       };
@@ -367,8 +379,13 @@ function registerDefectManagement({
       if (!DEFECT_PRIORITIES.includes(req.body.priority)) return res.status(400).json({ error: 'Ungültige Priorität.' });
       report.priority = req.body.priority;
     }
-    ['damageType', 'cause', 'riskLevel', 'operationalSafety', 'responsibleDepartment', 'resolution']
+    ['damageType', 'cause', 'riskLevel', 'operationalSafety', 'responsibleDepartment',
+      'contactName', 'contactEmail', 'contactPhone', 'resolution']
       .forEach((field) => { if (req.body[field] !== undefined) report[field] = text(req.body[field], field === 'cause' || field === 'resolution' ? 5000 : 255); });
+    report.contactEmail = report.contactEmail.toLowerCase();
+    if (report.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(report.contactEmail)) {
+      return res.status(400).json({ error: 'Die Kontakt-E-Mail-Adresse ist ungültig.' });
+    }
     if (req.body.dueDate !== undefined) report.dueDate = req.body.dueDate || null;
     if (req.body.estimatedCost !== undefined) report.estimatedCost = numberOrNull(req.body.estimatedCost);
     if (req.body.actualCost !== undefined) report.actualCost = numberOrNull(req.body.actualCost);
@@ -378,7 +395,8 @@ function registerDefectManagement({
     if (req.body.followUpTasks !== undefined && Array.isArray(req.body.followUpTasks)) report.followUpTasks = req.body.followUpTasks.slice(0, 100);
     const trackedFields = [
       'title', 'description', 'priority', 'damageType', 'cause', 'riskLevel',
-      'operationalSafety', 'responsibleDepartment', 'dueDate', 'estimatedCost',
+      'operationalSafety', 'responsibleDepartment', 'contactName', 'contactEmail',
+      'contactPhone', 'dueDate', 'estimatedCost',
       'actualCost', 'resolution', 'recurrenceOfId', 'duplicateOfId',
       'relatedActions', 'followUpTasks',
     ];

@@ -86,6 +86,45 @@ test('procurement persists requested budget and needs one approval', async () =>
   } finally { server.close(); }
 });
 
+test('department heads can only request and see their assigned departments', async () => {
+  const { server, baseUrl, login, admin } = await start();
+  try {
+    const department = await jsonRequest(`${baseUrl}/api/departments`, admin, 'POST', {
+      name: 'Ausbildung', code: 'AUSB', active: true,
+    });
+    const otherDepartment = await jsonRequest(`${baseUrl}/api/departments`, admin, 'POST', {
+      name: 'Öffentlichkeitsarbeit', code: 'OEFF', active: true,
+    });
+    const leader = await jsonRequest(`${baseUrl}/api/users`, admin, 'POST', {
+      name: 'Fiona Fachbereich',
+      username: 'fachbereich',
+      email: 'fachbereich@test.local',
+      password: 'Testpasswort123!',
+      roles: ['Fachbereichsleiter'],
+      departmentIds: [department.data.id],
+    });
+    assert.equal(leader.response.status, 201);
+    const leaderToken = await login('fachbereich@test.local', 'Testpasswort123!');
+    const requestBody = {
+      title: 'Übungsmaterial',
+      reason: 'Ausbildungsbetrieb',
+      requestedBudgetGross: 100,
+      items: [{ name: 'Leinen', categoryId: '02', quantity: 2, unit: 'Stück' }],
+    };
+
+    const forbidden = await jsonRequest(`${baseUrl}/api/procurement`, leaderToken, 'POST', {
+      ...requestBody, departmentId: otherDepartment.data.id,
+    });
+    assert.equal(forbidden.response.status, 403);
+    const created = await jsonRequest(`${baseUrl}/api/procurement`, leaderToken, 'POST', {
+      ...requestBody, departmentId: department.data.id,
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.data.department, 'Ausbildung');
+    assert.equal(created.data.departmentId, department.data.id);
+  } finally { server.close(); }
+});
+
 test('procurement supports offer selection, split workflow, receipts and inventory transfer', async () => {
   const { server, baseUrl, login, admin } = await start();
   try {

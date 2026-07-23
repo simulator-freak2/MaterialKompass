@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/file_save_mime_type.dart';
+import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
+import '../widgets/label_print_dialogs.dart';
 
 class ProcurementPage extends StatefulWidget {
   final String token;
@@ -36,6 +39,8 @@ class _ProcurementPageState extends State<ProcurementPage> {
       };
 
   bool _can(String permission) => _permissions.contains(permission);
+  bool get _canPrintLabels =>
+      LabelPrintService.instance.supported && userMayPrintLabels(_roles);
 
   @override
   void initState() {
@@ -438,6 +443,33 @@ class _ProcurementPageState extends State<ProcurementPage> {
           '${(result['created'] as List).length} Inventareinträge wurden erzeugt.');
       if (mounted) Navigator.pop(context);
       await _load();
+      if (_canPrintLabels && mounted) {
+        final created = (result['created'] as List)
+            .map((entry) => Map<String, dynamic>.from(entry as Map))
+            .toList();
+        final materials =
+            created.where((entry) => entry['entity'] == 'material').toList();
+        final clothing =
+            created.where((entry) => entry['entity'] == 'clothing').toList();
+        if (materials.isNotEmpty) {
+          await showLabelPrintDialog(
+            context,
+            labels: materials
+                .map((item) => LabelData.fromItem(item, LabelType.inventory))
+                .toList(),
+            type: LabelType.inventory,
+          );
+        }
+        if (clothing.isNotEmpty && mounted) {
+          await showLabelPrintDialog(
+            context,
+            labels: clothing
+                .map((item) => LabelData.fromItem(item, LabelType.clothing))
+                .toList(),
+            type: LabelType.clothing,
+          );
+        }
+      }
     }
   }
 
@@ -516,6 +548,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: format,
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType(format),
     );
     _message('$fileName wurde erstellt.');
   }
@@ -535,6 +568,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: extension,
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType(extension),
     );
     _message('$fileName wurde gespeichert.');
   }
@@ -549,6 +583,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: 'pdf',
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType('pdf'),
     );
     _message('$fileName wurde erstellt.');
   }
@@ -644,6 +679,18 @@ class _ProcurementPageState extends State<ProcurementPage> {
             Tab(icon: Icon(Icons.local_shipping_outlined), text: 'Lieferanten')
           ]),
           actions: [
+            if (_canPrintLabels)
+              IconButton(
+                onPressed: () => showPrinterSettingsDialog(context),
+                tooltip: 'Etikettendrucker einrichten',
+                icon: const Icon(Icons.settings_outlined),
+              ),
+            if (_canPrintLabels)
+              IconButton(
+                onPressed: () => showPrintQueueDialog(context),
+                tooltip: 'Zwischengespeicherte Druckaufträge',
+                icon: const Icon(Icons.queue),
+              ),
             IconButton(
                 onPressed: _load,
                 tooltip: 'Aktualisieren',
@@ -1497,6 +1544,7 @@ class _TransferDialogState extends State<TransferDialog> {
   String itemType = 'individual';
   bool resolved = false;
   final manufacturer = TextEditingController(),
+      manufacturingYear = TextEditingController(),
       model = TextEditingController(),
       interval = TextEditingController();
   final Map<String, String> selectedSizes = {};
@@ -1551,6 +1599,7 @@ class _TransferDialogState extends State<TransferDialog> {
   @override
   void dispose() {
     manufacturer.dispose();
+    manufacturingYear.dispose();
     model.dispose();
     interval.dispose();
     super.dispose();
@@ -1610,6 +1659,7 @@ class _TransferDialogState extends State<TransferDialog> {
                       ],
                       onChanged: (v) => setState(() => itemType = v!))),
               field(manufacturer, 'Hersteller', 180),
+              field(manufacturingYear, 'Baujahr', 180),
               field(model, 'Modell', 180),
               field(interval, 'Prüfintervall Monate', 180),
               ...(widget.receipt['items'] as List? ?? const []).map((raw) {
@@ -1673,6 +1723,7 @@ class _TransferDialogState extends State<TransferDialog> {
                       'stockStructureId': stock,
                       'itemType': itemType,
                       'manufacturer': manufacturer.text,
+                      'manufacturingYear': manufacturingYear.text,
                       'model': model.text,
                       'inspectionIntervalMonths': int.tryParse(interval.text),
                       'size': selectedSizes[receiptItem['requestItemId']] ?? ''

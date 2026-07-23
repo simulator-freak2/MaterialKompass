@@ -12,6 +12,7 @@ const IMPORT_ALIASES = {
   status: 'status', anzahl: 'quantity', einheit: 'unit', typ: 'itemType',
   hersteller: 'manufacturer', modell: 'model', seriennummer: 'serialNumber',
   anschaffungsdatum: 'purchaseDate', kaufpreis: 'purchasePrice',
+  baujahr: 'manufacturingYear',
   beschreibung: 'description', notizen: 'notes', fachbereich: 'department',
   prufintervallmonate: 'inspectionIntervalMonths', nachsterpruftermin: 'nextInspectionDate',
 };
@@ -101,6 +102,7 @@ function registerInventoryRoutes({
       unit: String(req.body.unit || 'Stück').trim() || 'Stück', issuedQuantity: 0,
       manufacturer: String(req.body.manufacturer || '').trim(), model: String(req.body.model || '').trim(),
       serialNumber: String(req.body.serialNumber || '').trim(), purchaseDate: req.body.purchaseDate || null,
+      manufacturingYear: String(req.body.manufacturingYear || '').trim(),
       purchasePrice: req.body.purchasePrice === '' || req.body.purchasePrice == null ? null : number(req.body.purchasePrice),
       description: String(req.body.description || '').trim(), notes: String(req.body.notes || '').trim(),
       department: String(req.body.department || '').trim(),
@@ -279,7 +281,7 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, 'Regal/Fach': item.stockStructureId || '', Status: item.status, Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, 'Regal/Fach': item.stockStructureId || '', Status: item.status, Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), archived ? 'Archiv' : 'Inventar');
     const fileName = `${archived ? 'inventar-archiv' : 'inventar'}-${new Date().toISOString().slice(0, 10)}.${format}`;
     res.json({ fileName, fileBase64: XLSX.write(workbook, { type: 'buffer', bookType: format }).toString('base64') });

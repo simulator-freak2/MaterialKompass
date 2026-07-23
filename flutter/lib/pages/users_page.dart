@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../widgets/qr_login_dialog.dart';
 
 class UsersPage extends StatefulWidget {
   final String token;
@@ -17,6 +18,7 @@ class _UsersPageState extends State<UsersPage> {
   final searchController = TextEditingController();
   List<Map<String, dynamic>> users = [];
   List<Map<String, dynamic>> roles = [];
+  List<Map<String, dynamic>> departments = [];
   bool loading = true;
 
   Map<String, String> get headers => {
@@ -37,6 +39,7 @@ class _UsersPageState extends State<UsersPage> {
       http.get(Uri.parse('$apiBaseUrl/api/users?search=$query'),
           headers: headers),
       http.get(Uri.parse('$apiBaseUrl/api/roles'), headers: headers),
+      http.get(Uri.parse('$apiBaseUrl/api/departments'), headers: headers),
     ]);
     if (!mounted) return;
     if (responses.any((response) => response.statusCode != 200)) {
@@ -47,6 +50,10 @@ class _UsersPageState extends State<UsersPage> {
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
       roles = (jsonDecode(responses[1].body) as List)
+          .cast<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      departments = (jsonDecode(responses[2].body) as List)
           .cast<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
@@ -79,7 +86,8 @@ class _UsersPageState extends State<UsersPage> {
       context: context,
       builder: (_) => UserDialog(
           user: user,
-          roles: roles.map((role) => role['name'].toString()).toList()),
+          roles: roles.map((role) => role['name'].toString()).toList(),
+          departments: departments),
     );
     if (result == null) return;
     final ok = await _send(user == null ? 'POST' : 'PUT',
@@ -110,6 +118,29 @@ class _UsersPageState extends State<UsersPage> {
             ));
     if (confirmed == true && await _send('DELETE', '/api/users/${user['id']}'))
       await load();
+  }
+
+  Future<void> createQrLogin(Map<String, dynamic> user) async {
+    final response = await http.post(
+      Uri.parse('$apiBaseUrl/api/users/${user['id']}/qr-credential'),
+      headers: headers,
+      body: '{}',
+    );
+    final data = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    if (!mounted) return;
+    if (response.statusCode != 201) {
+      _message(
+          data['error']?.toString() ?? 'QR-Code konnte nicht erstellt werden.');
+      return;
+    }
+    await showQrLoginCode(
+      context,
+      qrValue: data['qrValue'].toString(),
+      expiresAt: DateTime.parse(data['expiresAt'].toString()),
+      accountLabel: user['name']?.toString() ?? user['username'].toString(),
+    );
   }
 
   List<String> get allPermissions {
@@ -166,6 +197,51 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<void> editDepartment([Map<String, dynamic>? department]) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => DepartmentDialog(department: department),
+    );
+    if (result == null) return;
+    final ok = await _send(
+      department == null ? 'POST' : 'PUT',
+      department == null
+          ? '/api/departments'
+          : '/api/departments/${department['id']}',
+      result,
+    );
+    if (ok) {
+      _message(department == null
+          ? 'Fachbereich wurde angelegt.'
+          : 'Fachbereich wurde aktualisiert.');
+      await load();
+    }
+  }
+
+  Future<void> deleteDepartment(Map<String, dynamic> department) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Fachbereich löschen?'),
+        content: Text(
+            '„${department['name']}“ wird dauerhaft gelöscht. Zugewiesene Fachbereiche können nur deaktiviert werden.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Löschen')),
+        ],
+      ),
+    );
+    if (confirmed == true &&
+        await _send('DELETE', '/api/departments/${department['id']}')) {
+      _message('Fachbereich wurde gelöscht.');
+      await load();
+    }
+  }
+
   String date(Object? value) {
     if (value == null) return '—';
     final parsed = DateTime.tryParse(value.toString())?.toLocal();
@@ -176,13 +252,14 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-        length: 2,
+        length: 3,
         child: Scaffold(
           appBar: AppBar(
               title: const Text('Nutzerverwaltung'),
               bottom: const TabBar(tabs: [
                 Tab(text: 'Nutzer', icon: Icon(Icons.people)),
-                Tab(text: 'Rollen', icon: Icon(Icons.admin_panel_settings))
+                Tab(text: 'Rollen', icon: Icon(Icons.admin_panel_settings)),
+                Tab(text: 'Fachbereiche', icon: Icon(Icons.account_tree))
               ])),
           body: loading
               ? const Center(child: CircularProgressIndicator())
@@ -232,6 +309,12 @@ class _UsersPageState extends State<UsersPage> {
                                     '${user['email']}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}'),
                                 isThreeLine: true,
                                 trailing: Wrap(children: [
+                                  IconButton(
+                                      tooltip: 'Einmaligen Anmelde-QR-Code erstellen',
+                                      onPressed: active
+                                          ? () => createQrLogin(user)
+                                          : null,
+                                      icon: const Icon(Icons.qr_code_2)),
                                   IconButton(
                                       tooltip: 'Passwort-Reset senden',
                                       onPressed: () async {
@@ -284,6 +367,47 @@ class _UsersPageState extends State<UsersPage> {
                                         ]))))
                                 .toList())),
                   ]),
+                  Column(children: [
+                    Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(children: [
+                          const Expanded(
+                              child: Text(
+                                  'Zentrale Fachbereiche bilden den Geltungsbereich für Fachbereichsleiter.')),
+                          FilledButton.icon(
+                              onPressed: () => editDepartment(),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Fachbereich anlegen')),
+                        ])),
+                    Expanded(
+                        child: ListView(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            children: departments
+                                .map((department) => Card(
+                                    child: ListTile(
+                                        leading: Icon(
+                                            department['active'] == false
+                                                ? Icons.account_tree_outlined
+                                                : Icons.account_tree),
+                                        title:
+                                            Text(department['name'].toString()),
+                                        subtitle: Text(
+                                            '${department['code']} · ${department['active'] == false ? 'Deaktiviert' : 'Aktiv'}'),
+                                        trailing: Wrap(children: [
+                                          IconButton(
+                                              tooltip: 'Fachbereich bearbeiten',
+                                              onPressed: () =>
+                                                  editDepartment(department),
+                                              icon: const Icon(Icons.edit)),
+                                          IconButton(
+                                              tooltip: 'Fachbereich löschen',
+                                              onPressed: () =>
+                                                  deleteDepartment(department),
+                                              icon: const Icon(
+                                                  Icons.delete_outline)),
+                                        ]))))
+                                .toList())),
+                  ]),
                 ]),
         ),
       );
@@ -292,7 +416,12 @@ class _UsersPageState extends State<UsersPage> {
 class UserDialog extends StatefulWidget {
   final Map<String, dynamic>? user;
   final List<String> roles;
-  const UserDialog({required this.user, required this.roles, super.key});
+  final List<Map<String, dynamic>> departments;
+  const UserDialog(
+      {required this.user,
+      required this.roles,
+      this.departments = const [],
+      super.key});
   @override
   State<UserDialog> createState() => _UserDialogState();
 }
@@ -309,6 +438,11 @@ class _UserDialogState extends State<UserDialog> {
   late Set<String> selectedRoles =
       ((widget.user?['roles'] as List?)?.map((e) => e.toString()).toSet()) ??
           {'Nutzer'};
+  late Set<String> selectedDepartmentIds =
+      ((widget.user?['departmentIds'] as List?)
+              ?.map((e) => e.toString())
+              .toSet()) ??
+          {};
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -350,6 +484,31 @@ class _UserDialogState extends State<UserDialog> {
                         else
                           selectedRoles.remove(role);
                       }))),
+              const SizedBox(height: 12),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Geleitete Fachbereiche',
+                      style: Theme.of(context).textTheme.titleSmall)),
+              if (widget.departments.isEmpty)
+                const ListTile(
+                    dense: true,
+                    title: Text('Noch keine Fachbereiche angelegt.'))
+              else
+                ...widget.departments.map((department) => CheckboxListTile(
+                    dense: true,
+                    value: selectedDepartmentIds.contains(department['id']),
+                    title: Text(department['name'].toString()),
+                    subtitle: Text(department['code'].toString()),
+                    enabled: department['active'] != false,
+                    onChanged: (value) => setState(() {
+                          if (value == true) {
+                            selectedDepartmentIds
+                                .add(department['id'].toString());
+                          } else {
+                            selectedDepartmentIds
+                                .remove(department['id'].toString());
+                          }
+                        }))),
               SwitchListTile(
                   value: active,
                   title: const Text('Account aktiv'),
@@ -366,6 +525,7 @@ class _UserDialogState extends State<UserDialog> {
                   'username': username.text,
                   'email': email.text,
                   'roles': selectedRoles.toList(),
+                  'departmentIds': selectedDepartmentIds.toList(),
                   'active': active
                 };
                 if (password.text.isNotEmpty)
@@ -373,6 +533,57 @@ class _UserDialogState extends State<UserDialog> {
                 Navigator.pop(context, result);
               },
               child: const Text('Speichern'))
+        ],
+      );
+}
+
+class DepartmentDialog extends StatefulWidget {
+  final Map<String, dynamic>? department;
+  const DepartmentDialog({this.department, super.key});
+
+  @override
+  State<DepartmentDialog> createState() => _DepartmentDialogState();
+}
+
+class _DepartmentDialogState extends State<DepartmentDialog> {
+  late final name =
+      TextEditingController(text: widget.department?['name']?.toString());
+  late final code =
+      TextEditingController(text: widget.department?['code']?.toString());
+  late bool active = widget.department?['active'] != false;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.department == null
+            ? 'Fachbereich anlegen'
+            : 'Fachbereich bearbeiten'),
+        content: SizedBox(
+            width: 440,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                  controller: name,
+                  decoration:
+                      const InputDecoration(labelText: 'Bezeichnung *')),
+              TextField(
+                  controller: code,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(labelText: 'Kürzel *')),
+              SwitchListTile(
+                  value: active,
+                  title: const Text('Fachbereich aktiv'),
+                  onChanged: (value) => setState(() => active = value)),
+            ])),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, {
+                    'name': name.text,
+                    'code': code.text,
+                    'active': active,
+                  }),
+              child: const Text('Speichern')),
         ],
       );
 }

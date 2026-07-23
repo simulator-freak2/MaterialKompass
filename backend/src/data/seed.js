@@ -41,6 +41,7 @@ const users = [
     email: 'admin@materialkompass.org',
     passwordHash: bcrypt.hashSync(process.env.INITIAL_ADMIN_PASSWORD || 'MaterialKompass2026!', 12),
     roles: ['Admin'],
+    departmentIds: [],
     permissions,
     active: true,
     failedLoginAttempts: 0,
@@ -55,6 +56,7 @@ const users = [
     email: 'materialwart@materialkompass.local',
     passwordHash: bcrypt.hashSync('Material123!', 10),
     roles: ['Materialwart'],
+    departmentIds: [],
     permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.write', 'documents.read', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'],
     active: true,
     failedLoginAttempts: 0,
@@ -62,6 +64,10 @@ const users = [
     lastLoginAt: null,
     emailVerifiedAt: '2026-01-02T00:00:00.000Z',
   },
+];
+
+const departments = [
+  { id: 'department-technik', name: 'Technik', code: 'TECH', active: true },
 ];
 
 const locations = [
@@ -154,6 +160,7 @@ module.exports = {
     permissions,
     roles,
     users,
+    departments,
     locations,
     stockStructures,
     categories,

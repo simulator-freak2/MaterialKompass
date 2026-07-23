@@ -19,6 +19,7 @@ MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Orts
 - Aus-/Rückgabe, Umbuchung, Archiv und vollständiger Bewegungsverlauf
 - Prüfungen, vollständiges Mängelmanagement, Dokumente sowie XLSX-/ODS-Import und -Export
 - Barcode-/QR-Code-Anzeige, Handscanner- und Webkamera-Unterstützung
+- ZPL-Etikettendruck über LAN für Zebra-Drucker unter Windows und Android
 - Vollständige Beschaffung mit Anträgen, allgemeinen Kategorien und Brutto-Preisen
 - Beantragtes Budget auf Vorgangsebene ohne Einzelpreise im Antrag
 - Freigabeworkflow mit einer Freigabe durch Vorsitz oder Schatzmeister
@@ -34,6 +35,8 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
 - Automatische Mangelnummern im Format `M-JJJJ-NNNN`, Prioritäten, Teilmengen,
   Schadensart, Ursache, Gefährdung, Einsatzsicherheit, Verantwortliche, Fristen und Kosten
 - Kommentare, Checklisten, Folgeaufgaben, JPEG-/PNG-Nachweise und ein vollständiger Änderungsverlauf
+- Bilder können bereits beim Erfassen ausgewählt werden; Gefährdungsstufe,
+  Einsatzbereitschaft sowie Kontaktname, E-Mail und Telefon sind direkt hinterlegbar
 - Verknüpfungen zu Prüfungen, Reparaturen, Beschaffungen und Aussonderungen sowie
   Kennzeichnung von Wiederholungen und Duplikaten
 - Fehlgeschlagene Inventar- und Kleidungsprüfungen erzeugen automatisch einen Mangel
@@ -166,19 +169,25 @@ für `/#/verify-email` und `/#/password-reset` an Flutter gehen. Das Backend bra
 den IONOS-Versand typischerweise `SMTP_HOST=smtp.ionos.de`, Port 587 und TLS über
 STARTTLS (`SMTP_SECURE=false`).
 
-### Installierbare Apps und automatische Update-Prüfung
+### Fest installierbare Apps und automatische Updates
 
 Der Flutter-Client ist nativ für Windows, Linux und Android eingerichtet. Alle drei Apps
 laden ihre Anwendungsdaten über dieselbe REST-API. Beim Start und danach alle sechs
-Stunden fragt die App automatisch `GET /api/client-updates/<plattform>` ab. Ein neues
-Release wird über den Sicherheitsdialog des Betriebssystems geöffnet; eine konfigurierte
-Mindestversion erzwingt das Update, ohne Betriebssystem-Schutzmechanismen zu umgehen.
+Stunden fragt die App automatisch `GET /api/client-updates/<plattform>` ab. Bei einem
+neuen Release lädt MaterialKompass den Installer selbst in ein temporäres Verzeichnis,
+zeigt den Fortschritt an, prüft Größe und SHA-256 und startet anschließend direkt den
+System-Installer. Ein Browser oder manuelles Suchen im Download-Ordner ist nicht nötig.
+Eine konfigurierte Mindestversion erzwingt das Update.
+
+Die abschließende Sicherheitsfreigabe bleibt beim Betriebssystem: Windows verlangt je
+nach Signatur/SmartScreen eine Bestätigung, Linux die Administratorfreigabe und Android
+die Bestätigung des Paket-Installers. Diese Dialoge dürfen normale Apps nicht umgehen.
 
 Bei der Docker-Bereitstellung erwartet `compose.yaml` diese Release-Dateien:
 
 ```text
-releases/MaterialKompass-Windows.zip
-releases/MaterialKompass-Linux.tar.gz
+releases/MaterialKompass-Windows.exe
+releases/MaterialKompass-Linux.deb
 releases/MaterialKompass-Android.apk
 ```
 
@@ -189,38 +198,49 @@ eingebunden. Abweichende Pfade können mit `DOWNLOAD_WINDOWS_PATH`,
 die kleinste noch zulässige Version. `CLIENT_UPDATE_NOTES` enthält optionale Hinweise.
 Release-Binärdateien und Signaturschlüssel werden nicht in Git eingecheckt.
 
-Die Desktop-Pakete müssen auf dem jeweiligen Zielsystem mit der produktiven API-Adresse
-gebaut werden. Vom Repository-Stamm aus beispielsweise:
+Die Installer werden auf dem jeweiligen Zielsystem mit der produktiven API-Adresse
+gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno Setup 6:
 
 ```powershell
-cd flutter
-flutter build windows --release --dart-define=API_BASE_URL=https://materialkompass.org
-cd ..
-Compress-Archive -Path flutter\build\windows\x64\runner\Release\* -DestinationPath releases\MaterialKompass-Windows.zip -Force
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.0.0
 ```
 
 ```bash
-cd flutter
-flutter build linux --release --dart-define=API_BASE_URL=https://materialkompass.org
-cd ..
-tar -czf releases/MaterialKompass-Linux.tar.gz -C flutter/build/linux/x64/release/bundle .
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.0.0
 ```
 
-Android wird als signiertes APK gebaut. Vor einem produktiven Release muss in
-`flutter/android/app/build.gradle.kts` eine eigene Release-Signatur statt des
-Entwicklungszertifikats konfiguriert werden. Anschließend:
+Android wird als signiertes APK gebaut. `flutter/android/key.properties` muss auf den
+dauerhaften Release-Key verweisen; Updates lassen sich nur installieren, wenn sie mit
+demselben Schlüssel wie die bereits installierte App signiert sind. Anschließend:
 
 ```bash
-cd flutter
-flutter build apk --release --dart-define=API_BASE_URL=https://materialkompass.org
-cp build/app/outputs/flutter-apk/app-release.apk ../releases/MaterialKompass-Android.apk
+.\packaging\android\build_installer.ps1 -ApiBaseUrl https://materialkompass.org
 ```
 
 Nach dem Kopieren werden die passenden `CLIENT_*_VERSION`-Werte in `.env` erhöht und
 der Backend-Container neu gestartet. Release-Builds akzeptieren ausschließlich eine
-HTTPS-API-Adresse. Android verlangt bei direkter APK-Verteilung einmalig die Freigabe
-„Unbekannte Apps installieren“; alternativ kann dasselbe APK/AAB über einen verwalteten
-App-Store verteilt werden.
+HTTPS-API-Adresse. Die erste Installation erfolgt durch Öffnen des jeweiligen EXE-,
+DEB- oder APK-Installers. Danach übernimmt die App die Update-Downloads selbst.
+
+Der GitHub-Workflow `.github/workflows/client-installers.yml` erzeugt alle drei Installer
+manuell als Build-Artefakte. Für Android müssen zuvor die Repository-Secrets
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` und
+`ANDROID_KEY_PASSWORD` gesetzt werden. Windows-Installer sollten vor öffentlicher
+Verteilung zusätzlich mit einem Code-Signing-Zertifikat signiert werden.
+
+### Etikettendruck
+
+Windows und Android können Etiketten im Format 50,8 × 25,4 mm mit 203 dpi direkt
+per ZPL über eine LAN-Verbindung drucken. In Inventar, Kleiderkammer und
+Beschaffungsübernahme stehen Vorschau, Mehrfachdruck und lokal gespeicherte
+Druckereinstellungen zur Verfügung. Unterstützt werden mehrere Drucker mit getrennten
+Standardeinstellungen für Inventar und Kleidung, Port 9100, Geschwindigkeit,
+Schwärzungsgrad und Testdruck.
+
+Der Druck ist den Rollen Materialwart, Kleiderwart und Vorsitz vorbehalten. Die
+Webanwendung bietet bewusst keinen direkten Netzwerkdruck. Fehlgeschlagene Aufträge
+können während der laufenden App-Sitzung zwischengespeichert und manuell erneut
+gestartet werden; beim Schließen der App werden sie verworfen.
 
 ## Geplante Erweiterungen
 

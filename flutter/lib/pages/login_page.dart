@@ -1,11 +1,15 @@
 import 'dart:convert';
 
 import 'package:file_saver/file_saver.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/browser_download.dart';
+import '../services/file_save_mime_type.dart';
+import '../widgets/qr_login_dialog.dart';
 import 'dashboard_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -61,18 +65,34 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> downloadDesktopApp(Map<String, dynamic> download) async {
     final platform = download['platform']?.toString() ?? '';
     if (platform.isEmpty || download['available'] != true) return;
+    final downloadUri = Uri.parse('$apiBaseUrl/api/downloads/$platform');
+
+    if (kIsWeb) {
+      try {
+        final launched = await startBrowserDownload(downloadUri);
+        if (!launched) {
+          throw Exception('Der Download konnte nicht gestartet werden.');
+        }
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+      return;
+    }
+
     setState(() => activeDownload = platform);
     try {
-      final response =
-          await http.get(Uri.parse('$apiBaseUrl/api/downloads/$platform'));
+      final response = await http.get(downloadUri);
       if (response.statusCode != 200) {
         throw Exception('Der Download ist derzeit nicht verfügbar.');
       }
       final fileName = download['fileName']?.toString() ??
           switch (platform) {
-            'windows' => 'MaterialKompass-Windows.zip',
+            'windows' => 'MaterialKompass-Windows.exe',
             'android' => 'MaterialKompass-Android.apk',
-            _ => 'MaterialKompass-Linux.tar.gz',
+            _ => 'MaterialKompass-Linux.deb',
           };
       final extension = fileName.toLowerCase().endsWith('.tar.gz')
           ? 'tar.gz'
@@ -84,6 +104,7 @@ class _LoginPageState extends State<LoginPage> {
         bytes: response.bodyBytes,
         fileExtension: extension,
         mimeType: MimeType.custom,
+        customMimeType: fileMimeType(extension),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -159,6 +180,36 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> loginWithQrCode() async {
+    final credential = await scanQrLoginCode(context);
+    if (credential == null || !mounted) return;
+    setState(() => loading = true);
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/auth/qr-login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'credential': credential}),
+      );
+      final data = response.body.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+              builder: (_) => DashboardPage(token: data['token'].toString())),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(data['error']?.toString() ?? 'QR-Anmeldung fehlgeschlagen.'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -218,6 +269,11 @@ class _LoginPageState extends State<LoginPage> {
                           TextButton(
                               onPressed: loading ? null : requestPasswordReset,
                               child: const Text('Passwort vergessen?')),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : loginWithQrCode,
+                            icon: const Icon(Icons.qr_code_scanner),
+                            label: const Text('Mit QR-Code anmelden'),
+                          ),
                           const Divider(height: 32),
                           const Text(
                             'App herunterladen',
