@@ -9,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
+import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/label_print_dialogs.dart';
@@ -1146,6 +1147,7 @@ class _InventoryPageState extends State<InventoryPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: format,
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType(format),
     );
     _message('Export wurde erstellt.');
   }

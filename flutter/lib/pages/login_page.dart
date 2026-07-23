@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import '../constants.dart';
 import '../services/browser_download.dart';
+import '../services/file_save_mime_type.dart';
 import '../widgets/qr_login_dialog.dart';
 import 'dashboard_page.dart';
 
@@ -103,6 +104,7 @@ class _LoginPageState extends State<LoginPage> {
         bytes: response.bodyBytes,
         fileExtension: extension,
         mimeType: MimeType.custom,
+        customMimeType: fileMimeType(extension),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -199,8 +201,8 @@ class _LoginPageState extends State<LoginPage> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              data['error']?.toString() ?? 'QR-Anmeldung fehlgeschlagen.'),
+          content:
+              Text(data['error']?.toString() ?? 'QR-Anmeldung fehlgeschlagen.'),
         ));
       }
     } finally {

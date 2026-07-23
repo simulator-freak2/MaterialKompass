@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/file_save_mime_type.dart';
 import '../widgets/date_input_field.dart';
 
 const _statuses = <String>[
@@ -240,6 +241,7 @@ class _DefectsPageState extends State<DefectsPage> {
       bytes: base64Decode(data['fileBase64'].toString()),
       fileExtension: dot > 0 ? fileName.substring(dot + 1) : format,
       mimeType: MimeType.custom,
+      customMimeType: data['mimeType']?.toString() ?? fileMimeType(format),
     );
     if (mounted) _message('$fileName wurde erstellt.');
   }

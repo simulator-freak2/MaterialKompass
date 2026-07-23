@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/label_print_dialogs.dart';
@@ -547,6 +548,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: format,
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType(format),
     );
     _message('$fileName wurde erstellt.');
   }
@@ -566,6 +568,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: extension,
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType(extension),
     );
     _message('$fileName wurde gespeichert.');
   }
@@ -580,6 +583,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       bytes: base64Decode(data['fileBase64']),
       fileExtension: 'pdf',
       mimeType: MimeType.custom,
+      customMimeType: fileMimeType('pdf'),
     );
     _message('$fileName wurde erstellt.');
   }
