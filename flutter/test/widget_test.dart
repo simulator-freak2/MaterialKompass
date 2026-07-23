@@ -15,9 +15,10 @@ void main() {
 
     expect(find.text('MaterialKompass Login'), findsOneWidget);
     expect(find.text('Interne Materialverwaltung'), findsOneWidget);
-    expect(find.text('Desktop-App herunterladen'), findsOneWidget);
+    expect(find.text('App herunterladen'), findsOneWidget);
     expect(find.text('Windows nicht verfügbar'), findsOneWidget);
     expect(find.text('Linux nicht verfügbar'), findsOneWidget);
+    expect(find.text('Android nicht verfügbar'), findsOneWidget);
   });
 
   testWidgets('Dashboard is usable on a narrow phone screen',
@@ -41,6 +42,8 @@ void main() {
               'dueInspectionCount': 3,
               'clothingCount': 18,
               'defectCount': 1,
+              'openDefectCount': 1,
+              'defectsInProgressCount': 1,
               'procurementCount': 5,
               'pendingProcurementApprovals': 2,
               'overdueProcurementOrders': 1,
@@ -48,7 +51,7 @@ void main() {
             },
             'currentUser': {
               'roles': ['Admin'],
-              'permissions': ['locations.read'],
+              'permissions': ['locations.read', 'defects.read'],
             },
             'recentActivity': [
               {
@@ -87,6 +90,7 @@ void main() {
     );
     expect(find.text('Bereiche'), findsOneWidget);
     expect(find.text('Nutzerverwaltung'), findsOneWidget);
+    expect(find.text('Mängel'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.textContaining('Rettungsweste'),

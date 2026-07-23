@@ -39,11 +39,13 @@ async function start() {
 
     const app = createApp({ userStore: store, userData, data, dataStore: store });
     await app.locals.applyUserRetentionPolicy();
+    await app.locals.applyDefectRetentionPolicy();
     await app.locals.persistData();
     console.log(`Alle Anwendungsdaten aus MariaDB geladen (${userData.users.length} Accounts).`);
 
     const retentionTimer = setInterval(() => {
       app.locals.applyUserRetentionPolicy()
+        .then(() => app.locals.applyDefectRetentionPolicy())
         .then(() => app.locals.persistData())
         .catch((error) => console.error('Aufbewahrungsregel fehlgeschlagen:', error));
     }, 24 * 60 * 60 * 1000);

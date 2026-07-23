@@ -24,6 +24,7 @@ class _LoginPageState extends State<LoginPage> {
   List<Map<String, dynamic>> downloads = const [
     {'platform': 'windows', 'label': 'Windows', 'available': false},
     {'platform': 'linux', 'label': 'Linux', 'available': false},
+    {'platform': 'android', 'label': 'Android', 'available': false},
   ];
 
   @override
@@ -68,9 +69,11 @@ class _LoginPageState extends State<LoginPage> {
         throw Exception('Der Download ist derzeit nicht verfügbar.');
       }
       final fileName = download['fileName']?.toString() ??
-          (platform == 'windows'
-              ? 'MaterialKompass-Windows.zip'
-              : 'MaterialKompass-Linux.tar.gz');
+          switch (platform) {
+            'windows' => 'MaterialKompass-Windows.zip',
+            'android' => 'MaterialKompass-Android.apk',
+            _ => 'MaterialKompass-Linux.tar.gz',
+          };
       final extension = fileName.toLowerCase().endsWith('.tar.gz')
           ? 'tar.gz'
           : fileName.split('.').last;
@@ -119,10 +122,11 @@ class _LoginPageState extends State<LoginPage> {
     await http.post(Uri.parse('$apiBaseUrl/api/auth/password-reset'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'identifier': identifier}));
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content:
               Text('Wenn das Konto existiert, wurde eine E-Mail versendet.')));
+    }
   }
 
   Future<void> login() async {
@@ -216,7 +220,7 @@ class _LoginPageState extends State<LoginPage> {
                               child: const Text('Passwort vergessen?')),
                           const Divider(height: 32),
                           const Text(
-                            'Desktop-App herunterladen',
+                            'App herunterladen',
                             style: TextStyle(
                                 fontSize: 16, fontWeight: FontWeight.w600),
                           ),
@@ -224,7 +228,7 @@ class _LoginPageState extends State<LoginPage> {
                           Text(
                             downloadsLoading
                                 ? 'Verfügbarkeit wird geprüft …'
-                                : 'Für Windows und Linux',
+                                : 'Für Windows, Linux und Android',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),

@@ -17,7 +17,7 @@ MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Orts
 - Inventarverwaltung für Einzel- und Mengenartikel mit automatischen Inventarnummern
 - Einheitliche Inventarnummern `Gliederungsnummer-Hauptkategorie-Unterkategorie-Laufnummer`; die Gliederungsnummer ist über `GLIEDERUNGSNUMMER` konfigurierbar (Standard `10050035`)
 - Aus-/Rückgabe, Umbuchung, Archiv und vollständiger Bewegungsverlauf
-- Prüfungen, Mängel, Dokumente sowie XLSX-/ODS-Import und -Export
+- Prüfungen, vollständiges Mängelmanagement, Dokumente sowie XLSX-/ODS-Import und -Export
 - Barcode-/QR-Code-Anzeige, Handscanner- und Webkamera-Unterstützung
 - Vollständige Beschaffung mit Anträgen, allgemeinen Kategorien und Brutto-Preisen
 - Beantragtes Budget auf Vorgangsebene ohne Einzelpreise im Antrag
@@ -25,6 +25,30 @@ MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Orts
 - Lieferanten- und Angebotsvergleich, teilbare Bestellungen und Budgetgrenzen
 - Teil-/Mehrfachlieferungen, Beanstandungen und geprüfte Inventarübernahme
 - Beschaffungsdokumente sowie XLSX-, ODS- und PDF-Ausgabe
+
+## Mängelmanagement
+
+Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflow:
+
+- Statusfolge `Neu → In Prüfung → Zugewiesen → In Bearbeitung → Behoben → Geprüft/Geschlossen`
+- Automatische Mangelnummern im Format `M-JJJJ-NNNN`, Prioritäten, Teilmengen,
+  Schadensart, Ursache, Gefährdung, Einsatzsicherheit, Verantwortliche, Fristen und Kosten
+- Kommentare, Checklisten, Folgeaufgaben, JPEG-/PNG-Nachweise und ein vollständiger Änderungsverlauf
+- Verknüpfungen zu Prüfungen, Reparaturen, Beschaffungen und Aussonderungen sowie
+  Kennzeichnung von Wiederholungen und Duplikaten
+- Fehlgeschlagene Inventar- und Kleidungsprüfungen erzeugen automatisch einen Mangel
+- Betroffene Artikel werden auf `Defekt` gesetzt; Rücknahmen bleiben möglich, neue
+  Ausgaben werden bis zum geprüften Abschluss gesperrt
+- In-App-Benachrichtigungen für neue Mängel und Eskalationen an den Vorsitz
+- Listenansicht mit Suche und Filtern sowie XLSX-, ODS-, CSV-, PDF- und Druckausgabe
+- Geschlossene Mängel werden archiviert und zwei Kalenderjahre nach der Archivierung
+  automatisch gelöscht
+
+Materialwarte verwalten Inventarmängel, Kleiderwarte Kleidungsmängel. Die einzelnen
+Aktionen werden zusätzlich über die Berechtigungen `defects.report`, `defects.edit`,
+`defects.assign`, `defects.close`, `defects.archive`, `defects.delete` und
+`defects.export` gesteuert. „Löschen“ verschiebt einen geschlossenen Eintrag dabei
+zunächst revisionssicher ins Archiv; die endgültige Löschung erfolgt automatisch.
 
 ## Verzeichnisstruktur
 

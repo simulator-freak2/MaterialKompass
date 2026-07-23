@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../widgets/stat_card.dart';
 import 'categories_page.dart';
+import 'defects_page.dart';
 import 'login_page.dart';
 import 'inventory_page.dart';
 import 'locations_page.dart';
@@ -157,6 +158,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final canReadLocations =
               (currentUser['permissions'] as List? ?? const [])
                   .contains('locations.read');
+          final canReadDefects =
+              (currentUser['permissions'] as List? ?? const [])
+                  .contains('defects.read');
           final dashboardButtonStyle = ElevatedButton.styleFrom(
             minimumSize: const Size(0, 56),
             padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
@@ -201,6 +205,14 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       )),
                 ),
+                if (canReadDefects)
+                  (
+                    icon: Icons.report_problem_outlined,
+                    label: 'Mängel',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => DefectsPage(token: widget.token),
+                        )),
+                  ),
                 (
                   icon: Icons.category_outlined,
                   label: 'Kategorien',
@@ -233,7 +245,8 @@ class _DashboardPageState extends State<DashboardPage> {
                 ('Material defekt', summary['defectiveMaterialCount']),
                 ('Prüfungen fällig', summary['dueInspectionCount']),
                 ('Kleidung', summary['clothingCount']),
-                ('Mängel', summary['defectCount']),
+                ('Mängel offen', summary['openDefectCount']),
+                ('Mängel in Bearbeitung', summary['defectsInProgressCount']),
                 ('Beschaffungen', summary['procurementCount']),
                 ('Freigaben offen', summary['pendingProcurementApprovals']),
                 (

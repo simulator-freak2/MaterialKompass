@@ -632,6 +632,7 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Future<void> _addDefect(Map<String, dynamic> item) async {
+    final title = TextEditingController();
     final description = TextEditingController();
     final confirmed = await showDialog<bool>(
         context: context,
@@ -639,12 +640,18 @@ class _InventoryPageState extends State<InventoryPage> {
               title: const Text('Mangel melden'),
               content: SizedBox(
                   width: 440,
-                  child: TextField(
-                      controller: description,
-                      autofocus: true,
-                      maxLines: 4,
-                      decoration:
-                          const InputDecoration(labelText: 'Beschreibung *'))),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    TextField(
+                        controller: title,
+                        autofocus: true,
+                        decoration:
+                            const InputDecoration(labelText: 'Titel *')),
+                    TextField(
+                        controller: description,
+                        maxLines: 4,
+                        decoration:
+                            const InputDecoration(labelText: 'Beschreibung *')),
+                  ])),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -654,12 +661,23 @@ class _InventoryPageState extends State<InventoryPage> {
                     child: const Text('Melden'))
               ],
             ));
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      title.dispose();
+      description.dispose();
+      return;
+    }
+    final submittedTitle = title.text.trim();
+    final submittedDescription = description.text.trim();
+    title.dispose();
+    description.dispose();
     final saved = await _request('/api/defects', method: 'POST', body: {
       'entityType': 'MaterialItem',
       'entityId': item['id'],
-      'description': description.text.trim(),
-      'status': 'Offen'
+      'affectedQuantity': 1,
+      'title': submittedTitle,
+      'description': submittedDescription,
+      'priority': 'Normal',
+      'operationalSafety': 'Nicht einsatzfähig',
     });
     if (saved != null) _message('Mangel wurde gemeldet.');
   }

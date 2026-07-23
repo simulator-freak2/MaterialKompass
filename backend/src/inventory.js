@@ -24,7 +24,7 @@ function normalizeHeader(value) {
 function registerInventoryRoutes({
   app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
   materialInspections, materialDocuments, defectReports, categories, locations, stockStructures,
-  logEvent, nextId, XLSX,
+  logEvent, nextId, XLSX, defectManagement,
 }) {
   const number = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -191,7 +191,9 @@ function registerInventoryRoutes({
     if (checked.some((entry) => entry.error)) return res.status(409).json({ error: 'Die Sammelbuchung wurde nicht durchgeführt.', details: checked.filter((entry) => entry.error).map((entry) => ({ materialId: entry.item?.id, error: entry.error })) });
     const created = checked.map(({ item, quantity }) => {
       item.issuedQuantity = number(item.issuedQuantity) + (action === 'issue' ? quantity : -quantity);
-      item.status = item.issuedQuantity > 0 ? 'Ausgegeben' : 'Lagernd';
+      item.status = defectManagement?.hasOpenDefect('MaterialItem', item.id)
+        ? 'Defekt'
+        : item.issuedQuantity > 0 ? 'Ausgegeben' : 'Lagernd';
       const movement = {
         id: nextId('movement', materialMovements), materialId: item.id, action, quantity,
         recipientType: action === 'issue' ? String(req.body.recipientType || 'purpose') : null,
@@ -228,7 +230,12 @@ function registerInventoryRoutes({
     if (!req.body.inspectionDate || !String(req.body.inspector || '').trim() || !['Bestanden', 'Mangel', 'Nicht bestanden'].includes(result)) return res.status(400).json({ error: 'Datum, Prüfer und gültiges Ergebnis sind erforderlich.' });
     const inspection = { id: nextId('inspection', materialInspections), materialId: item.id, inspectionDate: req.body.inspectionDate, inspector: String(req.body.inspector).trim(), result, notes: String(req.body.notes || '').trim(), nextInspectionDate: req.body.nextInspectionDate || null, createdAt: new Date().toISOString() };
     materialInspections.push(inspection); item.lastInspectionDate = inspection.inspectionDate; item.nextInspectionDate = inspection.nextInspectionDate;
-    if (result === 'Nicht bestanden') item.status = 'Defekt';
+    if (result === 'Mangel' || result === 'Nicht bestanden') {
+      defectManagement?.createFromInspection({
+        entityType: 'MaterialItem', entityId: item.id, inspectionId: inspection.id,
+        notes: inspection.notes, user: req.user,
+      });
+    }
     logEvent('inspection', 'MaterialItem', { id: item.id, result }, req.user.username);
     res.status(201).json(inspection);
   });

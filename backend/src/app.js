@@ -8,6 +8,7 @@ const { registerInventoryRoutes } = require('./inventory');
 const { registerProcurementRoutes } = require('./procurement');
 const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
+const { registerDefectManagement } = require('./defects');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,7 +27,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'permissions', 'locations', 'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
-  'defectReports', 'procurementRequests', 'procurementOffers', 'procurementOrders',
+  'defectReports', 'notifications', 'procurementRequests', 'procurementOffers', 'procurementOrders',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'auditLogs', 'exportLogs',
 ]);
@@ -61,7 +62,7 @@ function createApp(options = {}) {
     next();
   });
   app.use(cors(createCorsOptions()));
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '8mb' }));
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '12mb' }));
   app.use((req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
     if (req.body === undefined) req.body = {};
@@ -98,6 +99,7 @@ function createApp(options = {}) {
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
+  const notifications = (appData.notifications ||= []);
   const procurementRequests = appData.procurementRequests;
   const suppliers = appData.suppliers;
   const documents = appData.documents;
@@ -267,6 +269,32 @@ function createApp(options = {}) {
   function hasPermission(user, permission) {
     return user?.permissions?.includes(permission) || user?.roles?.includes('Admin');
   }
+
+  const defectPermissions = [
+    'defects.report', 'defects.edit', 'defects.assign', 'defects.close',
+    'defects.archive', 'defects.delete', 'defects.export',
+  ];
+  defectPermissions.forEach((permission) => {
+    if (!permissions.includes(permission)) permissions.push(permission);
+  });
+  const defectRolePermissions = {
+    Admin: defectPermissions,
+    Materialwart: defectPermissions,
+    Kleiderwart: ['defects.read', ...defectPermissions],
+    Vorsitz: ['defects.read'],
+    'Sachkundiger PSAgE': ['defects.read'],
+  };
+  roles.forEach((role) => {
+    (defectRolePermissions[role.name] || []).forEach((permission) => {
+      if (!role.permissions.includes(permission)) role.permissions.push(permission);
+    });
+  });
+  users.forEach((user) => {
+    const inherited = user.roles.flatMap((name) => defectRolePermissions[name] || []);
+    inherited.forEach((permission) => {
+      if (!user.permissions.includes(permission)) user.permissions.push(permission);
+    });
+  });
 
   function requirePermission(permission) {
     return (req, res, next) => {
@@ -875,10 +903,16 @@ function createApp(options = {}) {
     res.json(categories.filter((category) => category.parentId));
   });
 
+  const defectManagement = registerDefectManagement({
+    app, authMiddleware, requirePermission, hasPermission, defectReports,
+    materials, clothingItems, users, notifications, logEvent, nextId, XLSX,
+  });
+  app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
+
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
-    stockStructures, logEvent, nextId, XLSX,
+    stockStructures, logEvent, nextId, XLSX, defectManagement,
   });
 
   app.get('/api/clothing', authMiddleware, requirePermission('clothing.read'), (req, res) => {
@@ -1125,6 +1159,12 @@ function createApp(options = {}) {
     item.inspectionIntervalMonths = interval;
     item.lastInspectionDate = inspectionDate;
     item.nextInspectionDate = inspection.nextInspectionDate;
+    if (result === 'Mangel' || result === 'Nicht bestanden') {
+      defectManagement.createFromInspection({
+        entityType: 'ClothingItem', entityId: item.id, inspectionId: inspection.id,
+        notes: inspection.notes, user: req.user,
+      });
+    }
     logEvent('inspection', 'ClothingItem', {
       id: item.id,
       result,
@@ -1331,9 +1371,12 @@ function createApp(options = {}) {
       const item = clothingItems.find((item) => item.id === id);
       if (!item) {
         errors.push({ id, error: 'not_found' });
+      } else if (action === 'ausgegeben' && item.status === 'Defekt') {
+        errors.push({ id, error: 'defective' });
       } else if (action === 'ausgegeben' && item.status === 'Ausgegeben') {
         errors.push({ id, error: 'already_issued' });
-      } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben') {
+      } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
+          !(item.status === 'Defekt' && item.assignedPerson)) {
         errors.push({ id, error: 'not_issued' });
       }
       return errors;
@@ -1362,24 +1405,14 @@ function createApp(options = {}) {
         clothingItem.status = 'Ausgegeben';
         clothingItem.assignedPerson = personName || clothingItem.assignedPerson || null;
       } else if (action === 'zurückgegeben') {
-        clothingItem.status = 'Lagernd';
+        clothingItem.status = defectManagement.hasOpenDefect('ClothingItem', id)
+          ? 'Defekt' : 'Lagernd';
         clothingItem.assignedPerson = null;
       }
     });
 
     logEvent('transaction', 'IssueTransaction', { ids: clothingIds, action }, req.user.username);
     res.status(201).json(transactions.length === 1 ? transactions[0] : transactions);
-  });
-
-  app.get('/api/defects', authMiddleware, requirePermission('defects.read'), (req, res) => {
-    res.json(defectReports);
-  });
-
-  app.post('/api/defects', authMiddleware, requirePermission('defects.write'), (req, res) => {
-    const report = { id: `defect-${defectReports.length + 1}`, ...req.body, createdAt: new Date().toISOString() };
-    defectReports.push(report);
-    logEvent('create', 'DefectReport', { id: report.id }, req.user.username);
-    res.status(201).json(report);
   });
 
   registerProcurementRoutes({
@@ -1397,7 +1430,7 @@ function createApp(options = {}) {
     res.json({
       materialCount: materials.length,
       clothingCount: clothingItems.length,
-      openDefects: defectReports.filter((item) => item.status !== 'Behoben').length,
+      openDefects: defectReports.filter((item) => !item.archivedAt && item.status !== 'Geprüft/Geschlossen').length,
       pendingProcurement: procurementRequests.filter((item) => item.status === 'Beantragt').length,
       auditEntries: auditLogs.length,
       exportEntries: exportLogs.length,
@@ -1417,7 +1450,10 @@ function createApp(options = {}) {
           return due && due <= inspectionWarning;
         }).length,
         clothingCount: clothingItems.length,
-        defectCount: defectReports.length,
+        defectCount: defectReports.filter((item) => !item.archivedAt).length,
+        openDefectCount: defectReports.filter((item) => !item.archivedAt && item.status !== 'Geprüft/Geschlossen').length,
+        defectsInProgressCount: defectReports.filter((item) => !item.archivedAt && item.status === 'In Bearbeitung').length,
+        unreadNotificationCount: notifications.filter((item) => item.userId === req.user.id && !item.readAt).length,
         procurementCount: procurementRequests.length,
         pendingProcurementApprovals: procurementRequests.filter((item) => item.status === 'Beantragt').length,
         overdueProcurementOrders: appData.procurementOrders.filter((order) => order.expectedDeliveryDate && new Date(order.expectedDeliveryDate) < new Date() && order.items.some((item) => item.deliveredQuantity < item.quantity)).length,

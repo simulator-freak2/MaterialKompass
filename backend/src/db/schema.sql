@@ -173,10 +173,29 @@ CREATE TABLE issue_transactions (
 
 CREATE TABLE defect_reports (
   id VARCHAR(64) PRIMARY KEY,
+  defect_number VARCHAR(32) UNIQUE NOT NULL,
   entity_type VARCHAR(64) NOT NULL,
   entity_id VARCHAR(64) NOT NULL,
+  affected_quantity DECIMAL(12,3) NOT NULL DEFAULT 1,
+  title VARCHAR(160) NOT NULL,
   description TEXT NOT NULL,
+  priority VARCHAR(32) NOT NULL DEFAULT 'Normal',
   status VARCHAR(64) NOT NULL,
+  damage_type VARCHAR(120) NULL,
+  cause TEXT NULL,
+  risk_level VARCHAR(80) NULL,
+  operational_safety VARCHAR(80) NULL,
+  assignee VARCHAR(255) NULL,
+  responsible_department VARCHAR(255) NULL,
+  due_date DATE NULL,
+  estimated_cost DECIMAL(12,2) NULL,
+  actual_cost DECIMAL(12,2) NULL,
+  resolution TEXT NULL,
+  reported_by VARCHAR(64) NOT NULL,
+  reported_at DATETIME NOT NULL,
+  details_json LONGTEXT NULL CHECK (details_json IS NULL OR JSON_VALID(details_json)),
+  archived_at DATETIME NULL,
+  archived_by VARCHAR(255) NULL,
   created_at DATETIME NOT NULL
 );
 
