@@ -139,6 +139,27 @@ void main() {
     expect(find.text('Speichern'), findsOneWidget);
   });
 
+  testWidgets('Department dialog centrally edits name, code and status',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: DepartmentDialog(
+          department: {
+            'id': 'department-technik',
+            'name': 'Technik',
+            'code': 'TECH',
+            'active': true,
+          },
+        ),
+      ),
+    ));
+
+    expect(find.text('Fachbereich bearbeiten'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Technik'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'TECH'), findsOneWidget);
+    expect(find.text('Fachbereich aktiv'), findsOneWidget);
+  });
+
   testWidgets('Wardrobe page renders its main actions',
       (WidgetTester tester) async {
     await tester

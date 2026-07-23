@@ -9,7 +9,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
+import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
+import '../widgets/label_print_dialogs.dart';
 import 'login_page.dart';
 
 class WardrobePage extends StatefulWidget {
@@ -43,6 +45,10 @@ class _WardrobePageState extends State<WardrobePage> {
       TextEditingController();
   final TextEditingController inventoryNumberController =
       TextEditingController();
+  final TextEditingController manufacturerController = TextEditingController();
+  final TextEditingController manufacturingYearController =
+      TextEditingController();
+  final TextEditingController purchaseDateController = TextEditingController();
   String _filterMode = 'alle';
   String _categoryFilterId = 'alle';
   String _searchQuery = '';
@@ -51,6 +57,10 @@ class _WardrobePageState extends State<WardrobePage> {
   final Set<String> _selectedClothingIds = {};
   List<Map<String, dynamic>> _currentClothing = [];
   bool _isTransferringTable = false;
+  Set<String> _roles = {};
+
+  bool get _canPrintLabels =>
+      LabelPrintService.instance.supported && userMayPrintLabels(_roles);
 
   @override
   void initState() {
@@ -60,6 +70,7 @@ class _WardrobePageState extends State<WardrobePage> {
     _historyFuture = _fetchHistory();
     _fetchCategories();
     _fetchStorageLocations();
+    _fetchPrintRoles();
   }
 
   @override
@@ -72,6 +83,9 @@ class _WardrobePageState extends State<WardrobePage> {
     assignedPersonController.dispose();
     transactionPersonController.dispose();
     inventoryNumberController.dispose();
+    manufacturerController.dispose();
+    manufacturingYearController.dispose();
+    purchaseDateController.dispose();
     super.dispose();
   }
 
@@ -98,6 +112,22 @@ class _WardrobePageState extends State<WardrobePage> {
       _currentClothing = [];
       return [];
     }
+  }
+
+  Future<void> _fetchPrintRoles() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/api/auth/me'),
+        headers: {'Authorization': 'Bearer ${widget.token}'},
+      );
+      if (response.statusCode != 200 || !mounted) return;
+      final user = jsonDecode(response.body)['user'] as Map;
+      setState(() {
+        _roles = ((user['roles'] as List?) ?? const [])
+            .map((value) => value.toString())
+            .toSet();
+      });
+    } catch (_) {}
   }
 
   Future<List<Map<String, dynamic>>> _fetchTransactions() async {
@@ -353,6 +383,9 @@ class _WardrobePageState extends State<WardrobePage> {
     nameController.clear();
     sizeController.clear();
     inventoryNumberController.clear();
+    manufacturerController.clear();
+    manufacturingYearController.clear();
+    purchaseDateController.clear();
     locationController.text = 'loc-2';
     stockController.clear();
     statusController.text = 'Lagernd';
@@ -398,6 +431,9 @@ class _WardrobePageState extends State<WardrobePage> {
       'assignedPerson': assignedPersonController.text.trim().isEmpty
           ? null
           : assignedPersonController.text.trim(),
+      'manufacturer': manufacturerController.text.trim(),
+      'manufacturingYear': manufacturingYearController.text.trim(),
+      'purchaseDate': dateInputToIso(purchaseDateController.text),
     };
 
     final isEditing = _editingClothingId != null;
@@ -422,6 +458,7 @@ class _WardrobePageState extends State<WardrobePage> {
     if (!mounted) return;
 
     if (response.statusCode == 201 || response.statusCode == 200) {
+      final saved = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
       _resetForm();
       setState(() {
         _clothingFuture = _fetchClothing();
@@ -434,8 +471,11 @@ class _WardrobePageState extends State<WardrobePage> {
           ),
         ),
       );
-      if (dialogContext != null) {
+      if (dialogContext != null && dialogContext.mounted) {
         Navigator.of(dialogContext).pop();
+      }
+      if (!isEditing && _canPrintLabels && mounted) {
+        await _printItems([saved]);
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -446,6 +486,24 @@ class _WardrobePageState extends State<WardrobePage> {
         ),
       );
     }
+  }
+
+  Future<void> _printItems(List<Map<String, dynamic>> items) async {
+    await showLabelPrintDialog(
+      context,
+      labels: items
+          .map((item) => LabelData.fromItem(item, LabelType.clothing))
+          .where((label) => label.inventoryNumber.isNotEmpty)
+          .toList(),
+      type: LabelType.clothing,
+    );
+  }
+
+  Future<void> _printSelected() async {
+    await _printItems(_currentClothing
+        .where((item) =>
+            _selectedClothingIds.contains(item['id']?.toString() ?? ''))
+        .toList());
   }
 
   List<String> _sizesForCategory(String? categoryId) {
@@ -640,6 +698,22 @@ class _WardrobePageState extends State<WardrobePage> {
                         const InputDecoration(labelText: 'Inventarnummer'),
                   ),
                   const SizedBox(height: 12),
+                  TextField(
+                    controller: manufacturerController,
+                    decoration: const InputDecoration(labelText: 'Hersteller'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: manufacturingYearController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Baujahr'),
+                  ),
+                  const SizedBox(height: 12),
+                  DateInputField(
+                    controller: purchaseDateController,
+                    label: 'Anschaffungsdatum',
+                  ),
+                  const SizedBox(height: 12),
                   _buildSizeField(),
                   const SizedBox(height: 12),
                   ..._buildStorageFields(() => setDialogState(() {})),
@@ -679,6 +753,11 @@ class _WardrobePageState extends State<WardrobePage> {
     nameController.text = item['name']?.toString() ?? '';
     sizeController.text = item['size']?.toString() ?? '';
     inventoryNumberController.text = item['inventoryNumber']?.toString() ?? '';
+    manufacturerController.text = item['manufacturer']?.toString() ?? '';
+    manufacturingYearController.text =
+        item['manufacturingYear']?.toString() ?? '';
+    purchaseDateController.text =
+        item['purchaseDate'] == null ? '' : _formatDate(item['purchaseDate']);
     locationController.text = item['locationId']?.toString() ?? 'loc-2';
     stockController.text = item['stockStructureId']?.toString() ?? '';
     statusController.text = item['status']?.toString() ?? 'Lagernd';
@@ -705,6 +784,22 @@ class _WardrobePageState extends State<WardrobePage> {
                     controller: inventoryNumberController,
                     decoration:
                         const InputDecoration(labelText: 'Inventarnummer'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: manufacturerController,
+                    decoration: const InputDecoration(labelText: 'Hersteller'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: manufacturingYearController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Baujahr'),
+                  ),
+                  const SizedBox(height: 12),
+                  DateInputField(
+                    controller: purchaseDateController,
+                    label: 'Anschaffungsdatum',
                   ),
                   const SizedBox(height: 12),
                   _buildSizeField(),
@@ -1196,6 +1291,15 @@ class _WardrobePageState extends State<WardrobePage> {
           ),
         ),
         actions: [
+          if (_canPrintLabels)
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _printItems([item]);
+              },
+              icon: const Icon(Icons.print_outlined),
+              label: const Text('Etikett drucken'),
+            ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Schließen'),
@@ -1855,6 +1959,30 @@ class _WardrobePageState extends State<WardrobePage> {
                 icon: const Icon(Icons.delete_outline, size: 18),
                 label: const Text('Löschen'),
               ),
+              if (_canPrintLabels && _selectedClothingIds.isNotEmpty)
+                ElevatedButton.icon(
+                  onPressed: _printSelected,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 10),
+                    backgroundColor: Colors.blueGrey.shade700,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.print, size: 18),
+                  label: const Text('Etiketten drucken'),
+                ),
+              if (_canPrintLabels)
+                IconButton(
+                  onPressed: () => showPrinterSettingsDialog(context),
+                  tooltip: 'Etikettendrucker einrichten',
+                  icon: const Icon(Icons.settings_outlined),
+                ),
+              if (_canPrintLabels)
+                IconButton(
+                  onPressed: () => showPrintQueueDialog(context),
+                  tooltip: 'Zwischengespeicherte Druckaufträge',
+                  icon: const Icon(Icons.queue),
+                ),
               ElevatedButton.icon(
                 onPressed: _isTransferringTable ? null : _importClothingTable,
                 style: ElevatedButton.styleFrom(
@@ -2095,6 +2223,14 @@ class _WardrobePageState extends State<WardrobePage> {
                                           tooltip: 'Barcode & QR-Code',
                                           icon: const Icon(Icons.qr_code_2),
                                         ),
+                                        if (_canPrintLabels)
+                                          IconButton(
+                                            onPressed: () =>
+                                                _printItems([item]),
+                                            tooltip: 'Etikett drucken',
+                                            icon: const Icon(
+                                                Icons.print_outlined),
+                                          ),
                                         OutlinedButton(
                                           onPressed: () =>
                                               _openTransactionDialog(

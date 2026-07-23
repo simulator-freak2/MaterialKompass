@@ -70,12 +70,17 @@ test('defect workflow blocks issue, permits return and restores the item on clos
         title: 'Kettenschutz gebrochen', description: 'Schutz kann nicht verriegelt werden.',
         priority: 'Kritisch', damageType: 'Mechanisch', cause: 'Verschleiß',
         riskLevel: 'Hoch', operationalSafety: 'Nicht einsatzfähig',
+        contactName: 'Max Mustermann', contactEmail: 'max@example.org',
+        contactPhone: '+49 123 456789',
       }),
     });
     assert.equal(create.status, 201);
     let defect = await create.json();
     assert.match(defect.defectNumber, /^M-\d{4}-\d{4}$/);
     assert.equal(defect.affectedQuantity, 2);
+    assert.equal(defect.contactName, 'Max Mustermann');
+    assert.equal(defect.contactEmail, 'max@example.org');
+    assert.equal(defect.contactPhone, '+49 123 456789');
 
     let item = await fetch(`${baseUrl}/api/material/material-1`, { headers: auth }).then((response) => response.json());
     assert.equal(item.status, 'Defekt');

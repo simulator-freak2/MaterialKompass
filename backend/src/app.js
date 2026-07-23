@@ -9,6 +9,7 @@ const { registerProcurementRoutes } = require('./procurement');
 const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { registerDefectManagement } = require('./defects');
+const { registerQrLoginRoutes } = require('./qr-login');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,12 +25,13 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_REQUESTS = 10;
 const MAX_IMPORT_ROWS = 1000;
 const PERSISTED_COLLECTIONS = Object.freeze([
-  'permissions', 'locations', 'stockStructures', 'categories', 'materials',
+  'permissions', 'departments', 'locations', 'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'procurementRequests', 'procurementOffers', 'procurementOrders',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'auditLogs', 'exportLogs',
+  'qrLoginCredentials',
 ]);
 
 function createApp(options = {}) {
@@ -86,6 +88,7 @@ function createApp(options = {}) {
   const roles = appData.roles;
   const permissions = appData.permissions;
   const users = appData.users;
+  const departments = (appData.departments ||= []);
   const locations = appData.locations;
   const stockStructures = appData.stockStructures;
   const categories = appData.categories;
@@ -105,17 +108,18 @@ function createApp(options = {}) {
   const documents = appData.documents;
   const auditLogs = appData.auditLogs;
   const exportLogs = appData.exportLogs;
+  const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
   const defaultDownloadsDirectory = path.resolve(__dirname, '..', 'downloads');
   const downloadSources = options.downloads || {
     windows: {
       filePath: process.env.DOWNLOAD_WINDOWS_PATH
-        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Windows.zip'),
-      fileName: 'MaterialKompass-Windows.zip',
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Windows.exe'),
+      fileName: 'MaterialKompass-Windows.exe',
     },
     linux: {
       filePath: process.env.DOWNLOAD_LINUX_PATH
-        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Linux.tar.gz'),
-      fileName: 'MaterialKompass-Linux.tar.gz',
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Linux.deb'),
+      fileName: 'MaterialKompass-Linux.deb',
     },
     android: {
       filePath: process.env.DOWNLOAD_ANDROID_PATH
@@ -123,6 +127,7 @@ function createApp(options = {}) {
       fileName: 'MaterialKompass-Android.apk',
     },
   };
+  const downloadHashes = new Map();
 
   function desktopDownload(platform) {
     const configured = downloadSources[platform];
@@ -137,10 +142,26 @@ function createApp(options = {}) {
         filePath,
         fileName: configured?.fileName || path.basename(filePath),
         sizeBytes: stats.size,
+        modifiedAtMs: stats.mtimeMs,
       };
     } catch (_) {
       return null;
     }
+  }
+
+  async function downloadSha256(download) {
+    const cacheKey = `${download.filePath}:${download.sizeBytes}:${download.modifiedAtMs}`;
+    if (downloadHashes.has(cacheKey)) return downloadHashes.get(cacheKey);
+    const digest = await new Promise((resolve, reject) => {
+      const hash = createHash('sha256');
+      const stream = fs.createReadStream(download.filePath);
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('error', reject);
+      stream.on('end', () => resolve(hash.digest('hex')));
+    });
+    downloadHashes.clear();
+    downloadHashes.set(cacheKey, digest);
+    return digest;
   }
 
   function compareClientVersions(left, right) {
@@ -515,6 +536,10 @@ function createApp(options = {}) {
     status: 'status',
     zugewiesenan: 'assignedPerson',
     assignedperson: 'assignedPerson',
+    hersteller: 'manufacturer',
+    manufacturer: 'manufacturer',
+    baujahr: 'manufacturingYear',
+    anschaffungsdatum: 'purchaseDate',
   };
 
   function normalizeColumnName(value) {
@@ -551,13 +576,16 @@ function createApp(options = {}) {
   }
 
   function buildClothingWorkbook() {
-    const headers = ['Inventarnummer', 'Name', 'Kategorie-ID', 'Kategorie', 'Größe', 'Standort', 'Regal/Fach', 'Status', 'Zugewiesen an'];
+    const headers = ['Inventarnummer', 'Name', 'Kategorie-ID', 'Kategorie', 'Größe', 'Hersteller', 'Baujahr', 'Anschaffungsdatum', 'Standort', 'Regal/Fach', 'Status', 'Zugewiesen an'];
     const rows = clothingItems.map((item) => ({
       Inventarnummer: item.inventoryNumber || '',
       Name: item.name || '',
       'Kategorie-ID': item.categoryId || '',
       Kategorie: categories.find((category) => category.id === item.categoryId)?.name || '',
       'Größe': item.size || '',
+      Hersteller: item.manufacturer || '',
+      Baujahr: item.manufacturingYear || '',
+      Anschaffungsdatum: item.purchaseDate || '',
       Standort: item.locationId || '',
       'Regal/Fach': item.stockStructureId || '',
       Status: item.status || 'Lagernd',
@@ -566,7 +594,8 @@ function createApp(options = {}) {
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
     worksheet['!cols'] = [
       { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 22 }, { wch: 12 },
-      { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 24 },
+      { wch: 20 }, { wch: 10 }, { wch: 18 }, { wch: 16 }, { wch: 18 },
+      { wch: 14 }, { wch: 24 },
     ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Kleiderkammer');
@@ -574,7 +603,7 @@ function createApp(options = {}) {
     const helpSheet = XLSX.utils.aoa_to_sheet([
       ['Importhinweise'],
       ['Pflichtfeld', 'Name'],
-      ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Standort, Regal/Fach, Status, Zugewiesen an'],
+      ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Hersteller, Baujahr, Anschaffungsdatum, Standort, Regal/Fach, Status, Zugewiesen an'],
       ['Statuswerte', 'Lagernd oder Ausgegeben'],
       ['Duplikate', 'Bereits vorhandene Inventarnummern werden übersprungen.'],
     ]);
@@ -584,7 +613,8 @@ function createApp(options = {}) {
   }
 
   const userManagement = registerUserRoutes({
-    app, users, roles, permissions, authMiddleware, requirePermission, logEvent,
+    app, users, roles, permissions, departments, authMiddleware, requirePermission, logEvent,
+    departmentReferences: procurementRequests,
     authRateLimit,
     skipEmailVerification: options.skipEmailVerification === true,
     onTokenIssued: options.onAccountToken,
@@ -620,7 +650,7 @@ function createApp(options = {}) {
     };
   })));
 
-  app.get('/api/client-updates/:platform', (req, res) => {
+  app.get('/api/client-updates/:platform', async (req, res, next) => {
     const platform = req.params.platform;
     if (!['windows', 'linux', 'android'].includes(platform)) {
       return res.status(404).json({ error: 'Unbekannte Plattform.' });
@@ -632,15 +662,22 @@ function createApp(options = {}) {
     const currentVersion = String(req.query.currentVersion || '0.0.0');
     const latestVersion = process.env[`CLIENT_${settingName}_VERSION`] || version;
     const minimumVersion = process.env[`CLIENT_${settingName}_MIN_VERSION`] || '0.0.0';
-    return res.json({
-      platform,
-      version: latestVersion,
-      minimumVersion,
-      updateAvailable: compareClientVersions(latestVersion, currentVersion) > 0,
-      required: compareClientVersions(minimumVersion, currentVersion) > 0,
-      downloadUrl: `/api/downloads/${platform}`,
-      notes: process.env.CLIENT_UPDATE_NOTES || null,
-    });
+    try {
+      return res.json({
+        platform,
+        version: latestVersion,
+        minimumVersion,
+        updateAvailable: compareClientVersions(latestVersion, currentVersion) > 0,
+        required: compareClientVersions(minimumVersion, currentVersion) > 0,
+        downloadUrl: `/api/downloads/${platform}`,
+        fileName: download.fileName,
+        sizeBytes: download.sizeBytes,
+        sha256: await downloadSha256(download),
+        notes: process.env.CLIENT_UPDATE_NOTES || null,
+      });
+    } catch (error) {
+      return next(error);
+    }
   });
 
   app.get('/api/downloads/:platform', (req, res, next) => {
@@ -694,6 +731,20 @@ function createApp(options = {}) {
     const token = createToken(user);
     logEvent('login', 'User', { id: user.id }, user.username);
     res.json({ token, expiresIn: 3600, user: publicUser(user) });
+  });
+
+  registerQrLoginRoutes({
+    app,
+    users,
+    credentials: qrLoginCredentials,
+    authMiddleware,
+    requirePermission,
+    authRateLimit,
+    createToken,
+    securityVersion,
+    publicUser,
+    logEvent,
+    saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
   });
 
   app.get('/api/auth/me', authMiddleware, (req, res) => {
@@ -953,6 +1004,9 @@ function createApp(options = {}) {
       locationId,
       stockStructureId: stockStructureId || null,
       size,
+      manufacturer: String(req.body.manufacturer || '').trim(),
+      manufacturingYear: String(req.body.manufacturingYear || '').trim(),
+      purchaseDate: req.body.purchaseDate || null,
       inspectionIntervalMonths: categoryInspectionInterval(categoryId),
       lastInspectionDate: null,
       nextInspectionDate: addMonths(
@@ -1017,6 +1071,9 @@ function createApp(options = {}) {
       inventoryNumber,
       categoryId: categoryId || null,
       size,
+      manufacturer: String(req.body.manufacturer ?? item.manufacturer ?? '').trim(),
+      manufacturingYear: String(req.body.manufacturingYear ?? item.manufacturingYear ?? '').trim(),
+      purchaseDate: req.body.purchaseDate ?? item.purchaseDate ?? null,
       locationId,
       stockStructureId: stockStructureId || null,
       inspectionIntervalMonths,
@@ -1291,6 +1348,9 @@ function createApp(options = {}) {
         name,
         categoryId: category?.id || null,
         size,
+        manufacturer: String(row.manufacturer || '').trim(),
+        manufacturingYear: String(row.manufacturingYear || '').trim(),
+        purchaseDate: row.purchaseDate || null,
         locationId,
         stockStructureId: stockStructureId || null,
         status,
@@ -1416,7 +1476,7 @@ function createApp(options = {}) {
   });
 
   registerProcurementRoutes({
-    app, authMiddleware, requirePermission, data: appData, categories, locations,
+    app, authMiddleware, requirePermission, data: appData, categories, departments, locations,
     stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
     addMonths,

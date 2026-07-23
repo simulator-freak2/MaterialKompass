@@ -109,6 +109,55 @@ test('password reset token is single-use and roles can be created', async () => 
   } finally { server.close(); }
 });
 
+test('departments are managed centrally and required for department heads', async () => {
+  const { server, request, adminToken } = await setup();
+  try {
+    const department = await request('/api/departments', {
+      method: 'POST',
+      token: adminToken,
+      body: { name: 'Ausbildung', code: 'AUSB', active: true },
+    });
+    assert.equal(department.response.status, 201);
+
+    const missingAssignment = await request('/api/users', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        username: 'bereichsleitung',
+        email: 'bereichsleitung@example.org',
+        password: 'SehrSicher123!',
+        roles: ['Fachbereichsleiter'],
+      },
+    });
+    assert.equal(missingAssignment.response.status, 400);
+
+    const created = await request('/api/users', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        username: 'bereichsleitung',
+        email: 'bereichsleitung@example.org',
+        password: 'SehrSicher123!',
+        roles: ['Fachbereichsleiter'],
+        departmentIds: [department.data.id],
+      },
+    });
+    assert.equal(created.response.status, 201);
+    assert.deepEqual(created.data.departmentIds, [department.data.id]);
+    assert.equal((await request(`/api/departments/${department.data.id}`, {
+      method: 'DELETE', token: adminToken,
+    })).response.status, 409);
+
+    const changed = await request(`/api/departments/${department.data.id}`, {
+      method: 'PUT',
+      token: adminToken,
+      body: { name: 'Aus- und Fortbildung', code: 'AFB', active: true },
+    });
+    assert.equal(changed.response.status, 200);
+    assert.equal(changed.data.code, 'AFB');
+  } finally { server.close(); }
+});
+
 test('password reset waits until the account email has been handed to SMTP', async () => {
   let finishDelivery;
   const deliveryStarted = new Promise((resolve) => {

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../constants.dart';
+import '../widgets/qr_login_dialog.dart';
 
 class ProfilePage extends StatefulWidget {
   final String token;
@@ -95,6 +96,28 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> createQrLogin() async {
+    final response = await http.post(
+      Uri.parse('$apiBaseUrl/api/auth/qr-credentials/me'),
+      headers: headers,
+      body: '{}',
+    );
+    final data = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    if (!mounted) return;
+    if (response.statusCode != 201) {
+      message(
+          data['error']?.toString() ?? 'QR-Code konnte nicht erstellt werden.');
+      return;
+    }
+    await showQrLoginCode(
+      context,
+      qrValue: data['qrValue'].toString(),
+      expiresAt: DateTime.parse(data['expiresAt'].toString()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('Mein Account')),
@@ -134,6 +157,20 @@ class _ProfilePageState extends State<ProfilePage> {
                       onPressed: save,
                       icon: const Icon(Icons.save),
                       label: const Text('Änderungen speichern'))),
+              const Divider(height: 48),
+              Text('QR-Anmeldung',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const Text(
+                  'Erstellt einen anonymen Einmalcode für die Anmeldung auf einem weiteren Gerät. Ein neuer Code widerruft den vorherigen.'),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: createQrLogin,
+                  icon: const Icon(Icons.qr_code_2),
+                  label: const Text('Anmelde-QR-Code erstellen'),
+                ),
+              ),
               const Divider(height: 48),
               Text('Account löschen',
                   style: Theme.of(context).textTheme.titleLarge),

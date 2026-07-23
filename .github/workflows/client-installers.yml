@@ -1,0 +1,83 @@
+name: Client-Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Client-Version ohne v
+        required: true
+        default: 1.0.0
+      api_base_url:
+        description: Produktive HTTPS-API-Adresse
+        required: true
+        default: https://materialkompass.org
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Inno Setup installieren
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Windows-Installer bauen
+        shell: pwsh
+        run: ./packaging/windows/build_installer.ps1 -ApiBaseUrl '${{ inputs.api_base_url }}' -Version '${{ inputs.version }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaterialKompass-Windows
+          path: releases/MaterialKompass-Windows.exe
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Linux-Buildabhängigkeiten installieren
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - name: DEB-Installer bauen
+        run: bash packaging/linux/build_deb.sh '${{ inputs.api_base_url }}' '${{ inputs.version }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaterialKompass-Linux
+          path: releases/MaterialKompass-Linux.deb
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Android-Signatur einrichten
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "ANDROID_KEYSTORE_BASE64 fehlt"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > flutter/android/app/release.jks
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=release.jks\n' \
+            "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" > flutter/android/key.properties
+      - name: Android-Installer bauen
+        working-directory: flutter
+        run: |
+          flutter pub get
+          flutter build apk --release --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+          cp build/app/outputs/flutter-apk/app-release.apk ../releases/MaterialKompass-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaterialKompass-Android
+          path: releases/MaterialKompass-Android.apk

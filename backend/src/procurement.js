@@ -9,7 +9,7 @@ const FILE_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'ods'];
 const { nextInventoryNumber } = require('./inventory-number');
 
 function registerProcurementRoutes({
-  app, authMiddleware, requirePermission, data, categories, locations,
+  app, authMiddleware, requirePermission, data, categories, departments = [], locations,
   stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
   nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
   addMonths,
@@ -24,6 +24,12 @@ function registerProcurementRoutes({
   const roles = (user) => new Set(user?.roles || []);
   const isAdmin = (user) => roles(user).has('Admin');
   const hasRole = (user, allowed) => isAdmin(user) || allowed.some((role) => roles(user).has(role));
+  const assignedDepartments = (user) => new Set(user?.departmentIds || []);
+  const departmentFor = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return departments.find((entry) => entry.id === value
+      || entry.name.toLowerCase() === normalized || entry.code.toLowerCase() === normalized);
+  };
   const number = (value) => {
     if (typeof value === 'string' && value.includes(',')) {
       return Number(value.trim().replace(/\./g, '').replace(',', '.')) || 0;
@@ -76,7 +82,9 @@ function registerProcurementRoutes({
   };
   const canSee = (user, request) => {
     if (isAdmin(user) || hasRole(user, ['Vorsitz', 'Schatzmeister'])) return true;
-    return request.requestedByEmail === user.email || (request.department && request.department === user.department);
+    return request.requestedByEmail === user.email
+      || (roles(user).has('Fachbereichsleiter')
+        && request.departmentId && assignedDepartments(user).has(request.departmentId));
   };
   const findVisible = (req, res) => {
     const request = requests.find((entry) => entry.id === req.params.id);
@@ -112,6 +120,11 @@ function registerProcurementRoutes({
     const items = normalizeItems(req.body.items);
     const itemError = validateItems(items);
     const requestedBudgetGross = money(req.body.requestedBudgetGross);
+    const department = departmentFor(req.body.departmentId || req.body.department);
+    if (roles(req.user).has('Fachbereichsleiter')
+      && (!department || department.active === false || !assignedDepartments(req.user).has(department.id))) {
+      return res.status(403).json({ error: 'Fachbereichsleiter dürfen nur für einen zugewiesenen aktiven Fachbereich beantragen.' });
+    }
     if (!String(req.body.title || '').trim() || !String(req.body.reason || '').trim() || requestedBudgetGross <= 0 || itemError) {
       return res.status(400).json({ error: itemError || 'Titel, Begründung und ein beantragtes Budget größer als null sind erforderlich.' });
     }
@@ -119,7 +132,9 @@ function registerProcurementRoutes({
       id: nextId('proc', requests), number: yearSequence('BA', requests), status: 'Entwurf',
       title: String(req.body.title).trim(), reason: String(req.body.reason).trim(),
       requestedBy: req.user.name, requestedByEmail: req.user.email,
-      department: String(req.body.department || '').trim(), costCenter: String(req.body.costCenter || '').trim(),
+      departmentId: department?.id || null,
+      department: department?.name || String(req.body.department || '').trim(),
+      costCenter: String(req.body.costCenter || '').trim(),
       desiredDeliveryDate: req.body.desiredDeliveryDate || null,
       priority: String(req.body.priority || 'Normal'), notes: String(req.body.notes || '').trim(),
       preferredSupplierId: req.body.preferredSupplierId || null, items,
@@ -137,7 +152,16 @@ function registerProcurementRoutes({
     if (!isAdmin(req.user) && request.requestedByEmail !== req.user.email) return res.status(403).json({ error: 'Nur der Antragsteller darf den Entwurf bearbeiten.' });
     const items = normalizeItems(req.body.items ?? request.items);
     const itemError = validateItems(items); if (itemError) return res.status(400).json({ error: itemError });
-    for (const field of ['title', 'reason', 'department', 'costCenter', 'desiredDeliveryDate', 'priority', 'notes', 'preferredSupplierId']) {
+    if (Object.hasOwn(req.body, 'department') || Object.hasOwn(req.body, 'departmentId')) {
+      const department = departmentFor(req.body.departmentId || req.body.department);
+      if (roles(req.user).has('Fachbereichsleiter')
+        && (!department || department.active === false || !assignedDepartments(req.user).has(department.id))) {
+        return res.status(403).json({ error: 'Fachbereichsleiter dürfen nur einen zugewiesenen aktiven Fachbereich verwenden.' });
+      }
+      request.departmentId = department?.id || null;
+      request.department = department?.name || String(req.body.department || '').trim();
+    }
+    for (const field of ['title', 'reason', 'costCenter', 'desiredDeliveryDate', 'priority', 'notes', 'preferredSupplierId']) {
       if (Object.hasOwn(req.body, field)) request[field] = typeof req.body[field] === 'string' ? req.body[field].trim() : req.body[field];
     }
     const requestedBudgetGross = money(req.body.requestedBudgetGross ?? request.requestedBudgetGross);
@@ -306,17 +330,19 @@ function registerProcurementRoutes({
         const inspectionIntervalMonths = categoryInspectionInterval(clothingCategoryId);
         const count = Math.max(1, Math.floor(receiptItem.quantity));
         for (let index = 0; index < count; index += 1) {
-          const item = { id: nextId('clothing', clothingItems), inventoryNumber: nextClothingInventoryNumber(clothingCategoryId), name: source.name, categoryId: clothingCategoryId, size, locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', assignedPerson: null, purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, inspectionIntervalMonths, lastInspectionDate: null, nextInspectionDate: addMonths(receipt.receivedAt, inspectionIntervalMonths), createdAt: now() };
-          clothingItems.push(item); created.push({ entity: 'clothing', id: item.id, inventoryNumber: item.inventoryNumber });
+          const item = { id: nextId('clothing', clothingItems), inventoryNumber: nextClothingInventoryNumber(clothingCategoryId), name: source.name, categoryId: clothingCategoryId, size, locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', assignedPerson: null, manufacturer: String(mapping.manufacturer || ''), manufacturingYear: String(mapping.manufacturingYear || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, inspectionIntervalMonths, lastInspectionDate: null, nextInspectionDate: addMonths(receipt.receivedAt, inspectionIntervalMonths), createdAt: now() };
+          clothingItems.push(item); created.push({ entity: 'clothing', ...item });
         }
       } else if (mapping.itemType === 'bulk') {
         const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'bulk', quantity: receiptItem.quantity, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: '', purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
-        materials.push(item); created.push({ entity: 'material', id: item.id, inventoryNumber: item.inventoryNumber });
+        item.manufacturingYear = String(mapping.manufacturingYear || '');
+        materials.push(item); created.push({ entity: 'material', ...item });
       } else {
         const count = Math.max(1, Math.floor(receiptItem.quantity));
         for (let index = 0; index < count; index += 1) {
           const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'individual', quantity: 1, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: String((mapping.serialNumbers || [])[index] || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
-          materials.push(item); created.push({ entity: 'material', id: item.id, inventoryNumber: item.inventoryNumber });
+          item.manufacturingYear = String(mapping.manufacturingYear || '');
+          materials.push(item); created.push({ entity: 'material', ...item });
         }
       }
     }

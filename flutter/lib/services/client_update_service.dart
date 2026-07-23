@@ -4,15 +4,18 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../constants.dart';
+import 'client_update_installer.dart';
 
 class ClientUpdate {
   const ClientUpdate({
     required this.version,
     required this.minimumVersion,
     required this.downloadUri,
+    required this.fileName,
+    required this.sizeBytes,
+    required this.sha256,
     required this.required,
     this.notes,
   });
@@ -20,6 +23,9 @@ class ClientUpdate {
   final String version;
   final String minimumVersion;
   final Uri downloadUri;
+  final String fileName;
+  final int sizeBytes;
+  final String sha256;
   final bool required;
   final String? notes;
 }
@@ -60,7 +66,13 @@ class ClientUpdateService {
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    if (data['updateAvailable'] != true || data['downloadUrl'] is! String) {
+    if (data['updateAvailable'] != true ||
+        data['downloadUrl'] is! String ||
+        data['fileName'] is! String ||
+        data['sizeBytes'] is! int ||
+        (data['sizeBytes'] as int) <= 0 ||
+        data['sha256'] is! String ||
+        !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(data['sha256'] as String)) {
       return null;
     }
     final downloadUri =
@@ -69,14 +81,22 @@ class ClientUpdateService {
       version: data['version'] as String,
       minimumVersion: data['minimumVersion'] as String? ?? '0.0.0',
       downloadUri: downloadUri,
+      fileName: data['fileName'] as String,
+      sizeBytes: data['sizeBytes'] as int,
+      sha256: data['sha256'] as String,
       required: data['required'] == true,
       notes: data['notes'] as String?,
     );
   }
 
-  Future<bool> install(ClientUpdate update) => launchUrl(
-        update.downloadUri,
-        mode: LaunchMode.externalApplication,
+  Future<bool> install(
+    ClientUpdate update, {
+    void Function(double progress)? onProgress,
+  }) =>
+      downloadAndInstallClientUpdate(
+        _client,
+        update,
+        onProgress: onProgress,
       );
 
   void dispose() => _client.close();

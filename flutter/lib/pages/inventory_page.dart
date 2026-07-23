@@ -9,7 +9,10 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
+import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
+import '../widgets/label_print_dialogs.dart';
+import 'defects_page.dart';
 
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
@@ -80,6 +83,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         'manufacturer',
         'model',
         'serialNumber',
+        'manufacturingYear',
         'purchaseDate',
         'purchasePrice',
         'description',
@@ -281,6 +285,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
               _text('manufacturer', 'Hersteller'),
               _text('model', 'Modell'),
               _text('serialNumber', 'Seriennummer'),
+              _text('manufacturingYear', 'Baujahr', numeric: true),
               _text('purchaseDate', 'Anschaffungsdatum', date: true),
               _text('purchasePrice', 'Kaufpreis', numeric: true),
               _text('department', 'Verantwortlicher Fachbereich'),
@@ -323,6 +328,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       'manufacturer': fields['manufacturer']!.text.trim(),
       'model': fields['model']!.text.trim(),
       'serialNumber': fields['serialNumber']!.text.trim(),
+      'manufacturingYear': fields['manufacturingYear']!.text.trim(),
       'purchaseDate': dateInputToIso(fields['purchaseDate']!.text),
       'purchasePrice': decimal('purchasePrice'),
       'description': fields['description']!.text.trim(),
@@ -351,6 +357,7 @@ class _InventoryPageState extends State<InventoryPage> {
   List<Map<String, dynamic>> locations = [];
   List<Map<String, dynamic>> stocks = [];
   Set<String> permissions = {};
+  Set<String> roles = {};
   final selected = <String>{};
   bool loading = true;
   bool archived = false;
@@ -363,6 +370,8 @@ class _InventoryPageState extends State<InventoryPage> {
         'Content-Type': 'application/json',
       };
   bool can(String value) => permissions.contains(value);
+  bool get canPrintLabels =>
+      LabelPrintService.instance.supported && userMayPrintLabels(roles);
 
   @override
   void initState() {
@@ -406,6 +415,9 @@ class _InventoryPageState extends State<InventoryPage> {
         locations = _list(responses[2]);
         stocks = _list(responses[3]);
         permissions = ((user['permissions'] as List?) ?? const [])
+            .map((value) => value.toString())
+            .toSet();
+        roles = ((user['roles'] as List?) ?? const [])
             .map((value) => value.toString())
             .toSet();
         selected.clear();
@@ -514,7 +526,28 @@ class _InventoryPageState extends State<InventoryPage> {
           ? 'Material wurde angelegt.'
           : 'Material wurde gespeichert.');
       await _load();
+      if (item == null && canPrintLabels && mounted) {
+        await _printItems([Map<String, dynamic>.from(saved as Map)]);
+      }
     }
+  }
+
+  Future<void> _printItems(List<Map<String, dynamic>> source) async {
+    await showLabelPrintDialog(
+      context,
+      labels: source
+          .map((item) => LabelData.fromItem(item, LabelType.inventory))
+          .where((label) => label.inventoryNumber.isNotEmpty)
+          .toList(),
+      type: LabelType.inventory,
+    );
+  }
+
+  Future<void> _printSelected() async {
+    final chosen = items
+        .where((item) => selected.contains(item['id']?.toString()))
+        .toList();
+    await _printItems(chosen);
   }
 
   Future<void> _detail(Map<String, dynamic> item) async {
@@ -530,6 +563,7 @@ class _InventoryPageState extends State<InventoryPage> {
           stocks: stocks,
           canWrite: can('inventory.write'),
           canReportDefect: can('defects.write'),
+          canPrint: canPrintLabels,
         ),
       );
       if (action == 'inspection') {
@@ -538,6 +572,8 @@ class _InventoryPageState extends State<InventoryPage> {
         await _addDocument(fresh);
       } else if (action == 'defect') {
         await _addDefect(fresh);
+      } else if (action == 'print') {
+        await _printItems([Map<String, dynamic>.from(fresh as Map)]);
       } else {
         return;
       }
@@ -632,54 +668,14 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Future<void> _addDefect(Map<String, dynamic> item) async {
-    final title = TextEditingController();
-    final description = TextEditingController();
-    final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-              title: const Text('Mangel melden'),
-              content: SizedBox(
-                  width: 440,
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    TextField(
-                        controller: title,
-                        autofocus: true,
-                        decoration:
-                            const InputDecoration(labelText: 'Titel *')),
-                    TextField(
-                        controller: description,
-                        maxLines: 4,
-                        decoration:
-                            const InputDecoration(labelText: 'Beschreibung *')),
-                  ])),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Abbrechen')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Melden'))
-              ],
-            ));
-    if (confirmed != true) {
-      title.dispose();
-      description.dispose();
-      return;
-    }
-    final submittedTitle = title.text.trim();
-    final submittedDescription = description.text.trim();
-    title.dispose();
-    description.dispose();
-    final saved = await _request('/api/defects', method: 'POST', body: {
-      'entityType': 'MaterialItem',
-      'entityId': item['id'],
-      'affectedQuantity': 1,
-      'title': submittedTitle,
-      'description': submittedDescription,
-      'priority': 'Normal',
-      'operationalSafety': 'Nicht einsatzfähig',
-    });
-    if (saved != null) _message('Mangel wurde gemeldet.');
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DefectsPage(
+        token: widget.token,
+        initialEntityType: 'MaterialItem',
+        initialEntityId: item['id']?.toString(),
+      ),
+    ));
+    await _load();
   }
 
   Future<void> _archive(Map<String, dynamic> item) async {
@@ -1363,6 +1359,25 @@ class _InventoryPageState extends State<InventoryPage> {
                             ),
                           ),
                         ),
+                      if (canPrintLabels && selected.isNotEmpty)
+                        _actionButton(
+                          label: 'Etiketten drucken',
+                          icon: Icons.print,
+                          color: Colors.blueGrey.shade700,
+                          onPressed: _printSelected,
+                        ),
+                      if (canPrintLabels)
+                        IconButton(
+                          onPressed: () => showPrinterSettingsDialog(context),
+                          tooltip: 'Etikettendrucker einrichten',
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
+                      if (canPrintLabels)
+                        IconButton(
+                          onPressed: () => showPrintQueueDialog(context),
+                          tooltip: 'Zwischengespeicherte Druckaufträge',
+                          icon: const Icon(Icons.queue),
+                        ),
                       if (selected.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.symmetric(
@@ -1458,6 +1473,11 @@ class _InventoryPageState extends State<InventoryPage> {
                           onPressed: () => _detail(item),
                           tooltip: 'Details',
                           icon: const Icon(Icons.visibility_outlined)),
+                      if (canPrintLabels)
+                        IconButton(
+                            onPressed: () => _printItems([item]),
+                            tooltip: 'Etikett drucken',
+                            icon: const Icon(Icons.print_outlined)),
                       if (can('inventory.write') && !archived)
                         IconButton(
                             onPressed: () => _edit(item),
@@ -1526,6 +1546,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 PopupMenuButton<String>(
                   onSelected: (action) {
                     if (action == 'details') _detail(item);
+                    if (action == 'print') _printItems([item]);
                     if (action == 'edit') _edit(item);
                     if (action == 'archive') _archive(item);
                     if (action == 'delete') _delete(item);
@@ -1538,6 +1559,14 @@ class _InventoryPageState extends State<InventoryPage> {
                         title: Text('Details'),
                       ),
                     ),
+                    if (canPrintLabels)
+                      const PopupMenuItem(
+                        value: 'print',
+                        child: ListTile(
+                          leading: Icon(Icons.print_outlined),
+                          title: Text('Etikett drucken'),
+                        ),
+                      ),
                     if (can('inventory.write') && !archived)
                       const PopupMenuItem(
                         value: 'edit',
@@ -1582,6 +1611,7 @@ class InventoryDetailDialog extends StatelessWidget {
   final List<Map<String, dynamic>> categories, locations, stocks;
   final bool canWrite;
   final bool canReportDefect;
+  final bool canPrint;
 
   const InventoryDetailDialog({
     required this.item,
@@ -1590,6 +1620,7 @@ class InventoryDetailDialog extends StatelessWidget {
     required this.stocks,
     required this.canWrite,
     required this.canReportDefect,
+    required this.canPrint,
     super.key,
   });
 
@@ -1629,6 +1660,13 @@ class InventoryDetailDialog extends StatelessWidget {
               onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.close)),
           actions: [
+            if (canPrint)
+              TextButton.icon(
+                onPressed: () => Navigator.pop(context, 'print'),
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Etikett'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+              ),
             if (canReportDefect)
               TextButton.icon(
                 onPressed: () => Navigator.pop(context, 'defect'),
@@ -1675,6 +1713,7 @@ class InventoryDetailDialog extends StatelessWidget {
                             '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}'),
                         _line('Hersteller / Modell',
                             '${item['manufacturer'] ?? ''} ${item['model'] ?? ''}'),
+                        _line('Baujahr', item['manufacturingYear']),
                         _line('Seriennummer', item['serialNumber']),
                         _line('Fachbereich', item['department']),
                         _line('Anschaffung',

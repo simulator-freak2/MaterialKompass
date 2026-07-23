@@ -5,6 +5,7 @@ CREATE TABLE users (
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   roles JSON NOT NULL,
+  department_ids JSON NOT NULL,
   permissions JSON NOT NULL,
   active TINYINT(1) DEFAULT 1,
   failed_login_attempts INT DEFAULT 0,
@@ -59,6 +60,9 @@ CREATE TABLE categories (
   requires_psage_inspection BOOLEAN NOT NULL DEFAULT FALSE,
   FOREIGN KEY (parent_id) REFERENCES categories(id)
 );
+
+-- Fachbereiche werden als zentrale Anwendungssammlung gespeichert. Die
+-- Benutzerzuordnung liegt normalisiert am Account in department_ids.
 
 CREATE TABLE material_items (
   id VARCHAR(64) PRIMARY KEY,
@@ -187,6 +191,9 @@ CREATE TABLE defect_reports (
   operational_safety VARCHAR(80) NULL,
   assignee VARCHAR(255) NULL,
   responsible_department VARCHAR(255) NULL,
+  contact_name VARCHAR(255) NULL,
+  contact_email VARCHAR(255) NULL,
+  contact_phone VARCHAR(80) NULL,
   due_date DATE NULL,
   estimated_cost DECIMAL(12,2) NULL,
   actual_cost DECIMAL(12,2) NULL,

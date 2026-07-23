@@ -47,6 +47,7 @@ function createUserStore(database = mariadb) {
         users: userRows.map((row) => ({
           id: row.id, name: row.name, username: row.username, email: row.email,
           passwordHash: row.password_hash, roles: parseJson(row.roles),
+          departmentIds: parseJson(row.department_ids),
           permissions: parseJson(row.permissions), active: Boolean(row.active),
           failedLoginAttempts: Number(row.failed_login_attempts || 0), lockedUntil: iso(row.locked_until),
           lastLoginAt: iso(row.last_login_at), emailVerifiedAt: iso(row.email_verified_at),
@@ -65,10 +66,11 @@ function createUserStore(database = mariadb) {
         failed_login_attempts, locked_until, last_login_at, email_verified_at,
         verification_token_hash, verification_expires_at, password_reset_token_hash,
         password_reset_expires_at, deactivated_at, deactivation_reason,
-        scheduled_deletion_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        scheduled_deletion_at, created_at, department_ids
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
-        password_hash=VALUES(password_hash), roles=VALUES(roles), permissions=VALUES(permissions),
+        password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
+        permissions=VALUES(permissions),
         active=VALUES(active), failed_login_attempts=VALUES(failed_login_attempts),
         locked_until=VALUES(locked_until), last_login_at=VALUES(last_login_at),
         email_verified_at=VALUES(email_verified_at), verification_token_hash=VALUES(verification_token_hash),
@@ -81,6 +83,7 @@ function createUserStore(database = mariadb) {
         sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
         user.passwordResetTokenHash || null, sqlDateTime(user.passwordResetExpiresAt), sqlDateTime(user.deactivatedAt),
         user.deactivationReason || null, sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt),
+        JSON.stringify(user.departmentIds || []),
       ]);
     },
 
