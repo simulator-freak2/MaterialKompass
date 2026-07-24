@@ -121,10 +121,15 @@ class _UsersPageState extends State<UsersPage> {
   }
 
   Future<void> createQrLogin(Map<String, dynamic> user) async {
+    final options = await chooseQrLoginOptions(context);
+    if (options == null || !mounted) return;
     final response = await http.post(
       Uri.parse('$apiBaseUrl/api/users/${user['id']}/qr-credential'),
       headers: headers,
-      body: '{}',
+      body: jsonEncode({
+        'oneTime': options.oneTime,
+        if (!options.oneTime) 'validForDays': options.validForDays,
+      }),
     );
     final data = response.body.isEmpty
         ? <String, dynamic>{}
@@ -138,7 +143,10 @@ class _UsersPageState extends State<UsersPage> {
     await showQrLoginCode(
       context,
       qrValue: data['qrValue'].toString(),
-      expiresAt: DateTime.parse(data['expiresAt'].toString()),
+      expiresAt: data['expiresAt'] == null
+          ? null
+          : DateTime.parse(data['expiresAt'].toString()),
+      oneTime: data['oneTime'] != false,
       accountLabel: user['name']?.toString() ?? user['username'].toString(),
     );
   }

@@ -97,10 +97,15 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> createQrLogin() async {
+    final options = await chooseQrLoginOptions(context);
+    if (options == null || !mounted) return;
     final response = await http.post(
       Uri.parse('$apiBaseUrl/api/auth/qr-credentials/me'),
       headers: headers,
-      body: '{}',
+      body: jsonEncode({
+        'oneTime': options.oneTime,
+        if (!options.oneTime) 'validForDays': options.validForDays,
+      }),
     );
     final data = response.body.isEmpty
         ? <String, dynamic>{}
@@ -114,8 +119,22 @@ class _ProfilePageState extends State<ProfilePage> {
     await showQrLoginCode(
       context,
       qrValue: data['qrValue'].toString(),
-      expiresAt: DateTime.parse(data['expiresAt'].toString()),
+      expiresAt: data['expiresAt'] == null
+          ? null
+          : DateTime.parse(data['expiresAt'].toString()),
+      oneTime: data['oneTime'] != false,
     );
+  }
+
+  Future<void> revokeQrLogin() async {
+    final response = await http.delete(
+      Uri.parse('$apiBaseUrl/api/auth/qr-credentials/me'),
+      headers: headers,
+    );
+    if (!mounted) return;
+    message(response.statusCode == 204
+        ? 'Aktiver Anmelde-QR-Code wurde widerrufen.'
+        : 'QR-Code konnte nicht widerrufen werden.');
   }
 
   @override
@@ -161,7 +180,7 @@ class _ProfilePageState extends State<ProfilePage> {
               Text('QR-Anmeldung',
                   style: Theme.of(context).textTheme.titleLarge),
               const Text(
-                  'Erstellt einen anonymen Einmalcode für die Anmeldung auf einem weiteren Gerät. Ein neuer Code widerruft den vorherigen.'),
+                  'Erstellt wahlweise einen einmaligen oder mehrfach verwendbaren anonymen Anmeldecode. Ein neuer Code widerruft den vorherigen.'),
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerLeft,
@@ -169,6 +188,14 @@ class _ProfilePageState extends State<ProfilePage> {
                   onPressed: createQrLogin,
                   icon: const Icon(Icons.qr_code_2),
                   label: const Text('Anmelde-QR-Code erstellen'),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: revokeQrLogin,
+                  icon: const Icon(Icons.block),
+                  label: const Text('Aktiven QR-Code widerrufen'),
                 ),
               ),
               const Divider(height: 48),

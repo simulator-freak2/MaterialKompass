@@ -5,29 +5,146 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 
+enum QrLoginMode { oneTime, reusable }
+
+class QrLoginOptions {
+  final bool oneTime;
+  final int? validForDays;
+  const QrLoginOptions.oneTime()
+      : oneTime = true,
+        validForDays = null;
+  const QrLoginOptions.reusable(this.validForDays) : oneTime = false;
+}
+
+Future<QrLoginOptions?> chooseQrLoginOptions(BuildContext context) async {
+  final mode = await showDialog<QrLoginMode>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Art des QR-Codes'),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.looks_one_outlined),
+                title: const Text('Einmal verwendbar'),
+                subtitle: const Text(
+                    '10 Minuten gültig und nach der ersten Anmeldung verbraucht.'),
+                onTap: () => Navigator.pop(context, QrLoginMode.oneTime),
+              ),
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('Mehrfach verwendbar'),
+                subtitle: const Text(
+                    'Gültigkeitsdauer auswählen. Wie ein Passwort schützen.'),
+                onTap: () => Navigator.pop(context, QrLoginMode.reusable),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+        ],
+      ),
+    );
+  if (mode == null) return null;
+  if (mode == QrLoginMode.oneTime) return const QrLoginOptions.oneTime();
+  if (!context.mounted) return null;
+  final days = await showDialog<int?>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: const Text('Gültigkeitsdauer'),
+      children: [
+        for (final days in const [7, 14, 30, 365])
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, days),
+            child: Text('$days Tage'),
+          ),
+        SimpleDialogOption(
+          onPressed: () => Navigator.pop(context, -1),
+          child: const Text('Benutzerdefiniert'),
+        ),
+        SimpleDialogOption(
+          onPressed: () => Navigator.pop(context, 0),
+          child: const Text('Bis Widerruf'),
+        ),
+      ],
+    ),
+  );
+  if (days == null) return null;
+  if (days == 0) return const QrLoginOptions.reusable(null);
+  if (days > 0) return QrLoginOptions.reusable(days);
+  if (!context.mounted) return null;
+  final controller = TextEditingController();
+  final customDays = await showDialog<int>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Benutzerdefinierte Gültigkeit'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(
+          labelText: 'Anzahl der Tage',
+          helperText: '1 bis 3650 Tage',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final value = int.tryParse(controller.text.trim());
+            if (value != null && value >= 1 && value <= 3650) {
+              Navigator.pop(context, value);
+            }
+          },
+          child: const Text('Übernehmen'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  return customDays == null ? null : QrLoginOptions.reusable(customDays);
+}
+
 Future<void> showQrLoginCode(
   BuildContext context, {
   required String qrValue,
-  required DateTime expiresAt,
+  required DateTime? expiresAt,
+  required bool oneTime,
   String? accountLabel,
 }) {
-  final localExpiry = expiresAt.toLocal();
-  final time =
-      '${localExpiry.hour.toString().padLeft(2, '0')}:${localExpiry.minute.toString().padLeft(2, '0')}';
+  final localExpiry = expiresAt?.toLocal();
+  final time = localExpiry == null
+      ? null
+      : '${localExpiry.hour.toString().padLeft(2, '0')}:${localExpiry.minute.toString().padLeft(2, '0')}';
+  final date = localExpiry == null
+      ? null
+      : '${localExpiry.day.toString().padLeft(2, '0')}.${localExpiry.month.toString().padLeft(2, '0')}.${localExpiry.year}';
   return showDialog<void>(
     context: context,
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       title: Text(accountLabel == null
-          ? 'Einmaliger Anmelde-QR-Code'
+          ? '${oneTime ? 'Einmaliger' : 'Mehrfach verwendbarer'} Anmelde-QR-Code'
           : 'QR-Code für $accountLabel'),
       content: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Der Code enthält keine persönlichen Daten. Er ist nur einmal und für 10 Minuten verwendbar.',
+            Text(
+              oneTime
+                  ? 'Der Code enthält keine persönlichen Daten. Er ist einmalig und 10 Minuten gültig.'
+                  : 'Der Code enthält keine persönlichen Daten. Er ist mehrfach verwendbar und muss wie ein Passwort geschützt werden.',
             ),
             const SizedBox(height: 16),
             Container(
@@ -41,7 +158,11 @@ Future<void> showQrLoginCode(
               ),
             ),
             const SizedBox(height: 12),
-            Text('Gültig bis $time Uhr'),
+            Text(localExpiry == null
+                ? 'Gültig bis zum Widerruf'
+                : oneTime
+                    ? 'Gültig bis $time Uhr'
+                    : 'Gültig bis $date, $time Uhr'),
           ],
         ),
       ),
