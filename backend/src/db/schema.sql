@@ -12,6 +12,8 @@ CREATE TABLE users (
   locked_until DATETIME NULL,
   last_login_at DATETIME NULL,
   email_verified_at DATETIME NULL,
+  email_verification_managed TINYINT(1) DEFAULT 0,
+  email_verification_requested_at DATETIME NULL,
   verification_token_hash CHAR(64) NULL,
   verification_expires_at DATETIME NULL,
   password_reset_token_hash CHAR(64) NULL,
@@ -20,8 +22,32 @@ CREATE TABLE users (
   deactivation_reason VARCHAR(64) NULL,
   scheduled_deletion_at DATETIME NULL,
   created_at DATETIME NOT NULL,
+  created_by_user_id VARCHAR(64) NULL,
   INDEX idx_users_last_login (last_login_at),
-  INDEX idx_users_scheduled_deletion (scheduled_deletion_at)
+  INDEX idx_users_scheduled_deletion (scheduled_deletion_at),
+  INDEX idx_users_created_by (created_by_user_id)
+);
+
+CREATE TABLE account_mail_deliveries (
+  id VARCHAR(64) PRIMARY KEY,
+  type VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) NOT NULL,
+  created_by_user_id VARCHAR(64) NULL,
+  recipient_email VARCHAR(255) NOT NULL,
+  message_id VARCHAR(255) NULL,
+  sent_at DATETIME NOT NULL,
+  bounce_forwarded_at DATETIME NULL,
+  INDEX idx_account_mail_message_id (message_id),
+  INDEX idx_account_mail_recipient (recipient_email),
+  INDEX idx_account_mail_user (user_id)
+);
+
+CREATE TABLE mailbox_processing_state (
+  mailbox VARCHAR(255) PRIMARY KEY,
+  uid_validity VARCHAR(64) NOT NULL,
+  last_uid BIGINT UNSIGNED NOT NULL,
+  initialized_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
 );
 
 CREATE TABLE roles (

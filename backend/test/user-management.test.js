@@ -8,6 +8,7 @@ async function setup(options = {}) {
   const app = createApp({
     onAccountToken: (entry) => tokens.push(entry),
     accountMailSender: options.accountMailSender,
+    userStore: options.userStore,
   });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -85,6 +86,94 @@ test('admin creates a user with only username and email as required fields', asy
       identifier: 'ohne-name', password: 'ErstesPasswort123!',
     } })).response.status, 200);
   } finally { server.close(); }
+});
+
+test('dashboard warns managers after 24 hours until the email is verified', async () => {
+  let createdUser;
+  const { server, request, tokens, adminToken } = await setup({
+    accountMailSender: async () => ({ messageId: '<verification@example.org>' }),
+    userStore: {
+      async saveUser(user) {
+        if (user.username === 'unconfirmed') createdUser = user;
+      },
+      async saveAccountMailDelivery() {},
+    },
+  });
+  try {
+    const created = await request('/api/users', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        username: 'unconfirmed',
+        email: 'unconfirmed@example.org',
+        password: 'SehrSicher123!',
+      },
+    });
+    assert.equal(created.response.status, 201);
+
+    let dashboard = await request('/api/dashboard', { token: adminToken });
+    assert.deepEqual(dashboard.data.unverifiedEmailUsers, []);
+
+    createdUser.emailVerificationRequestedAt = '2026-01-01T00:00:00.000Z';
+    dashboard = await request('/api/dashboard', { token: adminToken });
+    assert.equal(dashboard.data.unverifiedEmailUsers[0].id, created.data.id);
+
+    const verification = tokens.find((entry) => entry.type === 'verification'
+      && entry.userId === created.data.id);
+    assert.equal((await request(`/api/auth/verify-email?token=${verification.token}`)).response.status, 200);
+    dashboard = await request('/api/dashboard', { token: adminToken });
+    assert.deepEqual(dashboard.data.unverifiedEmailUsers, []);
+  } finally {
+    server.close();
+  }
+});
+
+test('a self-managed email change does not create a dashboard warning', async () => {
+  let changedAdmin;
+  const { server, request, tokens, adminToken } = await setup({
+    accountMailSender: async () => ({ messageId: '<self-change@example.org>' }),
+    userStore: {
+      async saveUser(user) {
+        if (user.id === 'user-admin' && user.email === 'admin-neu@example.org') changedAdmin = user;
+      },
+      async saveAccountMailDelivery() {},
+    },
+  });
+  try {
+    const secondAdmin = await request('/api/users', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        username: 'admin-zwei',
+        email: 'admin-zwei@example.org',
+        password: 'SehrSicher123!',
+        roles: ['Admin'],
+      },
+    });
+    const secondAdminVerification = tokens.find((entry) => entry.type === 'verification'
+      && entry.userId === secondAdmin.data.id);
+    await request(`/api/auth/verify-email?token=${secondAdminVerification.token}`);
+    const secondAdminLogin = await request('/api/auth/login', {
+      method: 'POST',
+      body: { identifier: 'admin-zwei', password: 'SehrSicher123!' },
+    });
+
+    const changed = await request('/api/users/me', {
+      method: 'PUT',
+      token: adminToken,
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        email: 'admin-neu@example.org',
+      },
+    });
+    assert.equal(changed.response.status, 200);
+    changedAdmin.emailVerificationRequestedAt = '2026-01-01T00:00:00.000Z';
+
+    const dashboard = await request('/api/dashboard', { token: secondAdminLogin.data.token });
+    assert.deepEqual(dashboard.data.unverifiedEmailUsers, []);
+  } finally {
+    server.close();
+  }
 });
 
 test('password reset token is single-use and roles can be created', async () => {

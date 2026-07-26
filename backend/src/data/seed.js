@@ -25,11 +25,11 @@ const roles = [
   { id: 'role-admin', name: 'Admin', permissions },
   { id: 'role-user', name: 'Nutzer', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.export', 'dashboard.read'] },
   { id: 'role-materialwart', name: 'Materialwart', permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.write', 'defects.report', 'defects.edit', 'defects.assign', 'defects.close', 'defects.archive', 'defects.delete', 'defects.export', 'documents.read', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
-  { id: 'role-kleiderwart', name: 'Kleiderwart', permissions: ['categories.read', 'locations.read', 'clothing.read', 'clothing.write', 'clothing.inspect', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.report', 'defects.edit', 'defects.assign', 'defects.close', 'defects.archive', 'defects.delete', 'defects.export', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
+  { id: 'role-kleiderwart', name: 'Kleiderwart', permissions: ['categories.read', 'locations.read', 'locations.write', 'clothing.read', 'clothing.write', 'clothing.inspect', 'inventory.read', 'inventory.write', 'inventory.import', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.report', 'defects.edit', 'defects.assign', 'defects.close', 'defects.archive', 'defects.delete', 'defects.export', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
   { id: 'role-fachbereichsleiter', name: 'Fachbereichsleiter', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'procurement.read', 'procurement.request', 'procurement.export', 'reports.read', 'dashboard.read'] },
   { id: 'role-vorsitz', name: 'Vorsitz', permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'defects.read', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
   { id: 'role-schatzmeister', name: 'Schatzmeister', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
-  { id: 'role-jugendvorsitzender', name: 'Jugendvorsitzender', permissions: ['material.read', 'dashboard.read'] },
+  { id: 'role-jugendvorsitzender', name: 'Jugendvorsitzender', permissions: ['categories.read', 'locations.read', 'locations.write', 'material.read', 'inventory.read', 'inventory.write', 'inventory.import', 'inventory.export', 'inventory.relocate', 'clothing.read', 'dashboard.read'] },
   { id: 'role-sachkundiger', name: 'Sachkundiger PSAgE', permissions: ['material.read', 'clothing.read', 'clothing.inspect', 'defects.read'] },
 ];
 
@@ -145,6 +145,7 @@ const clothingItems = [
 const issueTransactions = [];
 const defectReports = [];
 const notifications = [];
+const adminNotices = [];
 const procurementRequests = [];
 const procurementOffers = [];
 const procurementOrders = [];
@@ -154,6 +155,13 @@ const suppliers = [{ id: 'supplier-1', name: 'DLRG Fachhandel', contact: 'Vertri
 const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
 const exportLogs = [];
+const storageRacks = [];
+const storageLevels = [];
+const storagePlaces = [];
+const storageBoxes = [];
+const storageAssignments = [];
+const stocktakes = [];
+const storageHistory = [];
 
 module.exports = {
   seedData: {
@@ -173,6 +181,7 @@ module.exports = {
     issueTransactions,
     defectReports,
     notifications,
+    adminNotices,
     procurementRequests,
     procurementOffers,
     procurementOrders,
@@ -182,5 +191,12 @@ module.exports = {
     documents,
     auditLogs,
     exportLogs,
+    storageRacks,
+    storageLevels,
+    storagePlaces,
+    storageBoxes,
+    storageAssignments,
+    stocktakes,
+    storageHistory,
   },
 };

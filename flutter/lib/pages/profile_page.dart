@@ -18,6 +18,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final currentPassword = TextEditingController();
   final newPassword = TextEditingController();
   Map<String, dynamic>? user;
+  List<Map<String, dynamic>> qrCredentials = [];
   Map<String, String> get headers => {
         'Authorization': 'Bearer ${widget.token}',
         'Content-Type': 'application/json'
@@ -35,6 +36,20 @@ class _ProfilePageState extends State<ProfilePage> {
     if (response.statusCode == 200 && mounted) {
       user = jsonDecode(response.body)['user'];
       email.text = user!['email'];
+      setState(() {});
+      await loadQrCredentials();
+    }
+  }
+
+  Future<void> loadQrCredentials() async {
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/auth/qr-credentials/me'),
+      headers: headers,
+    );
+    if (response.statusCode == 200 && mounted) {
+      qrCredentials = (jsonDecode(response.body) as List)
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .toList();
       setState(() {});
     }
   }
@@ -124,17 +139,30 @@ class _ProfilePageState extends State<ProfilePage> {
           : DateTime.parse(data['expiresAt'].toString()),
       oneTime: data['oneTime'] != false,
     );
+    await loadQrCredentials();
   }
 
-  Future<void> revokeQrLogin() async {
+  Future<void> revokeQrLogin([String? credentialId]) async {
     final response = await http.delete(
-      Uri.parse('$apiBaseUrl/api/auth/qr-credentials/me'),
+      Uri.parse(credentialId == null
+          ? '$apiBaseUrl/api/auth/qr-credentials/me'
+          : '$apiBaseUrl/api/auth/qr-credentials/me/$credentialId'),
       headers: headers,
     );
     if (!mounted) return;
     message(response.statusCode == 204
-        ? 'Aktiver Anmelde-QR-Code wurde widerrufen.'
+        ? credentialId == null
+            ? 'Alle Anmelde-QR-Codes wurden widerrufen.'
+            : 'Anmelde-QR-Code wurde widerrufen.'
         : 'QR-Code konnte nicht widerrufen werden.');
+    if (response.statusCode == 204) await loadQrCredentials();
+  }
+
+  String qrValidity(Map<String, dynamic> credential) {
+    if (credential['expiresAt'] == null) return 'Gültig bis Widerruf';
+    final date = DateTime.parse(credential['expiresAt'].toString()).toLocal();
+    return 'Gültig bis ${date.day.toString().padLeft(2, '0')}.'
+        '${date.month.toString().padLeft(2, '0')}.${date.year}';
   }
 
   @override
@@ -180,7 +208,7 @@ class _ProfilePageState extends State<ProfilePage> {
               Text('QR-Anmeldung',
                   style: Theme.of(context).textTheme.titleLarge),
               const Text(
-                  'Erstellt wahlweise einen einmaligen oder mehrfach verwendbaren anonymen Anmeldecode. Ein neuer Code widerruft den vorherigen.'),
+                  'Mehrere einmalige oder mehrfach verwendbare Anmeldecodes können gleichzeitig aktiv sein. Der vollständige Code wird nur beim Erstellen angezeigt.'),
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerLeft,
@@ -190,12 +218,39 @@ class _ProfilePageState extends State<ProfilePage> {
                   label: const Text('Anmelde-QR-Code erstellen'),
                 ),
               ),
+              if (qrCredentials.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Keine aktiven QR-Codes.'),
+                )
+              else
+                ...qrCredentials.map((credential) => Card(
+                      child: ListTile(
+                        leading: Icon(credential['oneTime'] == true
+                            ? Icons.looks_one_outlined
+                            : Icons.all_inclusive),
+                        title: Text(credential['oneTime'] == true
+                            ? 'Einmalcode'
+                            : 'Mehrfachcode'),
+                        subtitle: Text(
+                          '${qrValidity(credential)}'
+                          '${credential['lastUsedAt'] == null ? '' : ' · Bereits verwendet'}',
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Diesen QR-Code widerrufen',
+                          onPressed: () =>
+                              revokeQrLogin(credential['id'].toString()),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ),
+                    )),
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
-                  onPressed: revokeQrLogin,
+                  onPressed:
+                      qrCredentials.isEmpty ? null : () => revokeQrLogin(),
                   icon: const Icon(Icons.block),
-                  label: const Text('Aktiven QR-Code widerrufen'),
+                  label: const Text('Alle QR-Codes widerrufen'),
                 ),
               ),
               const Divider(height: 48),

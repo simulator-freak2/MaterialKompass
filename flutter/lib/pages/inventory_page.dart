@@ -69,7 +69,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
   final formKey = GlobalKey<FormState>();
   late final Map<String, TextEditingController> fields;
   String itemType = 'individual', status = 'Lagernd', unit = 'Stück';
-  String? categoryCode, subcategoryCode, locationId, stockId;
+  String? categoryCode, subcategoryCode;
 
   @override
   void initState() {
@@ -108,9 +108,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
     categoryCode = value('categoryCode').isEmpty ? null : value('categoryCode');
     subcategoryCode =
         value('subcategoryCode').isEmpty ? null : value('subcategoryCode');
-    locationId = value('locationId').isEmpty ? null : value('locationId');
-    stockId =
-        value('stockStructureId').isEmpty ? null : value('stockStructureId');
   }
 
   @override
@@ -198,9 +195,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
     final subs = widget.categories
         .where((entry) => entry['parentId'] == categoryCode)
         .toList();
-    final availableStocks = widget.stocks
-        .where((entry) => entry['locationId'] == locationId)
-        .toList();
     return AlertDialog(
       title: Text(
           widget.item == null ? 'Material anlegen' : 'Material bearbeiten'),
@@ -226,16 +220,16 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
               }),
               _entityDropdown('Unterkategorie', subcategoryCode, subs,
                   (value) => setState(() => subcategoryCode = value)),
-              _entityDropdown('Standort *', locationId, widget.locations,
-                  (value) {
-                setState(() {
-                  locationId = value;
-                  stockId = null;
-                });
-              }),
-              _entityDropdown('Regal/Fach', stockId, availableStocks,
-                  (value) => setState(() => stockId = value),
-                  stock: true),
+              const SizedBox(
+                width: 472,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.place_outlined),
+                  title: Text('Lagerzuordnung'),
+                  subtitle: Text(
+                      'Lagerplätze und Kisten werden nach dem Speichern zentral in der Lagerverwaltung zugeordnet.'),
+                ),
+              ),
               SizedBox(
                 width: 230,
                 child: DropdownButtonFormField<String>(
@@ -320,8 +314,8 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       'inventoryNumber': fields['inventoryNumber']!.text.trim(),
       'categoryCode': categoryCode,
       'subcategoryCode': subcategoryCode ?? '',
-      'locationId': locationId,
-      'stockStructureId': stockId,
+      'locationId': null,
+      'stockStructureId': null,
       'status': status,
       'itemType': itemType,
       'quantity': itemType == 'individual' ? 1 : decimal('quantity'),
@@ -357,6 +351,8 @@ class _InventoryPageState extends State<InventoryPage> {
   List<Map<String, dynamic>> categories = [];
   List<Map<String, dynamic>> locations = [];
   List<Map<String, dynamic>> stocks = [];
+  List<Map<String, dynamic>> storageHierarchy = [];
+  List<Map<String, dynamic>> storageBoxes = [];
   Set<String> permissions = {};
   Set<String> roles = {};
   final selected = <String>{};
@@ -400,6 +396,9 @@ class _InventoryPageState extends State<InventoryPage> {
         http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
             headers: headers),
         http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: headers),
+        http.get(Uri.parse('$apiBaseUrl/api/storage/hierarchy'),
+            headers: headers),
+        http.get(Uri.parse('$apiBaseUrl/api/storage/boxes'), headers: headers),
       ]);
       if (responses.any((response) => response.statusCode == 401)) {
         widget.onLogout?.call();
@@ -415,6 +414,8 @@ class _InventoryPageState extends State<InventoryPage> {
         categories = _list(responses[1]);
         locations = _list(responses[2]);
         stocks = _list(responses[3]);
+        storageHierarchy = _list(responses[5]);
+        storageBoxes = _list(responses[6]);
         permissions = ((user['permissions'] as List?) ?? const [])
             .map((value) => value.toString())
             .toSet();
@@ -469,6 +470,45 @@ class _InventoryPageState extends State<InventoryPage> {
     return '-';
   }
 
+  List<Map<String, dynamic>> get _storagePlaces => [
+        for (final location in storageHierarchy)
+          for (final rack in (location['racks'] as List? ?? const []))
+            for (final level in (rack['levels'] as List? ?? const []))
+              for (final place in (level['places'] as List? ?? const []))
+                {
+                  ...Map<String, dynamic>.from(place as Map),
+                  'locationId': location['id'],
+                  'locationName': location['name'],
+                }
+      ];
+
+  String _storageLabel(Map<String, dynamic> item) {
+    final itemAssignments =
+        (item['storageAssignments'] as List? ?? const []).cast<Map>();
+    if (itemAssignments.isEmpty) return 'Nicht zugeordnet';
+    return itemAssignments.map((assignment) {
+      final place = _storagePlaces.cast<Map<String, dynamic>?>().firstWhere(
+            (entry) => entry?['id'] == assignment['storagePlaceId'],
+            orElse: () => null,
+          );
+      final box = storageBoxes.cast<Map<String, dynamic>?>().firstWhere(
+            (entry) => entry?['id'] == assignment['boxId'],
+            orElse: () => null,
+          );
+      final quantity = assignment['quantity'];
+      return '${place?['code'] ?? 'Unbekannter Platz'}${box == null ? '' : ' · ${box['inventoryNumber']}'} ($quantity)';
+    }).join(', ');
+  }
+
+  bool _matchesStorageLocation(Map<String, dynamic> item, String locationId) {
+    final placeIds = _storagePlaces
+        .where((place) => place['locationId'] == locationId)
+        .map((place) => place['id'])
+        .toSet();
+    return (item['storageAssignments'] as List? ?? const [])
+        .any((assignment) => placeIds.contains(assignment['storagePlaceId']));
+  }
+
   List<Map<String, dynamic>> get filtered {
     final query = search.text.trim().toLowerCase();
     final now = DateTime.now();
@@ -483,6 +523,7 @@ class _InventoryPageState extends State<InventoryPage> {
         item['description'],
         item['notes'],
         item['department'],
+        _storageLabel(item),
       ].join(' ').toLowerCase();
       final due =
           DateTime.tryParse(item['nextInspectionDate']?.toString() ?? '');
@@ -497,7 +538,8 @@ class _InventoryPageState extends State<InventoryPage> {
           (categoryFilter == null ||
               item['categoryCode'] == categoryFilter ||
               item['subcategoryCode'] == categoryFilter) &&
-          (locationFilter == null || item['locationId'] == locationFilter) &&
+          (locationFilter == null ||
+              _matchesStorageLocation(item, locationFilter!)) &&
           (statusFilter == null || item['status'] == statusFilter) &&
           (departmentFilter == null ||
               item['department'] == departmentFilter) &&
@@ -565,6 +607,7 @@ class _InventoryPageState extends State<InventoryPage> {
           canWrite: can('inventory.write'),
           canReportDefect: can('defects.write'),
           canPrint: canPrintLabels,
+          storageLabel: _storageLabel(Map<String, dynamic>.from(fresh as Map)),
         ),
       );
       if (action == 'inspection') {
@@ -1266,7 +1309,7 @@ class _InventoryPageState extends State<InventoryPage> {
                           _filter(
                             'Standort',
                             locationFilter,
-                            locations
+                            storageHierarchy
                                 .map((entry) => MapEntry(entry['id'].toString(),
                                     entry['name'].toString()))
                                 .toList(),
@@ -1439,7 +1482,7 @@ class _InventoryPageState extends State<InventoryPage> {
           DataColumn(label: Text('Inventarnummer')),
           DataColumn(label: Text('Bezeichnung')),
           DataColumn(label: Text('Kategorie')),
-          DataColumn(label: Text('Standort · Fach')),
+          DataColumn(label: Text('Lagerplätze / Kisten')),
           DataColumn(label: Text('Bestand')),
           DataColumn(label: Text('Status')),
           DataColumn(label: Text('Fachbereich')),
@@ -1462,8 +1505,7 @@ class _InventoryPageState extends State<InventoryPage> {
                         onTap: () => _detail(item)),
                     DataCell(Text(
                         '${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}')),
-                    DataCell(Text(
-                        '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}')),
+                    DataCell(Text(_storageLabel(item))),
                     DataCell(Text(
                         '${item['availableQuantity']}/${item['quantity']} ${item['unit']}')),
                     DataCell(
@@ -1531,8 +1573,7 @@ class _InventoryPageState extends State<InventoryPage> {
                     'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}'),
                 Text(
                     'Kategorie: ${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}'),
-                Text(
-                    'Standort: ${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}'),
+                Text('Lagerung: ${_storageLabel(item)}'),
                 Text(
                     'Verfügbar: ${item['availableQuantity']} von ${item['quantity']} ${item['unit']}'),
                 Text(
@@ -1614,6 +1655,7 @@ class InventoryDetailDialog extends StatelessWidget {
   final bool canWrite;
   final bool canReportDefect;
   final bool canPrint;
+  final String storageLabel;
 
   const InventoryDetailDialog({
     required this.item,
@@ -1623,6 +1665,7 @@ class InventoryDetailDialog extends StatelessWidget {
     required this.canWrite,
     required this.canReportDefect,
     required this.canPrint,
+    required this.storageLabel,
     super.key,
   });
 
@@ -1708,8 +1751,7 @@ class InventoryDetailDialog extends StatelessWidget {
                         _line('Inventarnummer', item['inventoryNumber']),
                         _line('Kategorie',
                             '${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}'),
-                        _line('Standort',
-                            '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}'),
+                        _line('Lagerplätze / Kisten', storageLabel),
                         _line('Status', item['status']),
                         _line('Bestand',
                             '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}'),

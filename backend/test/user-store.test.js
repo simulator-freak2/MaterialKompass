@@ -37,7 +37,7 @@ test('saveUser converts every timestamp before sending it to MariaDB', async () 
 
   assert.equal(poolOptions.timezone, 'Z');
   assert.equal(queryValues[11], '2026-01-01 00:00:00');
-  assert.equal(queryValues[19], '2026-01-01 00:00:00');
+  assert.equal(queryValues[21], '2026-01-01 00:00:00');
   assert.equal(queryValues[9], null);
   assert.equal(queryValues[10], null);
   await store.close();

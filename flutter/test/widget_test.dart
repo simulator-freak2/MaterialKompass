@@ -53,6 +53,23 @@ void main() {
               'roles': ['Admin'],
               'permissions': ['locations.read', 'defects.read'],
             },
+            'unverifiedEmailUsers': [
+              {
+                'id': 'user-unconfirmed',
+                'name': 'Noch Unbestätigt',
+                'username': 'unconfirmed',
+                'email': 'unconfirmed@example.org',
+              }
+            ],
+            'notices': [
+              {
+                'id': 'notice-1',
+                'title': 'Wartungsfenster',
+                'message':
+                    'Die Webseite ist am 24.10.2026 von 12:00 bis 13:00 Uhr nicht verfügbar.',
+                'level': 'warning',
+              },
+            ],
             'recentActivity': [
               {
                 'entityLabel': 'Material',
@@ -73,6 +90,11 @@ void main() {
     expect(loadCount, 1);
     expect(find.text('Material'), findsWidgets);
     expect(find.text('Material ausgegeben'), findsOneWidget);
+    expect(find.text('E-Mail-Adresse nicht bestätigt'), findsOneWidget);
+    expect(find.text('Wartungsfenster'), findsOneWidget);
+    expect(find.textContaining('24.10.2026'), findsOneWidget);
+    expect(find.text('Noch Unbestätigt'), findsOneWidget);
+    expect(find.text('Nutzer öffnen'), findsOneWidget);
 
     final firstCard = tester.getTopLeft(find.byWidgetPredicate(
       (widget) => widget is StatCard && widget.title == 'Material',
@@ -84,12 +106,14 @@ void main() {
     expect(secondCard.dx, greaterThan(firstCard.dx));
 
     await tester.scrollUntilVisible(
-      find.text('Bereiche'),
+      find.text('Hinweise verwalten'),
       400,
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Bereiche'), findsOneWidget);
     expect(find.text('Nutzerverwaltung'), findsOneWidget);
+    expect(find.text('Daten löschen'), findsOneWidget);
+    expect(find.text('Hinweise verwalten'), findsOneWidget);
     expect(find.text('Mängel'), findsOneWidget);
 
     await tester.scrollUntilVisible(

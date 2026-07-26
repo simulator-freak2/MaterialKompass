@@ -87,10 +87,15 @@ function loadRuntimeConfig(env = process.env) {
     if (appBaseUrl.protocol !== 'https:') {
       throw new Error('APP_BASE_URL muss im Produktivbetrieb HTTPS verwenden.');
     }
-    const missingMailSettings = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM']
+    const missingSmtpSettings = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM']
       .filter((name) => !env[name]);
-    if (missingMailSettings.length > 0) {
-      throw new Error(`Für Account-E-Mails fehlen SMTP-Einstellungen: ${missingMailSettings.join(', ')}.`);
+    if (missingSmtpSettings.length > 0) {
+      throw new Error(`Für Account-E-Mails fehlen SMTP-Einstellungen: ${missingSmtpSettings.join(', ')}.`);
+    }
+    const missingImapSettings = ['IMAP_HOST', 'IMAP_USER', 'IMAP_PASSWORD']
+      .filter((name) => !env[name]);
+    if (missingImapSettings.length > 0) {
+      throw new Error(`Für E-Mail-Rückläufer fehlen IMAP-Einstellungen: ${missingImapSettings.join(', ')}.`);
     }
     if (!env.DB_HOST && (!env.INITIAL_ADMIN_PASSWORD || env.INITIAL_ADMIN_PASSWORD.length < 12)) {
       throw new Error('INITIAL_ADMIN_PASSWORD muss ohne Datenbank mindestens 12 Zeichen lang sein.');

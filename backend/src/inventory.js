@@ -25,7 +25,7 @@ function normalizeHeader(value) {
 function registerInventoryRoutes({
   app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
   materialInspections, materialDocuments, defectReports, categories, locations, stockStructures,
-  logEvent, nextId, XLSX, defectManagement,
+  storageAssignments, logEvent, nextId, XLSX, defectManagement,
 }) {
   const number = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -54,14 +54,14 @@ function registerInventoryRoutes({
     const itemType = String(body.itemType ?? existing?.itemType ?? 'individual').trim();
     const quantity = itemType === 'individual' ? 1 : number(body.quantity ?? existing?.quantity, 0);
     const pair = categoryPair(categoryCode, subcategoryCode);
-    if (!name || !categoryCode || !locationId || !status) return { error: 'Bezeichnung, Kategorie, Standort und Status sind Pflichtfelder.' };
+    if (!name || !categoryCode || !status) return { error: 'Bezeichnung, Kategorie und Status sind Pflichtfelder.' };
     if (!pair.main || (subcategoryCode && !pair.child)) return { error: 'Die gewählte Haupt-/Unterkategorie ist ungültig.' };
-    if (!locations.some((entry) => entry.id === locationId)) return { error: 'Der gewählte Standort ist ungültig.' };
+    if (locationId && !locations.some((entry) => entry.id === locationId)) return { error: 'Der gewählte Standort ist ungültig.' };
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return { error: 'Der Lagerplatz gehört nicht zum gewählten Standort.' };
     if (!MATERIAL_STATUSES.includes(status)) return { error: 'Der gewählte Status ist ungültig.' };
     if (!['individual', 'bulk'].includes(itemType) || quantity <= 0) return { error: 'Art und Anzahl des Artikels sind ungültig.' };
     if (existing && quantity < number(existing.issuedQuantity)) return { error: 'Die Anzahl darf nicht unter die ausgegebene Menge fallen.' };
-    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, status, itemType, quantity };
+    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId: locationId || null, stockStructureId: stockStructureId || null, status, itemType, quantity };
   }
 
   function responseItem(item) {
@@ -72,6 +72,8 @@ function registerInventoryRoutes({
       inspections: materialInspections.filter((entry) => entry.materialId === item.id).slice().reverse(),
       documents: materialDocuments.filter((entry) => entry.materialId === item.id).map(({ fileBase64, ...entry }) => entry),
       defects: defectReports.filter((entry) => entry.entityType === 'MaterialItem' && entry.entityId === item.id).slice().reverse(),
+      storageAssignments: (storageAssignments || [])
+        .filter((entry) => entry.entityType === 'material' && entry.entityId === item.id),
     };
   }
 

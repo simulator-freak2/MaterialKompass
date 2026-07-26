@@ -169,6 +169,27 @@ für `/#/verify-email` und `/#/password-reset` an Flutter gehen. Das Backend bra
 den IONOS-Versand typischerweise `SMTP_HOST=smtp.ionos.de`, Port 587 und TLS über
 STARTTLS (`SMTP_SECURE=false`).
 
+Für die Verarbeitung unzustellbarer Adressbestätigungen wird zusätzlich das Postfach
+`noreply@materialkompass.org` per IMAP geöffnet. Bei IONOS werden dafür
+`IMAP_HOST=imap.ionos.de`, Port 993 und eine direkte TLS-Verbindung
+(`IMAP_SECURE=true`) verwendet. Beim ersten erfolgreichen Verbindungsaufbau merkt sich
+das Backend den aktuellen UID-Stand, sodass vorhandene Nachrichten nicht verarbeitet
+werden. Danach prüft es das Postfach beim Start und standardmäßig alle fünf Minuten.
+
+Nur endgültige Zustellfehler, die einer von MaterialKompass versandten
+E-Mail-Adressbestätigung zugeordnet werden können, werden als vollständige `.eml`
+weitergeleitet. Empfänger ist der aktive Ersteller des Kontos; fehlt dieser, erhalten
+alle aktiven Admins und Accounts mit `users.write` den Rückläufer. Erst nach
+erfolgreicher Weiterleitung wird die ursprüngliche Nachricht endgültig aus dem
+Postfach gelöscht. Nicht zuordenbare und temporäre Rückmeldungen bleiben unangetastet.
+
+Nicht bestätigte, durch die Nutzerverwaltung ausgelöste Adressbestätigungen erscheinen
+nach 24 Stunden für alle Admins und Accounts mit `users.write` auf dem Dashboard.
+Adressänderungen durch den Kontoinhaber selbst erzeugen diese Dashboard-Warnung nicht.
+Vor dem Deployment auf einer vorhandenen Datenbank muss
+`backend/src/db/migrations/20260726_email_verification_monitoring.sql` ausgeführt
+werden.
+
 ### Fest installierbare Apps und automatische Updates
 
 Der Flutter-Client ist nativ für Windows, Linux und Android eingerichtet. Alle drei Apps
@@ -236,6 +257,13 @@ Beschaffungsübernahme stehen Vorschau, Mehrfachdruck und lokal gespeicherte
 Druckereinstellungen zur Verfügung. Unterstützt werden mehrere Drucker mit getrennten
 Standardeinstellungen für Inventar und Kleidung, Port 9100, Geschwindigkeit,
 Schwärzungsgrad und Testdruck.
+
+Als Anschlussart kann neben dem direkten LAN-Druck auch eine lokal installierte
+Windows-Druckerwarteschlange gewählt werden. Dabei übergibt MaterialKompass das
+vollständige ZPL als RAW-Druckauftrag an den Windows-Spooler. Unter Android kann
+alternativ die Zebra-App PrintConnect als Druckertreiber verwendet werden; Druckerwahl
+und Kopplung erfolgen dann in PrintConnect. Die Android-App muss dafür PrintConnect
+installiert haben.
 
 Der Druck ist den Rollen Materialwart, Kleiderwart und Vorsitz vorbehalten. Die
 Webanwendung bietet bewusst keinen direkten Netzwerkdruck. Fehlgeschlagene Aufträge

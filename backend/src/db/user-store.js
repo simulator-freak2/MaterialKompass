@@ -51,10 +51,13 @@ function createUserStore(database = mariadb) {
           permissions: parseJson(row.permissions), active: Boolean(row.active),
           failedLoginAttempts: Number(row.failed_login_attempts || 0), lockedUntil: iso(row.locked_until),
           lastLoginAt: iso(row.last_login_at), emailVerifiedAt: iso(row.email_verified_at),
+          emailVerificationManaged: Boolean(row.email_verification_managed),
+          emailVerificationRequestedAt: iso(row.email_verification_requested_at),
           verificationTokenHash: row.verification_token_hash, verificationExpiresAt: iso(row.verification_expires_at),
           passwordResetTokenHash: row.password_reset_token_hash, passwordResetExpiresAt: iso(row.password_reset_expires_at),
           deactivatedAt: iso(row.deactivated_at), deactivationReason: row.deactivation_reason,
           scheduledDeletionAt: iso(row.scheduled_deletion_at), createdAt: iso(row.created_at),
+          createdByUserId: row.created_by_user_id || null,
         })),
         roles: roleRows.map((row) => ({ id: row.id, name: row.name, permissions: parseJson(row.permissions) })),
       };
@@ -64,26 +67,82 @@ function createUserStore(database = mariadb) {
       await pool.query(`INSERT INTO users (
         id, name, username, email, password_hash, roles, permissions, active,
         failed_login_attempts, locked_until, last_login_at, email_verified_at,
+        email_verification_managed, email_verification_requested_at,
         verification_token_hash, verification_expires_at, password_reset_token_hash,
         password_reset_expires_at, deactivated_at, deactivation_reason,
-        scheduled_deletion_at, created_at, department_ids
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        scheduled_deletion_at, created_at, department_ids, created_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
         password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
         permissions=VALUES(permissions),
         active=VALUES(active), failed_login_attempts=VALUES(failed_login_attempts),
         locked_until=VALUES(locked_until), last_login_at=VALUES(last_login_at),
-        email_verified_at=VALUES(email_verified_at), verification_token_hash=VALUES(verification_token_hash),
+        email_verified_at=VALUES(email_verified_at),
+        email_verification_managed=VALUES(email_verification_managed),
+        email_verification_requested_at=VALUES(email_verification_requested_at),
+        verification_token_hash=VALUES(verification_token_hash),
         verification_expires_at=VALUES(verification_expires_at), password_reset_token_hash=VALUES(password_reset_token_hash),
         password_reset_expires_at=VALUES(password_reset_expires_at), deactivated_at=VALUES(deactivated_at),
-        deactivation_reason=VALUES(deactivation_reason), scheduled_deletion_at=VALUES(scheduled_deletion_at)`, [
+        deactivation_reason=VALUES(deactivation_reason), scheduled_deletion_at=VALUES(scheduled_deletion_at),
+        created_by_user_id=VALUES(created_by_user_id)`, [
         user.id, user.name, user.username, user.email, user.passwordHash,
         JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []), user.active ? 1 : 0,
         user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
-        sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
+        sqlDateTime(user.emailVerifiedAt), user.emailVerificationManaged ? 1 : 0,
+        sqlDateTime(user.emailVerificationRequestedAt),
+        user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
         user.passwordResetTokenHash || null, sqlDateTime(user.passwordResetExpiresAt), sqlDateTime(user.deactivatedAt),
         user.deactivationReason || null, sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt),
         JSON.stringify(user.departmentIds || []),
+        user.createdByUserId || null,
+      ]);
+    },
+
+    async saveAccountMailDelivery(delivery) {
+      await pool.query(`INSERT INTO account_mail_deliveries (
+        id, type, user_id, created_by_user_id, recipient_email, message_id, sent_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+        delivery.id, delivery.type, delivery.userId, delivery.createdByUserId,
+        delivery.recipientEmail, delivery.messageId, sqlDateTime(delivery.sentAt),
+      ]);
+    },
+    async findVerificationMailDelivery({ deliveryId, messageId, recipientEmail }) {
+      const clauses = [];
+      const values = [];
+      if (deliveryId) { clauses.push('id = ?'); values.push(deliveryId); }
+      if (messageId) { clauses.push('message_id = ?'); values.push(messageId); }
+      if (recipientEmail) { clauses.push('recipient_email = ?'); values.push(recipientEmail); }
+      if (clauses.length === 0) return null;
+      const rows = await pool.query(`SELECT * FROM account_mail_deliveries
+        WHERE type = 'email-verification' AND (${clauses.join(' OR ')})
+        ORDER BY sent_at DESC LIMIT 1`, values);
+      const row = rows[0];
+      return row ? {
+        id: row.id, type: row.type, userId: row.user_id,
+        createdByUserId: row.created_by_user_id, recipientEmail: row.recipient_email,
+        messageId: row.message_id, sentAt: iso(row.sent_at),
+        bounceForwardedAt: iso(row.bounce_forwarded_at),
+      } : null;
+    },
+    async markAccountMailBounceForwarded(id) {
+      await pool.query('UPDATE account_mail_deliveries SET bounce_forwarded_at = ? WHERE id = ?',
+        [sqlDateTime(new Date()), id]);
+    },
+    async getMailboxProcessingState(mailbox) {
+      const rows = await pool.query('SELECT * FROM mailbox_processing_state WHERE mailbox = ?', [mailbox]);
+      const row = rows[0];
+      return row ? {
+        mailbox: row.mailbox, uidValidity: String(row.uid_validity),
+        lastUid: Number(row.last_uid), initializedAt: iso(row.initialized_at),
+      } : null;
+    },
+    async saveMailboxProcessingState({ mailbox, uidValidity, lastUid, initializedAt = new Date() }) {
+      await pool.query(`INSERT INTO mailbox_processing_state
+        (mailbox, uid_validity, last_uid, initialized_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE uid_validity=VALUES(uid_validity), last_uid=VALUES(last_uid),
+          initialized_at=VALUES(initialized_at), updated_at=VALUES(updated_at)`, [
+        mailbox, String(uidValidity), lastUid, sqlDateTime(initializedAt), sqlDateTime(new Date()),
       ]);
     },
 

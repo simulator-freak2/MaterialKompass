@@ -77,15 +77,35 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
 
   async function issueVerification(user) {
     const token = crypto.randomBytes(32).toString('hex');
+    const deliveryId = crypto.randomUUID();
     user.verificationTokenHash = tokenHash(token);
+    user.emailVerificationRequestedAt = new Date().toISOString();
     user.verificationExpiresAt = new Date(Date.now() + VERIFY_TTL).toISOString();
     const url = `${appBaseUrl}/#/verify-email?token=${token}`;
     onTokenIssued?.({ type: 'verification', userId: user.id, token });
-    return accountMailSender({
-      to: user.email,
-      subject: 'E-Mail-Adresse für MaterialKompass bestätigen',
-      text: `Bitte bestätigen Sie Ihre E-Mail-Adresse innerhalb von 24 Stunden:\n\n${url}`,
-    }).catch((error) => console.error('Verifizierungs-E-Mail fehlgeschlagen:', error.message));
+    try {
+      const result = await accountMailSender({
+        to: user.email,
+        subject: 'E-Mail-Adresse für MaterialKompass bestätigen',
+        text: `Bitte bestätigen Sie Ihre E-Mail-Adresse innerhalb von 24 Stunden:\n\n${url}`,
+        headers: { 'X-MaterialKompass-Delivery-ID': deliveryId },
+      });
+      if (result !== false) {
+        await userStore?.saveAccountMailDelivery?.({
+          id: deliveryId,
+          type: 'email-verification',
+          userId: user.id,
+          createdByUserId: user.createdByUserId || null,
+          recipientEmail: user.email,
+          messageId: result?.messageId || null,
+          sentAt: new Date().toISOString(),
+        });
+      }
+      return result;
+    } catch (error) {
+      console.error('Verifizierungs-E-Mail fehlgeschlagen:', error.message);
+      return false;
+    }
   }
 
   async function issuePasswordReset(user) {
@@ -257,7 +277,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       departmentIds: [...new Set(departmentIds)],
       permissions: permissionsForRoles(roleNames, roles), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
-      createdAt: new Date().toISOString(), lastLoginAt: null,
+      emailVerificationManaged: !skipEmailVerification,
+      createdAt: new Date().toISOString(), createdByUserId: req.user.id, lastLoginAt: null,
     };
     users.push(user);
     if (!skipEmailVerification) await issueVerification(user);
@@ -265,6 +286,38 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     await saveUser(user);
     logEvent('create', 'User', { id: user.id }, req.user.username);
     return res.status(201).json(publicUser(user));
+  });
+
+  app.put('/api/users/me', authMiddleware, async (req, res) => {
+    const user = req.user;
+    const valid = await bcrypt.compare(req.body.currentPassword || '', user.passwordHash);
+    if (!valid) return res.status(403).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
+    if (req.body.email) {
+      const email = normalize(req.body.email);
+      if (!email.includes('@') || users.some((entry) => entry.id !== user.id && normalize(entry.email) === email)) return res.status(409).json({ error: 'Ungültige oder bereits verwendete E-Mail-Adresse.' });
+      if (email !== normalize(user.email)) {
+        user.email = email;
+        user.emailVerifiedAt = null;
+        user.emailVerificationManaged = false;
+        await issueVerification(user);
+      }
+    }
+    if (req.body.password) {
+      if (!passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
+      user.passwordHash = bcrypt.hashSync(req.body.password, 12);
+    }
+    await saveUser(user);
+    logEvent('self_update', 'User', { id: user.id }, user.username);
+    return res.json(publicUser(user));
+  });
+
+  app.delete('/api/users/me', authMiddleware, async (req, res) => {
+    if (!await bcrypt.compare(req.body.password || '', req.user.passwordHash)) return res.status(403).json({ error: 'Das Passwort ist nicht korrekt.' });
+    if (isLastAdmin(req.user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
+    users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);
+    await deleteStoredUser(req.user.id);
+    logEvent('self_delete', 'User', { id: req.user.id }, req.user.username);
+    return res.status(204).end();
   });
 
   app.put('/api/users/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
@@ -290,7 +343,11 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (req.body.password) {
       user.passwordHash = bcrypt.hashSync(req.body.password, 12);
     }
-    if (emailChanged) { user.emailVerifiedAt = null; await issueVerification(user); }
+    if (emailChanged) {
+      user.emailVerifiedAt = null;
+      user.emailVerificationManaged = true;
+      await issueVerification(user);
+    }
     if (nextActive) { user.deactivatedAt = null; user.deactivationReason = null; user.scheduledDeletionAt = null; }
     await saveUser(user);
     logEvent('update', 'User', { id: user.id }, req.user.username);
@@ -310,33 +367,6 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     const [deleted] = users.splice(index, 1);
     await deleteStoredUser(deleted.id);
     logEvent('delete', 'User', { id: deleted.id }, req.user.username);
-    return res.status(204).end();
-  });
-
-  app.put('/api/users/me', authMiddleware, async (req, res) => {
-    const user = req.user;
-    const valid = await bcrypt.compare(req.body.currentPassword || '', user.passwordHash);
-    if (!valid) return res.status(403).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
-    if (req.body.email) {
-      const email = normalize(req.body.email);
-      if (!email.includes('@') || users.some((entry) => entry.id !== user.id && normalize(entry.email) === email)) return res.status(409).json({ error: 'Ungültige oder bereits verwendete E-Mail-Adresse.' });
-      if (email !== normalize(user.email)) { user.email = email; user.emailVerifiedAt = null; await issueVerification(user); }
-    }
-    if (req.body.password) {
-      if (!passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
-      user.passwordHash = bcrypt.hashSync(req.body.password, 12);
-    }
-    await saveUser(user);
-    logEvent('self_update', 'User', { id: user.id }, user.username);
-    return res.json(publicUser(user));
-  });
-
-  app.delete('/api/users/me', authMiddleware, async (req, res) => {
-    if (!await bcrypt.compare(req.body.password || '', req.user.passwordHash)) return res.status(403).json({ error: 'Das Passwort ist nicht korrekt.' });
-    if (isLastAdmin(req.user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
-    users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);
-    await deleteStoredUser(req.user.id);
-    logEvent('self_delete', 'User', { id: req.user.id }, req.user.username);
     return res.status(204).end();
   });
 

@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../widgets/stat_card.dart';
 import 'categories_page.dart';
+import 'admin_data_management_page.dart';
+import 'admin_notices_page.dart';
 import 'defects_page.dart';
 import 'login_page.dart';
 import 'inventory_page.dart';
@@ -155,6 +157,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final currentUser = data['currentUser'] as Map? ?? {};
           final isAdmin =
               (currentUser['roles'] as List? ?? const []).contains('Admin');
+          final canManageUsers = isAdmin ||
+              (currentUser['permissions'] as List? ?? const [])
+                  .contains('users.write');
           final canReadLocations =
               (currentUser['permissions'] as List? ?? const [])
                   .contains('locations.read');
@@ -177,12 +182,29 @@ class _DashboardPageState extends State<DashboardPage> {
               final activities = data['recentActivity'] as List? ?? const [];
               final actions =
                   <({IconData icon, String label, VoidCallback onTap})>[
-                if (isAdmin)
+                if (canManageUsers)
                   (
                     icon: Icons.manage_accounts_outlined,
                     label: 'Nutzerverwaltung',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                           builder: (_) => UsersPage(token: widget.token),
+                        )),
+                  ),
+                if (isAdmin)
+                  (
+                    icon: Icons.campaign_outlined,
+                    label: 'Hinweise verwalten',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => AdminNoticesPage(token: widget.token),
+                        )),
+                  ),
+                if (isAdmin)
+                  (
+                    icon: Icons.delete_forever_outlined,
+                    label: 'Daten löschen',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) =>
+                              AdminDataManagementPage(token: widget.token),
                         )),
                   ),
                 (
@@ -255,6 +277,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 ('Wareneingänge offen', summary['openProcurementReceipts']),
               ];
+              final unverifiedEmailUsers =
+                  data['unverifiedEmailUsers'] as List? ?? const [];
+              final notices = data['notices'] as List? ?? const [];
 
               Widget actionButton(
                 ({IconData icon, String label, VoidCallback onTap}) action,
@@ -310,6 +335,75 @@ class _DashboardPageState extends State<DashboardPage> {
                             'Willkommen bei MaterialKompass',
                             style: Theme.of(context).textTheme.headlineSmall,
                           ),
+                          if (notices.isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            for (final value in notices) ...[
+                              _NoticeCard(
+                                notice: Map<String, dynamic>.from(value as Map),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ],
+                          if (unverifiedEmailUsers.isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            Card(
+                              color:
+                                  Theme.of(context).colorScheme.errorContainer,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'E-Mail-Adresse nicht bestätigt',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onErrorContainer,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    for (final value
+                                        in unverifiedEmailUsers) ...[
+                                      Builder(builder: (context) {
+                                        final user = Map<String, dynamic>.from(
+                                            value as Map);
+                                        final displayName = (user['name'] ?? '')
+                                                .toString()
+                                                .trim()
+                                                .isEmpty
+                                            ? user['username'].toString()
+                                            : user['name'].toString();
+                                        return ListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          title: Text(displayName),
+                                          subtitle:
+                                              Text(user['email'].toString()),
+                                          trailing: TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context).push(
+                                              MaterialPageRoute(
+                                                builder: (_) => UsersPage(
+                                                  token: widget.token,
+                                                  initialSearch:
+                                                      user['email'].toString(),
+                                                ),
+                                              ),
+                                            ),
+                                            child: const Text('Nutzer öffnen'),
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 16),
                           if (isMobile)
                             GridView.builder(
@@ -459,6 +553,71 @@ class _DashboardPageState extends State<DashboardPage> {
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _NoticeCard extends StatelessWidget {
+  final Map<String, dynamic> notice;
+
+  const _NoticeCard({required this.notice});
+
+  @override
+  Widget build(BuildContext context) {
+    final level = notice['level']?.toString() ?? 'info';
+    final colorScheme = Theme.of(context).colorScheme;
+    final (background, foreground, icon) = switch (level) {
+      'critical' => (
+          colorScheme.errorContainer,
+          colorScheme.onErrorContainer,
+          Icons.error_outline,
+        ),
+      'warning' => (
+          const Color(0xFFFFE0B2),
+          const Color(0xFF5D3000),
+          Icons.warning_amber_rounded,
+        ),
+      _ => (
+          colorScheme.primaryContainer,
+          colorScheme.onPrimaryContainer,
+          Icons.info_outline,
+        ),
+    };
+    final title = notice['title']?.toString().trim() ?? '';
+
+    return Card(
+      color: background,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: foreground),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (title.isNotEmpty) ...[
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: foreground,
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  Text(
+                    notice['message']?.toString() ?? '',
+                    style: TextStyle(color: foreground),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

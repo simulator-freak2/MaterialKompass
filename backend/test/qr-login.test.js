@@ -150,3 +150,48 @@ test('reusable QR login supports custom days and validity until revocation', asy
     server.close();
   }
 });
+
+test('multiple reusable QR codes coexist, remain reusable and can be revoked separately', async () => {
+  const { server, request, adminToken } = await setup();
+  try {
+    const sevenDays = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: adminToken,
+      body: { oneTime: false, validForDays: 7 },
+    });
+    const unlimited = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: adminToken,
+      body: { oneTime: false, validForDays: null },
+    });
+    assert.equal(sevenDays.response.status, 201);
+    assert.equal(unlimited.response.status, 201);
+
+    const list = await request('/api/auth/qr-credentials/me', {
+      token: adminToken,
+    });
+    assert.equal(list.response.status, 200);
+    assert.equal(list.data.length, 2);
+    assert.equal(list.data.some((entry) => entry.credentialHash), false);
+
+    for (const issued of [sevenDays, unlimited]) {
+      assert.equal((await request('/api/auth/qr-login', {
+        method: 'POST', body: { credential: issued.data.qrValue },
+      })).response.status, 200);
+      assert.equal((await request('/api/auth/qr-login', {
+        method: 'POST', body: { credential: issued.data.qrValue },
+      })).response.status, 200);
+    }
+
+    assert.equal((await request(
+      `/api/auth/qr-credentials/me/${sevenDays.data.credentialId}`,
+      { method: 'DELETE', token: adminToken },
+    )).response.status, 204);
+    assert.equal((await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: sevenDays.data.qrValue },
+    })).response.status, 401);
+    assert.equal((await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: unlimited.data.qrValue },
+    })).response.status, 200);
+  } finally {
+    server.close();
+  }
+});

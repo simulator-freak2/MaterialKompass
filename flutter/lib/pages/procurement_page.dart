@@ -1607,43 +1607,21 @@ class _TransferDialogState extends State<TransferDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final availableStocks = widget.stocks
-        .where((entry) => entry['locationId'] == location)
-        .toList();
     return AlertDialog(
         title: const Text('Manuell prüfen und ins Inventar übernehmen'),
         content: SizedBox(
             width: 620,
             child: Wrap(spacing: 12, runSpacing: 12, children: [
-              SizedBox(
-                  width: 260,
-                  child: DropdownButtonFormField<String>(
-                      initialValue: location,
-                      decoration: const InputDecoration(
-                          labelText: 'Standort *',
-                          border: OutlineInputBorder()),
-                      items: widget.locations
-                          .map((v) => DropdownMenuItem(
-                              value: v['id'].toString(),
-                              child: Text(v['name'])))
-                          .toList(),
-                      onChanged: (v) => setState(() {
-                            location = v;
-                            stock = null;
-                          }))),
-              SizedBox(
-                  width: 260,
-                  child: DropdownButtonFormField<String>(
-                      initialValue: stock,
-                      decoration: const InputDecoration(
-                          labelText: 'Lagerplatz',
-                          border: OutlineInputBorder()),
-                      items: availableStocks
-                          .map((v) => DropdownMenuItem(
-                              value: v['id'].toString(),
-                              child: Text('${v['name']} · ${v['section']}')))
-                          .toList(),
-                      onChanged: (v) => setState(() => stock = v))),
+              const SizedBox(
+                width: 540,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.place_outlined),
+                  title: Text('Lagerzuordnung'),
+                  subtitle: Text(
+                      'Die erzeugten Artikel werden zunächst nicht zugeordnet und anschließend in der zentralen Lagerverwaltung auf Lagerplätze oder Kisten verteilt.'),
+                ),
+              ),
               SizedBox(
                   width: 220,
                   child: DropdownButtonFormField<String>(
@@ -1712,15 +1690,14 @@ class _TransferDialogState extends State<TransferDialog> {
               child: const Text('Abbrechen')),
           FilledButton(
               onPressed: () {
-                if (location == null) return;
                 Navigator.pop(context, {
                   'complaintResolved': resolved,
                   'items': (widget.receipt['items'] as List).map((raw) {
                     final receiptItem = Map<String, dynamic>.from(raw);
                     return {
                       'requestItemId': receiptItem['requestItemId'],
-                      'locationId': location,
-                      'stockStructureId': stock,
+                      'locationId': null,
+                      'stockStructureId': null,
                       'itemType': itemType,
                       'manufacturer': manufacturer.text,
                       'manufacturingYear': manufacturingYear.text,

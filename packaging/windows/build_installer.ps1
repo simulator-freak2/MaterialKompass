@@ -6,9 +6,23 @@ param(
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $flutterRoot = Join-Path $repositoryRoot "flutter"
-$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+$isccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+$iscc = $isccCommand.Source
 if (-not $iscc) {
-    throw "Inno Setup 6 wurde nicht gefunden. Installiere es von https://jrsoftware.org/isinfo.php."
+    $isccCandidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 7\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 7\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe")
+    )
+    $iscc = $isccCandidates |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+}
+if (-not $iscc) {
+    throw "Inno Setup wurde nicht gefunden. Installiere es von https://jrsoftware.org/isinfo.php."
 }
 
 Push-Location $flutterRoot

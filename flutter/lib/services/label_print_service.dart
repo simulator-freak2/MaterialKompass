@@ -7,10 +7,14 @@ import 'label_printer_transport.dart';
 
 enum LabelType { inventory, clothing }
 
+enum LabelPrinterConnection { network, windowsDriver, zebraPrintConnect }
+
 class LabelPrinter {
   final String id;
   final String name;
   final String host;
+  final LabelPrinterConnection connection;
+  final String systemPrinterName;
   final int port;
   final int speed;
   final int darkness;
@@ -21,6 +25,8 @@ class LabelPrinter {
     required this.id,
     required this.name,
     required this.host,
+    this.connection = LabelPrinterConnection.network,
+    this.systemPrinterName = '',
     this.port = 9100,
     this.speed = 4,
     this.darkness = 15,
@@ -32,6 +38,8 @@ class LabelPrinter {
     String? id,
     String? name,
     String? host,
+    LabelPrinterConnection? connection,
+    String? systemPrinterName,
     int? port,
     int? speed,
     int? darkness,
@@ -42,6 +50,8 @@ class LabelPrinter {
         id: id ?? this.id,
         name: name ?? this.name,
         host: host ?? this.host,
+        connection: connection ?? this.connection,
+        systemPrinterName: systemPrinterName ?? this.systemPrinterName,
         port: port ?? this.port,
         speed: speed ?? this.speed,
         darkness: darkness ?? this.darkness,
@@ -53,6 +63,8 @@ class LabelPrinter {
         'id': id,
         'name': name,
         'host': host,
+        'connection': connection.name,
+        'systemPrinterName': systemPrinterName,
         'port': port,
         'speed': speed,
         'darkness': darkness,
@@ -64,6 +76,11 @@ class LabelPrinter {
         id: json['id']?.toString() ?? '',
         name: json['name']?.toString() ?? '',
         host: json['host']?.toString() ?? '',
+        connection: LabelPrinterConnection.values.firstWhere(
+          (value) => value.name == json['connection']?.toString(),
+          orElse: () => LabelPrinterConnection.network,
+        ),
+        systemPrinterName: json['systemPrinterName']?.toString() ?? '',
         port: int.tryParse(json['port']?.toString() ?? '') ?? 9100,
         speed: int.tryParse(json['speed']?.toString() ?? '') ?? 4,
         darkness: int.tryParse(json['darkness']?.toString() ?? '') ?? 15,
@@ -151,8 +168,14 @@ class LabelPrintService extends ChangeNotifier {
   bool _loaded = false;
 
   bool get supported => labelPrintingSupported;
+  bool get supportsWindowsDriver => windowsSystemPrinterSupported;
+  bool get supportsZebraPrintConnect => zebraPrintConnectSupported;
   List<LabelPrinter> get printers => List.unmodifiable(_printers);
   List<LabelPrintJob> get queue => List.unmodifiable(_queue);
+
+  Future<List<String>> installedSystemPrinters() => listSystemPrinters();
+
+  Future<bool> printConnectInstalled() => isZebraPrintConnectInstalled();
 
   Future<void> load() async {
     if (_loaded) return;
@@ -245,7 +268,15 @@ class LabelPrintService extends ChangeNotifier {
         .map((line) => buildZpl(line.label, printer, line.copies))
         .join();
     if (zpl.isEmpty) throw StateError('Der Druckauftrag ist leer.');
-    await sendRawLabel(printer.host, printer.port, utf8.encode(zpl));
+    final bytes = utf8.encode(zpl);
+    switch (printer.connection) {
+      case LabelPrinterConnection.network:
+        await sendRawLabel(printer.host, printer.port, bytes);
+      case LabelPrinterConnection.windowsDriver:
+        await sendRawToSystemPrinter(printer.systemPrinterName, bytes);
+      case LabelPrinterConnection.zebraPrintConnect:
+        await sendRawToZebraPrintConnect(bytes);
+    }
   }
 
   void enqueue(

@@ -8,14 +8,19 @@ import '../widgets/qr_login_dialog.dart';
 
 class UsersPage extends StatefulWidget {
   final String token;
-  const UsersPage({required this.token, super.key});
+  final String initialSearch;
+  const UsersPage({
+    required this.token,
+    this.initialSearch = '',
+    super.key,
+  });
 
   @override
   State<UsersPage> createState() => _UsersPageState();
 }
 
 class _UsersPageState extends State<UsersPage> {
-  final searchController = TextEditingController();
+  late final TextEditingController searchController;
   List<Map<String, dynamic>> users = [];
   List<Map<String, dynamic>> roles = [];
   List<Map<String, dynamic>> departments = [];
@@ -29,7 +34,14 @@ class _UsersPageState extends State<UsersPage> {
   @override
   void initState() {
     super.initState();
+    searchController = TextEditingController(text: widget.initialSearch);
     load();
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
   }
 
   Future<void> load() async {
@@ -148,6 +160,78 @@ class _UsersPageState extends State<UsersPage> {
           : DateTime.parse(data['expiresAt'].toString()),
       oneTime: data['oneTime'] != false,
       accountLabel: user['name']?.toString() ?? user['username'].toString(),
+    );
+  }
+
+  Future<void> manageQrLogins(Map<String, dynamic> user) async {
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/users/${user['id']}/qr-credentials'),
+      headers: headers,
+    );
+    if (!mounted) return;
+    if (response.statusCode != 200) {
+      _message('QR-Codes konnten nicht geladen werden.');
+      return;
+    }
+    final credentials = (jsonDecode(response.body) as List)
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Aktive QR-Codes für ${user['username']}'),
+          content: SizedBox(
+            width: 520,
+            child: credentials.isEmpty
+                ? const Text('Keine aktiven QR-Codes.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: credentials.map((credential) {
+                      final expiresAt = credential['expiresAt'] == null
+                          ? null
+                          : DateTime.parse(credential['expiresAt'].toString())
+                              .toLocal();
+                      final validity = expiresAt == null
+                          ? 'Bis Widerruf'
+                          : 'Bis ${expiresAt.day.toString().padLeft(2, '0')}.'
+                              '${expiresAt.month.toString().padLeft(2, '0')}.'
+                              '${expiresAt.year}';
+                      return ListTile(
+                        leading: Icon(credential['oneTime'] == true
+                            ? Icons.looks_one_outlined
+                            : Icons.all_inclusive),
+                        title: Text(credential['oneTime'] == true
+                            ? 'Einmalcode'
+                            : 'Mehrfachcode'),
+                        subtitle: Text(validity),
+                        trailing: IconButton(
+                          tooltip: 'Widerrufen',
+                          onPressed: () async {
+                            final deleted = await http.delete(
+                              Uri.parse(
+                                  '$apiBaseUrl/api/users/${user['id']}/qr-credentials/${credential['id']}'),
+                              headers: headers,
+                            );
+                            if (deleted.statusCode == 204) {
+                              setDialogState(
+                                  () => credentials.remove(credential));
+                            }
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Schließen'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -318,11 +402,17 @@ class _UsersPageState extends State<UsersPage> {
                                 isThreeLine: true,
                                 trailing: Wrap(children: [
                                   IconButton(
-                                      tooltip: 'Einmaligen Anmelde-QR-Code erstellen',
+                                      tooltip: 'Anmelde-QR-Code erstellen',
                                       onPressed: active
                                           ? () => createQrLogin(user)
                                           : null,
                                       icon: const Icon(Icons.qr_code_2)),
+                                  IconButton(
+                                      tooltip: 'Aktive QR-Codes verwalten',
+                                      onPressed: active
+                                          ? () => manageQrLogins(user)
+                                          : null,
+                                      icon: const Icon(Icons.vpn_key_outlined)),
                                   IconButton(
                                       tooltip: 'Passwort-Reset senden',
                                       onPressed: () async {

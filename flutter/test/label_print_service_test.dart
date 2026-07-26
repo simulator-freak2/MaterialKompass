@@ -54,4 +54,33 @@ void main() {
     expect(zpl, contains('^FDBJ:2026^FS'));
     expect(zpl, contains('^FDGR:134/146^FS'));
   });
+
+  test('printer connection mode survives local serialization', () {
+    const driverPrinter = LabelPrinter(
+      id: 'windows-zebra',
+      name: 'ZDesigner ZD621',
+      host: '',
+      connection: LabelPrinterConnection.windowsDriver,
+      systemPrinterName: 'ZDesigner ZD621-203dpi ZPL',
+      defaultInventory: true,
+    );
+
+    final restored = LabelPrinter.fromJson(driverPrinter.toJson());
+
+    expect(restored.connection, LabelPrinterConnection.windowsDriver);
+    expect(restored.systemPrinterName, 'ZDesigner ZD621-203dpi ZPL');
+    expect(restored.defaultInventory, isTrue);
+  });
+
+  test('existing network printer settings remain backwards compatible', () {
+    final restored = LabelPrinter.fromJson({
+      'id': 'old',
+      'name': 'Zebra',
+      'host': '192.0.2.20',
+      'port': 9100,
+    });
+
+    expect(restored.connection, LabelPrinterConnection.network);
+    expect(restored.host, '192.0.2.20');
+  });
 }

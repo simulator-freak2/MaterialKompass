@@ -68,7 +68,7 @@ Future<bool> showLabelPrintDialog(
       builder: (dialogContext) => AlertDialog(
         title: const Text('Drucken fehlgeschlagen'),
         content: Text(
-            'Der Drucker „${printer.name}“ ist nicht erreichbar.\n\n$error\n\nAuftrag für einen manuellen neuen Versuch zwischenspeichern?'),
+            'Der Auftrag konnte nicht über „${printer.name}“ gedruckt werden.\n\n$error\n\nAuftrag für einen manuellen neuen Versuch zwischenspeichern?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -314,7 +314,14 @@ class _PrinterSettingsDialogState extends State<_PrinterSettingsDialog> {
                           child: ListTile(
                             title: Text(printer.name),
                             subtitle: Text(
-                              '${printer.host}:${printer.port} · Geschwindigkeit ${printer.speed} · Schwärzung ${printer.darkness}'
+                              '${switch (printer.connection) {
+                                LabelPrinterConnection.network =>
+                                  'LAN ${printer.host}:${printer.port}',
+                                LabelPrinterConnection.windowsDriver =>
+                                  'Windows-Treiber · ${printer.systemPrinterName}',
+                                LabelPrinterConnection.zebraPrintConnect =>
+                                  'Zebra PrintConnect · Android',
+                              }} · Geschwindigkeit ${printer.speed} · Schwärzung ${printer.darkness}'
                               '${printer.defaultInventory ? '\nStandard Inventar' : ''}'
                               '${printer.defaultClothing ? '\nStandard Kleidung' : ''}',
                             ),
@@ -375,6 +382,11 @@ class _PrinterEditorState extends State<_PrinterEditor> {
   late final TextEditingController name;
   late final TextEditingController host;
   late final TextEditingController port;
+  late LabelPrinterConnection connection;
+  String? systemPrinterName;
+  List<String> systemPrinters = const [];
+  bool loadingConnections = true;
+  bool printConnectInstalled = false;
   late double speed;
   late double darkness;
   late bool defaultInventory;
@@ -387,11 +399,45 @@ class _PrinterEditorState extends State<_PrinterEditor> {
     name = TextEditingController(text: printer?.name ?? 'Zebra ZD621');
     host = TextEditingController(text: printer?.host ?? '');
     port = TextEditingController(text: '${printer?.port ?? 9100}');
+    connection = printer?.connection ?? LabelPrinterConnection.network;
+    systemPrinterName = printer?.systemPrinterName.isNotEmpty == true
+        ? printer!.systemPrinterName
+        : null;
     speed = (printer?.speed ?? 4).toDouble();
     darkness = (printer?.darkness ?? 15).toDouble();
     defaultInventory = printer?.defaultInventory ?? true;
     defaultClothing = printer?.defaultClothing ?? true;
+    _loadConnections();
   }
+
+  Future<void> _loadConnections() async {
+    final service = LabelPrintService.instance;
+    final printers = service.supportsWindowsDriver
+        ? await service.installedSystemPrinters()
+        : const <String>[];
+    final printConnect = service.supportsZebraPrintConnect
+        ? await service.printConnectInstalled()
+        : false;
+    if (!mounted) return;
+    setState(() {
+      systemPrinters = printers;
+      if (systemPrinterName != null &&
+          !systemPrinters.contains(systemPrinterName)) {
+        systemPrinters = [...systemPrinters, systemPrinterName!];
+      }
+      systemPrinterName ??= systemPrinters.firstOrNull;
+      printConnectInstalled = printConnect;
+      loadingConnections = false;
+    });
+  }
+
+  String _connectionLabel(LabelPrinterConnection value) => switch (value) {
+        LabelPrinterConnection.network => 'Direkt über LAN (ZPL)',
+        LabelPrinterConnection.windowsDriver =>
+          'Installierter Windows-Druckertreiber',
+        LabelPrinterConnection.zebraPrintConnect =>
+          'Zebra PrintConnect (Android)',
+      };
 
   @override
   void dispose() {
@@ -411,18 +457,75 @@ class _PrinterEditorState extends State<_PrinterEditor> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            DropdownButtonFormField<LabelPrinterConnection>(
+              initialValue: connection,
+              decoration: const InputDecoration(labelText: 'Anschlussart'),
+              items: [
+                LabelPrinterConnection.network,
+                if (LabelPrintService.instance.supportsWindowsDriver)
+                  LabelPrinterConnection.windowsDriver,
+                if (LabelPrintService.instance.supportsZebraPrintConnect)
+                  LabelPrinterConnection.zebraPrintConnect,
+              ]
+                  .map((value) => DropdownMenuItem(
+                        value: value,
+                        child: Text(_connectionLabel(value)),
+                      ))
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) setState(() => connection = value);
+              },
+            ),
             TextField(
                 controller: name,
                 decoration: const InputDecoration(labelText: 'Anzeigename')),
-            TextField(
-                controller: host,
-                decoration: const InputDecoration(labelText: 'IP-Adresse')),
-            TextField(
-              controller: port,
-              keyboardType: TextInputType.number,
-              decoration:
-                  const InputDecoration(labelText: 'Port', hintText: '9100'),
-            ),
+            if (connection == LabelPrinterConnection.network) ...[
+              TextField(
+                  controller: host,
+                  decoration: const InputDecoration(labelText: 'IP-Adresse')),
+              TextField(
+                controller: port,
+                keyboardType: TextInputType.number,
+                decoration:
+                    const InputDecoration(labelText: 'Port', hintText: '9100'),
+              ),
+            ],
+            if (connection == LabelPrinterConnection.windowsDriver) ...[
+              const SizedBox(height: 12),
+              if (loadingConnections)
+                const LinearProgressIndicator()
+              else if (systemPrinters.isEmpty)
+                const Text(
+                    'Windows meldet keine installierte Druckerwarteschlange.')
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: systemPrinterName,
+                  isExpanded: true,
+                  decoration:
+                      const InputDecoration(labelText: 'Installierter Drucker'),
+                  items: systemPrinters
+                      .map((value) =>
+                          DropdownMenuItem(value: value, child: Text(value)))
+                      .toList(),
+                  onChanged: (value) =>
+                      setState(() => systemPrinterName = value),
+                ),
+            ],
+            if (connection == LabelPrinterConnection.zebraPrintConnect) ...[
+              const SizedBox(height: 12),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  printConnectInstalled ? Icons.check_circle : Icons.error,
+                  color: printConnectInstalled ? Colors.green : Colors.red,
+                ),
+                title: Text(printConnectInstalled
+                    ? 'Zebra PrintConnect ist installiert'
+                    : 'Zebra PrintConnect ist nicht installiert'),
+                subtitle: const Text(
+                    'Der Drucker wird in der Zebra-PrintConnect-App gekoppelt.'),
+              ),
+            ],
             const SizedBox(height: 12),
             Text('Druckgeschwindigkeit: ${speed.round()}'),
             Slider(
@@ -465,13 +568,17 @@ class _PrinterEditorState extends State<_PrinterEditor> {
           onPressed: () {
             final parsedPort = int.tryParse(port.text);
             if (name.text.trim().isEmpty ||
-                host.text.trim().isEmpty ||
-                parsedPort == null ||
-                parsedPort < 1 ||
-                parsedPort > 65535) {
+                (connection == LabelPrinterConnection.network &&
+                    (host.text.trim().isEmpty ||
+                        parsedPort == null ||
+                        parsedPort < 1 ||
+                        parsedPort > 65535)) ||
+                (connection == LabelPrinterConnection.windowsDriver &&
+                    (systemPrinterName == null ||
+                        systemPrinterName!.isEmpty))) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text(
-                      'Name, IP-Adresse und gültiger Port sind erforderlich.')));
+                      'Name und eine gültige Druckerverbindung sind erforderlich.')));
               return;
             }
             Navigator.pop(
@@ -481,7 +588,9 @@ class _PrinterEditorState extends State<_PrinterEditor> {
                     DateTime.now().microsecondsSinceEpoch.toString(),
                 name: name.text.trim(),
                 host: host.text.trim(),
-                port: parsedPort,
+                connection: connection,
+                systemPrinterName: systemPrinterName ?? '',
+                port: parsedPort ?? 9100,
                 speed: speed.round(),
                 darkness: darkness.round(),
                 defaultInventory: defaultInventory,

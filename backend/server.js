@@ -3,6 +3,7 @@ const { createUserStore } = require('./src/db/user-store');
 const { seedData } = require('./src/data/seed');
 const { loadRuntimeConfig } = require('./src/config');
 const { verifyAccountMailTransport } = require('./src/mailer');
+const { createMailBounceMonitor } = require('./src/mail-bounce-monitor');
 
 async function start() {
   const config = loadRuntimeConfig();
@@ -54,6 +55,11 @@ async function start() {
     const server = app.listen(config.port, config.host, () => {
       console.log(`MaterialKompass backend listening on http://${config.host}:${config.port}`);
     });
+    const mailBounceMonitor = createMailBounceMonitor({
+      store,
+      users: userData.users,
+    });
+    mailBounceMonitor.start();
     let shuttingDown = false;
     const shutdown = (signal) => {
       if (shuttingDown) return;
@@ -68,6 +74,10 @@ async function start() {
         clearTimeout(forceExitTimer);
         if (error) {
           console.error('Backend konnte nicht sauber beendet werden:', error);
+          process.exitCode = 1;
+        }
+        try { await mailBounceMonitor.stop(); } catch (monitorError) {
+          console.error('Rückläuferprüfung konnte nicht beendet werden:', monitorError);
           process.exitCode = 1;
         }
         try { await store.close(); } catch (closeError) {

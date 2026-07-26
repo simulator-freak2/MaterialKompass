@@ -10,6 +10,9 @@ const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { registerDefectManagement } = require('./defects');
 const { registerQrLoginRoutes } = require('./qr-login');
+const { registerStorageManagementRoutes } = require('./storage-management');
+const { registerAdminDataManagement } = require('./admin-data-management');
+const { registerAdminNoticeRoutes } = require('./admin-notices');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,9 +32,12 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'procurementRequests', 'procurementOffers', 'procurementOrders',
+  'adminNotices',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'auditLogs', 'exportLogs',
   'qrLoginCredentials',
+  'storageRacks', 'storageLevels', 'storagePlaces', 'storageBoxes',
+  'storageAssignments', 'stocktakes', 'storageHistory',
 ]);
 
 function createApp(options = {}) {
@@ -91,6 +97,9 @@ function createApp(options = {}) {
   const departments = (appData.departments ||= []);
   const locations = appData.locations;
   const stockStructures = appData.stockStructures;
+  const storagePlaces = (appData.storagePlaces ||= []);
+  const storageBoxes = (appData.storageBoxes ||= []);
+  const storageAssignments = (appData.storageAssignments ||= []);
   const categories = appData.categories;
   const materials = appData.materials;
   const deletedMaterials = (appData.deletedMaterials ||= []);
@@ -103,6 +112,7 @@ function createApp(options = {}) {
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
   const notifications = (appData.notifications ||= []);
+  const adminNotices = (appData.adminNotices ||= []);
   const procurementRequests = appData.procurementRequests;
   const suppliers = appData.suppliers;
   const documents = appData.documents;
@@ -512,6 +522,8 @@ function createApp(options = {}) {
         .filter((entry) => entry.clothingId === item.id)
         .slice()
         .reverse(),
+      storageAssignments: storageAssignments
+        .filter((entry) => entry.entityType === 'clothing' && entry.entityId === item.id),
     };
   }
 
@@ -747,6 +759,15 @@ function createApp(options = {}) {
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
   });
 
+  registerAdminDataManagement({
+    app,
+    data: appData,
+    users,
+    authMiddleware,
+    userStore: options.userStore,
+    logEvent,
+  });
+
   app.get('/api/auth/me', authMiddleware, (req, res) => {
     res.json({ user: publicUser(req.user) });
   });
@@ -963,12 +984,33 @@ function createApp(options = {}) {
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
-    stockStructures, logEvent, nextId, XLSX, defectManagement,
+    stockStructures, storageAssignments, logEvent, nextId, XLSX, defectManagement,
+  });
+
+  registerStorageManagementRoutes({
+    app, authMiddleware, requirePermission, data: appData, locations, materials, clothingItems,
+    categories, logEvent, nextId, XLSX,
   });
 
   app.get('/api/clothing', authMiddleware, requirePermission('clothing.read'), (req, res) => {
     res.json(clothingItems.map(responseClothing));
   });
+
+  function clothingStorageTarget(body) {
+    const storagePlaceId = String(body.storagePlaceId || '').trim();
+    const boxId = String(body.boxId || '').trim();
+    if (!storagePlaceId && !boxId) return { storagePlaceId: null, boxId: null };
+    const box = boxId
+      ? storageBoxes.find((entry) => entry.id === boxId && entry.active !== false && !entry.archivedAt)
+      : null;
+    const placeId = box?.storagePlaceId || storagePlaceId;
+    const place = storagePlaces.find((entry) =>
+      entry.id === placeId && entry.active !== false && !entry.archivedAt);
+    if (!place || (boxId && !box) || (storagePlaceId && storagePlaceId !== place.id)) {
+      return { error: 'Der gewählte Lagerplatz oder die Kiste ist ungültig.' };
+    }
+    return { storagePlaceId: place.id, boxId: box?.id || null };
+  }
 
   app.post('/api/clothing', authMiddleware, requirePermission('clothing.write'), (req, res) => {
     const name = String(req.body.name || '').trim();
@@ -985,23 +1027,28 @@ function createApp(options = {}) {
     if (size && allowedSizes.length && !allowedSizes.includes(size)) {
       return res.status(400).json({ error: 'Die Größe ist für diese Kategorie nicht vorgesehen.' });
     }
-    const locationId = String(req.body.locationId || 'loc-2').trim() || 'loc-2';
+    const locationId = String(req.body.locationId || '').trim();
     const stockStructureId = String(req.body.stockStructureId || '').trim();
-    if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
+    if (locationId && !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
     const requestedInventoryNumber = String(req.body.inventoryNumber || '').trim();
     const inventoryNumber = requestedInventoryNumber || nextClothingInventoryNumber(categoryId);
     if ([...materials, ...clothingItems, ...deletedClothingItems].some((item) => item.inventoryNumber === inventoryNumber)) {
       return res.status(409).json({ error: 'inventoryNumber already exists' });
     }
+    const storageTarget = clothingStorageTarget(req.body);
+    if (storageTarget.error) return res.status(400).json({ error: storageTarget.error });
+    const clothingBody = { ...req.body };
+    delete clothingBody.storagePlaceId;
+    delete clothingBody.boxId;
 
     const item = {
-      ...req.body,
+      ...clothingBody,
       id: nextId('clothing', [...clothingItems, ...deletedClothingItems]),
       name,
       inventoryNumber,
       categoryId: categoryId || null,
-      locationId,
+      locationId: locationId || null,
       stockStructureId: stockStructureId || null,
       size,
       manufacturer: String(req.body.manufacturer || '').trim(),
@@ -1018,14 +1065,92 @@ function createApp(options = {}) {
       createdAt: new Date().toISOString(),
     };
     clothingItems.push(item);
+    if (storageTarget.storagePlaceId) {
+      storageAssignments.push({
+        id: nextId('storage-assignment', storageAssignments),
+        entityType: 'clothing',
+        entityId: item.id,
+        storagePlaceId: storageTarget.storagePlaceId,
+        boxId: storageTarget.boxId,
+        quantity: 1,
+        createdAt: new Date().toISOString(),
+        createdBy: req.user.username,
+      });
+    }
     logEvent('create', 'ClothingItem', {
       id: item.id,
       itemName: item.name,
       inventoryNumber,
       categoryId: item.categoryId,
       categoryName: categoryLabel(item.categoryId),
+      storagePlaceId: storageTarget.storagePlaceId,
+      boxId: storageTarget.boxId,
     }, req.user.username);
     res.status(201).json(responseClothing(item));
+  });
+
+  app.post('/api/clothing/relocate/bulk', authMiddleware, requirePermission('clothing.write'), (req, res) => {
+    const clothingIds = Array.from(new Set(
+      Array.isArray(req.body.clothingIds)
+        ? req.body.clothingIds.map((id) => String(id || '').trim()).filter(Boolean)
+        : [],
+    ));
+    const target = clothingStorageTarget(req.body);
+    if (!clothingIds.length || target.error || !target.storagePlaceId) {
+      return res.status(400).json({
+        error: target.error || 'Kleidungsstücke und ein gültiger Lagerplatz sind erforderlich.',
+      });
+    }
+    const items = clothingIds.map((id) => clothingItems.find((entry) => entry.id === id));
+    if (items.some((item) => !item)) {
+      return res.status(404).json({ error: 'Mindestens ein Kleidungsstück wurde nicht gefunden.' });
+    }
+    if (items.some((item) => item.status === 'Ausgegeben')) {
+      return res.status(409).json({
+        error: 'Ausgegebene Kleidungsstücke können nicht umgebucht werden.',
+      });
+    }
+    const existingAssignments = clothingIds.map((id) =>
+      storageAssignments.filter((entry) =>
+        entry.entityType === 'clothing' && entry.entityId === id));
+    if (existingAssignments.some((entries) => entries.length > 1)) {
+      return res.status(409).json({
+        error: 'Mindestens ein Kleidungsstück besitzt mehrere Lagerzuordnungen.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const assignments = items.map((item, index) => {
+      const existing = existingAssignments[index][0];
+      if (existing) {
+        Object.assign(existing, {
+          storagePlaceId: target.storagePlaceId,
+          boxId: target.boxId,
+          quantity: 1,
+          updatedAt: now,
+          updatedBy: req.user.username,
+        });
+        return existing;
+      }
+      const assignment = {
+        id: nextId('storage-assignment', storageAssignments),
+        entityType: 'clothing',
+        entityId: item.id,
+        storagePlaceId: target.storagePlaceId,
+        boxId: target.boxId,
+        quantity: 1,
+        createdAt: now,
+        createdBy: req.user.username,
+      };
+      storageAssignments.push(assignment);
+      return assignment;
+    });
+    logEvent('relocate', 'StorageAssignment', {
+      clothingIds,
+      storagePlaceId: target.storagePlaceId,
+      boxId: target.boxId,
+    }, req.user.username);
+    return res.status(201).json(assignments);
   });
 
   app.put('/api/clothing/:id', authMiddleware, requirePermission('clothing.write'), (req, res) => {
@@ -1058,9 +1183,9 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'Die Größe ist für diese Kategorie nicht vorgesehen.' });
     }
     const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
-    const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
+    const locationId = String(req.body.locationId ?? item.locationId ?? '').trim();
     const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
-    if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
+    if (locationId && !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
 
     const updatedItem = {
@@ -1074,7 +1199,7 @@ function createApp(options = {}) {
       manufacturer: String(req.body.manufacturer ?? item.manufacturer ?? '').trim(),
       manufacturingYear: String(req.body.manufacturingYear ?? item.manufacturingYear ?? '').trim(),
       purchaseDate: req.body.purchaseDate ?? item.purchaseDate ?? null,
-      locationId,
+      locationId: locationId || null,
       stockStructureId: stockStructureId || null,
       inspectionIntervalMonths,
       nextInspectionDate: addMonths(
@@ -1333,9 +1458,9 @@ function createApp(options = {}) {
         });
         return;
       }
-      const locationId = String(row.locationId || '').trim() || 'loc-2';
+      const locationId = String(row.locationId || '').trim();
       const stockStructureId = String(row.stockStructureId || '').trim();
-      if (!locations.some((entry) => entry.id === locationId) || (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId))) {
+      if ((locationId && !locations.some((entry) => entry.id === locationId)) || (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId))) {
         skippedRows.push({ row: rowNumber, reason: 'Lagerort oder Regal/Fach ist ungültig' });
         return;
       }
@@ -1351,7 +1476,7 @@ function createApp(options = {}) {
         manufacturer: String(row.manufacturer || '').trim(),
         manufacturingYear: String(row.manufacturingYear || '').trim(),
         purchaseDate: row.purchaseDate || null,
-        locationId,
+        locationId: locationId || null,
         stockStructureId: stockStructureId || null,
         status,
         assignedPerson,
@@ -1482,6 +1607,10 @@ function createApp(options = {}) {
     addMonths,
   });
 
+  registerAdminNoticeRoutes({
+    app, authMiddleware, notices: adminNotices, logEvent,
+  });
+
   app.get('/api/documents', authMiddleware, requirePermission('documents.read'), (req, res) => {
     res.json(documents);
   });
@@ -1500,7 +1629,20 @@ function createApp(options = {}) {
   app.get('/api/dashboard', authMiddleware, requirePermission('dashboard.read'), (req, res) => {
     const activeMaterials = materials.filter((item) => !item.archived);
     const inspectionWarning = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const canManageUsers = req.user.roles?.includes('Admin')
+      || req.user.permissions?.includes('users.write');
+    const verificationWarningThreshold = Date.now() - 24 * 60 * 60 * 1000;
+    const now = Date.now();
     res.json({
+      notices: adminNotices
+        .filter((notice) => notice.active
+          && (!notice.startsAt || new Date(notice.startsAt).getTime() <= now)
+          && (!notice.endsAt || new Date(notice.endsAt).getTime() > now))
+        .sort((a, b) => {
+          const priority = { critical: 0, warning: 1, info: 2 };
+          return (priority[a.level] ?? 3) - (priority[b.level] ?? 3)
+            || new Date(b.createdAt) - new Date(a.createdAt);
+        }),
       summary: {
         materialCount: activeMaterials.length,
         issuedMaterialCount: activeMaterials.filter((item) => Number(item.issuedQuantity || 0) > 0).length,
@@ -1527,6 +1669,19 @@ function createApp(options = {}) {
         .slice(-10)
         .reverse()
         .map(dashboardActivity),
+      unverifiedEmailUsers: canManageUsers
+        ? users
+          .filter((user) => user.active && !user.emailVerifiedAt
+            && user.emailVerificationManaged === true
+            && new Date(user.emailVerificationRequestedAt).getTime() <= verificationWarningThreshold)
+          .map((user) => ({
+            id: user.id,
+            name: user.name,
+            username: user.username,
+            email: user.email,
+            createdAt: user.createdAt,
+          }))
+        : [],
     });
   });
 

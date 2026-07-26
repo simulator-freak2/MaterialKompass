@@ -30,12 +30,11 @@ class _WardrobePageState extends State<WardrobePage> {
   late Future<List<Map<String, dynamic>>> _historyFuture;
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _selectableCategories = [];
-  List<Map<String, dynamic>> _locations = [];
-  List<Map<String, dynamic>> _stocks = [];
+  List<Map<String, dynamic>> _storageHierarchy = [];
+  List<Map<String, dynamic>> _storageBoxes = [];
   final TextEditingController nameController = TextEditingController();
   final TextEditingController sizeController = TextEditingController();
-  final TextEditingController locationController =
-      TextEditingController(text: 'loc-2');
+  final TextEditingController locationController = TextEditingController();
   final TextEditingController stockController = TextEditingController();
   final TextEditingController statusController =
       TextEditingController(text: 'Lagernd');
@@ -54,6 +53,8 @@ class _WardrobePageState extends State<WardrobePage> {
   String _searchQuery = '';
   String? _editingClothingId;
   String? _selectedCategoryId;
+  String? _selectedStoragePlaceId;
+  String? _selectedStorageBoxId;
   final Set<String> _selectedClothingIds = {};
   List<Map<String, dynamic>> _currentClothing = [];
   bool _isTransferringTable = false;
@@ -196,18 +197,19 @@ class _WardrobePageState extends State<WardrobePage> {
   Future<void> _fetchStorageLocations() async {
     try {
       final responses = await Future.wait([
-        http.get(Uri.parse('$apiBaseUrl/api/locations'),
+        http.get(Uri.parse('$apiBaseUrl/api/storage/hierarchy'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        http.get(Uri.parse('$apiBaseUrl/api/storage/boxes'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
       ]);
-      if (responses.any((response) => response.statusCode != 200) || !mounted)
+      if (responses.any((response) => response.statusCode != 200) || !mounted) {
         return;
+      }
       setState(() {
-        _locations = (jsonDecode(responses[0].body) as List)
+        _storageHierarchy = (jsonDecode(responses[0].body) as List)
             .map((entry) => Map<String, dynamic>.from(entry as Map))
             .toList();
-        _stocks = (jsonDecode(responses[1].body) as List)
+        _storageBoxes = (jsonDecode(responses[1].body) as List)
             .map((entry) => Map<String, dynamic>.from(entry as Map))
             .toList();
       });
@@ -386,12 +388,14 @@ class _WardrobePageState extends State<WardrobePage> {
     manufacturerController.clear();
     manufacturingYearController.clear();
     purchaseDateController.clear();
-    locationController.text = 'loc-2';
+    locationController.clear();
     stockController.clear();
     statusController.text = 'Lagernd';
     assignedPersonController.clear();
     _editingClothingId = null;
     _selectedCategoryId = null;
+    _selectedStoragePlaceId = null;
+    _selectedStorageBoxId = null;
   }
 
   Future<void> _saveClothing({BuildContext? dialogContext}) async {
@@ -412,6 +416,7 @@ class _WardrobePageState extends State<WardrobePage> {
       return;
     }
 
+    final isEditing = _editingClothingId != null;
     final payload = {
       'name': name,
       'categoryId': _selectedCategoryId,
@@ -419,12 +424,8 @@ class _WardrobePageState extends State<WardrobePage> {
           ? null
           : inventoryNumberController.text.trim(),
       'size': sizeController.text.trim(),
-      'locationId': locationController.text.trim().isEmpty
-          ? 'loc-2'
-          : locationController.text.trim(),
-      'stockStructureId': stockController.text.trim().isEmpty
-          ? null
-          : stockController.text.trim(),
+      'locationId': null,
+      'stockStructureId': null,
       'status': statusController.text.trim().isEmpty
           ? 'Lagernd'
           : statusController.text.trim(),
@@ -434,9 +435,10 @@ class _WardrobePageState extends State<WardrobePage> {
       'manufacturer': manufacturerController.text.trim(),
       'manufacturingYear': manufacturingYearController.text.trim(),
       'purchaseDate': dateInputToIso(purchaseDateController.text),
+      if (!isEditing) 'storagePlaceId': _selectedStoragePlaceId,
+      if (!isEditing) 'boxId': _selectedStorageBoxId,
     };
 
-    final isEditing = _editingClothingId != null;
     final response = !isEditing
         ? await http.post(
             Uri.parse('$apiBaseUrl/api/clothing'),
@@ -591,20 +593,32 @@ class _WardrobePageState extends State<WardrobePage> {
     return 'Ohne Kategorie';
   }
 
+  List<Map<String, dynamic>> get _storagePlaces => [
+        for (final location in _storageHierarchy)
+          for (final rack in (location['racks'] as List? ?? const []))
+            for (final level in (rack['levels'] as List? ?? const []))
+              for (final place in (level['places'] as List? ?? const []))
+                {
+                  ...Map<String, dynamic>.from(place as Map),
+                  'locationName': location['name'],
+                },
+      ];
+
   String _storageLabel(Map<String, dynamic> item) {
-    final locationId = item['locationId']?.toString();
-    final stockId = item['stockStructureId']?.toString();
-    final location = _locations.cast<Map<String, dynamic>?>().firstWhere(
-          (entry) => entry?['id']?.toString() == locationId,
-          orElse: () => null,
-        );
-    final stock = _stocks.cast<Map<String, dynamic>?>().firstWhere(
-          (entry) => entry?['id']?.toString() == stockId,
-          orElse: () => null,
-        );
-    final locationName = location?['name']?.toString() ?? locationId ?? '-';
-    if (stock == null) return locationName;
-    return '$locationName · ${stock['name']} (${stock['section']})';
+    final itemAssignments =
+        (item['storageAssignments'] as List? ?? const []).cast<Map>();
+    if (itemAssignments.isEmpty) return 'Nicht zugeordnet';
+    return itemAssignments.map((assignment) {
+      final place = _storagePlaces.cast<Map<String, dynamic>?>().firstWhere(
+            (entry) => entry?['id'] == assignment['storagePlaceId'],
+            orElse: () => null,
+          );
+      final box = _storageBoxes.cast<Map<String, dynamic>?>().firstWhere(
+            (entry) => entry?['id'] == assignment['boxId'],
+            orElse: () => null,
+          );
+      return '${place?['code'] ?? 'Unbekannter Platz'}${box == null ? '' : ' · ${box['inventoryNumber']}'}';
+    }).join(', ');
   }
 
   String _categoryPath(Map<String, dynamic> category) {
@@ -619,56 +633,82 @@ class _WardrobePageState extends State<WardrobePage> {
     return parentName == null ? name : '$parentName › $name';
   }
 
-  List<Widget> _buildStorageFields(VoidCallback refreshDialog) {
-    final locationIds =
-        _locations.map((entry) => entry['id'].toString()).toSet();
-    final selectedLocation = locationIds.contains(locationController.text)
-        ? locationController.text
-        : (_locations.isEmpty ? null : _locations.first['id'].toString());
-    if (selectedLocation != null &&
-        locationController.text != selectedLocation) {
-      locationController.text = selectedLocation;
+  List<Widget> _buildStorageFields(VoidCallback refreshDialog,
+      {bool editable = true, Map<String, dynamic>? item}) {
+    if (!editable) {
+      return [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.place_outlined),
+          title: const Text('Lagerzuordnung'),
+          subtitle: Text(
+              '${item == null ? 'Nicht zugeordnet' : _storageLabel(item)}\nÄnderungen erfolgen über „Umbuchen“.'),
+        ),
+      ];
     }
-    final availableStocks = _stocks
-        .where((entry) => entry['locationId']?.toString() == selectedLocation)
+    final places =
+        _storagePlaces.where((place) => place['active'] != false).toList();
+    final boxes = _storageBoxes
+        .where((box) =>
+            box['active'] != false &&
+            box['storagePlaceId'] == _selectedStoragePlaceId)
         .toList();
-    final stockIds =
-        availableStocks.map((entry) => entry['id'].toString()).toSet();
-    final selectedStock =
-        stockIds.contains(stockController.text) ? stockController.text : null;
-    if (selectedStock == null && stockController.text.isNotEmpty)
-      stockController.clear();
+    if (_selectedStoragePlaceId != null &&
+        !places.any((place) => place['id'] == _selectedStoragePlaceId)) {
+      _selectedStoragePlaceId = null;
+      _selectedStorageBoxId = null;
+    }
+    if (_selectedStorageBoxId != null &&
+        !boxes.any((box) => box['id'] == _selectedStorageBoxId)) {
+      _selectedStorageBoxId = null;
+    }
     return [
-      DropdownButtonFormField<String>(
-        initialValue: selectedLocation,
-        decoration: const InputDecoration(labelText: 'Lagerort *'),
-        items: _locations
-            .map((entry) => DropdownMenuItem(
-                  value: entry['id'].toString(),
-                  child: Text('${entry['name']} (${entry['code']})'),
-                ))
-            .toList(),
-        onChanged: _locations.isEmpty
-            ? null
-            : (value) {
-                locationController.text = value ?? '';
-                stockController.clear();
-                refreshDialog();
-              },
-      ),
-      const SizedBox(height: 12),
-      DropdownButtonFormField<String>(
-        initialValue: selectedStock,
-        decoration: const InputDecoration(labelText: 'Regal / Fach'),
+      DropdownButtonFormField<String?>(
+        isExpanded: true,
+        initialValue: _selectedStoragePlaceId,
+        decoration: const InputDecoration(
+          labelText: 'Lagerplatz',
+          prefixIcon: Icon(Icons.place_outlined),
+        ),
         items: [
-          const DropdownMenuItem<String>(
-              value: null, child: Text('Kein Regal/Fach')),
-          ...availableStocks.map((entry) => DropdownMenuItem(
-                value: entry['id'].toString(),
-                child: Text('${entry['name']} · ${entry['section']}'),
+          const DropdownMenuItem<String?>(
+            value: null,
+            child: Text('Ohne Lagerplatz'),
+          ),
+          ...places.map((place) => DropdownMenuItem<String?>(
+                value: place['id']?.toString(),
+                child: Text(
+                    '${place['code']} · ${place['locationName'] ?? 'Standort'}'),
               )),
         ],
-        onChanged: (value) => stockController.text = value ?? '',
+        onChanged: (value) {
+          _selectedStoragePlaceId = value;
+          _selectedStorageBoxId = null;
+          refreshDialog();
+        },
+      ),
+      const SizedBox(height: 12),
+      DropdownButtonFormField<String?>(
+        isExpanded: true,
+        initialValue: _selectedStorageBoxId,
+        decoration: const InputDecoration(labelText: 'Kiste (optional)'),
+        items: [
+          const DropdownMenuItem<String?>(
+            value: null,
+            child: Text('Lose auf dem Lagerplatz'),
+          ),
+          ...boxes.map((box) => DropdownMenuItem<String?>(
+                value: box['id']?.toString(),
+                child: Text(
+                    '${box['inventoryNumber']} · ${box['name'] ?? 'Kiste'}'),
+              )),
+        ],
+        onChanged: _selectedStoragePlaceId == null
+            ? null
+            : (value) {
+                _selectedStorageBoxId = value;
+                refreshDialog();
+              },
       ),
     ];
   }
@@ -758,8 +798,8 @@ class _WardrobePageState extends State<WardrobePage> {
         item['manufacturingYear']?.toString() ?? '';
     purchaseDateController.text =
         item['purchaseDate'] == null ? '' : _formatDate(item['purchaseDate']);
-    locationController.text = item['locationId']?.toString() ?? 'loc-2';
-    stockController.text = item['stockStructureId']?.toString() ?? '';
+    locationController.clear();
+    stockController.clear();
     statusController.text = item['status']?.toString() ?? 'Lagernd';
     assignedPersonController.text = item['assignedPerson']?.toString() ?? '';
 
@@ -804,7 +844,11 @@ class _WardrobePageState extends State<WardrobePage> {
                   const SizedBox(height: 12),
                   _buildSizeField(),
                   const SizedBox(height: 12),
-                  ..._buildStorageFields(() => setDialogState(() {})),
+                  ..._buildStorageFields(
+                    () => setDialogState(() {}),
+                    editable: false,
+                    item: item,
+                  ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: statusController,
@@ -1650,6 +1694,156 @@ class _WardrobePageState extends State<WardrobePage> {
     );
   }
 
+  Future<void> _relocateClothing({String? clothingId}) async {
+    final requestedIds = clothingId == null
+        ? Set<String>.from(_selectedClothingIds)
+        : <String>{clothingId};
+    final movableIds = _currentClothing
+        .where((item) =>
+            item['status']?.toString() != 'Ausgegeben' &&
+            requestedIds.contains(item['id']?.toString()))
+        .map((item) => item['id'].toString())
+        .toSet();
+    if (movableIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Bitte mindestens ein nicht ausgegebenes Kleidungsstück auswählen.'),
+        ),
+      );
+      return;
+    }
+
+    String? targetPlaceId;
+    String? targetBoxId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final places = _storagePlaces
+              .where((place) => place['active'] != false)
+              .toList();
+          final boxes = _storageBoxes
+              .where((box) =>
+                  box['active'] != false &&
+                  box['storagePlaceId'] == targetPlaceId)
+              .toList();
+          return AlertDialog(
+            title: const Text('Kleidung umbuchen'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${movableIds.length} Kleidungsstücke ausgewählt'),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: targetPlaceId,
+                    decoration: const InputDecoration(
+                      labelText: 'Neuer Lagerplatz *',
+                      prefixIcon: Icon(Icons.place_outlined),
+                    ),
+                    items: places
+                        .map((place) => DropdownMenuItem<String>(
+                              value: place['id']?.toString(),
+                              child: Text(
+                                  '${place['code']} · ${place['locationName'] ?? 'Standort'}'),
+                            ))
+                        .toList(),
+                    onChanged: (value) => setDialogState(() {
+                      targetPlaceId = value;
+                      targetBoxId = null;
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String?>(
+                    isExpanded: true,
+                    initialValue: targetBoxId,
+                    decoration:
+                        const InputDecoration(labelText: 'Kiste (optional)'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Lose auf dem Lagerplatz'),
+                      ),
+                      ...boxes.map((box) => DropdownMenuItem<String?>(
+                            value: box['id']?.toString(),
+                            child: Text(
+                                '${box['inventoryNumber']} · ${box['name'] ?? 'Kiste'}'),
+                          )),
+                    ],
+                    onChanged: targetPlaceId == null
+                        ? null
+                        : (value) => setDialogState(() => targetBoxId = value),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton.icon(
+                onPressed: targetPlaceId == null
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(true),
+                icon: const Icon(Icons.move_to_inbox_outlined),
+                label: const Text('Umbuchen'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/clothing/relocate/bulk'),
+        headers: {
+          'Authorization': 'Bearer ${widget.token}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'clothingIds': movableIds.toList(),
+          'storagePlaceId': targetPlaceId,
+          'boxId': targetBoxId,
+        }),
+      );
+      if (!mounted) return;
+      if (response.statusCode != 201) {
+        var message = 'Die Kleidung konnte nicht umgebucht werden.';
+        try {
+          final data = jsonDecode(response.body);
+          if (data is Map && data['error'] != null) {
+            message = data['error'].toString();
+          }
+        } catch (_) {}
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+        return;
+      }
+      setState(() {
+        _selectedClothingIds.removeAll(movableIds);
+        _clothingFuture = _fetchClothing();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text('${movableIds.length} Kleidungsstücke wurden umgebucht.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Der Server ist momentan nicht erreichbar.')),
+      );
+    }
+  }
+
   Future<void> _openBulkCategoryDialog() async {
     if (_selectedClothingIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1938,6 +2132,17 @@ class _WardrobePageState extends State<WardrobePage> {
                 label: const Text('Ausgeben/Zurücknehmen'),
               ),
               ElevatedButton.icon(
+                onPressed: _relocateClothing,
+                style: ElevatedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  backgroundColor: Colors.blueGrey.shade700,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.move_to_inbox_outlined, size: 18),
+                label: const Text('Umbuchen'),
+              ),
+              ElevatedButton.icon(
                 onPressed: _openBulkCategoryDialog,
                 style: ElevatedButton.styleFrom(
                   padding:
@@ -2216,6 +2421,15 @@ class _WardrobePageState extends State<WardrobePage> {
                                               _openInspectionDialog(item),
                                           icon: const Icon(Icons.fact_check),
                                           label: const Text('Prüfung'),
+                                        ),
+                                        OutlinedButton.icon(
+                                          onPressed: isIssued
+                                              ? null
+                                              : () => _relocateClothing(
+                                                  clothingId: itemId),
+                                          icon: const Icon(
+                                              Icons.move_to_inbox_outlined),
+                                          label: const Text('Umbuchen'),
                                         ),
                                         IconButton(
                                           onPressed: () =>

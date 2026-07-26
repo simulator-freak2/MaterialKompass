@@ -105,6 +105,9 @@ test('runtime configuration validates network settings', () => {
     SMTP_USER: 'mailer@example.org',
     SMTP_PASSWORD: 'secret',
     MAIL_FROM: 'MaterialKompass <mailer@example.org>',
+    IMAP_HOST: 'imap.example.org',
+    IMAP_USER: 'mailer@example.org',
+    IMAP_PASSWORD: 'secret',
     DB_HOST: 'database',
     PORT: '4000',
   }), {
@@ -133,4 +136,15 @@ test('runtime configuration validates network settings', () => {
     APP_BASE_URL: 'https://app.example.org',
     DB_HOST: 'database',
   }), /SMTP/);
+  assert.throws(() => loadRuntimeConfig({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    CORS_ORIGIN: 'https://app.example.org',
+    APP_BASE_URL: 'https://app.example.org',
+    SMTP_HOST: 'smtp.example.org',
+    SMTP_USER: 'mailer@example.org',
+    SMTP_PASSWORD: 'secret',
+    MAIL_FROM: 'MaterialKompass <mailer@example.org>',
+    DB_HOST: 'database',
+  }), /IMAP/);
 });

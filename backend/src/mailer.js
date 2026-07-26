@@ -21,7 +21,7 @@ function getTransport() {
   return transport;
 }
 
-async function sendAccountMail({ to, subject, text }) {
+async function sendAccountMail({ to, subject, text, headers, attachments }) {
   const transport = getTransport();
   if (!transport) {
     if (process.env.NODE_ENV !== 'test') {
@@ -29,13 +29,15 @@ async function sendAccountMail({ to, subject, text }) {
     }
     return false;
   }
-  await transport.sendMail({
+  const info = await transport.sendMail({
     from: process.env.MAIL_FROM || 'MaterialKompass <noreply@materialkompass.org>',
     to,
     subject,
     text,
+    headers,
+    attachments,
   });
-  return true;
+  return { messageId: info.messageId || null };
 }
 
 async function verifyAccountMailTransport() {
