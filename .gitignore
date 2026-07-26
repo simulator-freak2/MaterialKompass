@@ -33,3 +33,6 @@ Thumbs.db
 # Desktop-Releases werden separat gebaut und nicht in Git eingecheckt.
 releases/*
 !releases/.gitkeep
+
+.dart-appdata/
+.dart-localappdata/
