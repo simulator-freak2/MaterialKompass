@@ -92,6 +92,16 @@ function loadRuntimeConfig(env = process.env) {
     if (missingMailSettings.length > 0) {
       throw new Error(`Für Account-E-Mails fehlen SMTP-Einstellungen: ${missingMailSettings.join(', ')}.`);
     }
+    const missingDefectImapSettings = [
+      'DEFECT_IMAP_HOST',
+      'DEFECT_IMAP_USER',
+      'DEFECT_IMAP_PASSWORD',
+    ].filter((name) => !env[name]);
+    if (missingDefectImapSettings.length > 0) {
+      throw new Error(
+        `Für das Mängel-Postfach fehlen IMAP-Einstellungen: ${missingDefectImapSettings.join(', ')}.`,
+      );
+    }
     if (!env.DB_HOST && (!env.INITIAL_ADMIN_PASSWORD || env.INITIAL_ADMIN_PASSWORD.length < 12)) {
       throw new Error('INITIAL_ADMIN_PASSWORD muss ohne Datenbank mindestens 12 Zeichen lang sein.');
     }

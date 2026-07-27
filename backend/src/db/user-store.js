@@ -36,6 +36,13 @@ function createUserStore(database = mariadb) {
           ON UPDATE CURRENT_TIMESTAMP(3),
         CHECK (JSON_VALID(data_json))
       )`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS mailbox_processing_state (
+        mailbox VARCHAR(255) PRIMARY KEY,
+        uid_validity VARCHAR(64) NOT NULL,
+        last_uid BIGINT UNSIGNED NOT NULL,
+        initialized_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL
+      )`);
     },
 
     async load() {
@@ -88,6 +95,38 @@ function createUserStore(database = mariadb) {
     },
 
     async deleteUser(id) { await pool.query('DELETE FROM users WHERE id = ?', [id]); },
+    async getMailboxProcessingState(mailbox) {
+      const rows = await pool.query(
+        'SELECT * FROM mailbox_processing_state WHERE mailbox = ?',
+        [mailbox],
+      );
+      const row = rows[0];
+      return row ? {
+        mailbox: row.mailbox,
+        uidValidity: String(row.uid_validity),
+        lastUid: Number(row.last_uid),
+        initializedAt: iso(row.initialized_at),
+      } : null;
+    },
+    async saveMailboxProcessingState({
+      mailbox,
+      uidValidity,
+      lastUid,
+      initializedAt = new Date(),
+    }) {
+      await pool.query(`INSERT INTO mailbox_processing_state
+        (mailbox, uid_validity, last_uid, initialized_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE uid_validity=VALUES(uid_validity),
+          last_uid=VALUES(last_uid), initialized_at=VALUES(initialized_at),
+          updated_at=VALUES(updated_at)`, [
+        mailbox,
+        String(uidValidity),
+        lastUid,
+        sqlDateTime(initializedAt),
+        sqlDateTime(new Date()),
+      ]);
+    },
     async saveRole(role) {
       await pool.query(`INSERT INTO roles (id, name, permissions) VALUES (?, ?, ?)
         ON DUPLICATE KEY UPDATE name=VALUES(name), permissions=VALUES(permissions)`,

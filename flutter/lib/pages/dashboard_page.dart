@@ -241,7 +241,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   _DashboardAction(
                     icon: Icons.report_problem_outlined,
                     label: 'Mängel',
-                    description: 'Meldungen prüfen und bearbeiten',
+                    description: 'Mängel und E-Mail-Meldungen bearbeiten',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => DefectsPage(token: widget.token),
                     )),
@@ -348,6 +348,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     value: metricValue('unreadNotificationCount'),
                     icon: Icons.notifications_active_outlined,
                     attention: metricValue('unreadNotificationCount') > 0,
+                  ),
+                if (can('defects.read') && hasMetric('pendingDefectEmailCount'))
+                  _DashboardMetric(
+                    label: 'E-Mail-Prüfungen',
+                    value: metricValue('pendingDefectEmailCount'),
+                    icon: Icons.mark_email_unread_outlined,
+                    attention: metricValue('pendingDefectEmailCount') > 0,
                   ),
                 if (can('procurement.approve') &&
                     hasMetric('pendingProcurementApprovals'))

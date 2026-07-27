@@ -145,6 +145,7 @@ const clothingItems = [
 const issueTransactions = [];
 const defectReports = [];
 const notifications = [];
+const defectEmailImports = [];
 const procurementRequests = [];
 const procurementOffers = [];
 const procurementOrders = [];
@@ -154,6 +155,7 @@ const suppliers = [{ id: 'supplier-1', name: 'DLRG Fachhandel', contact: 'Vertri
 const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
 const exportLogs = [];
+const scannerEmailAddresses = [];
 
 module.exports = {
   seedData: {
@@ -173,6 +175,7 @@ module.exports = {
     issueTransactions,
     defectReports,
     notifications,
+    defectEmailImports,
     procurementRequests,
     procurementOffers,
     procurementOrders,
@@ -182,5 +185,6 @@ module.exports = {
     documents,
     auditLogs,
     exportLogs,
+    scannerEmailAddresses,
   },
 };

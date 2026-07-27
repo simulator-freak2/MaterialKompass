@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
@@ -19,6 +20,10 @@ class _UsersPageState extends State<UsersPage> {
   List<Map<String, dynamic>> users = [];
   List<Map<String, dynamic>> roles = [];
   List<Map<String, dynamic>> departments = [];
+  List<Map<String, dynamic>> scannerEmailAddresses = [];
+  List<String> scannerEmailDestinations = [];
+  String scannerEmailDomain = 'materialkompass.org';
+  bool isAdmin = false;
   bool loading = true;
 
   Map<String, String> get headers => {
@@ -40,9 +45,11 @@ class _UsersPageState extends State<UsersPage> {
           headers: headers),
       http.get(Uri.parse('$apiBaseUrl/api/roles'), headers: headers),
       http.get(Uri.parse('$apiBaseUrl/api/departments'), headers: headers),
+      http.get(Uri.parse('$apiBaseUrl/api/scanner-email-addresses'),
+          headers: headers),
     ]);
     if (!mounted) return;
-    if (responses.any((response) => response.statusCode != 200)) {
+    if (responses.take(3).any((response) => response.statusCode != 200)) {
       _message('Nutzerverwaltung konnte nicht geladen werden.');
     } else {
       users = (jsonDecode(responses[0].body) as List)
@@ -57,6 +64,22 @@ class _UsersPageState extends State<UsersPage> {
           .cast<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      isAdmin = responses[3].statusCode == 200;
+      if (isAdmin) {
+        final scannerData =
+            Map<String, dynamic>.from(jsonDecode(responses[3].body) as Map);
+        scannerEmailDomain =
+            scannerData['domain']?.toString() ?? scannerEmailDomain;
+        scannerEmailDestinations =
+            ((scannerData['destinations'] as List?) ?? const [])
+                .map((entry) => entry.toString())
+                .toList();
+        scannerEmailAddresses =
+            ((scannerData['addresses'] as List?) ?? const [])
+                .cast<Map>()
+                .map((entry) => Map<String, dynamic>.from(entry))
+                .toList();
+      }
     }
     setState(() => loading = false);
   }
@@ -346,6 +369,137 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<void> editScannerEmail([Map<String, dynamic>? address]) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => ScannerEmailDialog(
+        address: address,
+        domain: scannerEmailDomain,
+        destinations: scannerEmailDestinations,
+      ),
+    );
+    if (result == null) return;
+    final ok = await _send(
+      address == null ? 'POST' : 'PUT',
+      address == null
+          ? '/api/scanner-email-addresses'
+          : '/api/scanner-email-addresses/${address['id']}',
+      result,
+    );
+    if (ok) {
+      _message(address == null
+          ? 'Scanner-E-Mail-Adresse wurde angelegt.'
+          : 'Scanner-E-Mail-Adresse wurde aktualisiert.');
+      await load();
+    }
+  }
+
+  Future<void> deleteScannerEmail(Map<String, dynamic> address) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Scanner-E-Mail-Adresse löschen?'),
+        content: Text(
+            '${address['email']} wird dauerhaft aus MaterialKompass entfernt.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Löschen')),
+        ],
+      ),
+    );
+    if (confirmed == true &&
+        await _send(
+            'DELETE', '/api/scanner-email-addresses/${address['id']}')) {
+      _message('Scanner-E-Mail-Adresse wurde gelöscht.');
+      await load();
+    }
+  }
+
+  Widget scannerEmailTab() => Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Diese Adressen sind für die Absenderkonfiguration von Scannern gedacht. '
+                          'Der Mailserver für @$scannerEmailDomain muss so eingerichtet sein, '
+                          'dass Nachrichten an diese Adressen an MaterialKompass zugestellt werden.',
+                        ),
+                      ),
+                    ]),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: () => editScannerEmail(),
+                icon: const Icon(Icons.add),
+                label: const Text('Scanner-Adresse anlegen'),
+              ),
+            ),
+          ]),
+        ),
+        Expanded(
+          child: scannerEmailAddresses.isEmpty
+              ? const Center(
+                  child: Text('Noch keine Scanner-E-Mail-Adressen angelegt.'))
+              : ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  children: scannerEmailAddresses
+                      .map((address) => Card(
+                            child: ListTile(
+                              leading: Icon(address['active'] == false
+                                  ? Icons.mark_email_unread_outlined
+                                  : Icons.mark_email_read_outlined),
+                              title: Text(address['email'].toString()),
+                              subtitle: Text(
+                                '${address['name']} · Ziel: ${address['destination']} · '
+                                '${address['active'] == false ? 'Deaktiviert' : 'Aktiv'}',
+                              ),
+                              trailing: Wrap(children: [
+                                IconButton(
+                                  tooltip: 'Adresse kopieren',
+                                  onPressed: () async {
+                                    await Clipboard.setData(ClipboardData(
+                                        text: address['email'].toString()));
+                                    if (mounted) {
+                                      _message('E-Mail-Adresse wurde kopiert.');
+                                    }
+                                  },
+                                  icon: const Icon(Icons.copy),
+                                ),
+                                IconButton(
+                                  tooltip: 'Bearbeiten',
+                                  onPressed: () => editScannerEmail(address),
+                                  icon: const Icon(Icons.edit),
+                                ),
+                                IconButton(
+                                  tooltip: 'Löschen',
+                                  onPressed: () => deleteScannerEmail(address),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ]),
+                            ),
+                          ))
+                      .toList(),
+                ),
+        ),
+      ]);
+
   String date(Object? value) {
     if (value == null) return '—';
     final parsed = DateTime.tryParse(value.toString())?.toLocal();
@@ -356,14 +510,19 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-        length: 3,
+        length: isAdmin ? 4 : 3,
         child: Scaffold(
           appBar: AppBar(
               title: const Text('Nutzerverwaltung'),
-              bottom: const TabBar(tabs: [
-                Tab(text: 'Nutzer', icon: Icon(Icons.people)),
-                Tab(text: 'Rollen', icon: Icon(Icons.admin_panel_settings)),
-                Tab(text: 'Fachbereiche', icon: Icon(Icons.account_tree))
+              bottom: TabBar(tabs: [
+                const Tab(text: 'Nutzer', icon: Icon(Icons.people)),
+                const Tab(
+                    text: 'Rollen', icon: Icon(Icons.admin_panel_settings)),
+                const Tab(text: 'Fachbereiche', icon: Icon(Icons.account_tree)),
+                if (isAdmin)
+                  const Tab(
+                      text: 'Scanner-E-Mails',
+                      icon: Icon(Icons.document_scanner))
               ])),
           body: loading
               ? const Center(child: CircularProgressIndicator())
@@ -513,8 +672,115 @@ class _UsersPageState extends State<UsersPage> {
                                         ]))))
                                 .toList())),
                   ]),
+                  if (isAdmin) scannerEmailTab(),
                 ]),
         ),
+      );
+}
+
+class ScannerEmailDialog extends StatefulWidget {
+  final Map<String, dynamic>? address;
+  final String domain;
+  final List<String> destinations;
+
+  const ScannerEmailDialog({
+    required this.address,
+    required this.domain,
+    required this.destinations,
+    super.key,
+  });
+
+  @override
+  State<ScannerEmailDialog> createState() => _ScannerEmailDialogState();
+}
+
+class _ScannerEmailDialogState extends State<ScannerEmailDialog> {
+  late final TextEditingController localPart = TextEditingController(
+      text: widget.address?['localPart']?.toString() ?? '');
+  late final TextEditingController name =
+      TextEditingController(text: widget.address?['name']?.toString() ?? '');
+  late String destination = widget.address?['destination']?.toString() ??
+      (widget.destinations.isEmpty ? 'Mängel' : widget.destinations.first);
+  late bool active = widget.address?['active'] != false;
+
+  @override
+  void dispose() {
+    localPart.dispose();
+    name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.address == null
+            ? 'Scanner-E-Mail-Adresse anlegen'
+            : 'Scanner-E-Mail-Adresse bearbeiten'),
+        content: SizedBox(
+          width: 520,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: localPart,
+              enabled: widget.address == null,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: 'Adresse *',
+                suffixText: '@${widget.domain}',
+                helperText: widget.address == null
+                    ? 'Zum Beispiel „maengel“'
+                    : 'Die Adresse kann nachträglich nicht geändert werden.',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: name,
+              decoration: const InputDecoration(
+                labelText: 'Bezeichnung *',
+                hintText: 'Zum Beispiel Mängelscanner',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: destination,
+              decoration: const InputDecoration(
+                labelText: 'Zielbereich *',
+                border: OutlineInputBorder(),
+              ),
+              items: widget.destinations
+                  .map((entry) =>
+                      DropdownMenuItem(value: entry, child: Text(entry)))
+                  .toList(),
+              onChanged: (value) =>
+                  setState(() => destination = value ?? destination),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Adresse aktiv'),
+              value: active,
+              onChanged: (value) => setState(() => active = value),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen')),
+          FilledButton(
+            onPressed: () {
+              if (localPart.text.trim().isEmpty || name.text.trim().isEmpty) {
+                return;
+              }
+              Navigator.pop(context, {
+                if (widget.address == null) 'localPart': localPart.text.trim(),
+                'name': name.text.trim(),
+                'destination': destination,
+                'active': active,
+              });
+            },
+            child: const Text('Speichern'),
+          ),
+        ],
       );
 }
 
