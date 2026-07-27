@@ -3,7 +3,13 @@ const test = require('node:test');
 const { createApp } = require('../src/app');
 
 async function startApp(options = {}) {
-  const app = createApp(options);
+  const provisioned = [];
+  const app = createApp({
+    mailboxProvisioner: {
+      async createMailbox(mailbox) { provisioned.push(mailbox); },
+    },
+    ...options,
+  });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -29,12 +35,12 @@ async function startApp(options = {}) {
     assert.equal(result.response.status, 200);
     return result.data.token;
   }
-  return { server, request, login };
+  return { server, request, login, provisioned };
 }
 
 test('admins manage scanner email addresses and changes are persisted', async () => {
   const snapshots = [];
-  const { server, request, login } = await startApp({
+  const { server, request, login, provisioned } = await startApp({
     dataStore: {
       async saveCollections(snapshot) { snapshots.push(snapshot); },
     },
@@ -49,7 +55,18 @@ test('admins manage scanner email addresses and changes are persisted', async ()
     });
     assert.equal(created.response.status, 201);
     assert.equal(created.data.email, 'maengel@materialkompass.org');
+    assert.equal(created.data.initialPassword.length, 32);
+    assert.equal(created.data.passwordCiphertext, undefined);
+    assert.equal(created.data.passwordIv, undefined);
+    assert.equal(created.data.passwordTag, undefined);
+    assert.equal(provisioned[0].email, created.data.email);
+    assert.equal(provisioned[0].password, created.data.initialPassword);
     assert.equal(snapshots.at(-1).scannerEmailAddresses[0].id, created.data.id);
+    assert.equal(
+      snapshots.at(-1).scannerEmailAddresses[0].initialPassword,
+      undefined,
+    );
+    assert.ok(snapshots.at(-1).scannerEmailAddresses[0].passwordCiphertext);
 
     const duplicate = await request('/api/scanner-email-addresses', {
       method: 'POST',
@@ -66,18 +83,66 @@ test('admins manage scanner email addresses and changes are persisted', async ()
     assert.equal(updated.response.status, 200);
     assert.equal(updated.data.active, false);
     assert.equal(updated.data.destination, 'Dokumente');
+    assert.equal(updated.data.passwordCiphertext, undefined);
 
     const listed = await request('/api/scanner-email-addresses', { token });
     assert.equal(listed.response.status, 200);
     assert.equal(listed.data.addresses.length, 1);
+    assert.equal(listed.data.addresses[0].passwordCiphertext, undefined);
     assert.deepEqual(listed.data.destinations, [
       'Mängel', 'Dokumente', 'Inventar', 'Kleiderkammer', 'Beschaffung',
     ]);
+
+    const wrongPassword = await request(
+      `/api/scanner-email-addresses/${created.data.id}/credentials`,
+      {
+        method: 'POST',
+        token,
+        body: { password: 'FalschesPasswort!' },
+      },
+    );
+    assert.equal(wrongPassword.response.status, 403);
+
+    const credentials = await request(
+      `/api/scanner-email-addresses/${created.data.id}/credentials`,
+      {
+        method: 'POST',
+        token,
+        body: { password: 'MaterialKompass2026!' },
+      },
+    );
+    assert.equal(credentials.response.status, 200);
+    assert.equal(credentials.data.initialPassword, created.data.initialPassword);
 
     const removed = await request(`/api/scanner-email-addresses/${created.data.id}`, {
       method: 'DELETE', token,
     });
     assert.equal(removed.response.status, 204);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('failed mailbox provisioning does not create an internal address', async () => {
+  const { server, request, login } = await startApp({
+    mailboxProvisioner: {
+      async createMailbox() {
+        const error = new Error('Das Postfach existiert bereits.');
+        error.status = 409;
+        throw error;
+      },
+    },
+  });
+  try {
+    const token = await login('admin', 'MaterialKompass2026!');
+    const created = await request('/api/scanner-email-addresses', {
+      method: 'POST',
+      token,
+      body: { localPart: 'scanner01', name: 'Scanner', destination: 'Mängel' },
+    });
+    assert.equal(created.response.status, 409);
+    const listed = await request('/api/scanner-email-addresses', { token });
+    assert.deepEqual(listed.data.addresses, []);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

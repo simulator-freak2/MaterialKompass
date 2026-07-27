@@ -238,10 +238,29 @@ void main() {
       ),
     ));
 
-    expect(find.text('Scanner-E-Mail-Adresse anlegen'), findsOneWidget);
+    expect(find.text('Scanner-Postfach anlegen'), findsOneWidget);
     expect(find.text('@materialkompass.org'), findsOneWidget);
     expect(find.text('Zielbereich *'), findsOneWidget);
     expect(find.text('Adresse aktiv'), findsOneWidget);
+  });
+
+  testWidgets('Mailbox credentials are displayed only in the result dialog',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: MailboxCredentialsDialog(credentials: {
+          'email': 'scanner01@materialkompass.org',
+          'initialPassword': 'generated-secret',
+          'mailServer': 'mail.materialkompass.org',
+          'smtpPort': 587,
+          'imapPort': 993,
+        }),
+      ),
+    ));
+
+    expect(find.text('Postfach wurde angelegt'), findsOneWidget);
+    expect(find.textContaining('generated-secret'), findsOneWidget);
+    expect(find.text('Zugangsdaten kopieren'), findsOneWidget);
   });
 
   testWidgets('Wardrobe page renders its main actions',

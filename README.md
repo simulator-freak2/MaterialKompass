@@ -194,12 +194,33 @@ Eine konfigurierte Mindestversion erzwingt das Update.
 
 ### Scanner-E-Mail-Adressen
 
-Administratoren können in der Nutzerverwaltung unter „Scanner-E-Mails“ Adressen wie
-`maengel@materialkompass.org` anlegen, einem Zielbereich zuordnen, deaktivieren und
-löschen. Die Domain wird im Backend mit `SCANNER_EMAIL_DOMAIN` festgelegt. Damit Scanner
-tatsächlich an diese Adressen senden können, muss der Mailserver der Domain die
-angelegten Empfänger an MaterialKompass zustellen; die Anwendung selbst verändert keine
-Postfächer beim Mailanbieter.
+Administratoren können in der Nutzerverwaltung unter „Scanner-E-Mails“ echte
+docker-mailserver-Postfächer wie `scanner-geraetehaus@materialkompass.org` anlegen und
+einem Zielbereich zuordnen. MaterialKompass erzeugt ein zufälliges Initialpasswort,
+übergibt es an docker-mailserver und speichert es ausschließlich AES-256-GCM-
+verschlüsselt. Ein Admin kann die SMTP-/IMAP-Zugangsdaten nach erneuter Bestätigung mit
+dem eigenen MaterialKompass-Passwort anzeigen. Jeder Abruf wird protokolliert. Das
+Entfernen eines Eintrags in MaterialKompass löscht das Postfach und vorhandene E-Mails
+bewusst nicht automatisch.
+
+Die Domain wird mit `SCANNER_EMAIL_DOMAIN`, der angezeigte Mailhostname mit
+`MAILBOX_SERVER_HOST` festgelegt. Der interne Dienst `mailbox-provisioner` besitzt als
+einziger MaterialKompass-Container Zugriff auf den Docker-Socket und akzeptiert nur
+validierte Postfachanlagen für diese Domain. Backend und Provisionierungsdienst
+authentifizieren sich mit einem mindestens 32 Zeichen langen, zufälligen
+`MAILBOX_PROVISIONER_TOKEN`:
+
+```bash
+openssl rand -hex 32
+```
+
+Der erzeugte Wert wird ausschließlich in der nicht versionierten Serverdatei `.env`
+gespeichert. Zusätzlich ist ein eigener `MAILBOX_PASSWORD_ENCRYPTION_KEY` mit demselben
+Befehl zu erzeugen. Dieser Schlüssel muss dauerhaft gesichert werden und darf nach der
+ersten Postfachanlage nicht geändert werden, da vorhandene Passwörter sonst nicht mehr
+entschlüsselt werden können. docker-mailserver wird standardmäßig im Container
+`mailserver` erwartet; bei einem anderen Namen muss `MAILSERVER_CONTAINER` angepasst
+werden.
 
 Die abschließende Sicherheitsfreigabe bleibt beim Betriebssystem: Windows verlangt je
 nach Signatur/SmartScreen eine Bestätigung, Linux die Administratorfreigabe und Android

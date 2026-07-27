@@ -102,6 +102,17 @@ function loadRuntimeConfig(env = process.env) {
         `Für das Mängel-Postfach fehlen IMAP-Einstellungen: ${missingDefectImapSettings.join(', ')}.`,
       );
     }
+    if (!env.MAILBOX_PROVISIONER_TOKEN || env.MAILBOX_PROVISIONER_TOKEN.length < 32
+      || /^replace-/i.test(env.MAILBOX_PROVISIONER_TOKEN)) {
+      throw new Error(
+        'MAILBOX_PROVISIONER_TOKEN muss mindestens 32 zufällige Zeichen lang sein.',
+      );
+    }
+    if (!/^[a-f0-9]{64}$/i.test(env.MAILBOX_PASSWORD_ENCRYPTION_KEY || '')) {
+      throw new Error(
+        'MAILBOX_PASSWORD_ENCRYPTION_KEY muss ein zufälliger 64-stelliger Hex-Wert sein.',
+      );
+    }
     if (!env.DB_HOST && (!env.INITIAL_ADMIN_PASSWORD || env.INITIAL_ADMIN_PASSWORD.length < 12)) {
       throw new Error('INITIAL_ADMIN_PASSWORD muss ohne Datenbank mindestens 12 Zeichen lang sein.');
     }

@@ -108,6 +108,8 @@ test('runtime configuration validates network settings', () => {
     DEFECT_IMAP_HOST: 'imap.example.org',
     DEFECT_IMAP_USER: 'maengel@example.org',
     DEFECT_IMAP_PASSWORD: 'secret',
+    MAILBOX_PROVISIONER_TOKEN: 'b'.repeat(64),
+    MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
     DB_HOST: 'database',
     PORT: '4000',
   }), {

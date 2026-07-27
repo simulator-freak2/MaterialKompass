@@ -15,6 +15,8 @@ const {
 } = require('./defect-email-ingestion');
 const { registerQrLoginRoutes } = require('./qr-login');
 const { registerScannerEmailRoutes } = require('./scanner-email-addresses');
+const { createMailboxProvisioner } = require('./mailbox-provisioner-client');
+const { createMailboxCredentialVault } = require('./mailbox-credential-vault');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -631,7 +633,18 @@ function createApp(options = {}) {
   });
 
   registerScannerEmailRoutes({
-    app, authMiddleware, scannerEmailAddresses, users, logEvent,
+    app,
+    authMiddleware,
+    scannerEmailAddresses,
+    users,
+    logEvent,
+    mailboxProvisioner: options.mailboxProvisioner || createMailboxProvisioner(),
+    mailboxCredentialVault: options.mailboxCredentialVault
+      || createMailboxCredentialVault({
+        key: process.env.MAILBOX_PASSWORD_ENCRYPTION_KEY
+          || (process.env.NODE_ENV === 'production' ? '' : '0'.repeat(64)),
+      }),
+    authRateLimit,
   });
 
   app.get('/health', (req, res) => res.json({

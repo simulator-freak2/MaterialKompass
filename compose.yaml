@@ -37,13 +37,41 @@ services:
       CLIENT_LINUX_MIN_VERSION: ${CLIENT_LINUX_MIN_VERSION:-1.0.0}
       CLIENT_ANDROID_MIN_VERSION: ${CLIENT_ANDROID_MIN_VERSION:-1.0.0}
       CLIENT_UPDATE_NOTES: ${CLIENT_UPDATE_NOTES:-}
+      MAILBOX_PROVISIONER_URL: http://mailbox-provisioner:3010
     volumes:
       - ./releases:/app/downloads:ro
     depends_on:
       db:
         condition: service_healthy
+      mailbox-provisioner:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3001:3001"
+
+  mailbox-provisioner:
+    build:
+      context: ./mailbox-provisioner
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      MAILSERVER_CONTAINER: ${MAILSERVER_CONTAINER:-mailserver}
+      SCANNER_EMAIL_DOMAIN: ${SCANNER_EMAIL_DOMAIN:-materialkompass.org}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3010/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
   materialkompass_db:

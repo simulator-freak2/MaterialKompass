@@ -379,17 +379,37 @@ class _UsersPageState extends State<UsersPage> {
       ),
     );
     if (result == null) return;
+    if (address == null) {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/scanner-email-addresses'),
+        headers: headers,
+        body: jsonEncode(result),
+      );
+      final data = response.body.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      if (!mounted) return;
+      if (response.statusCode != 201) {
+        _message(data['error']?.toString() ??
+            'Das Postfach konnte nicht angelegt werden.');
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => MailboxCredentialsDialog(credentials: data),
+      );
+      if (mounted) await load();
+      return;
+    }
+
     final ok = await _send(
-      address == null ? 'POST' : 'PUT',
-      address == null
-          ? '/api/scanner-email-addresses'
-          : '/api/scanner-email-addresses/${address['id']}',
+      'PUT',
+      '/api/scanner-email-addresses/${address['id']}',
       result,
     );
     if (ok) {
-      _message(address == null
-          ? 'Scanner-E-Mail-Adresse wurde angelegt.'
-          : 'Scanner-E-Mail-Adresse wurde aktualisiert.');
+      _message('Scanner-Postfach wurde aktualisiert.');
       await load();
     }
   }
@@ -400,7 +420,8 @@ class _UsersPageState extends State<UsersPage> {
       builder: (_) => AlertDialog(
         title: const Text('Scanner-E-Mail-Adresse löschen?'),
         content: Text(
-            '${address['email']} wird dauerhaft aus MaterialKompass entfernt.'),
+            '${address['email']} wird aus MaterialKompass entfernt. Das echte '
+            'Postfach und vorhandene E-Mails bleiben auf dem Mailserver erhalten.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -419,6 +440,72 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<void> showMailboxCredentials(Map<String, dynamic> address) async {
+    final passwordController = TextEditingController();
+    final adminPassword = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Scanner-Passwort anzeigen'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text(
+            'Bitte bestätigen Sie die Anzeige mit Ihrem aktuellen '
+            'MaterialKompass-Passwort.',
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: passwordController,
+            autofocus: true,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'MaterialKompass-Passwort',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (value) {
+              if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+            },
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (passwordController.text.isNotEmpty) {
+                Navigator.pop(dialogContext, passwordController.text);
+              }
+            },
+            child: const Text('Zugangsdaten anzeigen'),
+          ),
+        ],
+      ),
+    );
+    passwordController.dispose();
+    if (adminPassword == null || !mounted) return;
+
+    final response = await http.post(
+      Uri.parse(
+        '$apiBaseUrl/api/scanner-email-addresses/${address['id']}/credentials',
+      ),
+      headers: headers,
+      body: jsonEncode({'password': adminPassword}),
+    );
+    final data = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    if (!mounted) return;
+    if (response.statusCode != 200) {
+      _message(data['error']?.toString() ??
+          'Die Zugangsdaten konnten nicht geladen werden.');
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (_) => MailboxCredentialsDialog(credentials: data),
+    );
+  }
+
   Widget scannerEmailTab() => Column(children: [
         Padding(
           padding: const EdgeInsets.all(16),
@@ -434,9 +521,9 @@ class _UsersPageState extends State<UsersPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Diese Adressen sind für die Absenderkonfiguration von Scannern gedacht. '
-                          'Der Mailserver für @$scannerEmailDomain muss so eingerichtet sein, '
-                          'dass Nachrichten an diese Adressen an MaterialKompass zugestellt werden.',
+                          'Hier werden echte Postfächer auf dem Mailserver angelegt. '
+                          'Die verschlüsselt gespeicherten Zugangsdaten können von '
+                          'Admins nach erneuter Passwortbestätigung angezeigt werden.',
                         ),
                       ),
                     ]),
@@ -448,7 +535,7 @@ class _UsersPageState extends State<UsersPage> {
               child: FilledButton.icon(
                 onPressed: () => editScannerEmail(),
                 icon: const Icon(Icons.add),
-                label: const Text('Scanner-Adresse anlegen'),
+                label: const Text('Scanner-Postfach anlegen'),
               ),
             ),
           ]),
@@ -456,7 +543,7 @@ class _UsersPageState extends State<UsersPage> {
         Expanded(
           child: scannerEmailAddresses.isEmpty
               ? const Center(
-                  child: Text('Noch keine Scanner-E-Mail-Adressen angelegt.'))
+                  child: Text('Noch keine Scanner-Postfächer angelegt.'))
               : ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   children: scannerEmailAddresses
@@ -471,6 +558,12 @@ class _UsersPageState extends State<UsersPage> {
                                 '${address['active'] == false ? 'Deaktiviert' : 'Aktiv'}',
                               ),
                               trailing: Wrap(children: [
+                                IconButton(
+                                  tooltip: 'Zugangsdaten anzeigen',
+                                  onPressed: () =>
+                                      showMailboxCredentials(address),
+                                  icon: const Icon(Icons.key),
+                                ),
                                 IconButton(
                                   tooltip: 'Adresse kopieren',
                                   onPressed: () async {
@@ -713,8 +806,8 @@ class _ScannerEmailDialogState extends State<ScannerEmailDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
         title: Text(widget.address == null
-            ? 'Scanner-E-Mail-Adresse anlegen'
-            : 'Scanner-E-Mail-Adresse bearbeiten'),
+            ? 'Scanner-Postfach anlegen'
+            : 'Scanner-Postfach bearbeiten'),
         content: SizedBox(
           width: 520,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -726,7 +819,7 @@ class _ScannerEmailDialogState extends State<ScannerEmailDialog> {
                 labelText: 'Adresse *',
                 suffixText: '@${widget.domain}',
                 helperText: widget.address == null
-                    ? 'Zum Beispiel „maengel“'
+                    ? 'Zum Beispiel „scanner-geraetehaus“'
                     : 'Die Adresse kann nachträglich nicht geändert werden.',
                 border: const OutlineInputBorder(),
               ),
@@ -779,6 +872,60 @@ class _ScannerEmailDialogState extends State<ScannerEmailDialog> {
               });
             },
             child: const Text('Speichern'),
+          ),
+        ],
+      );
+}
+
+class MailboxCredentialsDialog extends StatelessWidget {
+  final Map<String, dynamic> credentials;
+
+  const MailboxCredentialsDialog({required this.credentials, super.key});
+
+  String get configuration => [
+        'E-Mail/Benutzername: ${credentials['email']}',
+        'Passwort: ${credentials['initialPassword']}',
+        'SMTP-Server: ${credentials['mailServer']}',
+        'SMTP-Port: ${credentials['smtpPort']} (STARTTLS)',
+        'IMAP-Server: ${credentials['mailServer']}',
+        'IMAP-Port: ${credentials['imapPort']} (TLS)',
+      ].join('\n');
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Postfach wurde angelegt'),
+        content: SizedBox(
+          width: 560,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text(
+              'Das Passwort ist verschlüsselt gespeichert. Bewahren Sie die '
+              'Zugangsdaten geschützt auf und hinterlegen Sie sie am Scanner.',
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              child: SelectableText(configuration),
+            ),
+          ]),
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: configuration));
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Zugangsdaten wurden kopiert.')),
+                );
+              }
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('Zugangsdaten kopieren'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Ich habe die Daten gespeichert'),
           ),
         ],
       );
