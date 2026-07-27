@@ -81,3 +81,100 @@ test('admin can issue a QR login for another active user', async () => {
     server.close();
   }
 });
+
+test('QR login supports preset, custom and unlimited validity', async () => {
+  const { server, request, adminToken } = await setup();
+  try {
+    const before = Date.now();
+    const preset = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: adminToken, body: { validity: '12h' },
+    });
+    assert.equal(preset.response.status, 201);
+    assert.equal(preset.data.validity, '12h');
+    assert.ok(new Date(preset.data.expiresAt).getTime() >= before + (12 * 60 * 60 * 1000));
+
+    const custom = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: adminToken, body: { validity: 'custom', customDays: 45 },
+    });
+    assert.equal(custom.response.status, 201);
+    assert.equal(custom.data.customDays, 45);
+
+    const unlimited = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: adminToken, body: { validity: 'unlimited' },
+    });
+    assert.equal(unlimited.response.status, 201);
+    assert.equal(unlimited.data.expiresAt, null);
+    const used = await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: unlimited.data.qrValue },
+    });
+    assert.equal(used.response.status, 200);
+    const reused = await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: unlimited.data.qrValue },
+    });
+    assert.equal(reused.response.status, 200);
+    const stillActive = await request('/api/auth/qr-credentials/me', {
+      token: adminToken,
+    });
+    assert.equal(
+      stillActive.data.some((entry) => entry.id === unlimited.data.id),
+      true,
+    );
+    assert.equal(
+      stillActive.data.find((entry) => entry.id === unlimited.data.id).oneTime,
+      false,
+    );
+
+    const invalid = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: adminToken, body: { validity: 'custom', customDays: 0 },
+    });
+    assert.equal(invalid.response.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('users can keep multiple titled QR codes and revoke one individually', async () => {
+  const { server, request, adminToken } = await setup();
+  try {
+    const tablet = await request('/api/auth/qr-credentials/me', {
+      method: 'POST',
+      token: adminToken,
+      body: { title: 'Tablet Gerätehaus', validity: '30d' },
+    });
+    const laptop = await request('/api/auth/qr-credentials/me', {
+      method: 'POST',
+      token: adminToken,
+      body: { title: 'Laptop Vorstand', validity: '1y' },
+    });
+    assert.equal(tablet.response.status, 201);
+    assert.equal(laptop.response.status, 201);
+
+    const listed = await request('/api/auth/qr-credentials/me', {
+      token: adminToken,
+    });
+    assert.equal(listed.response.status, 200);
+    assert.deepEqual(
+      new Set(listed.data.map((entry) => entry.title)),
+      new Set(['Tablet Gerätehaus', 'Laptop Vorstand']),
+    );
+    assert.equal(listed.data.some((entry) => entry.qrValue), false);
+    assert.equal(listed.data.some((entry) => entry.credentialHash), false);
+
+    const revoked = await request(
+      `/api/auth/qr-credentials/me/${tablet.data.id}`,
+      { method: 'DELETE', token: adminToken },
+    );
+    assert.equal(revoked.response.status, 204);
+
+    const rejected = await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: tablet.data.qrValue },
+    });
+    assert.equal(rejected.response.status, 401);
+    const accepted = await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: laptop.data.qrValue },
+    });
+    assert.equal(accepted.response.status, 200);
+  } finally {
+    server.close();
+  }
+});

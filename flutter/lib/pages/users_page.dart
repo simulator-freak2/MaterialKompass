@@ -69,12 +69,15 @@ class _UsersPageState extends State<UsersPage> {
     final uri = Uri.parse('$apiBaseUrl$path');
     final encoded = body == null ? null : jsonEncode(body);
     late http.Response response;
-    if (method == 'POST')
+    if (method == 'POST') {
       response = await http.post(uri, headers: headers, body: encoded);
-    if (method == 'PUT')
+    }
+    if (method == 'PUT') {
       response = await http.put(uri, headers: headers, body: encoded);
-    if (method == 'DELETE')
+    }
+    if (method == 'DELETE') {
       response = await http.delete(uri, headers: headers, body: encoded);
+    }
     if (response.statusCode >= 200 && response.statusCode < 300) return true;
     final data = response.body.isEmpty ? {} : jsonDecode(response.body);
     _message(data['error']?.toString() ?? 'Aktion fehlgeschlagen.');
@@ -116,31 +119,132 @@ class _UsersPageState extends State<UsersPage> {
                     child: const Text('Löschen'))
               ],
             ));
-    if (confirmed == true && await _send('DELETE', '/api/users/${user['id']}'))
+    if (confirmed == true &&
+        await _send('DELETE', '/api/users/${user['id']}')) {
       await load();
+    }
   }
 
-  Future<void> createQrLogin(Map<String, dynamic> user) async {
+  Future<bool> createQrLogin(Map<String, dynamic> user) async {
+    final validity = await chooseQrLoginValidity(context);
+    if (validity == null || !mounted) return false;
     final response = await http.post(
       Uri.parse('$apiBaseUrl/api/users/${user['id']}/qr-credential'),
       headers: headers,
-      body: '{}',
+      body: jsonEncode(validity.toJson()),
     );
     final data = response.body.isEmpty
         ? <String, dynamic>{}
         : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    if (!mounted) return;
+    if (!mounted) return false;
     if (response.statusCode != 201) {
       _message(
           data['error']?.toString() ?? 'QR-Code konnte nicht erstellt werden.');
-      return;
+      return false;
     }
     await showQrLoginCode(
       context,
       qrValue: data['qrValue'].toString(),
-      expiresAt: DateTime.parse(data['expiresAt'].toString()),
+      expiresAt: data['expiresAt'] == null
+          ? null
+          : DateTime.parse(data['expiresAt'].toString()),
       accountLabel: user['name']?.toString() ?? user['username'].toString(),
+      oneTime: data['oneTime'] != false,
     );
+    return true;
+  }
+
+  Future<List<Map<String, dynamic>>> loadUserQrLogins(
+      Map<String, dynamic> user) async {
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/users/${user['id']}/qr-credentials'),
+      headers: headers,
+    );
+    if (response.statusCode != 200) {
+      final data = response.body.isEmpty ? {} : jsonDecode(response.body);
+      _message(data['error']?.toString() ??
+          'Anmeldecodes konnten nicht geladen werden.');
+      return [];
+    }
+    return (jsonDecode(response.body) as List)
+        .cast<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList();
+  }
+
+  Future<void> manageQrLogins(Map<String, dynamic> user) async {
+    final credentials = await loadUserQrLogins(user);
+    if (!mounted) return;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text('Anmeldecodes für ${user['name'] ?? user['username']}'),
+          content: SizedBox(
+            width: 520,
+            child: credentials.isEmpty
+                ? const Text('Keine aktiven Anmeldecodes.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: credentials
+                        .map(
+                          (credential) => ListTile(
+                            leading: const Icon(Icons.qr_code_2),
+                            title: Text(credential['title'].toString()),
+                            subtitle: Text(
+                              '${qrCredentialExpiryLabel(credential['expiresAt'])} · '
+                              '${credential['oneTime'] == false ? 'Mehrfach verwendbar' : 'Einmal verwendbar'}',
+                            ),
+                            trailing: IconButton(
+                              tooltip: 'Anmeldecode deaktivieren',
+                              icon: const Icon(Icons.block),
+                              onPressed: () async {
+                                final response = await http.delete(
+                                  Uri.parse(
+                                    '$apiBaseUrl/api/users/${user['id']}/qr-credentials/${credential['id']}',
+                                  ),
+                                  headers: headers,
+                                );
+                                if (!mounted || !dialogContext.mounted) return;
+                                if (response.statusCode == 204) {
+                                  setDialogState(
+                                    () => credentials.removeWhere(
+                                      (entry) =>
+                                          entry['id'] == credential['id'],
+                                    ),
+                                  );
+                                  _message('Anmeldecode wurde deaktiviert.');
+                                } else {
+                                  final data = response.body.isEmpty
+                                      ? {}
+                                      : jsonDecode(response.body);
+                                  _message(data['error']?.toString() ??
+                                      'Deaktivierung fehlgeschlagen.');
+                                }
+                              },
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Schließen'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, 'create'),
+              icon: const Icon(Icons.add),
+              label: const Text('Neuen Code erstellen'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == 'create' && await createQrLogin(user) && mounted) {
+      await manageQrLogins(user);
+    }
   }
 
   List<String> get allPermissions {
@@ -310,18 +414,19 @@ class _UsersPageState extends State<UsersPage> {
                                 isThreeLine: true,
                                 trailing: Wrap(children: [
                                   IconButton(
-                                      tooltip: 'Einmaligen Anmelde-QR-Code erstellen',
+                                      tooltip: 'Anmeldecodes verwalten',
                                       onPressed: active
-                                          ? () => createQrLogin(user)
+                                          ? () => manageQrLogins(user)
                                           : null,
                                       icon: const Icon(Icons.qr_code_2)),
                                   IconButton(
                                       tooltip: 'Passwort-Reset senden',
                                       onPressed: () async {
                                         if (await _send('POST',
-                                            '/api/users/${user['id']}/password-reset'))
+                                            '/api/users/${user['id']}/password-reset')) {
                                           _message(
                                               'Reset-E-Mail wurde angefordert.');
+                                        }
                                       },
                                       icon: const Icon(Icons.password)),
                                   IconButton(
@@ -479,10 +584,11 @@ class _UserDialogState extends State<UserDialog> {
                   value: selectedRoles.contains(role),
                   title: Text(role),
                   onChanged: (value) => setState(() {
-                        if (value == true)
+                        if (value == true) {
                           selectedRoles.add(role);
-                        else
+                        } else {
                           selectedRoles.remove(role);
+                        }
                       }))),
               const SizedBox(height: 12),
               Align(
@@ -528,8 +634,9 @@ class _UserDialogState extends State<UserDialog> {
                   'departmentIds': selectedDepartmentIds.toList(),
                   'active': active
                 };
-                if (password.text.isNotEmpty)
+                if (password.text.isNotEmpty) {
                   result['password'] = password.text;
+                }
                 Navigator.pop(context, result);
               },
               child: const Text('Speichern'))
@@ -623,10 +730,11 @@ class _RoleDialogState extends State<RoleDialog> {
                                 title: Text(permission),
                                 value: selected.contains(permission),
                                 onChanged: (value) => setState(() {
-                                      if (value == true)
+                                      if (value == true) {
                                         selected.add(permission);
-                                      else
+                                      } else {
                                         selected.remove(permission);
+                                      }
                                     })))
                             .toList()))
               ])),
