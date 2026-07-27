@@ -50,8 +50,21 @@ void main() {
               'openProcurementReceipts': 4,
             },
             'currentUser': {
+              'name': 'Admin User',
               'roles': ['Admin'],
-              'permissions': ['locations.read', 'defects.read'],
+              'permissions': [
+                'users.read',
+                'roles.read',
+                'locations.read',
+                'categories.read',
+                'inventory.read',
+                'clothing.read',
+                'defects.read',
+                'procurement.read',
+                'procurement.approve',
+                'procurement.order',
+                'procurement.receive',
+              ],
             },
             'recentActivity': [
               {
@@ -84,11 +97,11 @@ void main() {
     expect(secondCard.dx, greaterThan(firstCard.dx));
 
     await tester.scrollUntilVisible(
-      find.text('Bereiche'),
+      find.text('Schnellzugriff'),
       400,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Bereiche'), findsOneWidget);
+    expect(find.text('Schnellzugriff'), findsOneWidget);
     expect(find.text('Nutzerverwaltung'), findsOneWidget);
     expect(find.text('Mängel'), findsOneWidget);
 
@@ -98,6 +111,52 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.textContaining('Rettungsweste'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Dashboard hides areas and metrics without permission',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        token: 'restricted',
+        dashboardLoader: () async => {
+          'summary': {
+            'materialCount': 12,
+            'issuedMaterialCount': 2,
+            'defectiveMaterialCount': 1,
+            'dueInspectionCount': 0,
+            // Even accidentally supplied values must stay hidden in the UI.
+            'clothingCount': 99,
+            'pendingProcurementApprovals': 8,
+          },
+          'currentUser': {
+            'name': 'Lesender Nutzer',
+            'roles': ['Nutzer'],
+            'permissions': [
+              'dashboard.read',
+              'inventory.read',
+              'locations.read',
+            ],
+          },
+          'recentActivity': const [],
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inventar'), findsOneWidget);
+    expect(find.text('Lagerorte'), findsOneWidget);
+    expect(find.text('Kleiderkammer'), findsNothing);
+    expect(find.text('Beschaffung'), findsNothing);
+    expect(find.text('Nutzerverwaltung'), findsNothing);
+    expect(find.text('Kleidung'), findsNothing);
+    expect(find.text('Freigaben offen'), findsNothing);
+    expect(find.text('Material defekt'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

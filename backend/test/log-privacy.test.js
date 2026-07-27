@@ -65,6 +65,12 @@ test('dashboard only returns activity from permitted areas', async () => {
     assert.equal(dashboard.recentActivity.some((entry) => entry.entity === 'MaterialItem'), true);
     assert.equal(dashboard.recentActivity.some((entry) => entry.entity === 'Location'), false);
     assert.equal(dashboard.recentActivity.some((entry) => entry.entity === 'User'), false);
+    assert.equal(typeof dashboard.summary.materialCount, 'number');
+    assert.equal(typeof dashboard.summary.issuedMaterialCount, 'number');
+    assert.equal('clothingCount' in dashboard.summary, false);
+    assert.equal('openDefectCount' in dashboard.summary, false);
+    assert.equal('procurementCount' in dashboard.summary, false);
+    assert.equal('pendingProcurementApprovals' in dashboard.summary, false);
   } finally {
     server.close();
   }
