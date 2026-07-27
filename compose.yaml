@@ -55,6 +55,8 @@ services:
     env_file:
       - ./.env
     environment:
+      HOST: 0.0.0.0
+      PORT: 3010
       MAILSERVER_CONTAINER: ${MAILSERVER_CONTAINER:-mailserver}
       SCANNER_EMAIL_DOMAIN: ${SCANNER_EMAIL_DOMAIN:-materialkompass.org}
     volumes:
