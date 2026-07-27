@@ -36,8 +36,10 @@ const REPORT_ANCHORS = [
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFKC')
-    .replace(/\r/g, '')
+    .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -160,7 +162,7 @@ function extractFromText(text, materials, clothingItems) {
     contactName,
     contactEmail: email.toLowerCase(),
     contactPhone: lineValue(text, 'Telefonnummer', ['Angaben zum Mangel', 'Beschreibung']),
-    cause: lineValue(text, 'Getroffene Maßnahmen', ['Datum der Feststellung', 'Status und Gefährdung']),
+    measuresTaken: lineValue(text, 'Getroffene Maßnahmen', ['Datum der Feststellung', 'Status und Gefährdung']),
     riskLevel: riskFromText(text),
     entityType: itemMatch?.entityType || '',
     entityId: itemMatch?.item.id || '',
@@ -237,6 +239,18 @@ async function extractPdfFields(bytes) {
   return values;
 }
 
+function hasDefectFormFields(fields) {
+  const knownNames = new Set([
+    'Inventarnummer',
+    'Name',
+    'E-Mailadresse',
+    'Beschreibung_des_Mangels',
+    'Getroffene_Maßnahmen',
+    'Telefonnummer',
+  ]);
+  return Object.keys(fields).filter((name) => knownNames.has(name)).length >= 3;
+}
+
 function valuesFromPdfFields(fields, materials, clothingItems) {
   const inventoryNumber = fields.Inventarnummer || '';
   const itemMatch = findItem(inventoryNumber, materials, clothingItems);
@@ -270,7 +284,7 @@ function valuesFromPdfFields(fields, materials, clothingItems) {
     contactName: fields.Name || '',
     contactEmail: String(fields['E-Mailadresse'] || '').toLowerCase(),
     contactPhone: fields.Telefonnummer || '',
-    cause: fields.Getroffene_Maßnahmen || '',
+    measuresTaken: fields.Getroffene_Maßnahmen || '',
     riskLevel: riskValue,
     entityType: itemMatch?.entityType || '',
     entityId: itemMatch?.item.id || '',
@@ -410,10 +424,11 @@ function createDefectEmailService({
       const pdf = pdfs[0];
       const fields = await extractPdfFields(pdf.content);
       const fieldValues = valuesFromPdfFields(fields, materials, clothingItems);
+      const usesDefectForm = hasDefectFormFields(fields);
       pdfText = await extractPdfText(pdf.content).catch(() => '');
       let textValues = extractFromText(pdfText, materials, clothingItems);
-      extracted = mergeExtracted(fieldValues, textValues);
-      if (requiredProblems(extracted).length && reportScore(pdfText) >= 2) {
+      extracted = usesDefectForm ? fieldValues : textValues;
+      if (!usesDefectForm && requiredProblems(extracted).length && reportScore(pdfText) >= 2) {
         const pageTexts = [];
         for (const page of await renderPdfPages(pdf.content)) pageTexts.push(await ocrImage(page));
         textValues = extractFromText(pageTexts.join('\n'), materials, clothingItems);
@@ -480,6 +495,10 @@ function createDefectEmailService({
 
   function valuesForEntry(entry, overrides = {}) {
     const values = { ...entry.extractedData, ...overrides };
+    if (!values.measuresTaken && values.cause) {
+      values.measuresTaken = values.cause;
+      values.cause = '';
+    }
     const itemMatch = findItem(values.inventoryNumber, materials, clothingItems);
     if (itemMatch) {
       values.inventoryNumber = itemMatch.item.inventoryNumber;
@@ -515,6 +534,7 @@ function createDefectEmailService({
         operationalSafety: values.operationalSafety,
         riskLevel: values.riskLevel || 'Keine Angabe',
         cause: values.cause || '',
+        measuresTaken: values.measuresTaken || '',
         contactName: values.contactName,
         contactEmail: values.contactEmail,
         contactPhone: values.contactPhone || '',

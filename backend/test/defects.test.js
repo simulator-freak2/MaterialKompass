@@ -69,6 +69,7 @@ test('defect workflow blocks issue, permits return and restores the item on clos
         entityType: 'MaterialItem', entityId: 'material-1', affectedQuantity: 2,
         title: 'Kettenschutz gebrochen', description: 'Schutz kann nicht verriegelt werden.',
         priority: 'Kritisch', damageType: 'Mechanisch', cause: 'Verschleiß',
+        measuresTaken: 'Gerät außer Betrieb genommen und gekennzeichnet.',
         riskLevel: 'Hoch', operationalSafety: 'Nicht einsatzfähig',
         contactName: 'Max Mustermann', contactEmail: 'max@example.org',
         contactPhone: '+49 123 456789',
@@ -78,6 +79,7 @@ test('defect workflow blocks issue, permits return and restores the item on clos
     let defect = await create.json();
     assert.match(defect.defectNumber, /^M-\d{4}-\d{4}$/);
     assert.equal(defect.affectedQuantity, 2);
+    assert.equal(defect.measuresTaken, 'Gerät außer Betrieb genommen und gekennzeichnet.');
     assert.equal(defect.contactName, 'Max Mustermann');
     assert.equal(defect.contactEmail, 'max@example.org');
     assert.equal(defect.contactPhone, '+49 123 456789');

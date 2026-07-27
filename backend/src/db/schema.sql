@@ -187,6 +187,7 @@ CREATE TABLE defect_reports (
   status VARCHAR(64) NOT NULL,
   damage_type VARCHAR(120) NULL,
   cause TEXT NULL,
+  measures_taken TEXT NULL,
   risk_level VARCHAR(80) NULL,
   operational_safety VARCHAR(80) NULL,
   assignee VARCHAR(255) NULL,

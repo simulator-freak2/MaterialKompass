@@ -125,11 +125,16 @@ function registerDefectManagement({
     report.reportedByName ||= report.reportedBy;
     report.affectedQuantity = Number(report.affectedQuantity || 1);
     report.damageType ||= '';
+    if (report.emailSource && !report.measuresTaken && report.cause) {
+      report.measuresTaken = report.cause;
+      report.cause = '';
+    }
     report.cause ||= '';
     report.riskLevel ||= 'Keine Angabe';
     report.operationalSafety ||= 'Nicht einsatzfähig';
     report.assignee ||= '';
     report.responsibleDepartment ||= '';
+    report.measuresTaken ||= '';
     report.contactName ||= report.reportedByName || '';
     report.contactEmail ||= '';
     report.contactPhone ||= '';
@@ -264,6 +269,7 @@ function registerDefectManagement({
       affectedQuantity: values.affectedQuantity, title: values.title,
       description: values.description, priority: values.priority, status: 'Neu',
       damageType: text(body.damageType, 120), cause: text(body.cause, 2000),
+      measuresTaken: text(body.measuresTaken, 5000),
       riskLevel: text(body.riskLevel || 'Keine Angabe', 80),
       operationalSafety: text(body.operationalSafety || 'Nicht einsatzfähig', 80),
       assignee: text(body.assignee, 255), responsibleDepartment: text(body.responsibleDepartment, 255),
@@ -340,6 +346,7 @@ function registerDefectManagement({
         Artikel: entity?.name || '', Inventarnummer: entity?.inventoryNumber || '',
         Menge: report.affectedQuantity, Status: report.status, Priorität: report.priority,
         Verantwortlich: report.assignee, Frist: report.dueDate || '',
+        'Getroffene Maßnahmen': report.measuresTaken || '',
         Kontakt: report.contactName || '', 'Kontakt E-Mail': report.contactEmail || '',
         'Kontakt Telefon': report.contactPhone || '',
         'Gemeldet am': report.reportedAt, Beschreibung: report.description,
@@ -397,9 +404,16 @@ function registerDefectManagement({
       if (!DEFECT_PRIORITIES.includes(req.body.priority)) return res.status(400).json({ error: 'Ungültige Priorität.' });
       report.priority = req.body.priority;
     }
-    ['damageType', 'cause', 'riskLevel', 'operationalSafety', 'responsibleDepartment',
+    ['damageType', 'cause', 'measuresTaken', 'riskLevel', 'operationalSafety', 'responsibleDepartment',
       'contactName', 'contactEmail', 'contactPhone', 'resolution']
-      .forEach((field) => { if (req.body[field] !== undefined) report[field] = text(req.body[field], field === 'cause' || field === 'resolution' ? 5000 : 255); });
+      .forEach((field) => {
+        if (req.body[field] !== undefined) {
+          report[field] = text(
+            req.body[field],
+            ['cause', 'measuresTaken', 'resolution'].includes(field) ? 5000 : 255,
+          );
+        }
+      });
     report.contactEmail = report.contactEmail.toLowerCase();
     if (report.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(report.contactEmail)) {
       return res.status(400).json({ error: 'Die Kontakt-E-Mail-Adresse ist ungültig.' });
@@ -412,7 +426,7 @@ function registerDefectManagement({
     if (req.body.relatedActions !== undefined && Array.isArray(req.body.relatedActions)) report.relatedActions = req.body.relatedActions.slice(0, 50);
     if (req.body.followUpTasks !== undefined && Array.isArray(req.body.followUpTasks)) report.followUpTasks = req.body.followUpTasks.slice(0, 100);
     const trackedFields = [
-      'title', 'description', 'priority', 'damageType', 'cause', 'riskLevel',
+      'title', 'description', 'priority', 'damageType', 'cause', 'measuresTaken', 'riskLevel',
       'operationalSafety', 'responsibleDepartment', 'contactName', 'contactEmail',
       'contactPhone', 'dueDate', 'estimatedCost',
       'actualCost', 'resolution', 'recurrenceOfId', 'duplicateOfId',

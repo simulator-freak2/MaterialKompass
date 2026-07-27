@@ -427,6 +427,10 @@ class _DefectsPageState extends State<DefectsPage> {
     }
     final description =
         TextEditingController(text: extracted['description']?.toString() ?? '');
+    final measuresTaken = TextEditingController(
+        text: extracted['measuresTaken']?.toString() ??
+            extracted['cause']?.toString() ??
+            '');
     final name =
         TextEditingController(text: extracted['contactName']?.toString() ?? '');
     final email = TextEditingController(
@@ -502,6 +506,12 @@ class _DefectsPageState extends State<DefectsPage> {
                       maxLines: 5,
                       decoration:
                           const InputDecoration(labelText: 'Beschreibung *'),
+                    ),
+                    TextField(
+                      controller: measuresTaken,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                          labelText: 'Getroffene Maßnahmen'),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
@@ -604,6 +614,7 @@ class _DefectsPageState extends State<DefectsPage> {
                             'inventoryNumber':
                                 selectedItem!['inventoryNumber'].toString(),
                             'description': description.text.trim(),
+                            'measuresTaken': measuresTaken.text.trim(),
                             'operationalSafety': safety,
                             'contactName': name.text.trim(),
                             'contactEmail': email.text.trim(),
@@ -622,6 +633,7 @@ class _DefectsPageState extends State<DefectsPage> {
       ),
     );
     description.dispose();
+    measuresTaken.dispose();
     name.dispose();
     email.dispose();
     phone.dispose();
@@ -1167,6 +1179,7 @@ class _DefectsPageState extends State<DefectsPage> {
       'Ursache': defect['cause'],
       'Gefährdung': defect['riskLevel'],
       'Einsatzbereitschaft': defect['operationalSafety'],
+      'Getroffene Maßnahmen': defect['measuresTaken'],
       'Verantwortlich': defect['assignee'],
       'Fachbereich': defect['responsibleDepartment'],
       'Kontakt': defect['contactName'],
@@ -1426,6 +1439,7 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
   late final TextEditingController quantity;
   late final TextEditingController damageType;
   late final TextEditingController cause;
+  late final TextEditingController measuresTaken;
   late final TextEditingController assignee;
   late final TextEditingController department;
   late final TextEditingController dueDate;
@@ -1458,6 +1472,8 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
     damageType =
         TextEditingController(text: value['damageType']?.toString() ?? '');
     cause = TextEditingController(text: value['cause']?.toString() ?? '');
+    measuresTaken =
+        TextEditingController(text: value['measuresTaken']?.toString() ?? '');
     assignee = TextEditingController(text: value['assignee']?.toString() ?? '');
     department = TextEditingController(
         text: value['responsibleDepartment']?.toString() ?? '');
@@ -1498,6 +1514,7 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
       quantity,
       damageType,
       cause,
+      measuresTaken,
       assignee,
       department,
       dueDate,
@@ -1524,6 +1541,7 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
         'priority': priority,
         'damageType': damageType.text.trim(),
         'cause': cause.text.trim(),
+        'measuresTaken': measuresTaken.text.trim(),
         'riskLevel': risk,
         'operationalSafety': operationalSafety,
         'responsibleDepartment': department.text.trim(),
@@ -1726,6 +1744,11 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
                 controller: cause,
                 maxLines: 2,
                 decoration: const InputDecoration(labelText: 'Ursache')),
+            TextField(
+                controller: measuresTaken,
+                maxLines: 3,
+                decoration:
+                    const InputDecoration(labelText: 'Getroffene Maßnahmen')),
             TextField(
                 controller: department,
                 decoration: const InputDecoration(

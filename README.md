@@ -36,7 +36,8 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
   Schadensart, Ursache, Gefährdung, Einsatzsicherheit, Verantwortliche, Fristen und Kosten
 - Kommentare, Checklisten, Folgeaufgaben, JPEG-/PNG-Nachweise und ein vollständiger Änderungsverlauf
 - Bilder können bereits beim Erfassen ausgewählt werden; Gefährdungsstufe,
-  Einsatzbereitschaft sowie Kontaktname, E-Mail und Telefon sind direkt hinterlegbar
+  Einsatzbereitschaft, bereits getroffene Maßnahmen sowie Kontaktname, E-Mail und
+  Telefon sind direkt hinterlegbar
 - Mängel können zusätzlich an `maengel@materialkompass.org` gemeldet werden. Ein
   PDF-, PNG- oder JPEG-Bericht wird lokal ausgewertet, Schadensbilder werden
   automatisch getrennt und der E-Mail-Text wird als Kommentar übernommen

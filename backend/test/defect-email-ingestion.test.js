@@ -30,6 +30,7 @@ async function filledReportPdf({
   name = 'Erika Beispiel',
   email = 'erika@example.org',
   description = 'Kettenschutz ist gebrochen und kann nicht verriegelt werden.',
+  measuresTaken = 'Außer Dienst gestellt.\nMit Hinweis versehen.\nSeparat gelagert.',
 } = {}) {
   const template = await generateDefectReportPdf();
   const document = await PDFDocument.load(template);
@@ -38,6 +39,7 @@ async function filledReportPdf({
   form.getTextField('Name').setText(name);
   form.getTextField('E-Mailadresse').setText(email);
   form.getTextField('Beschreibung_des_Mangels').setText(description);
+  form.getTextField('Getroffene_Maßnahmen').setText(measuresTaken);
   form.getCheckBox('Einsatzbereitschaft_nicht_einsatzfähig').check();
   form.updateFieldAppearances();
   return Buffer.from(await document.save({ useObjectStreams: false }));
@@ -166,6 +168,12 @@ test('digital email report is recognized, created and keeps report plus email bo
     assert.equal(defect.inventoryNumber, '10050035-02-02-001');
     assert.equal(defect.contactName, 'Erika Beispiel');
     assert.equal(defect.contactEmail, 'erika@example.org');
+    assert.equal(defect.contactPhone, '');
+    assert.equal(
+      defect.measuresTaken,
+      'Außer Dienst gestellt.\nMit Hinweis versehen.\nSeparat gelagert.',
+    );
+    assert.equal(defect.cause, '');
     assert.equal(defect.operationalSafety, 'Nicht einsatzfähig');
     assert.equal(defect.documents.length, 1);
     assert.equal(defect.documents[0].mimeType, 'application/pdf');
