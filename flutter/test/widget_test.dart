@@ -44,6 +44,7 @@ void main() {
               'defectCount': 1,
               'openDefectCount': 1,
               'defectsInProgressCount': 1,
+              'pendingDefectEmailCount': 2,
               'procurementCount': 5,
               'pendingProcurementApprovals': 2,
               'overdueProcurementOrders': 1,
@@ -86,6 +87,7 @@ void main() {
     expect(loadCount, 1);
     expect(find.text('Material'), findsWidgets);
     expect(find.text('Material ausgegeben'), findsOneWidget);
+    expect(find.text('E-Mail-Prüfungen'), findsOneWidget);
 
     final firstCard = tester.getTopLeft(find.byWidgetPredicate(
       (widget) => widget is StatCard && widget.title == 'Material',
@@ -222,6 +224,24 @@ void main() {
     expect(find.widgetWithText(TextField, 'Technik'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'TECH'), findsOneWidget);
     expect(find.text('Fachbereich aktiv'), findsOneWidget);
+  });
+
+  testWidgets('Scanner email dialog creates an admin-managed address',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: ScannerEmailDialog(
+          address: null,
+          domain: 'materialkompass.org',
+          destinations: ['Mängel', 'Dokumente'],
+        ),
+      ),
+    ));
+
+    expect(find.text('Scanner-E-Mail-Adresse anlegen'), findsOneWidget);
+    expect(find.text('@materialkompass.org'), findsOneWidget);
+    expect(find.text('Zielbereich *'), findsOneWidget);
+    expect(find.text('Adresse aktiv'), findsOneWidget);
   });
 
   testWidgets('Wardrobe page renders its main actions',

@@ -15,6 +15,8 @@ const NEXT_STATUS = Object.freeze({
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png']);
 const MAX_IMAGES = 10;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const REPORT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+const MAX_REPORT_BYTES = 10 * 1024 * 1024;
 
 function text(value, max = 10_000) {
   return String(value ?? '').trim().slice(0, max);
@@ -137,6 +139,7 @@ function registerDefectManagement({
     report.comments ||= [];
     report.checklist ||= [];
     report.images ||= [];
+    report.documents ||= [];
     report.history ||= [{ at: createdAt, actor: report.reportedBy, action: 'migration', details: 'Bestehenden Mangel übernommen' }];
     report.followUpTasks ||= [];
     report.relatedActions ||= [];
@@ -173,6 +176,10 @@ function registerDefectManagement({
       images: report.images.map((image) => includeImageData ? image : ({
         id: image.id, fileName: image.fileName, mimeType: image.mimeType,
         sizeBytes: image.sizeBytes, createdAt: image.createdAt, createdBy: image.createdBy,
+      })),
+      documents: report.documents.map((document) => includeImageData ? document : ({
+        id: document.id, fileName: document.fileName, mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes, createdAt: document.createdAt, createdBy: document.createdBy,
       })),
     };
   }
@@ -264,17 +271,28 @@ function registerDefectManagement({
       contactEmail: text(body.contactEmail || user.email, 255).toLowerCase(),
       contactPhone: text(body.contactPhone, 80),
       dueDate: body.dueDate || null, estimatedCost: numberOrNull(body.estimatedCost), actualCost: null,
-      resolution: '', reportedAt: createdAt, reportedBy: user.id,
-      reportedByName: user.name || user.username, createdAt, updatedAt: createdAt,
+      resolution: '', reportedAt: createdAt, reportedBy: source.reportedBy || user.id,
+      reportedByName: source.reportedByName || user.name || user.username, createdAt, updatedAt: createdAt,
       linkedInspectionId: source.inspectionId || null,
       recurrenceOfId: body.recurrenceOfId || possibleRecurrence?.id || null,
       duplicateOfId: body.duplicateOfId || possibleDuplicate?.id || null,
       duplicateDetectedAutomatically: !body.duplicateOfId && Boolean(possibleDuplicate),
       relatedActions: [], followUpTasks: [],
-      comments: [], checklist: [], images: [], history: [], archivedAt: null, archivedBy: null,
+      comments: [], checklist: [], images: [], documents: [], history: [],
+      emailSource: source.emailSource || null,
+      archivedAt: null, archivedBy: null,
     };
     defectReports.push(report);
-    addHistory(report, user.username, 'create', source.inspectionId ? 'Automatisch aus Prüfung erstellt' : 'Mangel gemeldet');
+    addHistory(
+      report,
+      user.username,
+      'create',
+      source.inspectionId
+        ? 'Automatisch aus Prüfung erstellt'
+        : source.emailSource
+          ? 'Automatisch aus E-Mail erstellt'
+          : 'Mangel gemeldet',
+    );
     markEntityDefective(report);
     createNotifications(report, user.id);
     logEvent('create', 'DefectReport', {
@@ -547,6 +565,7 @@ function registerDefectManagement({
     const report = findDefect(req, res); if (!report) return;
     if (report.status !== 'Geprüft/Geschlossen') return res.status(409).json({ error: 'Nur geschlossene Mängel können archiviert werden.' });
     report.archivedAt = nowIso(); report.archivedBy = req.user.username;
+    if (report.emailSource) report.emailSource.deleteRequestedAt = nowIso();
     addHistory(report, req.user.username, 'archive', changeDetails('archivedAt', null, report.archivedAt));
     return res.json(publicDefect(report));
   });
@@ -558,6 +577,7 @@ function registerDefectManagement({
     }
     if (!report.archivedAt) {
       report.archivedAt = nowIso(); report.archivedBy = req.user.username;
+      if (report.emailSource) report.emailSource.deleteRequestedAt = nowIso();
       addHistory(report, req.user.username, 'soft-delete', changeDetails('archivedAt', null, report.archivedAt));
     }
     return res.json({ success: true, archived: true, deleteAfter: new Date(
@@ -606,7 +626,77 @@ function registerDefectManagement({
 
   return {
     statuses: DEFECT_STATUSES,
+    canScope: (user, entityType) => scopeFor(user, entityType),
     hasOpenDefect: (entityType, entityId) => activeForEntity(entityType, entityId).length > 0,
+    createFromEmail({
+      body,
+      source,
+      reportDocuments = [],
+      images = [],
+      emailComment = '',
+      actor = {
+        id: 'system-email-eingang',
+        username: 'E-Mail-Eingang',
+        name: 'E-Mail-Eingang',
+        email: '',
+      },
+    }) {
+      const result = createReport(body, actor, {
+        emailSource: source,
+        reportedBy: 'system-email-eingang',
+        reportedByName: body.contactName,
+      });
+      if (result.error) return result;
+      const report = result.report;
+      for (const document of reportDocuments) {
+        const bytes = Buffer.from(document.fileBase64 || '', 'base64');
+        if (!REPORT_MIME_TYPES.has(document.mimeType) || !bytes.length
+          || bytes.length > MAX_REPORT_BYTES) {
+          defectReports.splice(defectReports.indexOf(report), 1);
+          restoreEntityIfResolved(report);
+          return { error: 'Der angehängte Mängelbericht ist ungültig oder zu groß.' };
+        }
+        report.documents.push({
+          id: nextId('document', report.documents),
+          fileName: text(document.fileName || 'maengelbericht', 255),
+          mimeType: document.mimeType,
+          sizeBytes: bytes.length,
+          fileBase64: bytes.toString('base64'),
+          createdAt: nowIso(),
+          createdBy: actor.username,
+        });
+      }
+      for (const input of images.slice(0, MAX_IMAGES)) {
+        const bytes = Buffer.from(input.fileBase64 || '', 'base64');
+        if (!IMAGE_MIME_TYPES.has(input.mimeType) || !bytes.length
+          || bytes.length > MAX_IMAGE_BYTES) continue;
+        report.images.push({
+          id: nextId('image', report.images),
+          fileName: text(input.fileName || 'bild', 255),
+          mimeType: input.mimeType,
+          sizeBytes: bytes.length,
+          fileBase64: bytes.toString('base64'),
+          createdAt: nowIso(),
+          createdBy: actor.username,
+        });
+      }
+      const commentValue = text(emailComment, 5000);
+      if (commentValue) {
+        report.comments.push({
+          id: nextId('comment', report.comments),
+          text: commentValue,
+          author: 'E-Mail-Eingang',
+          authorId: 'system-email-eingang',
+          createdAt: nowIso(),
+        });
+      }
+      addHistory(report, actor.username, 'email-import', {
+        reportDocuments: report.documents.length,
+        images: report.images.length,
+        messageId: source?.messageId || null,
+      });
+      return { report: publicDefect(report, true) };
+    },
     createFromInspection({ entityType, entityId, inspectionId, notes, user }) {
       return createReport({
         entityType, entityId, affectedQuantity: 1,

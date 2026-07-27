@@ -3,6 +3,7 @@ const { createUserStore } = require('./src/db/user-store');
 const { seedData } = require('./src/data/seed');
 const { loadRuntimeConfig } = require('./src/config');
 const { verifyAccountMailTransport } = require('./src/mailer');
+const { createDefectMailMonitor } = require('./src/defect-mail-monitor');
 
 async function start() {
   const config = loadRuntimeConfig();
@@ -40,12 +41,14 @@ async function start() {
     const app = createApp({ userStore: store, userData, data, dataStore: store });
     await app.locals.applyUserRetentionPolicy();
     await app.locals.applyDefectRetentionPolicy();
+    await app.locals.applyDefectEmailRetentionPolicy();
     await app.locals.persistData();
     console.log(`Alle Anwendungsdaten aus MariaDB geladen (${userData.users.length} Accounts).`);
 
     const retentionTimer = setInterval(() => {
       app.locals.applyUserRetentionPolicy()
         .then(() => app.locals.applyDefectRetentionPolicy())
+        .then(() => app.locals.applyDefectEmailRetentionPolicy())
         .then(() => app.locals.persistData())
         .catch((error) => console.error('Aufbewahrungsregel fehlgeschlagen:', error));
     }, 24 * 60 * 60 * 1000);
@@ -54,6 +57,13 @@ async function start() {
     const server = app.listen(config.port, config.host, () => {
       console.log(`MaterialKompass backend listening on http://${config.host}:${config.port}`);
     });
+    const defectMailMonitor = createDefectMailMonitor({
+      store,
+      service: app.locals.defectEmailService,
+      defectReports: app.locals.defectReports,
+      persistData: () => app.locals.persistData(),
+    });
+    defectMailMonitor.start();
     let shuttingDown = false;
     const shutdown = (signal) => {
       if (shuttingDown) return;
@@ -68,6 +78,10 @@ async function start() {
         clearTimeout(forceExitTimer);
         if (error) {
           console.error('Backend konnte nicht sauber beendet werden:', error);
+          process.exitCode = 1;
+        }
+        try { await defectMailMonitor.stop(); } catch (monitorError) {
+          console.error('Mängel-Mail-Eingang konnte nicht beendet werden:', monitorError);
           process.exitCode = 1;
         }
         try { await store.close(); } catch (closeError) {

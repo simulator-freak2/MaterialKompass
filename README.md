@@ -37,6 +37,12 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
 - Kommentare, Checklisten, Folgeaufgaben, JPEG-/PNG-Nachweise und ein vollständiger Änderungsverlauf
 - Bilder können bereits beim Erfassen ausgewählt werden; Gefährdungsstufe,
   Einsatzbereitschaft sowie Kontaktname, E-Mail und Telefon sind direkt hinterlegbar
+- Mängel können zusätzlich an `maengel@materialkompass.org` gemeldet werden. Ein
+  PDF-, PNG- oder JPEG-Bericht wird lokal ausgewertet, Schadensbilder werden
+  automatisch getrennt und der E-Mail-Text wird als Kommentar übernommen
+- Die Anwendung stellt eine leere sowie eine mit Inventarnummer und Kontaktdaten
+  vorbefüllte PDF-Vorlage bereit. Unvollständige oder unsichere Scans landen in
+  einer Prüfwarteschlange für berechtigte Nutzer
 - Verknüpfungen zu Prüfungen, Reparaturen, Beschaffungen und Aussonderungen sowie
   Kennzeichnung von Wiederholungen und Duplikaten
 - Fehlgeschlagene Inventar- und Kleidungsprüfungen erzeugen automatisch einen Mangel
@@ -52,6 +58,13 @@ Aktionen werden zusätzlich über die Berechtigungen `defects.report`, `defects.
 `defects.assign`, `defects.close`, `defects.archive`, `defects.delete` und
 `defects.export` gesteuert. „Löschen“ verschiebt einen geschlossenen Eintrag dabei
 zunächst revisionssicher ins Archiv; die endgültige Löschung erfolgt automatisch.
+
+Der E-Mail-Eingang verwendet ein eigenes IMAP-Postfach. Erfolgreich eingelesene
+Nachrichten werden in den konfigurierten Ordner `Verarbeitet` verschoben und beim
+Archivieren des zugehörigen Mangels gelöscht. Die gesamte Mail darf höchstens
+25 MB, die Anhänge zusammen 20 MB, der Bericht 10 MB und jedes der höchstens zehn
+Schadensbilder 8 MB groß sein. HEIC und WebP werden lokal nach JPEG konvertiert;
+OCR und Dateiklassifizierung verlassen das Backend nicht.
 
 ## Verzeichnisstruktur
 
@@ -136,8 +149,8 @@ automatisch angelegt; Migrationen für bestehende Datenbanken werden weiterhin g
 aus `backend/src/db/migrations` ausgeführt.
 
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
-`JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`, die MariaDB-
-und die IONOS-SMTP-Werte müssen als Server-Umgebungsvariablen gesetzt werden. Der
+`JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`, die MariaDB-,
+IONOS-SMTP- und `DEFECT_IMAP_*`-Werte müssen als Server-Umgebungsvariablen gesetzt werden. Der
 erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpasswort
 muss direkt nach der ersten Anmeldung geändert werden.
 
@@ -178,6 +191,15 @@ neuen Release lädt MaterialKompass den Installer selbst in ein temporäres Verz
 zeigt den Fortschritt an, prüft Größe und SHA-256 und startet anschließend direkt den
 System-Installer. Ein Browser oder manuelles Suchen im Download-Ordner ist nicht nötig.
 Eine konfigurierte Mindestversion erzwingt das Update.
+
+### Scanner-E-Mail-Adressen
+
+Administratoren können in der Nutzerverwaltung unter „Scanner-E-Mails“ Adressen wie
+`maengel@materialkompass.org` anlegen, einem Zielbereich zuordnen, deaktivieren und
+löschen. Die Domain wird im Backend mit `SCANNER_EMAIL_DOMAIN` festgelegt. Damit Scanner
+tatsächlich an diese Adressen senden können, muss der Mailserver der Domain die
+angelegten Empfänger an MaterialKompass zustellen; die Anwendung selbst verändert keine
+Postfächer beim Mailanbieter.
 
 Die abschließende Sicherheitsfreigabe bleibt beim Betriebssystem: Windows verlangt je
 nach Signatur/SmartScreen eine Bestätigung, Linux die Administratorfreigabe und Android

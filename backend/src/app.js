@@ -9,7 +9,12 @@ const { registerProcurementRoutes } = require('./procurement');
 const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { registerDefectManagement } = require('./defects');
+const {
+  createDefectEmailService,
+  registerDefectEmailRoutes,
+} = require('./defect-email-ingestion');
 const { registerQrLoginRoutes } = require('./qr-login');
+const { registerScannerEmailRoutes } = require('./scanner-email-addresses');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -28,10 +33,11 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'permissions', 'departments', 'locations', 'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
-  'defectReports', 'notifications', 'procurementRequests', 'procurementOffers', 'procurementOrders',
+  'defectReports', 'notifications', 'defectEmailImports',
+  'procurementRequests', 'procurementOffers', 'procurementOrders',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'auditLogs', 'exportLogs',
-  'qrLoginCredentials',
+  'qrLoginCredentials', 'scannerEmailAddresses',
 ]);
 
 function createApp(options = {}) {
@@ -103,12 +109,14 @@ function createApp(options = {}) {
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
   const notifications = (appData.notifications ||= []);
+  const defectEmailImports = (appData.defectEmailImports ||= []);
   const procurementRequests = appData.procurementRequests;
   const suppliers = appData.suppliers;
   const documents = appData.documents;
   const auditLogs = appData.auditLogs;
   const exportLogs = appData.exportLogs;
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
+  const scannerEmailAddresses = (appData.scannerEmailAddresses ||= []);
   const defaultDownloadsDirectory = path.resolve(__dirname, '..', 'downloads');
   const downloadSources = options.downloads || {
     windows: {
@@ -622,6 +630,10 @@ function createApp(options = {}) {
     accountMailSender: options.accountMailSender,
   });
 
+  registerScannerEmailRoutes({
+    app, authMiddleware, scannerEmailAddresses, users, logEvent,
+  });
+
   app.get('/health', (req, res) => res.json({
     status: 'ok',
     service: 'materialkompass-backend',
@@ -959,6 +971,27 @@ function createApp(options = {}) {
     materials, clothingItems, users, notifications, logEvent, nextId, XLSX,
   });
   app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
+  const defectEmailService = createDefectEmailService({
+    defectEmailImports,
+    defectManagement,
+    defectReports,
+    materials,
+    clothingItems,
+    persistData: () => app.locals.persistData(),
+  });
+  registerDefectEmailRoutes({
+    app,
+    authMiddleware,
+    requirePermission,
+    defectEmailImports,
+    defectEmailService,
+    defectManagement,
+    materials,
+    clothingItems,
+  });
+  app.locals.defectEmailService = defectEmailService;
+  app.locals.applyDefectEmailRetentionPolicy = defectEmailService.applyRetentionPolicy;
+  app.locals.defectReports = defectReports;
 
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
@@ -1524,6 +1557,13 @@ function createApp(options = {}) {
         openDefectCount: defectReports.filter((item) => !item.archivedAt && item.status !== 'Geprüft/Geschlossen').length,
         defectsInProgressCount: defectReports.filter((item) => !item.archivedAt && item.status === 'In Bearbeitung').length,
         unreadNotificationCount: notifications.filter((item) => item.userId === req.user.id && !item.readAt).length,
+        pendingDefectEmailCount: defectEmailImports.filter((item) => {
+          if (item.status !== 'pending') return false;
+          const entityType = item.extractedData?.entityType;
+          return entityType
+            ? defectManagement.canScope(req.user, entityType)
+            : req.user.roles?.some((role) => role === 'Admin' || role === 'Vorsitz');
+        }).length,
       });
     }
 

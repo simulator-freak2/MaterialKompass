@@ -105,6 +105,9 @@ test('runtime configuration validates network settings', () => {
     SMTP_USER: 'mailer@example.org',
     SMTP_PASSWORD: 'secret',
     MAIL_FROM: 'MaterialKompass <mailer@example.org>',
+    DEFECT_IMAP_HOST: 'imap.example.org',
+    DEFECT_IMAP_USER: 'maengel@example.org',
+    DEFECT_IMAP_PASSWORD: 'secret',
     DB_HOST: 'database',
     PORT: '4000',
   }), {

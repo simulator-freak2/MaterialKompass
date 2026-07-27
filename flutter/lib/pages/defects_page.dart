@@ -53,6 +53,7 @@ class _DefectsPageState extends State<DefectsPage> {
   List<Map<String, dynamic>> _defects = [];
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _notifications = [];
+  List<Map<String, dynamic>> _emailImports = [];
   Set<String> _permissions = {};
   Set<String> _roles = {};
   bool _initialCreateOpened = false;
@@ -133,27 +134,10 @@ class _DefectsPageState extends State<DefectsPage> {
     final requests = <Future<dynamic>>[
       _request('/api/defects?archived=${_showArchived ? 'all' : 'false'}'),
       _request('/api/notifications'),
+      _request('/api/defect-email-imports'),
+      _request('/api/defect-report-items'),
     ];
-    final itemKinds = <String>[];
-    if (_permissions.contains('inventory.read') || _roles.contains('Admin')) {
-      requests.add(_request('/api/material'));
-      itemKinds.add('MaterialItem');
-    }
-    if (_permissions.contains('clothing.read') || _roles.contains('Admin')) {
-      requests.add(_request('/api/clothing'));
-      itemKinds.add('ClothingItem');
-    }
     final results = await Future.wait(requests);
-    final loadedItems = <Map<String, dynamic>>[];
-    for (var index = 0; index < itemKinds.length; index++) {
-      final values = results[index + 2];
-      if (values is List) {
-        loadedItems.addAll(values.map((entry) => {
-              ...Map<String, dynamic>.from(entry as Map),
-              'entityType': itemKinds[index],
-            }));
-      }
-    }
     if (!mounted) return;
     setState(() {
       _defects = results[0] is List
@@ -166,7 +150,16 @@ class _DefectsPageState extends State<DefectsPage> {
               .map((entry) => Map<String, dynamic>.from(entry as Map))
               .toList()
           : [];
-      _items = loadedItems;
+      _emailImports = results[2] is List
+          ? (results[2] as List)
+              .map((entry) => Map<String, dynamic>.from(entry as Map))
+              .toList()
+          : [];
+      _items = results[3] is List
+          ? (results[3] as List)
+              .map((entry) => Map<String, dynamic>.from(entry as Map))
+              .toList()
+          : [];
       _loading = false;
     });
     if (!_initialCreateOpened && widget.initialEntityId != null) {
@@ -246,6 +239,86 @@ class _DefectsPageState extends State<DefectsPage> {
     if (mounted) _message('$fileName wurde erstellt.');
   }
 
+  Future<void> _saveDownloadPayload(Map data) async {
+    final fileName = data['fileName'].toString();
+    final dot = fileName.lastIndexOf('.');
+    await FileSaver.instance.saveFile(
+      name: dot > 0 ? fileName.substring(0, dot) : fileName,
+      bytes: base64Decode(data['fileBase64'].toString()),
+      fileExtension: dot > 0 ? fileName.substring(dot + 1) : 'bin',
+      mimeType: MimeType.custom,
+      customMimeType:
+          data['mimeType']?.toString() ?? 'application/octet-stream',
+    );
+    if (mounted) _message('$fileName wurde heruntergeladen.');
+  }
+
+  Future<void> _downloadTemplate() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mängelbericht herunterladen'),
+        content: const Text(
+            'Die Vorlage kann leer oder mit Inventarnummer und Kontaktdaten vorbefüllt erstellt werden.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen')),
+          OutlinedButton(
+              onPressed: () => Navigator.pop(context, 'blank'),
+              child: const Text('Leere Vorlage')),
+          FilledButton(
+              onPressed: _items.isEmpty
+                  ? null
+                  : () => Navigator.pop(context, 'prefilled'),
+              child: const Text('Vorbefüllt')),
+        ],
+      ),
+    );
+    if (choice == null) return;
+    if (!mounted) return;
+    String path = '/api/defect-report-template';
+    if (choice == 'prefilled') {
+      final selected = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Artikel auswählen'),
+          content: SizedBox(
+            width: 560,
+            height: 420,
+            child: ListView(
+              children: ([..._items]..sort((left, right) =>
+                      left['inventoryNumber']
+                          .toString()
+                          .compareTo(right['inventoryNumber'].toString())))
+                  .map((item) => ListTile(
+                        leading: Icon(item['entityType'] == 'MaterialItem'
+                            ? Icons.inventory_2_outlined
+                            : Icons.checkroom_outlined),
+                        title: Text(item['name']?.toString() ?? ''),
+                        subtitle:
+                            Text(item['inventoryNumber']?.toString() ?? ''),
+                        onTap: () => Navigator.pop(context, item),
+                      ))
+                  .toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Abbrechen')),
+          ],
+        ),
+      );
+      if (selected == null) return;
+      path =
+          '/api/defect-report-template?entityType=${Uri.encodeQueryComponent(selected['entityType'].toString())}'
+          '&entityId=${Uri.encodeQueryComponent(selected['id'].toString())}';
+    }
+    final data = await _request(path);
+    if (data is Map) await _saveDownloadPayload(data);
+  }
+
   Future<void> _showNotifications() async {
     await showDialog<void>(
       context: context,
@@ -286,6 +359,274 @@ class _DefectsPageState extends State<DefectsPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _showEmailQueue() async {
+    final pending =
+        _emailImports.where((entry) => entry['status'] == 'pending').toList();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Prüfwarteschlange (${pending.length})'),
+        content: SizedBox(
+          width: 680,
+          height: 480,
+          child: pending.isEmpty
+              ? const Center(
+                  child: Text('Keine E-Mail-Meldungen müssen geprüft werden.'))
+              : ListView.separated(
+                  itemCount: pending.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final entry = pending[index];
+                    final problems =
+                        (entry['problems'] as List? ?? const []).length;
+                    return ListTile(
+                      leading: const Icon(Icons.mark_email_unread_outlined),
+                      title: Text(
+                          entry['subject']?.toString().isNotEmpty == true
+                              ? entry['subject'].toString()
+                              : 'Mängelmeldung ohne Betreff'),
+                      subtitle: Text(
+                          '${entry['sender']?.toString().isNotEmpty == true ? entry['sender'] : 'Unbekannter Absender'}'
+                          ' · $problems Prüfhinweis${problems == 1 ? '' : 'e'}'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        Navigator.pop(dialogContext);
+                        await _reviewEmailImport(entry);
+                        await _load();
+                        if (mounted) await _showEmailQueue();
+                      },
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Schließen')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _reviewEmailImport(Map<String, dynamic> summary) async {
+    final response =
+        await _request('/api/defect-email-imports/${summary['id']}');
+    if (response is! Map || !mounted) return;
+    final entry = Map<String, dynamic>.from(response);
+    final extracted =
+        Map<String, dynamic>.from(entry['extractedData'] as Map? ?? const {});
+    Map<String, dynamic>? selectedItem;
+    for (final item in _items) {
+      if (item['inventoryNumber']?.toString() ==
+          extracted['inventoryNumber']?.toString()) {
+        selectedItem = item;
+        break;
+      }
+    }
+    final description =
+        TextEditingController(text: extracted['description']?.toString() ?? '');
+    final name =
+        TextEditingController(text: extracted['contactName']?.toString() ?? '');
+    final email = TextEditingController(
+        text: extracted['contactEmail']?.toString() ?? '');
+    final phone = TextEditingController(
+        text: extracted['contactPhone']?.toString() ?? '');
+    final reason = TextEditingController();
+    const safetyValues = [
+      'Nicht einsatzfähig',
+      'Eingeschränkt',
+      'Einsatzfähig'
+    ];
+    String? safety = safetyValues.contains(extracted['operationalSafety'])
+        ? extracted['operationalSafety'].toString()
+        : null;
+    final completed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final problems = (entry['problems'] as List? ?? const [])
+              .map((value) => value.toString());
+          final attachments = (entry['attachments'] as List? ?? const [])
+              .map((value) => Map<String, dynamic>.from(value as Map));
+          return AlertDialog(
+            title: const Text('E-Mail-Meldung prüfen'),
+            content: SizedBox(
+              width: 760,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(entry['subject']?.toString() ?? '',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                        '${entry['senderName'] ?? ''} <${entry['sender'] ?? ''}>'),
+                    if (problems.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Card(
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Automatische Prüfung',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold)),
+                              ...problems.map((problem) => Text('• $problem')),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<Map<String, dynamic>>(
+                      initialValue: selectedItem,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                          labelText: 'Betroffener Artikel *'),
+                      items: _items
+                          .map((item) => DropdownMenuItem(
+                                value: item,
+                                child: Text(
+                                    '${item['inventoryNumber']} · ${item['name']}'),
+                              ))
+                          .toList(),
+                      onChanged: (value) =>
+                          setDialogState(() => selectedItem = value),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: description,
+                      maxLines: 5,
+                      decoration:
+                          const InputDecoration(labelText: 'Beschreibung *'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: safety,
+                      decoration: const InputDecoration(
+                          labelText: 'Einsatzbereitschaft *'),
+                      items: safetyValues
+                          .map((value) => DropdownMenuItem(
+                              value: value, child: Text(value)))
+                          .toList(),
+                      onChanged: (value) =>
+                          setDialogState(() => safety = value),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                        controller: name,
+                        decoration: const InputDecoration(
+                            labelText: 'Name der meldenden Person *')),
+                    TextField(
+                        controller: email,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                            labelText: 'E-Mail der meldenden Person *')),
+                    TextField(
+                        controller: phone,
+                        decoration:
+                            const InputDecoration(labelText: 'Telefonnummer')),
+                    const SizedBox(height: 16),
+                    Text('Anhänge',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Wrap(
+                      spacing: 8,
+                      children: attachments
+                          .map((attachment) => ActionChip(
+                                avatar: Icon(attachment['role'] == 'report'
+                                    ? Icons.description_outlined
+                                    : Icons.image_outlined),
+                                label: Text(
+                                    attachment['fileName']?.toString() ?? ''),
+                                onPressed: attachment['fileBase64'] == null
+                                    ? null
+                                    : () => _saveDownloadPayload({
+                                          'fileName': attachment['fileName'],
+                                          'mimeType': attachment['mimeType'],
+                                          'fileBase64':
+                                              attachment['fileBase64'],
+                                        }),
+                              ))
+                          .toList(),
+                    ),
+                    if (entry['emailText']?.toString().isNotEmpty == true) ...[
+                      const SizedBox(height: 16),
+                      Text('E-Mail-Text',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      SelectableText(entry['emailText'].toString()),
+                    ],
+                    if (_can('defects.edit')) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                          controller: reason,
+                          decoration: const InputDecoration(
+                              labelText: 'Grund beim Verwerfen')),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Schließen')),
+              if (_can('defects.edit'))
+                TextButton.icon(
+                    onPressed: () async {
+                      final discarded = await _request(
+                          '/api/defect-email-imports/${entry['id']}/discard',
+                          method: 'POST',
+                          body: {'reason': reason.text.trim()});
+                      if (discarded != null && dialogContext.mounted) {
+                        Navigator.pop(dialogContext, true);
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Verwerfen')),
+              if (_can('defects.report'))
+                FilledButton.icon(
+                    onPressed: () async {
+                      if (selectedItem == null ||
+                          description.text.trim().isEmpty ||
+                          safety == null ||
+                          name.text.trim().isEmpty ||
+                          email.text.trim().isEmpty) {
+                        _message('Bitte alle Pflichtfelder ergänzen.');
+                        return;
+                      }
+                      final created = await _request(
+                          '/api/defect-email-imports/${entry['id']}/process',
+                          method: 'POST',
+                          body: {
+                            'inventoryNumber':
+                                selectedItem!['inventoryNumber'].toString(),
+                            'description': description.text.trim(),
+                            'operationalSafety': safety,
+                            'contactName': name.text.trim(),
+                            'contactEmail': email.text.trim(),
+                            'contactPhone': phone.text.trim(),
+                          });
+                      if (created != null && dialogContext.mounted) {
+                        _message('E-Mail-Meldung wurde als Mangel angelegt.');
+                        Navigator.pop(dialogContext, true);
+                      }
+                    },
+                    icon: const Icon(Icons.check),
+                    label: const Text('Mangel anlegen')),
+            ],
+          );
+        },
+      ),
+    );
+    description.dispose();
+    name.dispose();
+    email.dispose();
+    phone.dispose();
+    reason.dispose();
+    if (completed == true) await _load();
   }
 
   Future<void> _showDetail(Map<String, dynamic> summary) async {
@@ -568,6 +909,8 @@ class _DefectsPageState extends State<DefectsPage> {
               .map((entry) => Map<String, dynamic>.from(entry as Map));
           final images = (detail['images'] as List? ?? const [])
               .map((entry) => Map<String, dynamic>.from(entry as Map));
+          final documents = (detail['documents'] as List? ?? const [])
+              .map((entry) => Map<String, dynamic>.from(entry as Map));
           final history = (detail['history'] as List? ?? const []).reversed;
           final archived = detail['archivedAt'] != null;
           return AlertDialog(
@@ -703,6 +1046,31 @@ class _DefectsPageState extends State<DefectsPage> {
                                       '/api/defects/${detail['id']}'));
                                 },
                         )),
+                    if (documents.isNotEmpty) ...[
+                      Text('Mängelbericht',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: documents
+                            .map((document) => ActionChip(
+                                  avatar:
+                                      const Icon(Icons.description_outlined),
+                                  label: Text(
+                                      document['fileName']?.toString() ?? ''),
+                                  onPressed: document['fileBase64'] == null
+                                      ? null
+                                      : () => _saveDownloadPayload({
+                                            'fileName': document['fileName'],
+                                            'mimeType': document['mimeType'],
+                                            'fileBase64':
+                                                document['fileBase64'],
+                                          }),
+                                ))
+                            .toList(),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     Row(children: [
                       Text('Bilder (${images.length}/10)',
                           style: Theme.of(context).textTheme.titleMedium),
@@ -892,6 +1260,52 @@ class _DefectsPageState extends State<DefectsPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  Card(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Wrap(
+                        spacing: 16,
+                        runSpacing: 12,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          const Icon(Icons.forward_to_inbox_outlined, size: 34),
+                          const SizedBox(
+                            width: 470,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Mängel auch per E-Mail melden',
+                                    style: TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.bold)),
+                                SizedBox(height: 4),
+                                SelectableText(
+                                    'Ausgefüllten Bericht als PDF, PNG oder JPEG zusammen mit optionalen Schadensbildern an maengel@materialkompass.org senden.'),
+                              ],
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _downloadTemplate,
+                            icon: const Icon(Icons.picture_as_pdf_outlined),
+                            label: const Text('Vorlage herunterladen'),
+                          ),
+                          Badge(
+                            isLabelVisible: _emailImports
+                                .any((entry) => entry['status'] == 'pending'),
+                            label: Text(
+                                '${_emailImports.where((entry) => entry['status'] == 'pending').length}'),
+                            child: FilledButton.icon(
+                              onPressed: _showEmailQueue,
+                              icon: const Icon(Icons.rule_folder_outlined),
+                              label: const Text('Prüfwarteschlange'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   Wrap(spacing: 12, runSpacing: 12, children: [
                     SizedBox(
                       width: 280,

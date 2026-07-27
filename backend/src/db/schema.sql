@@ -401,3 +401,11 @@ CREATE TABLE application_collections (
     ON UPDATE CURRENT_TIMESTAMP(3),
   CHECK (JSON_VALID(data_json))
 );
+
+CREATE TABLE mailbox_processing_state (
+  mailbox VARCHAR(255) PRIMARY KEY,
+  uid_validity VARCHAR(64) NOT NULL,
+  last_uid BIGINT UNSIGNED NOT NULL,
+  initialized_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
