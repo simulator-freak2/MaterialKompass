@@ -1500,8 +1500,10 @@ function createApp(options = {}) {
   app.get('/api/dashboard', authMiddleware, requirePermission('dashboard.read'), (req, res) => {
     const activeMaterials = materials.filter((item) => !item.archived);
     const inspectionWarning = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    res.json({
-      summary: {
+    const summary = {};
+
+    if (hasPermission(req.user, 'inventory.read')) {
+      Object.assign(summary, {
         materialCount: activeMaterials.length,
         issuedMaterialCount: activeMaterials.filter((item) => Number(item.issuedQuantity || 0) > 0).length,
         defectiveMaterialCount: activeMaterials.filter((item) => item.status === 'Defekt').length,
@@ -1509,16 +1511,41 @@ function createApp(options = {}) {
           const due = item.nextInspectionDate ? new Date(item.nextInspectionDate) : null;
           return due && due <= inspectionWarning;
         }).length,
-        clothingCount: clothingItems.length,
+      });
+    }
+
+    if (hasPermission(req.user, 'clothing.read')) {
+      summary.clothingCount = clothingItems.length;
+    }
+
+    if (hasPermission(req.user, 'defects.read')) {
+      Object.assign(summary, {
         defectCount: defectReports.filter((item) => !item.archivedAt).length,
         openDefectCount: defectReports.filter((item) => !item.archivedAt && item.status !== 'Geprüft/Geschlossen').length,
         defectsInProgressCount: defectReports.filter((item) => !item.archivedAt && item.status === 'In Bearbeitung').length,
         unreadNotificationCount: notifications.filter((item) => item.userId === req.user.id && !item.readAt).length,
-        procurementCount: procurementRequests.length,
-        pendingProcurementApprovals: procurementRequests.filter((item) => item.status === 'Beantragt').length,
-        overdueProcurementOrders: appData.procurementOrders.filter((order) => order.expectedDeliveryDate && new Date(order.expectedDeliveryDate) < new Date() && order.items.some((item) => item.deliveredQuantity < item.quantity)).length,
-        openProcurementReceipts: appData.procurementReceipts.filter((receipt) => !receipt.inventoryTransferred).length,
-      },
+      });
+    }
+
+    if (hasPermission(req.user, 'procurement.read')) {
+      summary.procurementCount = procurementRequests.length;
+    }
+    if (hasPermission(req.user, 'procurement.approve')) {
+      summary.pendingProcurementApprovals = procurementRequests.filter((item) => item.status === 'Beantragt').length;
+    }
+    if (hasPermission(req.user, 'procurement.order')) {
+      summary.overdueProcurementOrders = appData.procurementOrders.filter((order) =>
+        order.expectedDeliveryDate
+        && new Date(order.expectedDeliveryDate) < new Date()
+        && order.items.some((item) => item.deliveredQuantity < item.quantity)
+      ).length;
+    }
+    if (hasPermission(req.user, 'procurement.receive')) {
+      summary.openProcurementReceipts = appData.procurementReceipts.filter((receipt) => !receipt.inventoryTransferred).length;
+    }
+
+    res.json({
+      summary,
       recentActivity: auditLogs
         .filter((entry) => {
           const area = activityAreas[entry.entity];

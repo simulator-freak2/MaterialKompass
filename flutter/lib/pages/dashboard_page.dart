@@ -125,6 +125,11 @@ class _DashboardPageState extends State<DashboardPage> {
         title: const Text('Dashboard'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Aktualisieren',
+            onPressed: _refresh,
+          ),
+          IconButton(
             icon: const Icon(Icons.account_circle_outlined),
             tooltip: 'Mein Account',
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(
@@ -147,146 +152,252 @@ class _DashboardPageState extends State<DashboardPage> {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(child: Text(snapshot.error.toString()));
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.cloud_off_outlined, size: 48),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Das Dashboard konnte nicht geladen werden.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _refresh,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Erneut versuchen'),
+                    ),
+                  ],
+                ),
+              ),
+            );
           }
 
           final data = snapshot.data ?? {};
-          final summary = data['summary'] ?? {};
-          final currentUser = data['currentUser'] as Map? ?? {};
-          final isAdmin =
-              (currentUser['roles'] as List? ?? const []).contains('Admin');
-          final canReadLocations =
-              (currentUser['permissions'] as List? ?? const [])
-                  .contains('locations.read');
-          final canReadDefects =
-              (currentUser['permissions'] as List? ?? const [])
-                  .contains('defects.read');
-          final dashboardButtonStyle = ElevatedButton.styleFrom(
-            minimumSize: const Size(0, 56),
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          );
+          final summary =
+              Map<String, dynamic>.from(data['summary'] as Map? ?? const {});
+          final currentUser = Map<String, dynamic>.from(
+              data['currentUser'] as Map? ?? const {});
+          final permissions = (currentUser['permissions'] as List? ?? const [])
+              .map((permission) => permission.toString())
+              .toSet();
+          final roles = (currentUser['roles'] as List? ?? const [])
+              .map((role) => role.toString())
+              .toList();
+          bool can(String permission) => permissions.contains(permission);
+          bool hasMetric(String key) => summary.containsKey(key);
+          int metricValue(String key) =>
+              int.tryParse(summary[key]?.toString() ?? '') ?? 0;
 
           return LayoutBuilder(
             builder: (context, constraints) {
               final isMobile = constraints.maxWidth < 700;
-              final pagePadding = isMobile ? 16.0 : 24.0;
-              final activities = data['recentActivity'] as List? ?? const [];
-              final actions =
-                  <({IconData icon, String label, VoidCallback onTap})>[
-                if (isAdmin)
-                  (
-                    icon: Icons.manage_accounts_outlined,
-                    label: 'Nutzerverwaltung',
+              final pagePadding = isMobile ? 16.0 : 28.0;
+              const activityPermissions = {
+                'Lagerorte': 'locations.read',
+                'Kategorien': 'categories.read',
+                'Inventar': 'inventory.read',
+                'Kleiderkammer': 'clothing.read',
+                'Mängel': 'defects.read',
+                'Beschaffung': 'procurement.read',
+                'Berichte': 'reports.read',
+              };
+              final activities =
+                  (data['recentActivity'] as List? ?? const []).where((entry) {
+                if (entry is! Map) return false;
+                final requiredPermission =
+                    activityPermissions[entry['area']?.toString()];
+                return requiredPermission != null && can(requiredPermission);
+              }).toList();
+              final actions = <_DashboardAction>[
+                if (can('inventory.read'))
+                  _DashboardAction(
+                    icon: Icons.inventory_2_outlined,
+                    label: 'Inventar',
+                    description: 'Bestände und Material verwalten',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => UsersPage(token: widget.token),
-                        )),
+                      builder: (_) => InventoryPage(
+                        token: widget.token,
+                        onLogout: () => _logout(context),
+                      ),
+                    )),
                   ),
-                (
-                  icon: Icons.shopping_cart_outlined,
-                  label: 'Beschaffung',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => ProcurementPage(
-                          token: widget.token,
-                          onLogout: () => _logout(context),
-                        ),
-                      )),
-                ),
-                (
-                  icon: Icons.inventory_2_outlined,
-                  label: 'Inventar',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => InventoryPage(
-                          token: widget.token,
-                          onLogout: () => _logout(context),
-                        ),
-                      )),
-                ),
-                if (canReadDefects)
-                  (
+                if (can('clothing.read'))
+                  _DashboardAction(
+                    icon: Icons.checkroom_outlined,
+                    label: 'Kleiderkammer',
+                    description: 'Kleidung und Ausgaben einsehen',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => WardrobePage(
+                        token: widget.token,
+                        onLogout: () => _logout(context),
+                      ),
+                    )),
+                  ),
+                if (can('defects.read'))
+                  _DashboardAction(
                     icon: Icons.report_problem_outlined,
                     label: 'Mängel',
+                    description: 'Meldungen prüfen und bearbeiten',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => DefectsPage(token: widget.token),
-                        )),
+                      builder: (_) => DefectsPage(token: widget.token),
+                    )),
                   ),
-                (
-                  icon: Icons.category_outlined,
-                  label: 'Kategorien',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => CategoriesPage(token: widget.token),
-                      )),
-                ),
-                if (canReadLocations)
-                  (
+                if (can('procurement.read'))
+                  _DashboardAction(
+                    icon: Icons.shopping_cart_outlined,
+                    label: 'Beschaffung',
+                    description: 'Anträge, Freigaben und Bestellungen',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => ProcurementPage(
+                        token: widget.token,
+                        onLogout: () => _logout(context),
+                      ),
+                    )),
+                  ),
+                if (can('categories.read'))
+                  _DashboardAction(
+                    icon: Icons.category_outlined,
+                    label: 'Kategorien',
+                    description: 'Materialstruktur einsehen',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => CategoriesPage(token: widget.token),
+                    )),
+                  ),
+                if (can('locations.read'))
+                  _DashboardAction(
                     icon: Icons.warehouse_outlined,
                     label: 'Lagerorte',
+                    description: 'Lager und Lagerplätze öffnen',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => LocationsPage(token: widget.token),
-                        )),
+                      builder: (_) => LocationsPage(token: widget.token),
+                    )),
                   ),
-                (
-                  icon: Icons.checkroom,
-                  label: 'Kleiderkammer',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => WardrobePage(
-                          token: widget.token,
-                          onLogout: () => _logout(context),
-                        ),
-                      )),
-                ),
-              ];
-              final statCards = [
-                ('Material', summary['materialCount']),
-                ('Material ausgegeben', summary['issuedMaterialCount']),
-                ('Material defekt', summary['defectiveMaterialCount']),
-                ('Prüfungen fällig', summary['dueInspectionCount']),
-                ('Kleidung', summary['clothingCount']),
-                ('Mängel offen', summary['openDefectCount']),
-                ('Mängel in Bearbeitung', summary['defectsInProgressCount']),
-                ('Beschaffungen', summary['procurementCount']),
-                ('Freigaben offen', summary['pendingProcurementApprovals']),
-                (
-                  'Bestellungen überfällig',
-                  summary['overdueProcurementOrders']
-                ),
-                ('Wareneingänge offen', summary['openProcurementReceipts']),
+                if (can('users.read') && can('roles.read'))
+                  _DashboardAction(
+                    icon: Icons.manage_accounts_outlined,
+                    label: 'Nutzerverwaltung',
+                    description: 'Konten, Rollen und Fachbereiche',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => UsersPage(token: widget.token),
+                    )),
+                  ),
               ];
 
-              Widget actionButton(
-                ({IconData icon, String label, VoidCallback onTap}) action,
-              ) {
-                if (!isMobile) {
-                  return ElevatedButton.icon(
-                    style: dashboardButtonStyle,
-                    onPressed: action.onTap,
-                    icon: Icon(action.icon),
-                    label: Text(action.label),
-                  );
-                }
-                return ElevatedButton(
-                  style: dashboardButtonStyle.copyWith(
-                    padding: const WidgetStatePropertyAll(
-                      EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                    ),
+              final overview = <_DashboardMetric>[
+                if (can('inventory.read') && hasMetric('materialCount'))
+                  _DashboardMetric(
+                    label: 'Material',
+                    value: metricValue('materialCount'),
+                    icon: Icons.inventory_2_outlined,
                   ),
-                  onPressed: action.onTap,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(action.icon),
-                      const SizedBox(height: 6),
-                      Text(
-                        action.label,
-                        maxLines: 2,
-                        textAlign: TextAlign.center,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                if (can('inventory.read') && hasMetric('issuedMaterialCount'))
+                  _DashboardMetric(
+                    label: 'Material ausgegeben',
+                    value: metricValue('issuedMaterialCount'),
+                    icon: Icons.output_outlined,
                   ),
+                if (can('clothing.read') && hasMetric('clothingCount'))
+                  _DashboardMetric(
+                    label: 'Kleidung',
+                    value: metricValue('clothingCount'),
+                    icon: Icons.checkroom_outlined,
+                  ),
+                if (can('procurement.read') && hasMetric('procurementCount'))
+                  _DashboardMetric(
+                    label: 'Beschaffungen',
+                    value: metricValue('procurementCount'),
+                    icon: Icons.shopping_cart_outlined,
+                  ),
+              ];
+              final tasks = <_DashboardMetric>[
+                if (can('inventory.read') &&
+                    hasMetric('defectiveMaterialCount'))
+                  _DashboardMetric(
+                    label: 'Material defekt',
+                    value: metricValue('defectiveMaterialCount'),
+                    icon: Icons.build_circle_outlined,
+                    attention: metricValue('defectiveMaterialCount') > 0,
+                  ),
+                if (can('inventory.read') && hasMetric('dueInspectionCount'))
+                  _DashboardMetric(
+                    label: 'Prüfungen fällig',
+                    value: metricValue('dueInspectionCount'),
+                    icon: Icons.event_busy_outlined,
+                    attention: metricValue('dueInspectionCount') > 0,
+                  ),
+                if (can('defects.read') && hasMetric('openDefectCount'))
+                  _DashboardMetric(
+                    label: 'Mängel offen',
+                    value: metricValue('openDefectCount'),
+                    icon: Icons.report_problem_outlined,
+                    attention: metricValue('openDefectCount') > 0,
+                  ),
+                if (can('defects.read') && hasMetric('defectsInProgressCount'))
+                  _DashboardMetric(
+                    label: 'Mängel in Bearbeitung',
+                    value: metricValue('defectsInProgressCount'),
+                    icon: Icons.pending_actions_outlined,
+                  ),
+                if (can('defects.read') && hasMetric('unreadNotificationCount'))
+                  _DashboardMetric(
+                    label: 'Neue Hinweise',
+                    value: metricValue('unreadNotificationCount'),
+                    icon: Icons.notifications_active_outlined,
+                    attention: metricValue('unreadNotificationCount') > 0,
+                  ),
+                if (can('procurement.approve') &&
+                    hasMetric('pendingProcurementApprovals'))
+                  _DashboardMetric(
+                    label: 'Freigaben offen',
+                    value: metricValue('pendingProcurementApprovals'),
+                    icon: Icons.approval_outlined,
+                    attention: metricValue('pendingProcurementApprovals') > 0,
+                  ),
+                if (can('procurement.order') &&
+                    hasMetric('overdueProcurementOrders'))
+                  _DashboardMetric(
+                    label: 'Bestellungen überfällig',
+                    value: metricValue('overdueProcurementOrders'),
+                    icon: Icons.delivery_dining_outlined,
+                    attention: metricValue('overdueProcurementOrders') > 0,
+                  ),
+                if (can('procurement.receive') &&
+                    hasMetric('openProcurementReceipts'))
+                  _DashboardMetric(
+                    label: 'Wareneingänge offen',
+                    value: metricValue('openProcurementReceipts'),
+                    icon: Icons.move_to_inbox_outlined,
+                    attention: metricValue('openProcurementReceipts') > 0,
+                  ),
+              ];
+
+              Widget metricGrid(List<_DashboardMetric> metrics) {
+                final columns = isMobile ? 2 : 4;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: isMobile ? 1.35 : 1.55,
+                  ),
+                  itemCount: metrics.length,
+                  itemBuilder: (_, index) {
+                    final metric = metrics[index];
+                    return StatCard(
+                      title: metric.label,
+                      value: metric.value.toString(),
+                      width: double.infinity,
+                      compact: isMobile,
+                      icon: metric.icon,
+                      attention: metric.attention,
+                    );
+                  },
                 );
               }
 
@@ -297,168 +408,318 @@ class _DashboardPageState extends State<DashboardPage> {
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
                   slivers: [
-                    SliverPadding(
-                      padding: EdgeInsets.fromLTRB(
-                        pagePadding,
-                        pagePadding,
-                        pagePadding,
-                        12,
-                      ),
-                      sliver: SliverList.list(
-                        children: [
-                          Text(
-                            'Willkommen bei MaterialKompass',
-                            style: Theme.of(context).textTheme.headlineSmall,
-                          ),
-                          const SizedBox(height: 16),
-                          if (isMobile)
-                            GridView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 10,
-                                childAspectRatio: 1.18,
-                              ),
-                              itemCount: statCards.length,
-                              itemBuilder: (_, index) => StatCard(
-                                title: statCards[index].$1,
-                                value: statCards[index].$2?.toString() ?? '0',
-                                width: double.infinity,
-                                compact: true,
-                              ),
-                            )
-                          else
-                            Wrap(
-                              spacing: 16,
-                              runSpacing: 16,
-                              children: [
-                                for (final stat in statCards)
-                                  StatCard(
-                                    title: stat.$1,
-                                    value: stat.$2?.toString() ?? '0',
-                                  ),
-                              ],
+                    SliverToBoxAdapter(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1200),
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              pagePadding,
+                              pagePadding,
+                              pagePadding,
+                              pagePadding +
+                                  MediaQuery.paddingOf(context).bottom,
                             ),
-                          SizedBox(height: isMobile ? 24 : 28),
-                          if (isMobile) ...[
-                            const Text(
-                              'Bereiche',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            GridView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 10,
-                                mainAxisExtent: 88,
-                              ),
-                              itemCount: actions.length,
-                              itemBuilder: (_, index) =>
-                                  actionButton(actions[index]),
-                            ),
-                            const SizedBox(height: 28),
-                            const Text(
-                              'Letzte Aktivitäten',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ] else
-                            Row(
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 16),
-                                  child: Text(
-                                    'Letzte Aktivitäten',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
+                                _WelcomeCard(
+                                  name: currentUser['name']?.toString(),
+                                  roles: roles,
+                                ),
+                                if (actions.isNotEmpty) ...[
+                                  const SizedBox(height: 28),
+                                  const _SectionHeading(
+                                    title: 'Schnellzugriff',
+                                    subtitle:
+                                        'Direkt zu Ihren freigeschalteten Bereichen',
+                                  ),
+                                  const SizedBox(height: 12),
+                                  GridView.builder(
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: isMobile ? 2 : 3,
+                                      crossAxisSpacing: 12,
+                                      mainAxisSpacing: 12,
+                                      mainAxisExtent: isMobile ? 132 : 112,
+                                    ),
+                                    itemCount: actions.length,
+                                    itemBuilder: (_, index) => _QuickActionCard(
+                                      action: actions[index],
+                                      compact: isMobile,
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 24),
-                                Expanded(
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Wrap(
-                                      spacing: 8,
-                                      runSpacing: 8,
-                                      alignment: WrapAlignment.end,
-                                      children:
-                                          actions.map(actionButton).toList(),
-                                    ),
+                                ],
+                                if (overview.isNotEmpty) ...[
+                                  const SizedBox(height: 28),
+                                  const _SectionHeading(
+                                    title: 'Übersicht',
+                                    subtitle:
+                                        'Die wichtigsten Zahlen aus Ihren Bereichen',
                                   ),
+                                  const SizedBox(height: 12),
+                                  metricGrid(overview),
+                                ],
+                                if (tasks.isNotEmpty) ...[
+                                  const SizedBox(height: 28),
+                                  const _SectionHeading(
+                                    title: 'Aufgaben & Hinweise',
+                                    subtitle:
+                                        'Was aktuell Ihre Aufmerksamkeit braucht',
+                                  ),
+                                  const SizedBox(height: 12),
+                                  metricGrid(tasks),
+                                ],
+                                const SizedBox(height: 28),
+                                const _SectionHeading(
+                                  title: 'Letzte Aktivitäten',
+                                  subtitle:
+                                      'Nur Ereignisse aus Ihren freigeschalteten Bereichen',
                                 ),
+                                const SizedBox(height: 8),
+                                if (activities.isEmpty)
+                                  const _EmptyActivityCard()
+                                else
+                                  for (final rawEntry in activities)
+                                    _ActivityCard(
+                                      title: _activityTitle(
+                                        Map<String, dynamic>.from(
+                                            rawEntry as Map),
+                                      ),
+                                      details: _activityDetails(
+                                        Map<String, dynamic>.from(rawEntry),
+                                      ),
+                                    ),
                               ],
-                            ),
-                          const SizedBox(height: 8),
-                        ],
-                      ),
-                    ),
-                    if (activities.isEmpty)
-                      const SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Text(
-                              'Noch keine Aktivitäten in deinen freigeschalteten Bereichen.',
-                              textAlign: TextAlign.center,
                             ),
                           ),
                         ),
-                      )
-                    else
-                      SliverPadding(
-                        padding: EdgeInsets.fromLTRB(
-                          pagePadding,
-                          0,
-                          pagePadding,
-                          pagePadding + MediaQuery.paddingOf(context).bottom,
-                        ),
-                        sliver: SliverList.builder(
-                          itemCount: activities.length,
-                          itemBuilder: (_, index) {
-                            final entry = Map<String, dynamic>.from(
-                              activities[index] as Map,
-                            );
-                            return Card(
-                              child: ListTile(
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: isMobile ? 12 : 16,
-                                  vertical: isMobile ? 4 : 8,
-                                ),
-                                leading: CircleAvatar(
-                                  radius: isMobile ? 18 : 20,
-                                  child: const Icon(Icons.history),
-                                ),
-                                title: Text(_activityTitle(entry)),
-                                subtitle: Text(_activityDetails(entry)),
-                                isThreeLine: entry['category'] != null ||
-                                    entry['inventoryNumber'] != null,
-                              ),
-                            );
-                          },
-                        ),
                       ),
+                    ),
                   ],
                 ),
               );
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _DashboardAction {
+  final IconData icon;
+  final String label;
+  final String description;
+  final VoidCallback onTap;
+
+  const _DashboardAction({
+    required this.icon,
+    required this.label,
+    required this.description,
+    required this.onTap,
+  });
+}
+
+class _DashboardMetric {
+  final String label;
+  final int value;
+  final IconData icon;
+  final bool attention;
+
+  const _DashboardMetric({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.attention = false,
+  });
+}
+
+class _WelcomeCard extends StatelessWidget {
+  final String? name;
+  final List<String> roles;
+
+  const _WelcomeCard({required this.name, required this.roles});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final displayName = (name == null || name!.trim().isEmpty)
+        ? 'Willkommen'
+        : 'Hallo, ${name!.trim().split(' ').first}';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 26,
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
+            child: const Icon(Icons.space_dashboard_outlined),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(displayName, style: theme.textTheme.headlineSmall),
+                const SizedBox(height: 4),
+                Text(
+                  roles.isEmpty
+                      ? 'Ihre persönliche Übersicht'
+                      : 'Ihre Übersicht als ${roles.join(', ')}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionHeading extends StatelessWidget {
+  final String title;
+  final String subtitle;
+
+  const _SectionHeading({required this.title, required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 2),
+        Text(
+          subtitle,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickActionCard extends StatelessWidget {
+  final _DashboardAction action;
+  final bool compact;
+
+  const _QuickActionCard({required this.action, required this.compact});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: action.onTap,
+        child: Padding(
+          padding: EdgeInsets.all(compact ? 12 : 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: colors.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(action.icon, color: colors.onPrimaryContainer),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      action.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      action.description,
+                      maxLines: compact ? 3 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              if (!compact)
+                const Padding(
+                  padding: EdgeInsets.only(top: 12),
+                  child: Icon(Icons.chevron_right),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityCard extends StatelessWidget {
+  final String title;
+  final String details;
+
+  const _ActivityCard({required this.title, required this.details});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        leading: const CircleAvatar(child: Icon(Icons.history)),
+        title: Text(title),
+        subtitle: Text(details),
+      ),
+    );
+  }
+}
+
+class _EmptyActivityCard extends StatelessWidget {
+  const _EmptyActivityCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Row(
+          children: [
+            Icon(
+              Icons.inbox_outlined,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Noch keine Aktivitäten in Ihren freigeschalteten Bereichen.',
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
