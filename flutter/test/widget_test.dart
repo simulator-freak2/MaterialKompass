@@ -104,6 +104,11 @@ void main() {
     expect(find.text('Schnellzugriff'), findsOneWidget);
     expect(find.text('Nutzerverwaltung'), findsOneWidget);
     expect(find.text('Mängel'), findsOneWidget);
+    expect(find.byIcon(Icons.checkroom), findsWidgets);
+
+    final wardrobeIcon = tester.getTopLeft(find.byIcon(Icons.checkroom).first);
+    final wardrobeLabel = tester.getTopLeft(find.text('Kleiderkammer').first);
+    expect((wardrobeIcon.dy - wardrobeLabel.dy).abs(), lessThan(3));
 
     await tester.scrollUntilVisible(
       find.textContaining('Rettungsweste'),

@@ -5,15 +5,173 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 
+class QrLoginValidity {
+  final String value;
+  final int? customDays;
+  final String title;
+
+  const QrLoginValidity(this.value, {required this.title, this.customDays});
+
+  Map<String, dynamic> toJson() => {
+        'title': title,
+        'validity': value,
+        if (customDays != null) 'customDays': customDays,
+      };
+}
+
+const qrLoginValidityOptions = <String, String>{
+  '10m': '10 Minuten',
+  '30m': '30 Minuten',
+  '60m': '60 Minuten',
+  '12h': '12 Stunden',
+  '1d': '1 Tag',
+  '7d': '7 Tage',
+  '14d': '14 Tage',
+  '30d': '30 Tage',
+  '1y': '1 Jahr',
+  '3y': '3 Jahre',
+  'custom': 'Benutzerdefiniert (in Tagen)',
+  'unlimited': 'Unbefristet',
+};
+
+String qrCredentialExpiryLabel(Object? value) {
+  if (value == null) return 'Unbefristet gültig';
+  final localExpiry = DateTime.tryParse(value.toString())?.toLocal();
+  if (localExpiry == null) return 'Unbekannte Gültigkeit';
+  return 'Gültig bis '
+      '${localExpiry.day.toString().padLeft(2, '0')}.'
+      '${localExpiry.month.toString().padLeft(2, '0')}.'
+      '${localExpiry.year}, '
+      '${localExpiry.hour.toString().padLeft(2, '0')}:'
+      '${localExpiry.minute.toString().padLeft(2, '0')} Uhr';
+}
+
+Future<QrLoginValidity?> chooseQrLoginValidity(BuildContext context) async {
+  var selected = '10m';
+  String? errorText;
+  String? titleErrorText;
+  final title = TextEditingController();
+  final customDays = TextEditingController();
+  final result = await showDialog<QrLoginValidity>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Gültigkeit des Anmeldecodes'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: title,
+                autofocus: true,
+                maxLength: 120,
+                decoration: InputDecoration(
+                  labelText: 'Titel',
+                  hintText: 'z. B. Tablet Gerätehaus',
+                  errorText: titleErrorText,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selected,
+                decoration: const InputDecoration(
+                  labelText: 'Gültigkeitsdauer',
+                  border: OutlineInputBorder(),
+                ),
+                items: qrLoginValidityOptions.entries
+                    .map((entry) => DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() {
+                      selected = value;
+                      errorText = null;
+                    });
+                  }
+                },
+              ),
+              if (selected == 'custom') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: customDays,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Anzahl Tage',
+                    errorText: errorText,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Text(
+                selected == 'unlimited'
+                    ? 'Der Code kann bis zur manuellen Deaktivierung beliebig oft verwendet werden.'
+                    : 'Der Code ist innerhalb der gewählten Laufzeit einmal verwendbar.',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmedTitle = title.text.trim();
+              if (trimmedTitle.isEmpty) {
+                setDialogState(() {
+                  titleErrorText = 'Bitte einen Titel eingeben.';
+                });
+                return;
+              }
+              if (selected != 'custom') {
+                Navigator.pop(
+                  context,
+                  QrLoginValidity(selected, title: trimmedTitle),
+                );
+                return;
+              }
+              final days = int.tryParse(customDays.text.trim());
+              if (days == null || days < 1 || days > 36500) {
+                setDialogState(() {
+                  errorText = 'Bitte 1 bis 36500 Tage eingeben.';
+                });
+                return;
+              }
+              Navigator.pop(
+                context,
+                QrLoginValidity(
+                  selected,
+                  title: trimmedTitle,
+                  customDays: days,
+                ),
+              );
+            },
+            child: const Text('Code erstellen'),
+          ),
+        ],
+      ),
+    ),
+  );
+  title.dispose();
+  customDays.dispose();
+  return result;
+}
+
 Future<void> showQrLoginCode(
   BuildContext context, {
   required String qrValue,
-  required DateTime expiresAt,
+  DateTime? expiresAt,
   String? accountLabel,
+  bool oneTime = true,
 }) {
-  final localExpiry = expiresAt.toLocal();
-  final time =
-      '${localExpiry.hour.toString().padLeft(2, '0')}:${localExpiry.minute.toString().padLeft(2, '0')}';
+  final expiryText = qrCredentialExpiryLabel(expiresAt?.toIso8601String());
   return showDialog<void>(
     context: context,
     barrierDismissible: false,
@@ -26,8 +184,10 @@ Future<void> showQrLoginCode(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Der Code enthält keine persönlichen Daten. Er ist nur einmal und für 10 Minuten verwendbar.',
+            Text(
+              oneTime
+                  ? 'Der Code enthält keine persönlichen Daten und ist nur einmal verwendbar.'
+                  : 'Der Code enthält keine persönlichen Daten und kann bis zur Deaktivierung mehrfach verwendet werden.',
             ),
             const SizedBox(height: 16),
             Container(
@@ -41,7 +201,7 @@ Future<void> showQrLoginCode(
               ),
             ),
             const SizedBox(height: 12),
-            Text('Gültig bis $time Uhr'),
+            Text(expiryText),
           ],
         ),
       ),
