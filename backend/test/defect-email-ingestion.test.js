@@ -38,7 +38,31 @@ async function filledReportPdf({
   form.getTextField('Name').setText(name);
   form.getTextField('E-Mailadresse').setText(email);
   form.getTextField('Beschreibung_des_Mangels').setText(description);
-  form.getCheckBox('Nicht_einsatzfaehig').check();
+  form.getCheckBox('Einsatzbereitschaft_nicht_einsatzfähig').check();
+  form.updateFieldAppearances();
+  return Buffer.from(await document.save({ useObjectStreams: false }));
+}
+
+async function legacyFilledReportPdf() {
+  const document = await PDFDocument.create();
+  const page = document.addPage([595, 842]);
+  const form = document.getForm();
+  for (const [name, value, y] of [
+    ['Inventarnummer', '10050035-02-02-001', 760],
+    ['Name', 'Erika Beispiel', 720],
+    ['E-Mailadresse', 'erika@example.org', 680],
+    ['Beschreibung_des_Mangels', 'Druckanzeige ist gerissen.', 640],
+  ]) {
+    const field = form.createTextField(name);
+    field.setText(value);
+    field.addToPage(page, { x: 40, y, width: 400, height: 25 });
+  }
+  for (let index = 0; index < 6; index += 1) {
+    const name = index === 0 ? 'CheckBox' : `CheckBox_${index}`;
+    const field = form.createCheckBox(name);
+    field.addToPage(page, { x: 40 + index * 30, y: 580, width: 18, height: 18 });
+    if (index === 1 || index === 4) field.check();
+  }
   form.updateFieldAppearances();
   return Buffer.from(await document.save({ useObjectStreams: false }));
 }
@@ -153,6 +177,18 @@ test('digital email report is recognized, created and keeps report plus email bo
     server.close();
     await app.locals.defectEmailService.stop();
   }
+});
+
+test('legacy report checkbox names are recognized', async () => {
+  const app = createApp();
+  const result = await app.locals.defectEmailService.ingestSource(
+    mailWithAttachment(await legacyFilledReportPdf()),
+    { mailbox: 'INBOX', uid: 26, uidValidity: '10' },
+  );
+  assert.equal(result.entry.status, 'processed');
+  assert.equal(result.entry.extractedData.operationalSafety, 'Eingeschränkt');
+  assert.equal(result.entry.extractedData.riskLevel, 'Mittel');
+  await app.locals.defectEmailService.stop();
 });
 
 test('template download supports blank and item-prefilled variants', async () => {

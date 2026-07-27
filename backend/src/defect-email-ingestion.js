@@ -241,6 +241,12 @@ function valuesFromPdfFields(fields, materials, clothingItems) {
   const inventoryNumber = fields.Inventarnummer || '';
   const itemMatch = findItem(inventoryNumber, materials, clothingItems);
   const checkboxValue = [
+    ['CheckBox', 'Nicht einsatzfähig'],
+    ['CheckBox_1', 'Eingeschränkt'],
+    ['CheckBox_2', 'Einsatzfähig'],
+    ['Einsatzbereitschaft_nicht_einsatzfähig', 'Nicht einsatzfähig'],
+    ['Einsatzbereitschaft_eingeschraenkt', 'Eingeschränkt'],
+    ['Einsatzbereitschaft_einsatzbereit', 'Einsatzfähig'],
     ['Nicht_einsatzfaehig', 'Nicht einsatzfähig'],
     ['Nicht einsatzfähig', 'Nicht einsatzfähig'],
     ['Eingeschraenkt', 'Eingeschränkt'],
@@ -249,6 +255,10 @@ function valuesFromPdfFields(fields, materials, clothingItems) {
     [' Einsatzfähig', 'Einsatzfähig'],
   ].filter(([name]) => fields[name] === true);
   const riskValue = [
+    ['CheckBox_3', 'Niedrig'], ['CheckBox_4', 'Mittel'], ['CheckBox_5', 'Hoch'],
+    ['gefaehrdungsstufe_niedrig', 'Niedrig'],
+    ['gefaehrdungsstufe_mittel', 'Mittel'],
+    ['gefaehrdungsstufe_hoch', 'Hoch'],
     ['Gefaehrdung_Hoch', 'Hoch'], [' Hoch', 'Hoch'],
     ['Gefaehrdung_Mittel', 'Mittel'], [' Mittel', 'Mittel'],
     ['Gefaehrdung_Niedrig', 'Niedrig'], ['Niedrig', 'Niedrig'],
