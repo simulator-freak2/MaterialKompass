@@ -5,6 +5,7 @@ const SUPPORTED_PLATFORMS = Object.freeze([
   'ios',
   'macos',
 ]);
+const { validateLegalConfig } = require('./legal-config');
 
 function parsePort(value = '3001') {
   const port = Number(value);
@@ -76,7 +77,7 @@ function loadRuntimeConfig(env = process.env) {
       try { parsed = new URL(origin); } catch (_) {
         throw new Error(`Ungültiger CORS_ORIGIN: ${origin}`);
       }
-      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) {
+      if (parsed.protocol !== 'https:' || parsed.origin !== origin) {
         throw new Error(`CORS_ORIGIN muss ein Origin ohne Pfad sein: ${origin}`);
       }
     }
@@ -86,6 +87,24 @@ function loadRuntimeConfig(env = process.env) {
     }
     if (appBaseUrl.protocol !== 'https:') {
       throw new Error('APP_BASE_URL muss im Produktivbetrieb HTTPS verwenden.');
+    }
+    if (parseTrustProxy(env.TRUST_PROXY) === null) {
+      throw new Error(
+        'TRUST_PROXY muss im Produktivbetrieb explizit für den TLS-Reverse-Proxy gesetzt sein.',
+      );
+    }
+    if (env.DEFECT_IMAP_SECURE === 'false'
+      || env.DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED === 'false') {
+      throw new Error(
+        'Das Mängel-Postfach muss im Produktivbetrieb TLS mit Zertifikatsprüfung verwenden.',
+      );
+    }
+    if (env.INITIAL_ADMIN_PASSWORD
+      && (env.INITIAL_ADMIN_PASSWORD.length < 12
+        || /^replace-/i.test(env.INITIAL_ADMIN_PASSWORD))) {
+      throw new Error(
+        'INITIAL_ADMIN_PASSWORD muss mindestens 12 Zeichen lang und individuell gesetzt sein.',
+      );
     }
     const missingMailSettings = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM']
       .filter((name) => !env[name]);
@@ -113,9 +132,24 @@ function loadRuntimeConfig(env = process.env) {
         'MAILBOX_PASSWORD_ENCRYPTION_KEY muss ein zufälliger 64-stelliger Hex-Wert sein.',
       );
     }
+    if (!env.MAILBOX_PROVISIONER_SOCKET) {
+      let provisionerUrl;
+      try { provisionerUrl = new URL(env.MAILBOX_PROVISIONER_URL || ''); } catch (_) {
+        throw new Error(
+          'MAILBOX_PROVISIONER_SOCKET oder eine gültige MAILBOX_PROVISIONER_URL ist erforderlich.',
+        );
+      }
+      if (provisionerUrl.protocol !== 'https:') {
+        throw new Error(
+          'MAILBOX_PROVISIONER_URL muss im Produktivbetrieb HTTPS verwenden; '
+          + 'für Compose sollte MAILBOX_PROVISIONER_SOCKET verwendet werden.',
+        );
+      }
+    }
     if (!env.DB_HOST && (!env.INITIAL_ADMIN_PASSWORD || env.INITIAL_ADMIN_PASSWORD.length < 12)) {
       throw new Error('INITIAL_ADMIN_PASSWORD muss ohne Datenbank mindestens 12 Zeichen lang sein.');
     }
+    validateLegalConfig(env);
   }
 
   parseTrustProxy(env.TRUST_PROXY);

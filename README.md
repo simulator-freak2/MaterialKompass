@@ -1,5 +1,8 @@
 # MaterialKompass
 
+Hinweise zum datenschutzkonformen Produktivbetrieb, Pflichtangaben und offenen
+organisatorischen Maßnahmen stehen in [LEGAL_COMPLIANCE.md](LEGAL_COMPLIANCE.md).
+
 MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Ortsgruppe.
 
 ## Aktueller Stand
@@ -142,6 +145,7 @@ docker compose up -d --build --remove-orphans
 docker compose ps
 docker compose logs --tail=100 backend
 curl --fail http://127.0.0.1:3001/health
+curl --fail -H "X-Forwarded-Proto: https" http://127.0.0.1:3001/ready
 ```
 
 MariaDB-Daten liegen im benannten Docker-Volume `materialkompass_db` und bleiben beim
@@ -156,13 +160,27 @@ erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpassw
 muss direkt nach der ersten Anmeldung geändert werden.
 
 In Produktion muss `JWT_SECRET` mindestens 32 zufällige Zeichen enthalten und
-`APP_BASE_URL` HTTPS verwenden. `TRUST_PROXY` darf nur auf die tatsächliche Anzahl
-vorgeschalteter Proxy-Hops gesetzt werden; ohne Reverse Proxy bleibt der Wert leer.
+`APP_BASE_URL` HTTPS verwenden. Das Backend akzeptiert außerhalb von `/health` keine
+Klartextanfragen. TLS muss daher an einem lokalen Reverse Proxy terminieren;
+`TRUST_PROXY` wird eng auf diesen Proxy begrenzt (bei Compose üblicherweise `loopback`).
+Der Postfach-Provisioner erhält keine allgemeine `.env`-Datei und keinen Netzwerkzugriff;
+Backend und Hilfsdienst tauschen Zugangsdaten ausschließlich über das private
+`materialkompass_mailbox_socket`-Volume aus.
+
+Das MariaDB-Volume enthält fachliche Daten im Datenbankformat. Der Serverdatenträger
+einschließlich Backups muss deshalb betriebssystemseitig verschlüsselt und nur für die
+zuständigen Administratoren zugänglich sein. Datenbank- und Root-Kennwörter müssen
+getrennt sein; das Root-Kennwort wird nicht in den Backend-Container durchgereicht.
 
 Ein vorhandenes MariaDB-System wird mit den SQL-Dateien in
 `backend/src/db/migrations` erweitert. Die Tabelle für die fachlichen Snapshots wird
 beim Backend-Start zusätzlich mit `CREATE TABLE IF NOT EXISTS` abgesichert. Bei einer
 Neuinstallation enthält `backend/src/db/schema.sql` bereits das vollständige Schema.
+Solange die Fachsammlungen noch als transaktionale Snapshots gespeichert werden,
+erzwingt das Backend über eine MariaDB-Sperre genau eine aktive Backend-Instanz. Eine
+zweite Instanz beendet sich beim Start, statt konkurrierende Snapshots zu überschreiben.
+`DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
+Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
 ### Flutter
 
@@ -185,13 +203,14 @@ STARTTLS (`SMTP_SECURE=false`).
 
 ### Fest installierbare Apps und automatische Updates
 
-Der Flutter-Client ist nativ für Windows, Linux und Android eingerichtet. Alle drei Apps
-laden ihre Anwendungsdaten über dieselbe REST-API. Beim Start und danach alle sechs
-Stunden fragt die App automatisch `GET /api/client-updates/<plattform>` ab. Bei einem
-neuen Release lädt MaterialKompass den Installer selbst in ein temporäres Verzeichnis,
-zeigt den Fortschritt an, prüft Größe und SHA-256 und startet anschließend direkt den
-System-Installer. Ein Browser oder manuelles Suchen im Download-Ordner ist nicht nötig.
-Eine konfigurierte Mindestversion erzwingt das Update.
+Der Flutter-Client ist nativ für Windows, macOS, Linux, Android und iOS eingerichtet.
+Alle Apps laden ihre Anwendungsdaten über dieselbe REST-API. Die Download-Auswahl wird
+nur in der Webanwendung angezeigt und ist in installierten Apps ausgeblendet. Windows,
+macOS, Linux und Android fragen beim Start und danach alle sechs Stunden automatisch
+`GET /api/client-updates/<plattform>` ab. Bei einem neuen Release lädt MaterialKompass
+den Installer in ein temporäres Verzeichnis, prüft Größe und SHA-256 und startet den
+System-Installer. iOS-Updates werden wegen der Apple-Signatur- und Store-Vorgaben über
+den gewählten Apple-Verteilungskanal ausgeliefert.
 
 ### Scanner-E-Mail-Adressen
 
@@ -224,20 +243,24 @@ entschlüsselt werden können. docker-mailserver wird standardmäßig im Contain
 werden.
 
 Die abschließende Sicherheitsfreigabe bleibt beim Betriebssystem: Windows verlangt je
-nach Signatur/SmartScreen eine Bestätigung, Linux die Administratorfreigabe und Android
-die Bestätigung des Paket-Installers. Diese Dialoge dürfen normale Apps nicht umgehen.
+nach Signatur/SmartScreen eine Bestätigung, macOS Gatekeeper, Linux die
+Administratorfreigabe und Android den Paket-Installer. Diese Dialoge dürfen normale
+Apps nicht umgehen.
 
 Bei der Docker-Bereitstellung erwartet `compose.yaml` diese Release-Dateien:
 
 ```text
 releases/MaterialKompass-Windows.exe
+releases/MaterialKompass-macOS.dmg
 releases/MaterialKompass-Linux.deb
 releases/MaterialKompass-Android.apk
+releases/MaterialKompass-iOS.ipa
 ```
 
 Das Verzeichnis wird schreibgeschützt nach `/app/downloads` in den Backend-Container
 eingebunden. Abweichende Pfade können mit `DOWNLOAD_WINDOWS_PATH`,
-`DOWNLOAD_LINUX_PATH` und `DOWNLOAD_ANDROID_PATH` konfiguriert werden.
+`DOWNLOAD_MACOS_PATH`, `DOWNLOAD_LINUX_PATH`, `DOWNLOAD_ANDROID_PATH` und
+`DOWNLOAD_IOS_PATH` konfiguriert werden.
 `CLIENT_<PLATTFORM>_VERSION` bezeichnet die aktuelle, `CLIENT_<PLATTFORM>_MIN_VERSION`
 die kleinste noch zulässige Version. `CLIENT_UPDATE_NOTES` enthält optionale Hinweise.
 Release-Binärdateien und Signaturschlüssel werden nicht in Git eingecheckt.
@@ -246,12 +269,30 @@ Die Installer werden auf dem jeweiligen Zielsystem mit der produktiven API-Adres
 gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno Setup 6:
 
 ```powershell
+$env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
 .\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.0.0
 ```
+
+Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
+Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsigniert
+sein.
 
 ```bash
 bash packaging/linux/build_deb.sh https://materialkompass.org 1.0.0
 ```
+
+macOS wird auf einem Mac als DMG gebaut:
+
+```bash
+export MACOS_SIGNING_IDENTITY="Developer ID Application: Organisation (TEAMID)"
+export APPLE_ID="apple-id@example.org"
+export APPLE_TEAM_ID="TEAMID"
+export APPLE_APP_PASSWORD="app-spezifisches-passwort"
+bash packaging/macos/build_dmg.sh https://materialkompass.org
+```
+
+Das Skript signiert die App und das DMG, reicht das DMG zur Apple-Notarisierung ein
+und prüft anschließend das Stapling-Ticket.
 
 Android wird als signiertes APK gebaut. `flutter/android/key.properties` muss auf den
 dauerhaften Release-Key verweisen; Updates lassen sich nur installieren, wenn sie mit
@@ -264,13 +305,24 @@ demselben Schlüssel wie die bereits installierte App signiert sind. Anschließe
 Nach dem Kopieren werden die passenden `CLIENT_*_VERSION`-Werte in `.env` erhöht und
 der Backend-Container neu gestartet. Release-Builds akzeptieren ausschließlich eine
 HTTPS-API-Adresse. Die erste Installation erfolgt durch Öffnen des jeweiligen EXE-,
-DEB- oder APK-Installers. Danach übernimmt die App die Update-Downloads selbst.
+DMG-, DEB- oder APK-Installers. Danach übernimmt die App die Update-Downloads selbst.
 
-Der GitHub-Workflow `.github/workflows/client-installers.yml` erzeugt alle drei Installer
-manuell als Build-Artefakte. Für Android müssen zuvor die Repository-Secrets
+Der GitHub-Workflow `.github/workflows/client-installers.yml` erzeugt Windows-, macOS-,
+Linux- und Android-Installer sowie einen nicht signierten iOS-Prüf-Build. Für Android
+müssen zuvor die Repository-Secrets
 `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` und
-`ANDROID_KEY_PASSWORD` gesetzt werden. Windows-Installer sollten vor öffentlicher
-Verteilung zusätzlich mit einem Code-Signing-Zertifikat signiert werden.
+`ANDROID_KEY_PASSWORD` gesetzt werden. Für Windows sind
+`WINDOWS_SIGNING_PFX_BASE64` und `WINDOWS_SIGNING_PFX_PASSWORD` erforderlich. macOS
+benötigt `MACOS_SIGNING_CERTIFICATE_BASE64`,
+`MACOS_SIGNING_CERTIFICATE_PASSWORD`, `MACOS_KEYCHAIN_PASSWORD`,
+`MACOS_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID` und `APPLE_APP_PASSWORD`.
+Eine auf Geräten installierbare iOS-IPA muss auf macOS mit Apple-Developer-Zertifikat
+und Provisioning Profile signiert und als `releases/MaterialKompass-iOS.ipa`
+veröffentlicht werden; der CI-Prüf-Build ist nicht installierbar.
+
+Der Workflow `.github/workflows/quality.yml` führt bei Pull Requests und Änderungen
+am Hauptbranch Backend- und Flutter-Tests, Flutter-Analyse, Formatprüfung,
+Provisioner-Tests und den npm-Sicherheitsaudit aus.
 
 ### Etikettendruck
 

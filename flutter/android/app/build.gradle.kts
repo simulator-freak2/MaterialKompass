@@ -12,6 +12,14 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     FileInputStream(keystorePropertiesFile).use(keystoreProperties::load)
 }
+val releaseRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+if (releaseRequested && !keystorePropertiesFile.exists()) {
+    throw GradleException(
+        "flutter/android/key.properties fehlt. Release-Builds dürfen nicht mit dem Debug-Schlüssel signiert werden."
+    )
+}
 
 android {
     namespace = "org.materialkompass.materialkompass"
@@ -47,10 +55,8 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }

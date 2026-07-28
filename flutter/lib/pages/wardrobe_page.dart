@@ -201,8 +201,9 @@ class _WardrobePageState extends State<WardrobePage> {
         http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
       ]);
-      if (responses.any((response) => response.statusCode != 200) || !mounted)
+      if (responses.any((response) => response.statusCode != 200) || !mounted) {
         return;
+      }
       setState(() {
         _locations = (jsonDecode(responses[0].body) as List)
             .map((entry) => Map<String, dynamic>.from(entry as Map))
@@ -636,8 +637,9 @@ class _WardrobePageState extends State<WardrobePage> {
         availableStocks.map((entry) => entry['id'].toString()).toSet();
     final selectedStock =
         stockIds.contains(stockController.text) ? stockController.text : null;
-    if (selectedStock == null && stockController.text.isNotEmpty)
+    if (selectedStock == null && stockController.text.isNotEmpty) {
       stockController.clear();
+    }
     return [
       DropdownButtonFormField<String>(
         initialValue: selectedLocation,

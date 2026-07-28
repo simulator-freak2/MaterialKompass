@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "org.materialkompass" "\0"
-            VALUE "FileDescription", "materialkompass" "\0"
+            VALUE "FileDescription", "MaterialKompass" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "materialkompass" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 org.materialkompass. All rights reserved." "\0"
             VALUE "OriginalFilename", "materialkompass.exe" "\0"
-            VALUE "ProductName", "materialkompass" "\0"
+            VALUE "ProductName", "MaterialKompass" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

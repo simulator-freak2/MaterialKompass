@@ -127,8 +127,9 @@ class _LocationsPageState extends State<LocationsPage> {
                 location == null ? 'POST' : 'PUT',
                 {'name': name.text, 'code': code.text, 'type': type.text},
               );
-              if (ok && dialogContext.mounted)
+              if (ok && dialogContext.mounted) {
                 Navigator.pop(dialogContext, true);
+              }
             },
             child: const Text('Speichern'),
           ),
@@ -182,8 +183,9 @@ class _LocationsPageState extends State<LocationsPage> {
                   'locationId': locationId
                 },
               );
-              if (ok && dialogContext.mounted)
+              if (ok && dialogContext.mounted) {
                 Navigator.pop(dialogContext, true);
+              }
             },
             child: const Text('Speichern'),
           ),
@@ -263,13 +265,16 @@ class _LocationsPageState extends State<LocationsPage> {
                           trailing: canWrite
                               ? PopupMenuButton<String>(
                                   onSelected: (value) {
-                                    if (value == 'edit')
+                                    if (value == 'edit') {
                                       _editLocation(location);
-                                    if (value == 'add')
+                                    }
+                                    if (value == 'add') {
                                       _editStock(location['id'].toString());
-                                    if (value == 'delete')
+                                    }
+                                    if (value == 'delete') {
                                       _delete('Lagerort',
                                           '/api/locations/${location['id']}');
+                                    }
                                   },
                                   itemBuilder: (_) => const [
                                     PopupMenuItem(

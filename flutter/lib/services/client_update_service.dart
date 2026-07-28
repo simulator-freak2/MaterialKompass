@@ -46,6 +46,7 @@ class ClientUpdateService {
       TargetPlatform.windows => 'windows',
       TargetPlatform.linux => 'linux',
       TargetPlatform.android => 'android',
+      TargetPlatform.macOS => 'macos',
       _ => null,
     };
   }

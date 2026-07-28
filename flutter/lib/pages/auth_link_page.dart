@@ -1,7 +1,6 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import '../constants.dart';
+
+import '../services/api_client.dart';
 import 'login_page.dart';
 
 class AuthLinkPage extends StatefulWidget {
@@ -13,6 +12,7 @@ class AuthLinkPage extends StatefulWidget {
 }
 
 class _AuthLinkPageState extends State<AuthLinkPage> {
+  final api = ApiClient();
   final password = TextEditingController();
   String? message;
   bool loading = false;
@@ -24,28 +24,49 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
 
   Future<void> verify() async {
     setState(() => loading = true);
-    final response = await http.get(Uri.parse(
-        '$apiBaseUrl/api/auth/verify-email?token=${Uri.encodeQueryComponent(widget.token)}'));
-    final data = jsonDecode(response.body);
-    if (mounted)
-      setState(() {
-        loading = false;
-        message = data['message']?.toString() ?? data['error']?.toString();
-      });
+    try {
+      final response = await api.get(
+        '/api/auth/verify-email',
+        queryParameters: {'token': widget.token},
+      );
+      if (mounted) {
+        setState(() {
+          message = response.object['message']?.toString() ??
+              response.object['error']?.toString();
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted) setState(() => message = error.message);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   Future<void> reset() async {
     setState(() => loading = true);
-    final response = await http.post(
-        Uri.parse('$apiBaseUrl/api/auth/password-reset/confirm'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': widget.token, 'password': password.text}));
-    final data = jsonDecode(response.body);
-    if (mounted)
-      setState(() {
-        loading = false;
-        message = data['message']?.toString() ?? data['error']?.toString();
-      });
+    try {
+      final response = await api.post(
+        '/api/auth/password-reset/confirm',
+        body: {'token': widget.token, 'password': password.text},
+      );
+      if (mounted) {
+        setState(() {
+          message = response.object['message']?.toString() ??
+              response.object['error']?.toString();
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted) setState(() => message = error.message);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    api.close();
+    password.dispose();
+    super.dispose();
   }
 
   @override

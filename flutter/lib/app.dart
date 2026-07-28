@@ -26,7 +26,7 @@ class MaterialKompassApp extends StatelessWidget {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: const Color(0xFFF4B400),
       primary: const Color(0xFFF4B400),
-      onPrimary: Colors.white,
+      onPrimary: const Color(0xFF2B2100),
       secondary: const Color(0xFFD32F2F),
       onSecondary: Colors.white,
       tertiary: const Color(0xFFB71C1C),

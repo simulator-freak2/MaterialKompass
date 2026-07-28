@@ -1,4 +1,5 @@
 const http = require('node:http');
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { timingSafeEqual } = require('node:crypto');
 
@@ -115,11 +116,29 @@ function createProvisionerServer(options = {}) {
 
 if (require.main === module) {
   const server = createProvisionerServer();
-  server.listen(
-    Number(process.env.PORT || 3010),
-    process.env.HOST || '0.0.0.0',
-    () => console.log('Mailbox provisioner listening.'),
-  );
+  const socketPath = process.env.SOCKET_PATH;
+  if (socketPath) {
+    try {
+      const stats = fs.lstatSync(socketPath);
+      if (!stats.isSocket()) throw new Error(`${socketPath} ist kein Unix-Socket.`);
+      fs.unlinkSync(socketPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    server.listen(socketPath, () => {
+      // The socket volume is mounted only into these two containers. World
+      // access inside that private volume avoids granting this otherwise
+      // capability-free helper CAP_CHOWN merely to reach the backend uid.
+      fs.chmodSync(socketPath, 0o666);
+      console.log('Mailbox provisioner listening on Unix socket.');
+    });
+  } else {
+    server.listen(
+      Number(process.env.PORT || 3010),
+      process.env.HOST || '127.0.0.1',
+      () => console.log('Mailbox provisioner listening.'),
+    );
+  }
 }
 
 module.exports = { createProvisionerServer, dockerMailboxCreate };

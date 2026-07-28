@@ -87,6 +87,18 @@ test('admin creates a user with only username and email as required fields', asy
   } finally { server.close(); }
 });
 
+test('authenticated users can download a secret-free personal data copy', async () => {
+  const { server, request, adminToken } = await setup();
+  try {
+    const exported = await request('/api/users/me/export', { token: adminToken });
+    assert.equal(exported.response.status, 200);
+    assert.equal(exported.data.format, 'MaterialKompass DSGVO-Datenkopie');
+    assert.equal(exported.data.account.username, 'admin');
+    assert.equal(exported.data.account.passwordHash, undefined);
+    assert.doesNotMatch(JSON.stringify(exported.data), /MaterialKompass2026!/);
+  } finally { server.close(); }
+});
+
 test('password reset token is single-use and roles can be created', async () => {
   const { server, request, tokens, adminToken } = await setup();
   try {

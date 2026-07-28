@@ -309,7 +309,9 @@ class _ProcurementPageState extends State<ProcurementPage> {
         (approve &&
             isChair &&
             (double.tryParse(approvedBudget.text.replaceAll(',', '.')) ?? 0) <=
-                0)) return;
+                0)) {
+      return;
+    }
     await _simpleAction(request, 'approval',
         body: {
           'decision': approve ? 'approve' : 'reject',
@@ -488,10 +490,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
         withData: true);
     final file = picked?.files.single;
     if (file?.bytes == null || file!.bytes!.length > 5 * 1024 * 1024) {
-      if (file != null)
+      if (file != null) {
         _message('Die Datei darf maximal 5 MB groß sein.', error: true);
+      }
       return;
     }
+    if (!mounted) return;
     final type = await showDialog<String>(
         context: context,
         builder: (context) {
@@ -637,10 +641,11 @@ class _ProcurementPageState extends State<ProcurementPage> {
               onCancel: () async {
                 final reason =
                     await _textPrompt('Vorgang stornieren', 'Begründung *');
-                if (reason != null && reason.isNotEmpty)
+                if (reason != null && reason.isNotEmpty) {
                   await _simpleAction(fresh, 'cancel',
                       body: {'reason': reason},
                       success: 'Vorgang wurde storniert.');
+                }
               },
             )));
   }
@@ -802,7 +807,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
 
   Widget _requestList(List<Map<String, dynamic>> entries,
       {bool approvalButtons = false}) {
-    if (entries.isEmpty)
+    if (entries.isEmpty) {
       return Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.playlist_add,
@@ -817,6 +822,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
               label: const Text('Ersten Vorgang anlegen'))
         ]
       ]));
+    }
     return ListView.separated(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
         itemCount: entries.length,
@@ -987,8 +993,12 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
       requestedBudget,
       desiredDate,
       notes
-    ]) c.dispose();
-    for (final item in items) item.dispose();
+    ]) {
+      c.dispose();
+    }
+    for (final item in items) {
+      item.dispose();
+    }
     super.dispose();
   }
 
@@ -1291,7 +1301,9 @@ class _OfferDialogState extends State<OfferDialog> {
                 onPressed: () {
                   if (supplier == null ||
                       (double.tryParse(total.text.replaceAll(',', '.')) ?? 0) <=
-                          0) return;
+                          0) {
+                    return;
+                  }
                   Navigator.pop(context, {
                     'supplierId': supplier,
                     'offerNumber': number.text,

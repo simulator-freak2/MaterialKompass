@@ -35,7 +35,7 @@ function permissionsForRoles(roleNames, roles) {
   return [...new Set(roleNames.flatMap((name) => roles.find((role) => role.name === name)?.permissions || []))];
 }
 
-function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail }) {
+function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete }) {
   const appBaseUrl = process.env.APP_BASE_URL || 'https://materialkompass.org';
   const saveUser = (user) => userStore?.saveUser(user) || Promise.resolve();
   const deleteStoredUser = (id) => userStore?.deleteUser(id) || Promise.resolve();
@@ -253,7 +253,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (departmentError) return res.status(400).json({ error: departmentError });
     const user = {
       id: nextId('user', users), name: String(name || '').trim(), username: String(username).trim(),
-      email: normalize(email), passwordHash: bcrypt.hashSync(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: roleNames,
+      email: normalize(email), passwordHash: await bcrypt.hash(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: roleNames,
       departmentIds: [...new Set(departmentIds)],
       permissions: permissionsForRoles(roleNames, roles), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
@@ -288,7 +288,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     Object.assign(user, { name: String(req.body.name ?? user.name ?? '').trim(), username, email, roles: roleNames, departmentIds: [...new Set(departmentIds)], active: nextActive });
     user.permissions = permissionsForRoles(roleNames, roles);
     if (req.body.password) {
-      user.passwordHash = bcrypt.hashSync(req.body.password, 12);
+      user.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
     if (emailChanged) { user.emailVerifiedAt = null; await issueVerification(user); }
     if (nextActive) { user.deactivatedAt = null; user.deactivationReason = null; user.scheduledDeletionAt = null; }
@@ -308,6 +308,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (index < 0) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     if (isLastAdmin(users[index])) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht gelöscht werden.' });
     const [deleted] = users.splice(index, 1);
+    await onBeforeUserDelete?.(deleted);
     await deleteStoredUser(deleted.id);
     logEvent('delete', 'User', { id: deleted.id }, req.user.username);
     return res.status(204).end();
@@ -324,16 +325,26 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     }
     if (req.body.password) {
       if (!passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
-      user.passwordHash = bcrypt.hashSync(req.body.password, 12);
+      user.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
     await saveUser(user);
     logEvent('self_update', 'User', { id: user.id }, user.username);
     return res.json(publicUser(user));
   });
 
+  app.get('/api/users/me/export', authMiddleware, (req, res) => {
+    const payload = dataSubjectExporter
+      ? dataSubjectExporter(req.user)
+      : { generatedAt: new Date().toISOString(), account: publicUser(req.user), relatedData: {} };
+    logEvent('self_export', 'User', { id: req.user.id }, req.user.username);
+    res.set('Content-Disposition', 'attachment; filename="materialkompass-datenkopie.json"');
+    return res.json(payload);
+  });
+
   app.delete('/api/users/me', authMiddleware, async (req, res) => {
     if (!await bcrypt.compare(req.body.password || '', req.user.passwordHash)) return res.status(403).json({ error: 'Das Passwort ist nicht korrekt.' });
     if (isLastAdmin(req.user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
+    await onBeforeUserDelete?.(req.user);
     users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);
     await deleteStoredUser(req.user.id);
     logEvent('self_delete', 'User', { id: req.user.id }, req.user.username);
@@ -357,7 +368,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       return res.status(400).json({ error: 'Der Link ist ungültig oder abgelaufen.' });
     }
     if (!passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
-    user.passwordHash = bcrypt.hashSync(req.body.password, 12);
+    user.passwordHash = await bcrypt.hash(req.body.password, 12);
     user.passwordResetTokenHash = null;
     user.passwordResetExpiresAt = null;
     user.failedLoginAttempts = 0;

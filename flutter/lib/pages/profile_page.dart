@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:file_saver/file_saver.dart';
 import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../widgets/qr_login_dialog.dart';
+import '../services/file_save_mime_type.dart';
+import 'legal_page.dart';
 
 class ProfilePage extends StatefulWidget {
   final String token;
@@ -110,6 +113,26 @@ class _ProfilePageState extends State<ProfilePage> {
       final data = jsonDecode(response.body);
       message(data['error']?.toString() ?? 'Löschung fehlgeschlagen.');
     }
+  }
+
+  Future<void> exportPersonalData() async {
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/users/me/export'),
+      headers: headers,
+    );
+    if (response.statusCode != 200) {
+      final data = response.body.isEmpty ? {} : jsonDecode(response.body);
+      message(data['error']?.toString() ?? 'Datenkopie fehlgeschlagen.');
+      return;
+    }
+    await FileSaver.instance.saveFile(
+      name: 'materialkompass-datenkopie',
+      bytes: response.bodyBytes,
+      fileExtension: 'json',
+      mimeType: MimeType.custom,
+      customMimeType: fileMimeType('json'),
+    );
+    message('Ihre maschinenlesbare Datenkopie wurde gespeichert.');
   }
 
   Future<void> createQrLogin() async {
@@ -248,6 +271,24 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                   ),
                 ),
+              const Divider(height: 48),
+              Text('Datenschutzrechte',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const Text(
+                  'Laden Sie eine Kopie der Daten herunter, die Ihrem Konto unmittelbar zugeordnet werden konnten. Weitere Rechte können Sie gegenüber dem Verantwortlichen geltend machen.'),
+              const SizedBox(height: 12),
+              Wrap(spacing: 12, runSpacing: 8, children: [
+                OutlinedButton.icon(
+                    onPressed: exportPersonalData,
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Meine Daten herunterladen')),
+                TextButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const LegalPage(initialTab: 1))),
+                    icon: const Icon(Icons.privacy_tip_outlined),
+                    label: const Text('Datenschutzinformationen')),
+              ]),
               const Divider(height: 48),
               Text('Account löschen',
                   style: Theme.of(context).textTheme.titleLarge),

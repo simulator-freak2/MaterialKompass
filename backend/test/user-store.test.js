@@ -75,3 +75,56 @@ test('application collections are loaded and saved in one transaction', async ()
   assert.equal(calls.filter((entry) => entry?.sql?.includes('INSERT INTO application_collections')).length, 2);
   assert.deepEqual(calls.slice(-2), ['commit', 'release']);
 });
+
+test('process lock prevents concurrent snapshot-based backend instances', async () => {
+  const calls = [];
+  const connection = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      if (sql.startsWith('SELECT GET_LOCK')) return [{ acquired: 1 }];
+      return [{ released: 1 }];
+    },
+    release() { calls.push('release'); },
+  };
+  const database = {
+    createPool() {
+      return {
+        async getConnection() { return connection; },
+        async end() { calls.push('end'); },
+      };
+    },
+  };
+  const store = createUserStore(database);
+
+  await store.acquireProcessLock();
+  await store.close();
+
+  assert.match(calls[0].sql, /GET_LOCK/);
+  assert.match(calls[1].sql, /RELEASE_LOCK/);
+  assert.deepEqual(calls.slice(-2), ['release', 'end']);
+});
+
+test('process lock fails fast when another backend owns the database', async () => {
+  let released = false;
+  const database = {
+    createPool() {
+      return {
+        async getConnection() {
+          return {
+            async query() { return [{ acquired: 0 }]; },
+            release() { released = true; },
+          };
+        },
+        async end() {},
+      };
+    },
+  };
+  const store = createUserStore(database);
+
+  await assert.rejects(
+    store.acquireProcessLock(),
+    /nur eine Instanz/,
+  );
+  assert.equal(released, true);
+  await store.close();
+});

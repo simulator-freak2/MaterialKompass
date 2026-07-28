@@ -16,18 +16,50 @@ function sqlDateTime(value) {
 }
 
 function createUserStore(database = mariadb) {
+  const connectionLimit = Number(process.env.DB_CONNECTION_LIMIT || 5);
+  if (!Number.isInteger(connectionLimit) || connectionLimit < 2) {
+    throw new Error(
+      'DB_CONNECTION_LIMIT muss wegen der exklusiven Instanzsperre mindestens 2 sein.',
+    );
+  }
   const pool = database.createPool({
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT || 3306),
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'materialkompass',
-    connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 5),
+    connectionLimit,
     ssl: process.env.DB_SSL === 'true',
     timezone: 'Z',
   });
+  let processLockConnection;
+  let processLockName;
 
   return {
+    async acquireProcessLock(
+      name = `materialkompass-backend:${process.env.DB_NAME || 'materialkompass'}`,
+    ) {
+      const connection = await pool.getConnection();
+      try {
+        const rows = await connection.query('SELECT GET_LOCK(?, 0) AS acquired', [name]);
+        if (Number(rows[0]?.acquired) !== 1) {
+          throw new Error(
+            'Eine andere Backend-Instanz verwendet bereits diese Datenbank. '
+            + 'Der aktuelle Persistenzmodus unterstützt nur eine Instanz.',
+          );
+        }
+        processLockConnection = connection;
+        processLockName = name;
+      } catch (error) {
+        connection.release();
+        throw error;
+      }
+    },
+
+    async checkHealth() {
+      await pool.query('SELECT 1');
+    },
+
     async initialize() {
       await pool.query(`CREATE TABLE IF NOT EXISTS application_collections (
         name VARCHAR(64) PRIMARY KEY,
@@ -157,7 +189,21 @@ function createUserStore(database = mariadb) {
         if (connection) connection.release();
       }
     },
-    async close() { await pool.end(); },
+    async close() {
+      if (processLockConnection) {
+        try {
+          await processLockConnection.query(
+            'SELECT RELEASE_LOCK(?)',
+            [processLockName],
+          );
+        } finally {
+          processLockConnection.release();
+          processLockConnection = null;
+          processLockName = null;
+        }
+      }
+      await pool.end();
+    },
   };
 }
 

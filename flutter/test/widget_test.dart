@@ -15,10 +15,8 @@ void main() {
 
     expect(find.text('MaterialKompass Login'), findsOneWidget);
     expect(find.text('Interne Materialverwaltung'), findsOneWidget);
-    expect(find.text('App herunterladen'), findsOneWidget);
-    expect(find.text('Windows nicht verfügbar'), findsOneWidget);
-    expect(find.text('Linux nicht verfügbar'), findsOneWidget);
-    expect(find.text('Android nicht verfügbar'), findsOneWidget);
+    expect(find.text('App herunterladen'), findsNothing);
+    expect(find.textContaining('herunterladen'), findsNothing);
   });
 
   testWidgets('Dashboard is usable on a narrow phone screen',

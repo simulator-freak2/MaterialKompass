@@ -21,6 +21,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { SUPPORTED_PLATFORMS, createCorsOptions, parseTrustProxy } = require('./config');
+const { legalInformation } = require('./legal-config');
 const { version } = require('../package.json');
 
 const API_VERSION = '1';
@@ -70,6 +71,33 @@ function createApp(options = {}) {
       res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
     next();
+  });
+  app.use((req, res, next) => {
+    if (process.env.NODE_ENV !== 'production') return next();
+    const startedAt = process.hrtime.bigint();
+    res.once('finish', () => {
+      if (req.path === '/health') return;
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      console.log(JSON.stringify({
+        level: res.statusCode >= 500 ? 'error' : 'info',
+        event: 'http_request',
+        requestId: req.requestId,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: Number(durationMs.toFixed(1)),
+      }));
+    });
+    return next();
+  });
+  app.use((req, res, next) => {
+    if (process.env.NODE_ENV !== 'production' || req.path === '/health' || req.secure) {
+      return next();
+    }
+    return res.status(426).json({
+      error: 'HTTPS ist für diese API erforderlich.',
+      requestId: req.requestId,
+    });
   });
   app.use(cors(createCorsOptions()));
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '12mb' }));
@@ -136,8 +164,58 @@ function createApp(options = {}) {
         || path.join(defaultDownloadsDirectory, 'MaterialKompass-Android.apk'),
       fileName: 'MaterialKompass-Android.apk',
     },
+    ios: {
+      filePath: process.env.DOWNLOAD_IOS_PATH
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-iOS.ipa'),
+      fileName: 'MaterialKompass-iOS.ipa',
+    },
+    macos: {
+      filePath: process.env.DOWNLOAD_MACOS_PATH
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-macOS.dmg'),
+      fileName: 'MaterialKompass-macOS.dmg',
+    },
   };
   const downloadHashes = new Map();
+  const clientPlatforms = ['windows', 'macos', 'linux', 'android', 'ios'];
+  const platformLabels = {
+    windows: 'Windows',
+    macos: 'macOS',
+    linux: 'Linux',
+    android: 'Android',
+    ios: 'iOS',
+  };
+
+  function removeOlderThan(collection, fields, days) {
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    let removed = 0;
+    for (let index = collection.length - 1; index >= 0; index -= 1) {
+      const raw = fields.map((field) => collection[index]?.[field]).find(Boolean);
+      const timestamp = raw ? new Date(raw).getTime() : Number.NaN;
+      if (Number.isFinite(timestamp) && timestamp < cutoff) {
+        collection.splice(index, 1);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  async function applyDataRetentionPolicy() {
+    const auditDays = Number(process.env.RETENTION_AUDIT_DAYS || 1095);
+    const exportDays = Number(process.env.RETENTION_EXPORT_LOG_DAYS || 365);
+    const notificationDays = Number(process.env.RETENTION_NOTIFICATION_DAYS || 365);
+    const qrDays = Number(process.env.RETENTION_EXPIRED_QR_DAYS || 30);
+    removeOlderThan(auditLogs, ['timestamp', 'createdAt'], auditDays);
+    removeOlderThan(exportLogs, ['createdAt', 'timestamp'], exportDays);
+    removeOlderThan(notifications, ['createdAt', 'timestamp'], notificationDays);
+    const expiredCutoff = Date.now() - qrDays * 24 * 60 * 60 * 1000;
+    for (let index = qrLoginCredentials.length - 1; index >= 0; index -= 1) {
+      const expiry = new Date(qrLoginCredentials[index].expiresAt || 0).getTime();
+      if (Number.isFinite(expiry) && expiry > 0 && expiry < expiredCutoff) {
+        qrLoginCredentials.splice(index, 1);
+      }
+    }
+  }
+  app.locals.applyDataRetentionPolicy = applyDataRetentionPolicy;
 
   function desktopDownload(platform) {
     const configured = downloadSources[platform];
@@ -148,7 +226,7 @@ function createApp(options = {}) {
       if (!stats.isFile()) return null;
       return {
         platform,
-        label: platform === 'windows' ? 'Windows' : platform === 'linux' ? 'Linux' : 'Android',
+        label: platformLabels[platform],
         filePath,
         fileName: configured?.fileName || path.basename(filePath),
         sizeBytes: stats.size,
@@ -622,6 +700,65 @@ function createApp(options = {}) {
     return workbook;
   }
 
+  function containsIdentity(value, identities) {
+    if (value === null || value === undefined) return false;
+    if (typeof value !== 'object') {
+      return identities.has(String(value).trim().toLowerCase());
+    }
+    return Object.values(value).some((entry) => containsIdentity(entry, identities));
+  }
+
+  function safeDataCopy(value) {
+    if (Array.isArray(value)) return value.map(safeDataCopy);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !/(password|token|hash|credential|fileBase64)/i.test(key))
+      .map(([key, entry]) => [key, safeDataCopy(entry)]));
+  }
+
+  function exportDataSubject(user) {
+    const identities = new Set([user.id, user.name, user.username, user.email]
+      .filter(Boolean).map((entry) => String(entry).trim().toLowerCase()));
+    const relatedData = {};
+    for (const name of PERSISTED_COLLECTIONS) {
+      const matches = (appData[name] || []).filter((entry) => containsIdentity(entry, identities));
+      if (matches.length) relatedData[name] = safeDataCopy(matches);
+    }
+    return {
+      generatedAt: new Date().toISOString(),
+      format: 'MaterialKompass DSGVO-Datenkopie',
+      account: publicUser(user),
+      relatedData,
+      notes: [
+        'Die Datenkopie enthält Datensätze, die dem Konto anhand von Konto-ID, Name, Nutzername oder E-Mail-Adresse unmittelbar zugeordnet werden konnten.',
+        'Geheimnisse, Authentifizierungswerte und eingebettete Binärdateien sind aus Sicherheitsgründen nicht Bestandteil dieser maschinenlesbaren Kopie.',
+      ],
+    };
+  }
+
+  function anonymizeDataSubject(user) {
+    const pseudonym = `deleted-${createHash('sha256').update(user.id).digest('hex').slice(0, 12)}`;
+    const replacements = new Map([
+      [String(user.id).toLowerCase(), pseudonym],
+      [String(user.name || '').toLowerCase(), 'Gelöschte Person'],
+      [String(user.username || '').toLowerCase(), pseudonym],
+      [String(user.email || '').toLowerCase(), `${pseudonym}@example.invalid`],
+    ].filter(([key]) => key));
+    function anonymize(value) {
+      if (Array.isArray(value)) {
+        value.forEach((entry, index) => { value[index] = anonymize(entry); });
+        return value;
+      }
+      if (value && typeof value === 'object') {
+        Object.keys(value).forEach((key) => { value[key] = anonymize(value[key]); });
+        return value;
+      }
+      if (typeof value !== 'string') return value;
+      return replacements.get(value.trim().toLowerCase()) || value;
+    }
+    PERSISTED_COLLECTIONS.forEach((name) => anonymize(appData[name] || []));
+  }
+
   const userManagement = registerUserRoutes({
     app, users, roles, permissions, departments, authMiddleware, requirePermission, logEvent,
     departmentReferences: procurementRequests,
@@ -630,6 +767,8 @@ function createApp(options = {}) {
     onTokenIssued: options.onAccountToken,
     userStore: options.userStore,
     accountMailSender: options.accountMailSender,
+    dataSubjectExporter: exportDataSubject,
+    onBeforeUserDelete: anonymizeDataSubject,
   });
 
   registerScannerEmailRoutes({
@@ -656,6 +795,23 @@ function createApp(options = {}) {
     timestamp: new Date().toISOString(),
   }));
 
+  app.get('/ready', async (req, res) => {
+    try {
+      await options.dataStore?.checkHealth?.();
+      return res.json({
+        status: 'ready',
+        service: 'materialkompass-backend',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      return res.status(503).json({
+        status: 'not-ready',
+        error: 'Die Datenbank ist nicht erreichbar.',
+        requestId: req.requestId,
+      });
+    }
+  });
+
   app.get('/api/info', (req, res) => res.json({
     service: 'MaterialKompass API',
     version,
@@ -663,11 +819,13 @@ function createApp(options = {}) {
     supportedClients: SUPPORTED_PLATFORMS,
   }));
 
-  app.get('/api/downloads', (req, res) => res.json(['windows', 'linux', 'android'].map((platform) => {
+  app.get('/api/legal', (_req, res) => res.json(legalInformation()));
+
+  app.get('/api/downloads', (req, res) => res.json(clientPlatforms.map((platform) => {
     const download = desktopDownload(platform);
     return {
       platform,
-      label: platform === 'windows' ? 'Windows' : platform === 'linux' ? 'Linux' : 'Android',
+      label: platformLabels[platform],
       available: download !== null,
       fileName: download?.fileName || null,
       sizeBytes: download?.sizeBytes || null,
@@ -677,7 +835,7 @@ function createApp(options = {}) {
 
   app.get('/api/client-updates/:platform', async (req, res, next) => {
     const platform = req.params.platform;
-    if (!['windows', 'linux', 'android'].includes(platform)) {
+    if (!clientPlatforms.includes(platform)) {
       return res.status(404).json({ error: 'Unbekannte Plattform.' });
     }
     const download = desktopDownload(platform);
@@ -706,7 +864,7 @@ function createApp(options = {}) {
   });
 
   app.get('/api/downloads/:platform', (req, res, next) => {
-    if (!['windows', 'linux', 'android'].includes(req.params.platform)) {
+    if (!clientPlatforms.includes(req.params.platform)) {
       return res.status(404).json({ error: 'Unbekannte Plattform.' });
     }
     const download = desktopDownload(req.params.platform);

@@ -11,6 +11,7 @@ const _extensions = {
   'windows': '.exe',
   'linux': '.deb',
   'android': '.apk',
+  'macos': '.dmg',
 };
 
 Future<bool> downloadAndInstallClientUpdate(
@@ -80,5 +81,6 @@ String _mimeType(String extension) => switch (extension) {
       '.exe' => 'application/vnd.microsoft.portable-executable',
       '.deb' => 'application/vnd.debian.binary-package',
       '.apk' => 'application/vnd.android.package-archive',
+      '.dmg' => 'application/x-apple-diskimage',
       _ => 'application/octet-stream',
     };

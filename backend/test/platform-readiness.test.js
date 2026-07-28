@@ -30,9 +30,19 @@ test('health and API information are available to every client platform', async 
     assert.ok(health.headers.get('x-request-id'));
     assert.equal((await health.json()).status, 'ok');
 
+    const readiness = await fetch(`${baseUrl}/ready`);
+    assert.equal(readiness.status, 200);
+    assert.equal((await readiness.json()).status, 'ready');
+
     const info = await fetch(`${baseUrl}/api/info`);
     const data = await info.json();
     assert.deepEqual(data.supportedClients, ['windows', 'linux', 'android', 'ios', 'macos']);
+
+    const legal = await fetch(`${baseUrl}/api/legal`);
+    assert.equal(legal.status, 200);
+    const legalData = await legal.json();
+    assert.equal(legalData.hasDummies, true);
+    assert.equal(Array.isArray(legalData.privacy.rights), true);
 
     const missing = await fetch(`${baseUrl}/api/does-not-exist`);
     assert.equal(missing.status, 404);
@@ -49,11 +59,17 @@ test('desktop downloads report availability and stream configured release files'
     const windows = metadata.find((entry) => entry.platform === 'windows');
     const linux = metadata.find((entry) => entry.platform === 'linux');
     const android = metadata.find((entry) => entry.platform === 'android');
+    const ios = metadata.find((entry) => entry.platform === 'ios');
+    const macos = metadata.find((entry) => entry.platform === 'macos');
     assert.equal(windows.available, true);
     assert.equal(windows.fileName, 'MaterialKompass-Windows.exe');
     assert.equal(windows.downloadUrl, '/api/downloads/windows');
     assert.equal(linux.available, false);
     assert.equal(android.available, false);
+    assert.equal(ios.available, false);
+    assert.equal(macos.available, false);
+    assert.equal(ios.label, 'iOS');
+    assert.equal(macos.label, 'macOS');
 
     const updateResponse = await fetch(`${baseUrl}/api/client-updates/windows?currentVersion=0.9.0`);
     assert.equal(updateResponse.status, 200);
@@ -101,6 +117,7 @@ test('runtime configuration validates network settings', () => {
     JWT_SECRET: 'a-secure-random-secret-with-32-characters',
     CORS_ORIGIN: 'https://app.example.org',
     APP_BASE_URL: 'https://app.example.org',
+    TRUST_PROXY: '1',
     SMTP_HOST: 'smtp.example.org',
     SMTP_USER: 'mailer@example.org',
     SMTP_PASSWORD: 'secret',
@@ -110,6 +127,21 @@ test('runtime configuration validates network settings', () => {
     DEFECT_IMAP_PASSWORD: 'secret',
     MAILBOX_PROVISIONER_TOKEN: 'b'.repeat(64),
     MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
+    MAILBOX_PROVISIONER_SOCKET: '/run/materialkompass/provisioner.sock',
+    LEGAL_CONTROLLER_NAME: 'Example Organisation',
+    LEGAL_LEGAL_FORM: 'e. V.',
+    LEGAL_REPRESENTED_BY: 'Erika Beispiel',
+    LEGAL_STREET: 'Beispielweg 1',
+    LEGAL_POSTAL_CODE: '12345',
+    LEGAL_CITY: 'Beispielstadt',
+    LEGAL_COUNTRY: 'Deutschland',
+    LEGAL_EMAIL: 'legal@example.org',
+    LEGAL_PHONE: '+49 30 123456',
+    LEGAL_SUPERVISORY_AUTHORITY: 'Landesaufsicht',
+    LEGAL_SUPERVISORY_WEBSITE: 'https://authority.example.org',
+    LEGAL_ACCOUNT_BASIS: 'Art. 6 Abs. 1 lit. b DSGVO',
+    LEGAL_OPERATIONS_BASIS: 'Art. 6 Abs. 1 lit. f DSGVO',
+    LEGAL_LEGITIMATE_INTERESTS: 'Sichere interne Materialverwaltung',
     DB_HOST: 'database',
     PORT: '4000',
   }), {
@@ -136,6 +168,58 @@ test('runtime configuration validates network settings', () => {
     JWT_SECRET: 'a-secure-random-secret-with-32-characters',
     CORS_ORIGIN: 'https://app.example.org',
     APP_BASE_URL: 'https://app.example.org',
+    TRUST_PROXY: '1',
     DB_HOST: 'database',
   }), /SMTP/);
+  assert.throws(() => loadRuntimeConfig({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    CORS_ORIGIN: 'http://app.example.org',
+  }), /CORS_ORIGIN/);
+});
+
+test('readiness reports database failures without failing liveness', async () => {
+  await withServer(async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+    const readiness = await fetch(`${baseUrl}/ready`);
+    assert.equal(readiness.status, 503);
+    assert.equal((await readiness.json()).status, 'not-ready');
+  }, {
+    dataStore: {
+      async checkHealth() { throw new Error('database unavailable'); },
+      async saveCollections() {},
+    },
+  });
+});
+
+test('production API rejects cleartext requests outside the health endpoint', async () => {
+  const previous = {
+    NODE_ENV: process.env.NODE_ENV,
+    JWT_SECRET: process.env.JWT_SECRET,
+    TRUST_PROXY: process.env.TRUST_PROXY,
+    CORS_ORIGIN: process.env.CORS_ORIGIN,
+    MAILBOX_PASSWORD_ENCRYPTION_KEY: process.env.MAILBOX_PASSWORD_ENCRYPTION_KEY,
+  };
+  Object.assign(process.env, {
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    TRUST_PROXY: 'loopback',
+    CORS_ORIGIN: 'https://app.example.org',
+    MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
+  });
+  try {
+    await withServer(async (baseUrl) => {
+      assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+      assert.equal((await fetch(`${baseUrl}/ready`)).status, 426);
+      assert.equal((await fetch(`${baseUrl}/api/info`)).status, 426);
+      assert.equal((await fetch(`${baseUrl}/api/info`, {
+        headers: { 'X-Forwarded-Proto': 'https' },
+      })).status, 200);
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

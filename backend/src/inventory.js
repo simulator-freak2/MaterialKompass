@@ -3,6 +3,8 @@ const MATERIAL_STATUSES = [
   'In Reparatur', 'Ausgesondert', 'Verloren',
 ];
 const { nextInventoryNumber } = require('./inventory-number');
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 1000;
 
 const IMPORT_ALIASES = {
   inventarnummer: 'inventoryNumber', bezeichnung: 'name', name: 'name',
@@ -261,11 +263,23 @@ function registerInventoryRoutes({
 
   app.post('/api/material/import', authMiddleware, requirePermission('inventory.import'), (req, res) => {
     const fileName = String(req.body.fileName || ''); const extension = fileName.split('.').pop().toLowerCase();
-    if (!['xlsx', 'ods'].includes(extension) || !req.body.fileBase64) return res.status(400).json({ error: 'Eine XLSX- oder ODS-Datei ist erforderlich.' });
+    const fileBase64 = String(req.body.fileBase64 || '');
+    if (!['xlsx', 'ods'].includes(extension) || !fileBase64
+      || fileBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(fileBase64)) {
+      return res.status(400).json({ error: 'Eine gültige XLSX- oder ODS-Datei ist erforderlich.' });
+    }
+    const fileBytes = Buffer.from(fileBase64, 'base64');
+    if (fileBytes.length > MAX_IMPORT_BYTES) {
+      return res.status(413).json({ error: 'Die Importdatei darf höchstens 5 MB groß sein.' });
+    }
     let rows;
     try {
-      const workbook = XLSX.read(Buffer.from(req.body.fileBase64, 'base64'), { type: 'buffer' });
-      rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '', raw: false }).map((row) => Object.entries(row).reduce((result, [key, value]) => { const field = IMPORT_ALIASES[normalizeHeader(key)]; if (field) result[field] = String(value ?? '').trim(); return result; }, {}));
+      const workbook = XLSX.read(fileBytes, { type: 'buffer', sheetRows: MAX_IMPORT_ROWS + 2 });
+      const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '', raw: false });
+      if (rawRows.length > MAX_IMPORT_ROWS) {
+        return res.status(413).json({ error: `Die Tabelle darf höchstens ${MAX_IMPORT_ROWS} Datenzeilen enthalten.` });
+      }
+      rows = rawRows.map((row) => Object.entries(row).reduce((result, [key, value]) => { const field = IMPORT_ALIASES[normalizeHeader(key)]; if (field) result[field] = String(value ?? '').trim(); return result; }, {}));
     } catch (_) { return res.status(400).json({ error: 'Die Tabelle konnte nicht gelesen werden.' }); }
     const skippedRows = []; const imported = [];
     rows.forEach((row, index) => {

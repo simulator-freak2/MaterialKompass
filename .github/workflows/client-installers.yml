@@ -27,6 +27,20 @@ jobs:
       - name: Inno Setup installieren
         shell: pwsh
         run: choco install innosetup --yes --no-progress
+      - name: Windows-Signaturzertifikat importieren
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_BASE64 -or -not $env:PFX_PASSWORD) {
+            throw "Windows-Signatursecrets fehlen."
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "materialkompass-signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:PFX_BASE64))
+          $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "WINDOWS_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Windows-Installer bauen
         shell: pwsh
         run: ./packaging/windows/build_installer.ps1 -ApiBaseUrl '${{ inputs.api_base_url }}' -Version '${{ inputs.version }}'
@@ -51,6 +65,57 @@ jobs:
         with:
           name: MaterialKompass-Linux
           path: releases/MaterialKompass-Linux.deb
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: macOS-Signaturzertifikat importieren
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$CERTIFICATE_BASE64" && test -n "$CERTIFICATE_PASSWORD" && test -n "$KEYCHAIN_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/materialkompass-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/materialkompass-signing.keychain-db"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+      - name: macOS-DMG bauen
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash packaging/macos/build_dmg.sh '${{ inputs.api_base_url }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaterialKompass-macOS
+          path: releases/MaterialKompass-macOS.dmg
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: iOS-Prüf-Build ohne Signatur bauen
+        run: bash packaging/ios/build_unsigned_app.sh '${{ inputs.api_base_url }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaterialKompass-iOS-unsigned
+          path: releases/MaterialKompass-iOS-unsigned.zip
 
   android:
     runs-on: ubuntu-latest

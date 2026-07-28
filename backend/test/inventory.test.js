@@ -168,3 +168,23 @@ test('inventory only permanently deletes archived items and does not reuse their
     server.close();
   }
 });
+
+test('inventory import rejects oversized spreadsheet payloads before parsing', async () => {
+  const { server, baseUrl, token } = await serverAndToken();
+  try {
+    const response = await fetch(`${baseUrl}/api/material/import`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        fileName: 'oversized.xlsx',
+        fileBase64: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64'),
+      }),
+    });
+    assert.equal(response.status, 413);
+  } finally {
+    server.close();
+  }
+});

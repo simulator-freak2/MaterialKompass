@@ -22,14 +22,71 @@ services:
       context: ./backend
     restart: unless-stopped
     init: true
-    env_file:
-      - ./.env
     environment:
+      JWT_SECRET: ${JWT_SECRET}
+      TRUST_PROXY: ${TRUST_PROXY:-loopback}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      APP_BASE_URL: ${APP_BASE_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-12mb}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      MAILBOX_PROVISIONER_TOKEN: ${MAILBOX_PROVISIONER_TOKEN}
+      MAILBOX_PASSWORD_ENCRYPTION_KEY: ${MAILBOX_PASSWORD_ENCRYPTION_KEY}
+      MAILBOX_SERVER_HOST: ${MAILBOX_SERVER_HOST}
+      SCANNER_EMAIL_DOMAIN: ${SCANNER_EMAIL_DOMAIN}
+      DEFECT_IMAP_HOST: ${DEFECT_IMAP_HOST}
+      DEFECT_IMAP_PORT: ${DEFECT_IMAP_PORT:-993}
+      DEFECT_IMAP_SECURE: ${DEFECT_IMAP_SECURE:-true}
+      DEFECT_IMAP_USER: ${DEFECT_IMAP_USER}
+      DEFECT_IMAP_PASSWORD: ${DEFECT_IMAP_PASSWORD}
+      DEFECT_IMAP_MAILBOX: ${DEFECT_IMAP_MAILBOX:-INBOX}
+      DEFECT_IMAP_PROCESSED_MAILBOX: ${DEFECT_IMAP_PROCESSED_MAILBOX:-Verarbeitet}
+      DEFECT_IMAP_POLL_INTERVAL_MS: ${DEFECT_IMAP_POLL_INTERVAL_MS:-300000}
+      DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED: ${DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED:-true}
       DB_HOST: db
       DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_CONNECTION_LIMIT: ${DB_CONNECTION_LIMIT:-5}
+      DB_SSL: ${DB_SSL:-false}
+      GLIEDERUNGSNUMMER: ${GLIEDERUNGSNUMMER:-10050035}
+      RETENTION_AUDIT_DAYS: ${RETENTION_AUDIT_DAYS:-1095}
+      RETENTION_EXPORT_LOG_DAYS: ${RETENTION_EXPORT_LOG_DAYS:-365}
+      RETENTION_NOTIFICATION_DAYS: ${RETENTION_NOTIFICATION_DAYS:-365}
+      RETENTION_EXPIRED_QR_DAYS: ${RETENTION_EXPIRED_QR_DAYS:-30}
+      LEGAL_CONTROLLER_NAME: ${LEGAL_CONTROLLER_NAME}
+      LEGAL_LEGAL_FORM: ${LEGAL_LEGAL_FORM}
+      LEGAL_REPRESENTED_BY: ${LEGAL_REPRESENTED_BY}
+      LEGAL_STREET: ${LEGAL_STREET}
+      LEGAL_POSTAL_CODE: ${LEGAL_POSTAL_CODE}
+      LEGAL_CITY: ${LEGAL_CITY}
+      LEGAL_COUNTRY: ${LEGAL_COUNTRY}
+      LEGAL_EMAIL: ${LEGAL_EMAIL}
+      LEGAL_PHONE: ${LEGAL_PHONE}
+      LEGAL_REGISTER: ${LEGAL_REGISTER:-}
+      LEGAL_REGISTER_NUMBER: ${LEGAL_REGISTER_NUMBER:-}
+      LEGAL_VAT_ID: ${LEGAL_VAT_ID:-}
+      LEGAL_DPO_NAME: ${LEGAL_DPO_NAME:-}
+      LEGAL_DPO_EMAIL: ${LEGAL_DPO_EMAIL:-}
+      LEGAL_DPO_ADDRESS: ${LEGAL_DPO_ADDRESS:-}
+      LEGAL_SUPERVISORY_AUTHORITY: ${LEGAL_SUPERVISORY_AUTHORITY}
+      LEGAL_SUPERVISORY_ADDRESS: ${LEGAL_SUPERVISORY_ADDRESS:-}
+      LEGAL_SUPERVISORY_WEBSITE: ${LEGAL_SUPERVISORY_WEBSITE}
+      LEGAL_ACCOUNT_BASIS: ${LEGAL_ACCOUNT_BASIS}
+      LEGAL_OPERATIONS_BASIS: ${LEGAL_OPERATIONS_BASIS}
+      LEGAL_LEGITIMATE_INTERESTS: ${LEGAL_LEGITIMATE_INTERESTS}
       DOWNLOAD_WINDOWS_PATH: /app/downloads/MaterialKompass-Windows.exe
       DOWNLOAD_LINUX_PATH: /app/downloads/MaterialKompass-Linux.deb
       DOWNLOAD_ANDROID_PATH: /app/downloads/MaterialKompass-Android.apk
+      DOWNLOAD_IOS_PATH: /app/downloads/MaterialKompass-iOS.ipa
+      DOWNLOAD_MACOS_PATH: /app/downloads/MaterialKompass-macOS.dmg
       CLIENT_WINDOWS_VERSION: ${CLIENT_WINDOWS_VERSION:-1.0.0}
       CLIENT_LINUX_VERSION: ${CLIENT_LINUX_VERSION:-1.0.0}
       CLIENT_ANDROID_VERSION: ${CLIENT_ANDROID_VERSION:-1.0.0}
@@ -37,9 +94,10 @@ services:
       CLIENT_LINUX_MIN_VERSION: ${CLIENT_LINUX_MIN_VERSION:-1.0.0}
       CLIENT_ANDROID_MIN_VERSION: ${CLIENT_ANDROID_MIN_VERSION:-1.0.0}
       CLIENT_UPDATE_NOTES: ${CLIENT_UPDATE_NOTES:-}
-      MAILBOX_PROVISIONER_URL: http://mailbox-provisioner:3010
+      MAILBOX_PROVISIONER_SOCKET: /run/materialkompass/mailbox-provisioner.sock
     volumes:
       - ./releases:/app/downloads:ro
+      - materialkompass_mailbox_socket:/run/materialkompass
     depends_on:
       db:
         condition: service_healthy
@@ -52,15 +110,15 @@ services:
     build:
       context: ./mailbox-provisioner
     restart: unless-stopped
-    env_file:
-      - ./.env
     environment:
-      HOST: 0.0.0.0
-      PORT: 3010
+      SOCKET_PATH: /run/materialkompass/mailbox-provisioner.sock
       MAILSERVER_CONTAINER: ${MAILSERVER_CONTAINER:-mailserver}
       SCANNER_EMAIL_DOMAIN: ${SCANNER_EMAIL_DOMAIN:-materialkompass.org}
+      MAILBOX_PROVISIONER_TOKEN: ${MAILBOX_PROVISIONER_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - materialkompass_mailbox_socket:/run/materialkompass
+    network_mode: none
     read_only: true
     tmpfs:
       - /tmp
@@ -69,7 +127,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3010/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "const h=require('http');const r=h.get({socketPath:'/run/materialkompass/mailbox-provisioner.sock',path:'/health'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -78,3 +136,4 @@ services:
 volumes:
   materialkompass_db:
     name: ${DB_VOLUME_NAME:-materialkompass_db_data}
+  materialkompass_mailbox_socket:

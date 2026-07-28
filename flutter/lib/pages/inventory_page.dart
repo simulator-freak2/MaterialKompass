@@ -250,8 +250,9 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                   ],
                   onChanged: (value) => setState(() {
                     itemType = value!;
-                    if (itemType == 'individual')
+                    if (itemType == 'individual') {
                       fields['quantity']!.text = '1';
+                    }
                   }),
                 ),
               ),

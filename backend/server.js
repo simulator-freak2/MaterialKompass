@@ -17,6 +17,7 @@ async function start() {
 
   const store = createUserStore();
   try {
+    await store.acquireProcessLock();
     await store.initialize();
     const userData = await store.load();
     const storedCollections = await store.loadCollections();
@@ -42,6 +43,7 @@ async function start() {
     await app.locals.applyUserRetentionPolicy();
     await app.locals.applyDefectRetentionPolicy();
     await app.locals.applyDefectEmailRetentionPolicy();
+    await app.locals.applyDataRetentionPolicy();
     await app.locals.persistData();
     console.log(`Alle Anwendungsdaten aus MariaDB geladen (${userData.users.length} Accounts).`);
 
@@ -49,6 +51,7 @@ async function start() {
       app.locals.applyUserRetentionPolicy()
         .then(() => app.locals.applyDefectRetentionPolicy())
         .then(() => app.locals.applyDefectEmailRetentionPolicy())
+        .then(() => app.locals.applyDataRetentionPolicy())
         .then(() => app.locals.persistData())
         .catch((error) => console.error('Aufbewahrungsregel fehlgeschlagen:', error));
     }, 24 * 60 * 60 * 1000);
