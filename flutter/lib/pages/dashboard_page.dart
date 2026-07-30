@@ -9,6 +9,7 @@ import 'categories_page.dart';
 import 'defects_page.dart';
 import 'login_page.dart';
 import 'inventory_page.dart';
+import 'knowledge_base_page.dart';
 import 'locations_page.dart';
 import 'procurement_page.dart';
 import 'profile_page.dart';
@@ -213,6 +214,14 @@ class _DashboardPageState extends State<DashboardPage> {
                 return requiredPermission != null && can(requiredPermission);
               }).toList();
               final actions = <_DashboardAction>[
+                _DashboardAction(
+                  icon: Icons.menu_book_outlined,
+                  label: 'Handbuch',
+                  description: 'Anleitungen und Antworten durchsuchen',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const KnowledgeBasePage(),
+                  )),
+                ),
                 if (can('inventory.read'))
                   _DashboardAction(
                     icon: Icons.inventory_2_outlined,

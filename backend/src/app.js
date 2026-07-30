@@ -769,6 +769,7 @@ function createApp(options = {}) {
     accountMailSender: options.accountMailSender,
     dataSubjectExporter: exportDataSubject,
     onBeforeUserDelete: anonymizeDataSubject,
+    now: options.now,
   });
 
   registerScannerEmailRoutes({

@@ -28,3 +28,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/materialkompass_logo_mit_schriftzug.png
+    - assets/branding/materialkompass_logo_ohne_schriftzug.png

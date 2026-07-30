@@ -1,5 +1,67 @@
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+
 let nodemailer;
 let transport;
+
+const LOGO_CID = 'materialkompass-logo';
+const logo = readFileSync(path.join(
+  __dirname,
+  'assets',
+  'materialkompass-logo-with-wordmark.png',
+));
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function buildBrandedHtml({ text, actionUrl, actionLabel }) {
+  const bodyText = actionUrl
+    ? String(text || '').replace(actionUrl, '').trim()
+    : String(text || '').trim();
+  const paragraphs = bodyText
+    .split(/\n{2,}/)
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replaceAll('\n', '<br>')}</p>`)
+    .join('');
+  const action = actionUrl
+    ? `<p class="action"><a href="${escapeHtml(actionUrl)}">${escapeHtml(actionLabel || 'MaterialKompass öffnen')}</a></p>`
+    : '';
+
+  return `<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <style>
+    body { margin: 0; padding: 24px; background: #fff7e6; color: #2b2100; font: 16px/1.5 Arial, sans-serif; }
+    .card { max-width: 620px; margin: 0 auto; padding: 28px; background: #ffffff; border: 1px solid #f4b400; border-radius: 16px; }
+    .logo { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto 24px; }
+    .action a { display: inline-block; padding: 12px 18px; border-radius: 10px; background: #d32f2f; color: #ffffff !important; font-weight: 700; text-decoration: none; }
+    .footer { margin-top: 28px; color: #6b5b3e; font-size: 13px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1b1710; color: #fff7e6; }
+      .card { background: #2b2418; border-color: #f4b400; }
+      .footer { color: #d8ccb4; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img class="logo" src="cid:${LOGO_CID}" alt="MaterialKompass">
+    ${paragraphs}
+    ${action}
+    <p class="footer">Diese Nachricht wurde automatisch von MaterialKompass versendet.</p>
+  </main>
+</body>
+</html>`;
+}
 
 function getTransport() {
   if (!process.env.SMTP_HOST) return null;
@@ -21,7 +83,13 @@ function getTransport() {
   return transport;
 }
 
-async function sendAccountMail({ to, subject, text }) {
+async function sendAccountMail({
+  to,
+  subject,
+  text,
+  actionUrl,
+  actionLabel,
+}) {
   const transport = getTransport();
   if (!transport) {
     if (process.env.NODE_ENV !== 'test') {
@@ -34,6 +102,14 @@ async function sendAccountMail({ to, subject, text }) {
     to,
     subject,
     text,
+    html: buildBrandedHtml({ text, actionUrl, actionLabel }),
+    attachments: [{
+      filename: 'materialkompass-logo.png',
+      content: logo,
+      cid: LOGO_CID,
+      contentType: 'image/png',
+      contentDisposition: 'inline',
+    }],
   });
   return true;
 }
@@ -45,4 +121,8 @@ async function verifyAccountMailTransport() {
   return true;
 }
 
-module.exports = { sendAccountMail, verifyAccountMailTransport };
+module.exports = {
+  buildBrandedHtml,
+  sendAccountMail,
+  verifyAccountMailTransport,
+};

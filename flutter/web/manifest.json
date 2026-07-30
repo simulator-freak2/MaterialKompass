@@ -1,11 +1,11 @@
 {
-    "name": "materialkompass",
-    "short_name": "materialkompass",
+    "name": "MaterialKompass",
+    "short_name": "MaterialKompass",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFF7E6",
+    "theme_color": "#D32F2F",
+    "description": "Interne Materialverwaltung mit MaterialKompass.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

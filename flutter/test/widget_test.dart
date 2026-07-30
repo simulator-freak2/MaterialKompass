@@ -15,6 +15,7 @@ void main() {
 
     expect(find.text('MaterialKompass Login'), findsOneWidget);
     expect(find.text('Interne Materialverwaltung'), findsOneWidget);
+    expect(find.text('Bestätigungs-E-Mail erneut senden'), findsOneWidget);
     expect(find.text('App herunterladen'), findsNothing);
     expect(find.textContaining('herunterladen'), findsNothing);
   });

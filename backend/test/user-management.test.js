@@ -8,6 +8,7 @@ async function setup(options = {}) {
   const app = createApp({
     onAccountToken: (entry) => tokens.push(entry),
     accountMailSender: options.accountMailSender,
+    now: options.now,
   });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -96,6 +97,93 @@ test('authenticated users can download a secret-free personal data copy', async 
     assert.equal(exported.data.account.username, 'admin');
     assert.equal(exported.data.account.passwordHash, undefined);
     assert.doesNotMatch(JSON.stringify(exported.data), /MaterialKompass2026!/);
+  } finally { server.close(); }
+});
+
+test('email verification can only be resent after 24 hours for new and changed addresses', async () => {
+  let currentTime = Date.parse('2026-07-01T08:00:00.000Z');
+  const { server, request, tokens, adminToken } = await setup({
+    now: () => currentTime,
+  });
+  try {
+    const created = await request('/api/users', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        name: 'Wartende Nutzerin',
+        username: 'wartend',
+        email: 'wartend@example.org',
+        password: 'SehrSicher123!',
+        roles: ['Nutzer'],
+      },
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(
+      created.data.verificationResendAvailableAt,
+      '2026-07-02T08:00:00.000Z',
+    );
+    assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 1);
+
+    const earlyPublicResend = await request('/api/auth/verification/resend', {
+      method: 'POST',
+      body: { identifier: 'wartend' },
+    });
+    assert.equal(earlyPublicResend.response.status, 202);
+    assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 1);
+
+    const earlyAdminResend = await request(
+      `/api/users/${created.data.id}/verification/resend`,
+      { method: 'POST', token: adminToken },
+    );
+    assert.equal(earlyAdminResend.response.status, 409);
+    assert.equal(earlyAdminResend.data.availableAt, '2026-07-02T08:00:00.000Z');
+
+    currentTime += 24 * 60 * 60 * 1000;
+    const resentForNewUser = await request('/api/auth/verification/resend', {
+      method: 'POST',
+      body: { email: 'wartend@example.org' },
+    });
+    assert.equal(resentForNewUser.response.status, 202);
+    assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 2);
+
+    const latestVerification = tokens.findLast(
+      (entry) => entry.type === 'verification' && entry.userId === created.data.id,
+    );
+    assert.equal(
+      (await request(`/api/auth/verify-email?token=${latestVerification.token}`)).response.status,
+      200,
+    );
+
+    const changed = await request(`/api/users/${created.data.id}`, {
+      method: 'PUT',
+      token: adminToken,
+      body: { ...created.data, email: 'geändert@example.org' },
+    });
+    assert.equal(changed.response.status, 200);
+    assert.equal(changed.data.emailVerifiedAt, null);
+    assert.equal(
+      changed.data.verificationResendAvailableAt,
+      '2026-07-03T08:00:00.000Z',
+    );
+    assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 3);
+
+    assert.equal(
+      (await request(`/api/users/${created.data.id}/verification/resend`, {
+        method: 'POST',
+        token: adminToken,
+      })).response.status,
+      409,
+    );
+
+    currentTime += 24 * 60 * 60 * 1000;
+    assert.equal(
+      (await request(`/api/users/${created.data.id}/verification/resend`, {
+        method: 'POST',
+        token: adminToken,
+      })).response.status,
+      202,
+    );
+    assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 4);
   } finally { server.close(); }
 });
 

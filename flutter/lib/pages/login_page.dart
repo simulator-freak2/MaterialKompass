@@ -120,6 +120,56 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> resendEmailVerification() async {
+    final controller = TextEditingController(text: emailController.text);
+    String? identifier;
+    try {
+      identifier = await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Bestätigungs-E-Mail erneut senden'),
+          content: TextField(
+            controller: controller,
+            decoration:
+                const InputDecoration(labelText: 'Nutzername oder E-Mail'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('E-Mail anfordern'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+    if (identifier == null || identifier.trim().isEmpty) return;
+    try {
+      final response = await api.post(
+        '/api/auth/verification/resend',
+        body: {'identifier': identifier},
+      );
+      if (!mounted) return;
+      if (response.statusCode == 202) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+            'Wenn die Bestätigung aussteht und die letzte E-Mail mindestens 24 Stunden alt ist, wurde eine neue E-Mail versendet.',
+          ),
+        ));
+      } else {
+        _showError(response.object['error']?.toString() ??
+            'Die Bestätigungs-E-Mail konnte nicht angefordert werden.');
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showError(error.message);
+    }
+  }
+
   Future<void> login() async {
     setState(() => loading = true);
     try {
@@ -201,6 +251,22 @@ class _LoginPageState extends State<LoginPage> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          Image.asset(
+                            'assets/branding/materialkompass_logo_mit_schriftzug.png',
+                            height: 92,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                            semanticLabel: 'MaterialKompass',
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'MaterialKompass',
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
                           const Text(
                             'Interne Materialverwaltung',
                             style: TextStyle(
@@ -244,6 +310,11 @@ class _LoginPageState extends State<LoginPage> {
                           TextButton(
                               onPressed: loading ? null : requestPasswordReset,
                               child: const Text('Passwort vergessen?')),
+                          TextButton(
+                            onPressed: loading ? null : resendEmailVerification,
+                            child:
+                                const Text('Bestätigungs-E-Mail erneut senden'),
+                          ),
                           OutlinedButton.icon(
                             onPressed: loading ? null : loginWithQrCode,
                             icon: const Icon(Icons.qr_code_scanner),

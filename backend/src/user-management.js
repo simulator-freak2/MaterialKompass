@@ -22,7 +22,11 @@ function publicUser(user) {
     passwordResetExpiresAt,
     ...safe
   } = user;
-  return safe;
+  return {
+    ...safe,
+    verificationResendAvailableAt:
+      user.emailVerifiedAt ? null : verificationExpiresAt || null,
+  };
 }
 
 function passwordIsValid(password) {
@@ -35,7 +39,7 @@ function permissionsForRoles(roleNames, roles) {
   return [...new Set(roleNames.flatMap((name) => roles.find((role) => role.name === name)?.permissions || []))];
 }
 
-function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete }) {
+function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete, now = Date.now }) {
   const appBaseUrl = process.env.APP_BASE_URL || 'https://materialkompass.org';
   const saveUser = (user) => userStore?.saveUser(user) || Promise.resolve();
   const deleteStoredUser = (id) => userStore?.deleteUser(id) || Promise.resolve();
@@ -76,16 +80,31 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   }
 
   async function issueVerification(user) {
+    const issuedAt = now();
     const token = crypto.randomBytes(32).toString('hex');
     user.verificationTokenHash = tokenHash(token);
-    user.verificationExpiresAt = new Date(Date.now() + VERIFY_TTL).toISOString();
+    user.verificationExpiresAt = new Date(issuedAt + VERIFY_TTL).toISOString();
     const url = `${appBaseUrl}/#/verify-email?token=${token}`;
     onTokenIssued?.({ type: 'verification', userId: user.id, token });
     return accountMailSender({
       to: user.email,
       subject: 'E-Mail-Adresse für MaterialKompass bestätigen',
       text: `Bitte bestätigen Sie Ihre E-Mail-Adresse innerhalb von 24 Stunden:\n\n${url}`,
+      actionUrl: url,
+      actionLabel: 'E-Mail-Adresse bestätigen',
     }).catch((error) => console.error('Verifizierungs-E-Mail fehlgeschlagen:', error.message));
+  }
+
+  function verificationCanBeResent(user) {
+    if (!user?.active || user.emailVerifiedAt) return false;
+    const availableAt = new Date(user.verificationExpiresAt).getTime();
+    return !Number.isFinite(availableAt) || availableAt <= now();
+  }
+
+  async function resendVerification(user, actor) {
+    await issueVerification(user);
+    await saveUser(user);
+    logEvent('email_verification_resent', 'User', { id: user.id }, actor);
   }
 
   async function issuePasswordReset(user) {
@@ -98,6 +117,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       to: user.email,
       subject: 'MaterialKompass-Passwort zurücksetzen',
       text: `Über diesen Link können Sie innerhalb einer Stunde ein neues Passwort setzen:\n\n${url}`,
+      actionUrl: url,
+      actionLabel: 'Neues Passwort setzen',
     }).catch((error) => console.error('Passwort-E-Mail fehlgeschlagen:', error.message));
   }
 
@@ -303,6 +324,24 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     return res.status(202).json({ message: 'Wenn das Konto existiert, wurde eine E-Mail versendet.' });
   });
 
+  app.post('/api/users/:id/verification/resend', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    const user = users.find((entry) => entry.id === req.params.id);
+    if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+    if (!user.active) return res.status(409).json({ error: 'Der Account ist deaktiviert.' });
+    if (user.emailVerifiedAt) return res.status(409).json({ error: 'Die E-Mail-Adresse ist bereits bestätigt.' });
+    if (!verificationCanBeResent(user)) {
+      return res.status(409).json({
+        error: 'Die Bestätigungs-E-Mail kann erst 24 Stunden nach dem letzten Versand erneut gesendet werden.',
+        availableAt: user.verificationExpiresAt,
+      });
+    }
+    await resendVerification(user, req.user.username);
+    return res.status(202).json({
+      message: 'Die Bestätigungs-E-Mail wurde erneut versendet.',
+      verificationResendAvailableAt: user.verificationExpiresAt,
+    });
+  });
+
   app.delete('/api/users/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
     const index = users.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
@@ -381,10 +420,10 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   app.get('/api/auth/verify-email', authRateLimit, async (req, res) => {
     const hash = tokenHash(req.query.token || '');
     const user = users.find((entry) => entry.verificationTokenHash === hash);
-    if (!user || new Date(user.verificationExpiresAt).getTime() < Date.now()) {
+    if (!user || new Date(user.verificationExpiresAt).getTime() <= now()) {
       return res.status(400).json({ error: 'Der Link ist ungültig oder abgelaufen.' });
     }
-    user.emailVerifiedAt = new Date().toISOString();
+    user.emailVerifiedAt = new Date(now()).toISOString();
     user.verificationTokenHash = null;
     user.verificationExpiresAt = null;
     await saveUser(user);
@@ -394,8 +433,12 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
 
   app.post('/api/auth/verification/resend', authRateLimit, async (req, res) => {
     const user = findUser(req.body.email || req.body.identifier);
-    if (user?.active && !user.emailVerifiedAt) { await issueVerification(user); await saveUser(user); }
-    return res.status(202).json({ message: 'Wenn eine Bestätigung erforderlich ist, wurde eine E-Mail versendet.' });
+    if (verificationCanBeResent(user)) {
+      await resendVerification(user, user.username);
+    }
+    return res.status(202).json({
+      message: 'Wenn eine Bestätigung erforderlich ist und die letzte E-Mail mindestens 24 Stunden alt ist, wurde eine E-Mail versendet.',
+    });
   });
 
   return { findUser, publicUser, issuePasswordReset, applyRetentionPolicy };

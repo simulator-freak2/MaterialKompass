@@ -601,6 +601,33 @@ class _UsersPageState extends State<UsersPage> {
         : '${parsed.day.toString().padLeft(2, '0')}.${parsed.month.toString().padLeft(2, '0')}.${parsed.year}';
   }
 
+  String dateTime(Object? value) {
+    final parsed = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+    if (parsed == null) return '—';
+    final datePart =
+        '${parsed.day.toString().padLeft(2, '0')}.${parsed.month.toString().padLeft(2, '0')}.${parsed.year}';
+    final timePart =
+        '${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}';
+    return '$datePart $timePart Uhr';
+  }
+
+  bool verificationCanBeResent(Map<String, dynamic> user) {
+    if (user['active'] != true || user['emailVerifiedAt'] != null) return false;
+    final availableAt = DateTime.tryParse(
+        user['verificationResendAvailableAt']?.toString() ?? '');
+    return availableAt == null || !availableAt.isAfter(DateTime.now());
+  }
+
+  String verificationStatus(Map<String, dynamic> user) {
+    if (user['emailVerifiedAt'] != null) return 'E-Mail bestätigt';
+    final availableAt = DateTime.tryParse(
+        user['verificationResendAvailableAt']?.toString() ?? '');
+    if (availableAt == null || !availableAt.isAfter(DateTime.now())) {
+      return 'E-Mail unbestätigt · erneuter Versand möglich';
+    }
+    return 'E-Mail unbestätigt · erneut ab ${dateTime(availableAt)}';
+  }
+
   @override
   Widget build(BuildContext context) => DefaultTabController(
         length: isAdmin ? 4 : 3,
@@ -662,7 +689,7 @@ class _UsersPageState extends State<UsersPage> {
                                     ? user['username'].toString()
                                     : '${user['name']} (${user['username']})'),
                                 subtitle: Text(
-                                    '${user['email']}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}'),
+                                    '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}'),
                                 isThreeLine: true,
                                 trailing: Wrap(children: [
                                   IconButton(
@@ -681,6 +708,21 @@ class _UsersPageState extends State<UsersPage> {
                                         }
                                       },
                                       icon: const Icon(Icons.password)),
+                                  IconButton(
+                                      tooltip:
+                                          'Bestätigungs-E-Mail erneut senden',
+                                      onPressed: verificationCanBeResent(user)
+                                          ? () async {
+                                              if (await _send('POST',
+                                                  '/api/users/${user['id']}/verification/resend')) {
+                                                _message(
+                                                    'Bestätigungs-E-Mail wurde erneut versendet.');
+                                                await load();
+                                              }
+                                            }
+                                          : null,
+                                      icon:
+                                          const Icon(Icons.mark_email_unread)),
                                   IconButton(
                                       tooltip: 'Bearbeiten',
                                       onPressed: () => editUser(user),
