@@ -15,6 +15,7 @@ import 'procurement_page.dart';
 import 'profile_page.dart';
 import 'users_page.dart';
 import 'wardrobe_page.dart';
+import 'stocktakes_page.dart';
 
 typedef DashboardLoader = Future<Map<String, dynamic>> Function();
 
@@ -205,6 +206,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 'Mängel': 'defects.read',
                 'Beschaffung': 'procurement.read',
                 'Berichte': 'reports.read',
+                'Inventuren': 'stocktakes.read',
               };
               final activities =
                   (data['recentActivity'] as List? ?? const []).where((entry) {
@@ -241,6 +243,19 @@ class _DashboardPageState extends State<DashboardPage> {
                     description: 'Kleidung und Ausgaben einsehen',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => WardrobePage(
+                        token: widget.token,
+                        onLogout: () => _logout(context),
+                      ),
+                    )),
+                  ),
+                if (can('stocktakes.read'))
+                  _DashboardAction(
+                    icon: Icons.fact_check_outlined,
+                    label: 'Inventuren',
+                    description:
+                        'Bestände digital oder mit Zähllisten aufnehmen',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => StocktakesPage(
                         token: widget.token,
                         onLogout: () => _logout(context),
                       ),

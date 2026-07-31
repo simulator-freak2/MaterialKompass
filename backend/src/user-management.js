@@ -342,6 +342,20 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     });
   });
 
+  app.post('/api/users/:id/verification/confirm', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    const user = users.find((entry) => entry.id === req.params.id);
+    if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+    if (user.emailVerifiedAt) {
+      return res.status(409).json({ error: 'Die E-Mail-Adresse ist bereits bestätigt.' });
+    }
+    user.emailVerifiedAt = new Date(now()).toISOString();
+    user.verificationTokenHash = null;
+    user.verificationExpiresAt = null;
+    await saveUser(user);
+    logEvent('email_verified_manually', 'User', { id: user.id }, req.user.username);
+    return res.json(publicUser(user));
+  });
+
   app.delete('/api/users/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
     const index = users.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });

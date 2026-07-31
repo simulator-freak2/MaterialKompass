@@ -272,9 +272,20 @@ void main() {
     expect(find.text('Ausgabe-/Rückgabe-Log'), findsOneWidget);
     expect(find.text('Ausgeben/Zurücknehmen'), findsOneWidget);
     expect(find.text('Kategorie ändern'), findsOneWidget);
-    expect(find.text('Scannen'), findsOneWidget);
+    expect(find.text('Scannen & Suchen'), findsOneWidget);
+    expect(find.text('Scannen'), findsNothing);
     expect(find.text('Tabelle importieren'), findsOneWidget);
     expect(find.text('Tabelle exportieren'), findsOneWidget);
+
+    await tester.tap(find.text('Scannen & Suchen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Scannen oder suchen'), findsOneWidget);
+    expect(find.text('Suchbegriff oder Handscanner'), findsOneWidget);
+    expect(find.text('Filter löschen'), findsOneWidget);
+
+    await tester.tap(find.text('Abbrechen'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();

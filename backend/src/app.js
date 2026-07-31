@@ -5,6 +5,11 @@ const jwt = require('jsonwebtoken');
 const XLSX = require('xlsx');
 const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
+const { registerStocktakeRoutes } = require('./stocktakes');
+const {
+  createStocktakeEmailService,
+  registerStocktakeEmailRoutes,
+} = require('./stocktake-email-ingestion');
 const { registerProcurementRoutes } = require('./procurement');
 const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
@@ -41,6 +46,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'auditLogs', 'exportLogs',
   'qrLoginCredentials', 'scannerEmailAddresses',
+  'stocktakes', 'stocktakeEmailImports',
 ]);
 
 function createApp(options = {}) {
@@ -147,6 +153,8 @@ function createApp(options = {}) {
   const exportLogs = appData.exportLogs;
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
   const scannerEmailAddresses = (appData.scannerEmailAddresses ||= []);
+  const stocktakes = (appData.stocktakes ||= []);
+  const stocktakeEmailImports = (appData.stocktakeEmailImports ||= []);
   const defaultDownloadsDirectory = path.resolve(__dirname, '..', 'downloads');
   const downloadSources = options.downloads || {
     windows: {
@@ -405,6 +413,31 @@ function createApp(options = {}) {
     });
   });
 
+  const stocktakePermissions = [
+    'stocktakes.read', 'stocktakes.create', 'stocktakes.count',
+    'stocktakes.evaluate', 'stocktakes.export', 'stocktakes.email.import',
+  ];
+  stocktakePermissions.forEach((permission) => {
+    if (!permissions.includes(permission)) permissions.push(permission);
+  });
+  const stocktakeRolePermissions = {
+    Admin: stocktakePermissions,
+    Jugendvorsitzender: stocktakePermissions,
+    Jugendvorsitz: stocktakePermissions,
+    Materialwart: ['stocktakes.read', 'stocktakes.create', 'stocktakes.count', 'stocktakes.export'],
+    Kleiderwart: ['stocktakes.read', 'stocktakes.create', 'stocktakes.count', 'stocktakes.export'],
+  };
+  roles.forEach((role) => {
+    (stocktakeRolePermissions[role.name] || []).forEach((permission) => {
+      if (!role.permissions.includes(permission)) role.permissions.push(permission);
+    });
+  });
+  users.forEach((user) => {
+    user.roles.flatMap((name) => stocktakeRolePermissions[name] || []).forEach((permission) => {
+      if (!user.permissions.includes(permission)) user.permissions.push(permission);
+    });
+  });
+
   function requirePermission(permission) {
     return (req, res, next) => {
       if (!hasPermission(req.user, permission)) {
@@ -442,6 +475,7 @@ function createApp(options = {}) {
     IssueTransaction: { permission: 'clothing.read', label: 'Kleiderkammer' },
     DefectReport: { permission: 'defects.read', label: 'Mängel' },
     ProcurementRequest: { permission: 'procurement.read', label: 'Beschaffung' },
+    Stocktake: { permission: 'stocktakes.read', label: 'Inventuren' },
     ExportLog: { permission: 'reports.read', label: 'Berichte' },
   });
 
@@ -479,7 +513,7 @@ function createApp(options = {}) {
       MaterialItem: 'Artikel', ClothingItem: 'Kleidungsartikel', Location: 'Lagerort',
       StockStructure: 'Lagerplatz', Category: 'Kategorie', MaterialMovement: 'Material',
       IssueTransaction: 'Kleidungsausgabe', DefectReport: 'Mangel',
-      ProcurementRequest: 'Beschaffung', ExportLog: 'Export',
+      ProcurementRequest: 'Beschaffung', Stocktake: 'Inventur', ExportLog: 'Export',
     };
 
     return {
@@ -1170,6 +1204,23 @@ function createApp(options = {}) {
     materialInspections, materialDocuments, defectReports, categories, locations,
     stockStructures, logEvent, nextId, XLSX, defectManagement,
   });
+
+  registerStocktakeRoutes({
+    app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
+    clothingItems, locations, stockStructures, departments, users, logEvent, nextId,
+    XLSX, defectManagement,
+  });
+  app.locals.stocktakes = stocktakes;
+  app.locals.stocktakeEmailImports = stocktakeEmailImports;
+  const stocktakeEmailService = createStocktakeEmailService({
+    stocktakeEmailImports, stocktakes, nextId,
+    persistData: () => app.locals.persistData(),
+  });
+  registerStocktakeEmailRoutes({
+    app, authMiddleware, requirePermission, stocktakeEmailImports, stocktakes,
+    users, logEvent,
+  });
+  app.locals.stocktakeEmailService = stocktakeEmailService;
 
   app.get('/api/clothing', authMiddleware, requirePermission('clothing.read'), (req, res) => {
     res.json(clothingItems.map(responseClothing));

@@ -29,6 +29,10 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+tmp/
+.dart-appdata/
+.dart-localappdata/
+*.tar.gz
 
 # Desktop-Releases werden separat gebaut und nicht in Git eingecheckt.
 releases/*

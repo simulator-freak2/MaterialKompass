@@ -148,6 +148,36 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<void> confirmEmailManually(Map<String, dynamic> user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('E-Mail-Adresse manuell bestätigen?'),
+        content: Text(
+          'Die Adresse ${user['email']} wird ohne Prüfung eines Bestätigungslinks als bestätigt markiert. Offene Bestätigungslinks werden ungültig.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Manuell bestätigen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    if (await _send(
+      'POST',
+      '/api/users/${user['id']}/verification/confirm',
+    )) {
+      _message('E-Mail-Adresse wurde manuell bestätigt.');
+      await load();
+    }
+  }
+
   Future<bool> createQrLogin(Map<String, dynamic> user) async {
     final validity = await chooseQrLoginValidity(context);
     if (validity == null || !mounted) return false;
@@ -723,6 +753,13 @@ class _UsersPageState extends State<UsersPage> {
                                           : null,
                                       icon:
                                           const Icon(Icons.mark_email_unread)),
+                                  IconButton(
+                                      tooltip:
+                                          'E-Mail-Adresse manuell bestätigen',
+                                      onPressed: user['emailVerifiedAt'] == null
+                                          ? () => confirmEmailManually(user)
+                                          : null,
+                                      icon: const Icon(Icons.mark_email_read)),
                                   IconButton(
                                       tooltip: 'Bearbeiten',
                                       onPressed: () => editUser(user),

@@ -19,6 +19,8 @@ const permissions = [
   'documents.read',
   'reports.read',
   'dashboard.read',
+  'stocktakes.read', 'stocktakes.create', 'stocktakes.count',
+  'stocktakes.evaluate', 'stocktakes.export', 'stocktakes.email.import',
 ];
 
 const roles = [
@@ -156,6 +158,8 @@ const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
 const exportLogs = [];
 const scannerEmailAddresses = [];
+const stocktakes = [];
+const stocktakeEmailImports = [];
 
 module.exports = {
   seedData: {
@@ -186,5 +190,7 @@ module.exports = {
     auditLogs,
     exportLogs,
     scannerEmailAddresses,
+    stocktakes,
+    stocktakeEmailImports,
   },
 };

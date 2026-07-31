@@ -49,6 +49,8 @@ class _WardrobePageState extends State<WardrobePage> {
   final TextEditingController manufacturingYearController =
       TextEditingController();
   final TextEditingController purchaseDateController = TextEditingController();
+  final TextEditingController _scanAndSearchController =
+      TextEditingController();
   String _filterMode = 'alle';
   String _categoryFilterId = 'alle';
   String _searchQuery = '';
@@ -86,6 +88,7 @@ class _WardrobePageState extends State<WardrobePage> {
     manufacturerController.dispose();
     manufacturingYearController.dispose();
     purchaseDateController.dispose();
+    _scanAndSearchController.dispose();
     super.dispose();
   }
 
@@ -1139,110 +1142,84 @@ class _WardrobePageState extends State<WardrobePage> {
     );
   }
 
-  Future<void> _openSearchDialog() async {
-    final searchController = TextEditingController(text: _searchQuery);
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Suche'),
-          content: TextField(
-            controller: searchController,
-            decoration: const InputDecoration(
-              labelText: 'Suchbegriff',
-              hintText: 'Name, Inventarnummer oder Person',
-            ),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                setState(() {
-                  _searchQuery = '';
-                });
-              },
-              child: const Text('Löschen'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                setState(() {
-                  _searchQuery = searchController.text.trim();
-                });
-              },
-              child: const Text('Suchen'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _scanClothing() async {
-    final manualController = TextEditingController();
+  Future<void> _openScanAndSearchDialog() async {
+    _scanAndSearchController
+      ..text = _searchQuery
+      ..selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _searchQuery.length,
+      );
     final cameraSupported = isCameraScanningSupported;
     var completed = false;
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Barcode oder QR-Code scannen'),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: manualController,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Handscanner / Inventarnummer',
-                  prefixIcon: Icon(Icons.qr_code_scanner),
-                ),
-                onSubmitted: (input) =>
-                    Navigator.pop(dialogContext, input.trim()),
-              ),
-              if (cameraSupported) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 260,
-                  child: MobileScanner(
-                    onDetect: (capture) {
-                      final code = capture.barcodes.isEmpty
-                          ? null
-                          : capture.barcodes.first.rawValue;
-                      if (code != null && !completed) {
-                        completed = true;
-                        Navigator.pop(dialogContext, code);
-                      }
-                    },
+        title: const Text('Scannen oder suchen'),
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _scanAndSearchController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Suchbegriff oder Handscanner',
+                    hintText:
+                        'Name, Inventarnummer, Größe, Kategorie oder Person',
+                    prefixIcon: Icon(Icons.qr_code_scanner),
                   ),
+                  onSubmitted: (input) =>
+                      Navigator.pop(dialogContext, input.trim()),
                 ),
-              ] else
-                const Padding(
-                  padding: EdgeInsets.only(top: 16),
-                  child: Text(
-                    'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.',
+                if (cameraSupported) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 260,
+                    child: MobileScanner(
+                      onDetect: (capture) {
+                        final code = capture.barcodes.isEmpty
+                            ? null
+                            : capture.barcodes.first.rawValue;
+                        if (code != null && !completed) {
+                          completed = true;
+                          Navigator.pop(dialogContext, code);
+                        }
+                      },
+                    ),
                   ),
-                ),
-            ],
+                ] else
+                  const Padding(
+                    padding: EdgeInsets.only(top: 16),
+                    child: Text(
+                      'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.',
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, ''),
+            child: const Text('Filter löschen'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Abbrechen'),
           ),
           FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, manualController.text.trim()),
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              _scanAndSearchController.text.trim(),
+            ),
             child: const Text('Suchen'),
           ),
         ],
       ),
     );
-    manualController.dispose();
-    if (value != null && value.trim().isNotEmpty && mounted) {
+    if (value != null && mounted) {
       setState(() => _searchQuery = value.trim());
     }
   }
@@ -1907,18 +1884,7 @@ class _WardrobePageState extends State<WardrobePage> {
                 label: const Text('Neue Kleidung anlegen'),
               ),
               ElevatedButton.icon(
-                onPressed: _openSearchDialog,
-                style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                  backgroundColor: Colors.blue.shade700,
-                  foregroundColor: Colors.white,
-                ),
-                icon: const Icon(Icons.search, size: 18),
-                label: const Text('Suche'),
-              ),
-              ElevatedButton.icon(
-                onPressed: _scanClothing,
+                onPressed: _openScanAndSearchDialog,
                 style: ElevatedButton.styleFrom(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -1926,7 +1892,7 @@ class _WardrobePageState extends State<WardrobePage> {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.qr_code_scanner, size: 18),
-                label: const Text('Scannen'),
+                label: const Text('Scannen & Suchen'),
               ),
               ElevatedButton.icon(
                 onPressed: _openBulkActionDialog,

@@ -30,6 +30,37 @@ MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Orts
 - Teil-/Mehrfachlieferungen, Beanstandungen und geprüfte Inventarübernahme
 - Beschaffungsdokumente sowie XLSX-, ODS- und PDF-Ausgabe
 
+## Inventuren
+
+Der eigene Bereich „Inventuren“ bildet Bestandsaufnahmen für das Materialinventar
+und die Kleiderkammer ab:
+
+- Statusfolge `Angelegt → In Arbeit → Auswertung → Abgeschlossen`
+- Einschränkung auf mehrere Standorte, Lagerplätze und Fachbereiche; kombinierte
+  Inventuren von Material und Kleidung sind möglich
+- Blindzählung oder sichtbarer Sollbestand, Ist-Mengen für Mengenartikel sowie
+  `vorhanden`, `beschädigt` und `nicht vorhanden` für Einzelartikel
+- Kamera-/QR-Scan auf Mobilgeräten, USB-Handscanner und filterbare Positionsliste
+- Beliebige Nachzählungen mit unveränderlichem Verlauf aus Bearbeiter und Zeitpunkt
+- Unbekannte Inventarnummern werden als Fundstücke für die spätere Zuordnung vorgemerkt
+- Abweichungen erzeugen beim Wechsel in die Auswertung nachvollziehbare Fehlbestands-
+  beziehungsweise Mangelvorgänge; technische Mängel sperren den betroffenen Artikel
+- Bestands- und Standortkorrekturen werden nur beim ausdrücklich bestätigten Abschluss
+  übernommen; abgeschlossene Inventuren bleiben revisionssicher unveränderlich
+- Zähl- und Ergebnislisten als XLSX, ODS und PDF sowie Tabellenimport für Papierlisten
+
+Für eine Papierinventur trägt die erzeugte Liste ihre Inventur-ID. Ausgefüllte PDF-,
+JPG-, PNG-, XLSX- oder ODS-Dateien können an `inventur@materialkompass.org` gesendet
+werden, wenn Betreff oder Dateiname diese ID enthält. Der IMAP-Eingang ordnet die Mail
+der Inventur zu und stellt den Originalanhang zur kontrollierten Übertragung bereit;
+nicht eindeutig erkannte E-Mails landen beim Jugendvorsitz zur manuellen Zuordnung.
+Dies vermeidet unkontrollierte Bestandsänderungen durch unsichere Handschrift-OCR.
+
+Materialwarte dürfen Materialinventuren, Kleiderwarte Kleiderkammerinventuren anlegen
+und zählen. Der Jugendvorsitz darf beide Bereiche bearbeiten, auswerten und abschließen.
+Die Einzelrechte heißen `stocktakes.read`, `stocktakes.create`, `stocktakes.count`,
+`stocktakes.evaluate`, `stocktakes.export` und `stocktakes.email.import`.
+
 ## Mängelmanagement
 
 Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflow:

@@ -191,7 +191,8 @@ function registerDefectManagement({
 
   function activeForEntity(entityType, entityId, exceptId = null) {
     return defectReports.filter((report) => report.id !== exceptId && report.entityType === entityType &&
-      report.entityId === entityId && !report.archivedAt && !CLOSED_STATUSES.has(report.status));
+      report.entityId === entityId && !report.doesNotAffectEntityStatus
+      && !report.archivedAt && !CLOSED_STATUSES.has(report.status));
   }
 
   function markEntityDefective(report) {
@@ -280,6 +281,7 @@ function registerDefectManagement({
       resolution: '', reportedAt: createdAt, reportedBy: source.reportedBy || user.id,
       reportedByName: source.reportedByName || user.name || user.username, createdAt, updatedAt: createdAt,
       linkedInspectionId: source.inspectionId || null,
+      doesNotAffectEntityStatus: source.preserveEntityStatus === true,
       recurrenceOfId: body.recurrenceOfId || possibleRecurrence?.id || null,
       duplicateOfId: body.duplicateOfId || possibleDuplicate?.id || null,
       duplicateDetectedAutomatically: !body.duplicateOfId && Boolean(possibleDuplicate),
@@ -299,7 +301,7 @@ function registerDefectManagement({
           ? 'Automatisch aus E-Mail erstellt'
           : 'Mangel gemeldet',
     );
-    markEntityDefective(report);
+    if (!source.preserveEntityStatus) markEntityDefective(report);
     createNotifications(report, user.id);
     logEvent('create', 'DefectReport', {
       id: report.id, itemName: values.entity.name, inventoryNumber: values.entity.inventoryNumber,
@@ -719,6 +721,22 @@ function registerDefectManagement({
         priority: 'Hoch', damageType: 'Prüfmangel', riskLevel: 'Hoch',
         operationalSafety: 'Nicht einsatzfähig',
       }, user, { inspectionId });
+    },
+    createFromStocktake({
+      entityType, entityId, affectedQuantity, title, description, stocktakeId, user,
+    }) {
+      const isShortage = title.startsWith('Fehlbestand');
+      const result = createReport({
+        entityType, entityId, affectedQuantity, title, description,
+        priority: 'Hoch',
+        damageType: isShortage ? 'Fehlbestand' : 'Inventurmangel',
+        riskLevel: 'Nicht bewertet', operationalSafety: 'Nicht einsatzfähig',
+      }, user, { preserveEntityStatus: isShortage });
+      if (result.report) {
+        result.report.linkedStocktakeId = stocktakeId;
+        addHistory(result.report, user.username, 'stocktake-link', { stocktakeId });
+      }
+      return result;
     },
     applyRetentionPolicy,
   };

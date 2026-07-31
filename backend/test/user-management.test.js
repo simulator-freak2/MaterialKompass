@@ -184,6 +184,28 @@ test('email verification can only be resent after 24 hours for new and changed a
       202,
     );
     assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 4);
+
+    const pendingToken = tokens.findLast(
+      (entry) => entry.type === 'verification' && entry.userId === created.data.id,
+    ).token;
+    const manuallyConfirmed = await request(
+      `/api/users/${created.data.id}/verification/confirm`,
+      { method: 'POST', token: adminToken },
+    );
+    assert.equal(manuallyConfirmed.response.status, 200);
+    assert.equal(manuallyConfirmed.data.emailVerifiedAt, '2026-07-03T08:00:00.000Z');
+    assert.equal(manuallyConfirmed.data.verificationResendAvailableAt, null);
+    assert.equal(
+      (await request(`/api/auth/verify-email?token=${pendingToken}`)).response.status,
+      400,
+    );
+    assert.equal(
+      (await request(`/api/users/${created.data.id}/verification/confirm`, {
+        method: 'POST',
+        token: adminToken,
+      })).response.status,
+      409,
+    );
   } finally { server.close(); }
 });
 
