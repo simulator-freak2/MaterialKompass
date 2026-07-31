@@ -6,7 +6,7 @@ on:
       version:
         description: Client-Version ohne v
         required: true
-        default: 1.0.0
+        default: 1.1.0
       api_base_url:
         description: Produktive HTTPS-API-Adresse
         required: true
@@ -34,7 +34,8 @@ jobs:
           PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
         run: |
           if (-not $env:PFX_BASE64 -or -not $env:PFX_PASSWORD) {
-            throw "Windows-Signatursecrets fehlen."
+            Write-Host "WARNUNG: Windows-Signatursecrets fehlen; der Build wird unsigniert erzeugt."
+            exit 0
           }
           $pfxPath = Join-Path $env:RUNNER_TEMP "materialkompass-signing.pfx"
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:PFX_BASE64))
@@ -43,7 +44,15 @@ jobs:
           "WINDOWS_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Windows-Installer bauen
         shell: pwsh
-        run: ./packaging/windows/build_installer.ps1 -ApiBaseUrl '${{ inputs.api_base_url }}' -Version '${{ inputs.version }}'
+        run: |
+          $parameters = @{
+            ApiBaseUrl = '${{ inputs.api_base_url }}'
+            Version = '${{ inputs.version }}'
+          }
+          if (-not $env:WINDOWS_CERT_THUMBPRINT) {
+            $parameters.AllowUnsigned = $true
+          }
+          ./packaging/windows/build_installer.ps1 @parameters
       - uses: actions/upload-artifact@v4
         with:
           name: MaterialKompass-Windows
@@ -80,7 +89,10 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
-          test -n "$CERTIFICATE_BASE64" && test -n "$CERTIFICATE_PASSWORD" && test -n "$KEYCHAIN_PASSWORD"
+          if [[ -z "$CERTIFICATE_BASE64" || -z "$CERTIFICATE_PASSWORD" || -z "$KEYCHAIN_PASSWORD" ]]; then
+            echo "WARNUNG: macOS-Signatursecrets fehlen; der Build wird unsigniert erzeugt."
+            exit 0
+          fi
           CERTIFICATE_PATH="$RUNNER_TEMP/materialkompass-signing.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/materialkompass-signing.keychain-db"
           echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
@@ -116,6 +128,29 @@ jobs:
         with:
           name: MaterialKompass-iOS-unsigned
           path: releases/MaterialKompass-iOS-unsigned.zip
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Webanwendung bauen
+        working-directory: flutter
+        run: |
+          flutter pub get
+          flutter build web --release --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+      - name: Web-Artefakt verpacken
+        run: |
+          mkdir -p releases
+          cd flutter/build/web
+          zip -r ../../../releases/MaterialKompass-Web.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaterialKompass-Web
+          path: releases/MaterialKompass-Web.zip
 
   android:
     runs-on: ubuntu-latest

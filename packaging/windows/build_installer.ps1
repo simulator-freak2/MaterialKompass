@@ -1,6 +1,6 @@
 param(
     [string]$ApiBaseUrl = "https://materialkompass.org",
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.1.0",
     [string]$CertificateThumbprint = $env:WINDOWS_CERT_THUMBPRINT,
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$AllowUnsigned
