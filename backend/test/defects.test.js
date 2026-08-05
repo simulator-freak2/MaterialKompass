@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const bcrypt = require('bcryptjs');
+const { PDFDocument } = require('pdf-lib');
 
 const { createApp } = require('../src/app');
 const { seedData } = require('../src/data/seed');
@@ -171,6 +172,26 @@ test('defects enforce role scope, create notifications and support every export'
     assert.equal(wardrobeList.length, 0);
     assert.equal((await fetch(`${baseUrl}/api/defects/${defect.id}`, { headers: headers(wardrobeToken) })).status, 404);
 
+    const clothingCreate = await fetch(`${baseUrl}/api/defects`, {
+      method: 'POST', headers: headers(wardrobeToken),
+      body: JSON.stringify({
+        entityType: 'ClothingItem', entityId: 'clothing-1', affectedQuantity: 1,
+        title: 'Naht gerissen', description: 'Die Schulterpartie ist beschädigt.', priority: 'Hoch',
+      }),
+    });
+    assert.equal(clothingCreate.status, 201);
+    const clothingDefect = await clothingCreate.json();
+    const clothing = await fetch(`${baseUrl}/api/clothing`, { headers: headers(wardrobeToken) })
+      .then((response) => response.json());
+    assert.ok(clothing.find((item) => item.id === 'clothing-1').defects
+      .some((entry) => entry.id === clothingDefect.id));
+    assert.equal((await fetch(`${baseUrl}/api/defects/${clothingDefect.id}/print`, {
+      headers: headers(wardrobeToken),
+    })).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/defects/${clothingDefect.id}/print`, {
+      headers: headers(materialToken),
+    })).status, 404);
+
     const notifications = await fetch(`${baseUrl}/api/notifications`, { headers: headers(adminToken) }).then((response) => response.json());
     assert.ok(notifications.some((entry) => entry.defectId === defect.id));
     for (const format of ['xlsx', 'ods', 'csv', 'pdf', 'print']) {
@@ -179,6 +200,75 @@ test('defects enforce role scope, create notifications and support every export'
       const exported = await response.json();
       assert.ok(Buffer.from(exported.fileBase64, 'base64').length > 20, format);
     }
+    const printResponse = await fetch(`${baseUrl}/api/defects/${defect.id}/print`, {
+      headers: headers(materialToken),
+    });
+    assert.equal(printResponse.status, 200);
+    const printed = await printResponse.json();
+    assert.equal(printed.fileName, `maengelmeldung-${defect.defectNumber}.pdf`);
+    const printedPdf = await PDFDocument.load(Buffer.from(printed.fileBase64, 'base64'));
+    assert.ok(printedPdf.getPageCount() >= 2);
+    assert.equal(printedPdf.getForm().getTextField('Inventarnummer').getText(), '10050035-02-02-001');
+    assert.match(printedPdf.getForm().getTextField('Beschreibung_des_Mangels').getText(), /Ölaustritt/);
+    assert.equal((await fetch(`${baseUrl}/api/defects/${defect.id}/print`, {
+      headers: headers(wardrobeToken),
+    })).status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('defect disposal reduces stock and creates a linked procurement draft', async () => {
+  const { server, baseUrl } = await start();
+  try {
+    const materialToken = await token(baseUrl, 'materialwart', 'Material123!');
+    const auth = headers(materialToken);
+    const create = await fetch(`${baseUrl}/api/defects`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        entityType: 'MaterialItem', entityId: 'material-1', affectedQuantity: 2,
+        title: 'Irreparabler Schaden', description: 'Zwei Geräte sind wirtschaftlich nicht reparierbar.',
+        priority: 'Hoch', responsibleDepartment: 'Technik',
+      }),
+    });
+    assert.equal(create.status, 201);
+    const defect = await create.json();
+
+    const disposal = await fetch(`${baseUrl}/api/defects/${defect.id}/dispose-and-procure`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        disposalQuantity: 2, replacementQuantity: 2, requestedBudgetGross: 1190,
+        reason: 'Ersatz für die irreparabel beschädigten Geräte.', department: 'Technik',
+        costCenter: 'TECH-01', desiredDeliveryDate: '2026-09-01',
+      }),
+    });
+    assert.equal(disposal.status, 201);
+    const result = await disposal.json();
+    assert.equal(result.defect.disposal.quantity, 2);
+    assert.equal(result.defect.disposal.procurementRequestId, result.procurementRequest.id);
+    assert.equal(result.procurementRequest.status, 'Entwurf');
+    assert.equal(result.procurementRequest.sourceDefectId, defect.id);
+    assert.equal(result.procurementRequest.items[0].name, 'Kettensäge');
+    assert.equal(result.procurementRequest.items[0].quantity, 2);
+    assert.equal(result.procurementRequest.items[0].categoryId, '02');
+    assert.equal(result.procurementRequest.items[0].subcategoryId, '02-02');
+    assert.equal(result.procurementRequest.requestedBudgetGross, 1190);
+
+    const item = await fetch(`${baseUrl}/api/material/material-1`, { headers: auth })
+      .then((response) => response.json());
+    assert.equal(item.quantity, 3);
+    assert.equal(item.status, 'Lagernd');
+    const procurement = await fetch(`${baseUrl}/api/procurement`, { headers: auth })
+      .then((response) => response.json());
+    assert.equal(procurement.length, 1);
+    assert.equal(procurement[0].id, result.procurementRequest.id);
+    assert.equal((await fetch(`${baseUrl}/api/defects/${defect.id}/dispose-and-procure`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        disposalQuantity: 1, replacementQuantity: 1, requestedBudgetGross: 500,
+        reason: 'Doppelte Aussonderung darf nicht möglich sein.',
+      }),
+    })).status, 409);
   } finally {
     server.close();
   }

@@ -32,6 +32,28 @@ const REPORT_ANCHORS = [
   'gefährdungsstufe',
   'weitere hinweise',
 ];
+const TEMPLATE_PAGE_WIDTH = 595.150024;
+const TEMPLATE_PAGE_HEIGHT = 842.01001;
+const TEMPLATE_TEXT_FIELDS = {
+  inventoryNumber: { page: 0, x: 166.374695, y: 685.104675, width: 385.549988, height: 39.880005, singleLine: true },
+  contactName: { page: 0, x: 166.374695, y: 643.23468, width: 385.549988, height: 39.869995, singleLine: true },
+  contactEmail: { page: 0, x: 166.374695, y: 601.73468, width: 385.549988, height: 39.5, singleLine: true },
+  contactPhone: { page: 0, x: 166.374695, y: 559.854675, width: 385.549988, height: 39.880005, singleLine: true },
+  description: { page: 0, x: 166.374695, y: 250.104675, width: 385.549988, height: 277.940003 },
+  measuresTaken: { page: 0, x: 166.374695, y: 130.504669, width: 385.549988, height: 117.600006 },
+};
+const TEMPLATE_CHECKBOXES = {
+  operationalSafety: [
+    { value: 'Nicht einsatzfähig', x: 170.146774, y: 750.809998, width: 7.212723, height: 7.322692 },
+    { value: 'Eingeschränkt', x: 276.62674, y: 750.809998, width: 7.212738, height: 7.322692 },
+    { value: 'Einsatzfähig', x: 365.336761, y: 750.809998, width: 7.212739, height: 7.322692 },
+  ],
+  riskLevel: [
+    { value: 'Niedrig', x: 170.146774, y: 706.830017, width: 7.212723, height: 7.322693 },
+    { value: 'Mittel', x: 225.526764, y: 706.830017, width: 7.212707, height: 7.322693 },
+    { value: 'Hoch', x: 274.136749, y: 706.830017, width: 7.212739, height: 7.322693 },
+  ],
+};
 
 function normalizeText(value) {
   return String(value || '')
@@ -123,6 +145,37 @@ function findItemInText(text, materials, clothingItems) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
+function findItemFromOcr(value, materials, clothingItems) {
+  const wanted = normalizeInventoryNumber(value);
+  if (!wanted) return null;
+  const equivalent = (left, right) => left === right
+    || ['0O', '1IL', '5S', '8B'].some((group) => group.includes(left) && group.includes(right));
+  const distance = (left, right) => {
+    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+      const current = [leftIndex];
+      for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+        current[rightIndex] = Math.min(
+          previous[rightIndex] + 1,
+          current[rightIndex - 1] + 1,
+          previous[rightIndex - 1]
+            + (equivalent(left[leftIndex - 1], right[rightIndex - 1]) ? 0 : 1),
+        );
+      }
+      previous = current;
+    }
+    return previous[right.length];
+  };
+  const candidates = [
+    ...materials.map((item) => ({ item, entityType: 'MaterialItem' })),
+    ...clothingItems.map((item) => ({ item, entityType: 'ClothingItem' })),
+  ].filter(({ item }) => {
+    const inventoryNumber = normalizeInventoryNumber(item.inventoryNumber);
+    return distance(inventoryNumber, wanted) <= 2;
+  });
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 function operationalSafetyFromText(text) {
   const searchable = normalizedSearch(text);
   const checkedPatterns = [
@@ -181,6 +234,9 @@ async function pdfJs() {
   globalThis.DOMMatrix ||= DOMMatrix;
   globalThis.ImageData ||= ImageData;
   globalThis.Path2D ||= Path2D;
+  // pdfjs-dist uses this newer Node API for embedded images. Keep local
+  // development and older supported container images able to render scans.
+  process.getBuiltinModule ||= (name) => require(name);
   pdfJsPromise ||= import('pdfjs-dist/legacy/build/pdf.mjs');
   return pdfJsPromise;
 }
@@ -237,6 +293,26 @@ async function extractPdfFields(bytes) {
     return {};
   }
   return values;
+}
+
+function cleanOcrField(value) {
+  return normalizeText(value)
+    .replace(/^[-—_|.:;,]+|[-—_|.:;,]+$/g, '')
+    .trim();
+}
+
+function cleanOcrEmail(value) {
+  const compact = cleanOcrField(value).replace(/\s+/g, '');
+  return compact.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase() || compact.toLowerCase();
+}
+
+function sameOcrValue(left, right) {
+  const first = String(left || '').toLocaleUpperCase('de').replace(/\s+/g, '');
+  const second = String(right || '').toLocaleUpperCase('de').replace(/\s+/g, '');
+  if (!first || first.length !== second.length) return false;
+  const equivalentGroups = ['0O', '1IL', '3E', 'AE', '5S', '8B'];
+  return [...first].every((character, index) => character === second[index]
+    || equivalentGroups.some((group) => group.includes(character) && group.includes(second[index])));
 }
 
 function hasDefectFormFields(fields) {
@@ -355,7 +431,7 @@ function createDefectEmailService({
     return workerPromise;
   }
 
-  async function ocrImage(bytes) {
+  async function ocrImage(bytes, pageSegmentationMode = PSM.SPARSE_TEXT) {
     const normalized = await sharp(bytes)
       .rotate()
       .flatten({ background: '#ffffff' })
@@ -363,8 +439,102 @@ function createDefectEmailService({
       .normalize()
       .png()
       .toBuffer();
-    const result = await (await worker()).recognize(normalized);
+    const instance = await worker();
+    await instance.setParameters({
+      tessedit_pageseg_mode: pageSegmentationMode,
+      preserve_interword_spaces: '1',
+    });
+    const result = await instance.recognize(normalized);
     return normalizeText(result.data.text);
+  }
+
+  function templateRegion(metadata, region, inset = 3) {
+    const scaleX = metadata.width / TEMPLATE_PAGE_WIDTH;
+    const scaleY = metadata.height / TEMPLATE_PAGE_HEIGHT;
+    const left = Math.max(0, Math.round((region.x + inset) * scaleX));
+    const top = Math.max(0, Math.round((TEMPLATE_PAGE_HEIGHT - region.y - region.height + inset) * scaleY));
+    const width = Math.min(metadata.width - left, Math.max(1, Math.round((region.width - 2 * inset) * scaleX)));
+    const height = Math.min(metadata.height - top, Math.max(1, Math.round((region.height - 2 * inset) * scaleY)));
+    return { left, top, width, height };
+  }
+
+  async function ocrTemplateTextField(page, region) {
+    const metadata = await sharp(page).metadata();
+    if (!metadata.width || !metadata.height) return '';
+    const extract = templateRegion(metadata, region);
+    const fieldImage = await sharp(page)
+      .extract(extract)
+      .resize({ width: Math.max(extract.width * 2, 600), withoutEnlargement: false })
+      .greyscale()
+      .normalize()
+      .threshold(205)
+      .png()
+      .toBuffer();
+    return cleanOcrField(await ocrImage(
+      fieldImage,
+      region.singleLine ? PSM.SINGLE_LINE : PSM.SINGLE_BLOCK,
+    ));
+  }
+
+  async function checkedTemplateValue(page, options) {
+    if (!page) return '';
+    const metadata = await sharp(page).metadata();
+    if (!metadata.width || !metadata.height) return '';
+    const checked = [];
+    for (const option of options) {
+      const extract = templateRegion(metadata, option, 1.8);
+      const { data, info } = await sharp(page)
+        .extract(extract)
+        .greyscale()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      const darkPixels = data.reduce((sum, value) => sum + (value < 170 ? 1 : 0), 0);
+      const darkRatio = darkPixels / Math.max(1, info.width * info.height);
+      if (darkRatio >= 0.08) checked.push(option.value);
+    }
+    return checked.length === 1 ? checked[0] : '';
+  }
+
+  async function extractTemplateFields(recognizedPages) {
+    const firstPage = recognizedPages.find(({ text }) => {
+      const searchable = normalizedSearch(text);
+      return searchable.includes('inventarnummer') || searchable.includes('beschreibung des mangels');
+    })?.bytes || recognizedPages[0]?.bytes;
+    if (!firstPage) return {};
+    const secondPage = recognizedPages.find(({ text }) => {
+      const searchable = normalizedSearch(text);
+      return searchable.includes('einsatzbereit') || searchable.includes('gefahrdungsstufe');
+    })?.bytes || recognizedPages[1]?.bytes;
+    const values = {};
+    for (const [name, region] of Object.entries(TEMPLATE_TEXT_FIELDS)) {
+      values[name] = await ocrTemplateTextField(firstPage, region);
+    }
+    values.contactEmail = cleanOcrEmail(values.contactEmail);
+    const itemMatch = findItem(values.inventoryNumber, materials, clothingItems)
+      || findItemInText(values.inventoryNumber, materials, clothingItems)
+      || findItemFromOcr(values.inventoryNumber, materials, clothingItems);
+    if (itemMatch) {
+      values.inventoryNumber = itemMatch.item.inventoryNumber;
+      values.entityType = itemMatch.entityType;
+      values.entityId = itemMatch.item.id;
+    }
+    values.operationalSafety = await checkedTemplateValue(
+      secondPage,
+      TEMPLATE_CHECKBOXES.operationalSafety,
+    );
+    values.riskLevel = await checkedTemplateValue(secondPage, TEMPLATE_CHECKBOXES.riskLevel)
+      || 'Keine Angabe';
+    return values;
+  }
+
+  async function recognizeReportPages(pages) {
+    const recognizedPages = [];
+    for (const bytes of pages) recognizedPages.push({ bytes, text: await ocrImage(bytes) });
+    const fullText = recognizedPages.map(({ text }) => text).join('\n');
+    const textValues = extractFromText(fullText, materials, clothingItems);
+    if (reportScore(fullText) < 2) return { fullText, extracted: textValues };
+    const fieldValues = await extractTemplateFields(recognizedPages);
+    return { fullText, extracted: mergeExtracted(fieldValues, textValues) };
   }
 
   async function normalizeImage(attachment, type) {
@@ -428,11 +598,12 @@ function createDefectEmailService({
       pdfText = await extractPdfText(pdf.content).catch(() => '');
       let textValues = extractFromText(pdfText, materials, clothingItems);
       extracted = usesDefectForm ? fieldValues : textValues;
-      if (!usesDefectForm && requiredProblems(extracted).length && reportScore(pdfText) >= 2) {
-        const pageTexts = [];
-        for (const page of await renderPdfPages(pdf.content)) pageTexts.push(await ocrImage(page));
-        textValues = extractFromText(pageTexts.join('\n'), materials, clothingItems);
-        extracted = mergeExtracted(extracted, textValues);
+      if (requiredProblems(extracted).length
+        && (reportScore(pdfText) >= 2 || !normalizeText(pdfText))) {
+        const recognition = await recognizeReportPages(await renderPdfPages(pdf.content));
+        if (reportScore(recognition.fullText) >= 2) {
+          extracted = mergeExtracted(extracted, recognition.extracted);
+        }
       }
       reportDocuments.push({
         fileName: safeFileName(pdf.filename, 'maengelbericht.pdf'),
@@ -473,7 +644,12 @@ function createDefectEmailService({
       problems.push('Neben dem PDF wurde mindestens ein weiterer Mängelbericht als Bild erkannt.');
     } else if (!pdfs.length && reportImages.length) {
       const imageText = reportImages.map((image) => image.ocrText).join('\n');
-      extracted = extractFromText(imageText, materials, clothingItems);
+      const textValues = extractFromText(imageText, materials, clothingItems);
+      const fieldValues = await extractTemplateFields(reportImages.map((image) => ({
+        bytes: image.bytes,
+        text: image.ocrText,
+      })));
+      extracted = mergeExtracted(fieldValues, textValues);
       for (const image of reportImages) {
         reportDocuments.push({
           fileName: image.fileName,
@@ -583,11 +759,23 @@ function createDefectEmailService({
       messageId && entry.messageId === messageId);
     if (duplicate) return { duplicate: true, entry: duplicate };
     const analysis = await analyzeAttachments(parsed);
+    const sender = parsed.from?.value?.[0]?.address?.toLowerCase() || '';
+    const senderName = normalizeText(parsed.from?.value?.[0]?.name || '');
+    const extractedData = { ...analysis.extracted };
+    if (EMAIL_PATTERN.test(sender)
+      && (!EMAIL_PATTERN.test(extractedData.contactEmail)
+        || sameOcrValue(sender, extractedData.contactEmail))) {
+      extractedData.contactEmail = sender;
+    }
+    if (senderName && (!normalizeText(extractedData.contactName)
+      || sameOcrValue(senderName, extractedData.contactName))) {
+      extractedData.contactName = senderName;
+    }
     const entry = {
       id: `defect-email-${randomUUID()}`,
       messageId: messageId || null,
-      sender: parsed.from?.value?.[0]?.address?.toLowerCase() || '',
-      senderName: normalizeText(parsed.from?.value?.[0]?.name || ''),
+      sender,
+      senderName,
       subject: normalizeText(parsed.subject || ''),
       emailText: normalizeText(parsed.text || ''),
       receivedAt: parsed.date?.toISOString?.() || new Date().toISOString(),
@@ -599,7 +787,7 @@ function createDefectEmailService({
       processedUidValidity: sourceInfo.processedUidValidity || null,
       status: 'pending',
       problems: [...analysis.problems],
-      extractedData: analysis.extracted,
+      extractedData,
       attachments: analysis.attachments,
       createdAt: new Date().toISOString(),
     };

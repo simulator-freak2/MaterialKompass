@@ -150,7 +150,7 @@ class _LocationsPageState extends State<LocationsPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(
-            stock == null ? 'Regal/Fach anlegen' : 'Regal/Fach bearbeiten'),
+            stock == null ? 'Lagerplatz anlegen' : 'Lagerplatz bearbeiten'),
         content: SizedBox(
           width: 440,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -221,7 +221,7 @@ class _LocationsPageState extends State<LocationsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Zentrale Lagerortverwaltung'),
+        title: const Text('Lagerort- und Lagerplatzverwaltung'),
         actions: [
           IconButton(
               onPressed: _load,
@@ -247,7 +247,7 @@ class _LocationsPageState extends State<LocationsPage> {
                       leading: Icon(Icons.hub_outlined),
                       title: Text('Gemeinsame Lagerstruktur'),
                       subtitle: Text(
-                          'Diese Lagerorte und Regal/Fach-Strukturen werden in Kleiderkammer, Inventar und Beschaffung verwendet.'),
+                          'Diese Lagerorte und Lagerplätze werden in Kleiderkammer, Inventar, Inventuren und Beschaffung verwendet.'),
                     )),
                     const SizedBox(height: 8),
                     ...locations.map((location) {
@@ -261,7 +261,7 @@ class _LocationsPageState extends State<LocationsPage> {
                           title:
                               Text('${location['name']} (${location['code']})'),
                           subtitle: Text(
-                              '${location['type']} · ${children.length} Regal/Fach-Einträge'),
+                              '${location['type']} · ${children.length} Lagerplätze'),
                           trailing: canWrite
                               ? PopupMenuButton<String>(
                                   onSelected: (value) {
@@ -279,7 +279,7 @@ class _LocationsPageState extends State<LocationsPage> {
                                   itemBuilder: (_) => const [
                                     PopupMenuItem(
                                         value: 'add',
-                                        child: Text('Regal/Fach hinzufügen')),
+                                        child: Text('Lagerplatz hinzufügen')),
                                     PopupMenuItem(
                                         value: 'edit',
                                         child: Text('Lagerort bearbeiten')),
@@ -292,8 +292,8 @@ class _LocationsPageState extends State<LocationsPage> {
                           children: children.isEmpty
                               ? const [
                                   ListTile(
-                                      title: Text(
-                                          'Keine Regal/Fach-Struktur angelegt.'))
+                                      title:
+                                          Text('Keine Lagerplätze angelegt.'))
                                 ]
                               : children
                                   .map((stock) => ListTile(
@@ -317,7 +317,7 @@ class _LocationsPageState extends State<LocationsPage> {
                                                             .edit_outlined)),
                                                     IconButton(
                                                         onPressed: () => _delete(
-                                                            'Regal/Fach',
+                                                            'Lagerplatz',
                                                             '/api/stock-structures/${stock['id']}'),
                                                         tooltip: 'Löschen',
                                                         icon: const Icon(Icons

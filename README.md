@@ -80,6 +80,8 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
   einer Prüfwarteschlange für berechtigte Nutzer
 - Verknüpfungen zu Prüfungen, Reparaturen, Beschaffungen und Aussonderungen sowie
   Kennzeichnung von Wiederholungen und Duplikaten
+- Betroffene Artikel können direkt in der Mängelbearbeitung ausgesondert werden;
+  dabei wird ein vorbefüllter Beschaffungsentwurf für den Ersatz angelegt
 - Fehlgeschlagene Inventar- und Kleidungsprüfungen erzeugen automatisch einen Mangel
 - Betroffene Artikel werden auf `Defekt` gesetzt; Rücknahmen bleiben möglich, neue
   Ausgaben werden bis zum geprüften Abschluss gesperrt
@@ -272,6 +274,25 @@ ersten Postfachanlage nicht geändert werden, da vorhandene Passwörter sonst ni
 entschlüsselt werden können. docker-mailserver wird standardmäßig im Container
 `mailserver` erwartet; bei einem anderen Namen muss `MAILSERVER_CONTAINER` angepasst
 werden.
+
+### Angebots-Postbox
+
+Die Beschaffung besitzt den Reiter „Postbox“. Eingehende Angebote werden aus einem
+eigenen IMAP-Postfach gelesen und nach dem Import serverseitig in den Ordner
+`Verarbeitet` verschoben. Die sichtbare Adresse ist standardmäßig
+`angebote@materialkompass.org`; sie kann mit `PROCUREMENT_EMAIL_ADDRESS` geändert
+werden. Enthält Betreff, Nachricht oder Dateiname eine Beschaffungsnummer wie
+`BA-2026-0001`, ordnet MaterialKompass die E-Mail automatisch zu. Auch der Lieferant
+wird anhand seiner hinterlegten Absenderadresse vorgeschlagen.
+
+Für den produktiven Betrieb werden `PROCUREMENT_IMAP_HOST`,
+`PROCUREMENT_IMAP_USER` (üblicherweise `angebote@materialkompass.org`) und
+`PROCUREMENT_IMAP_PASSWORD` benötigt. Port, TLS, Postfach, Zielordner und Prüfintervall
+lassen sich mit `PROCUREMENT_IMAP_PORT`, `PROCUREMENT_IMAP_SECURE`,
+`PROCUREMENT_IMAP_MAILBOX`, `PROCUREMENT_IMAP_PROCESSED_MAILBOX` und
+`PROCUREMENT_IMAP_POLL_INTERVAL_MS` anpassen. Unterstützte Angebotsanhänge sind PDF,
+PNG, JPG, DOCX, XLSX und ODS bis jeweils 5 MB; die gesamte Nachricht darf höchstens
+25 MB groß sein.
 
 Die abschließende Sicherheitsfreigabe bleibt beim Betriebssystem: Windows verlangt je
 nach Signatur/SmartScreen eine Bestätigung, macOS Gatekeeper, Linux die

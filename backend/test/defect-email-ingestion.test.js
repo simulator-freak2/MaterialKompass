@@ -300,5 +300,37 @@ test('locally rendered scans are recognized as report pages rather than damage p
   assert.ok(result.entry.attachments.length >= 2);
   assert.ok(result.entry.attachments.every((attachment) => attachment.role === 'report'));
   assert.ok(!result.entry.problems.some((problem) => /Kein Mängelbericht/.test(problem)));
+  assert.equal(result.entry.extractedData.inventoryNumber, '10050035-02-02-001');
+  assert.equal(result.entry.extractedData.contactName, 'Erika Beispiel');
+  assert.equal(result.entry.extractedData.contactEmail, 'erika@example.org');
+  assert.match(result.entry.extractedData.description, /Kettenschutz/);
+  assert.match(result.entry.extractedData.description, /verriegelt werden/);
+  assert.equal(result.entry.extractedData.operationalSafety, 'Nicht einsatzfähig');
+  await app.locals.defectEmailService.stop();
+});
+
+test('image-only scan PDFs are OCRed and prefill the review fields', async () => {
+  const app = createApp();
+  const renderedPages = await renderPdfPages(await filledReportPdf());
+  const scan = await PDFDocument.create();
+  for (const pageImage of renderedPages) {
+    const embedded = await scan.embedPng(pageImage);
+    const page = scan.addPage([embedded.width, embedded.height]);
+    page.drawImage(embedded, {
+      x: 0,
+      y: 0,
+      width: embedded.width,
+      height: embedded.height,
+    });
+  }
+  const result = await app.locals.defectEmailService.ingestSource(
+    mailWithAttachment(Buffer.from(await scan.save({ useObjectStreams: false }))),
+    { mailbox: 'INBOX', uid: 27, uidValidity: '10' },
+  );
+  assert.equal(result.entry.extractedData.inventoryNumber, '10050035-02-02-001');
+  assert.equal(result.entry.extractedData.contactName, 'Erika Beispiel');
+  assert.equal(result.entry.extractedData.contactEmail, 'erika@example.org');
+  assert.match(result.entry.extractedData.description, /Kettenschutz/);
+  assert.equal(result.entry.extractedData.operationalSafety, 'Nicht einsatzfähig');
   await app.locals.defectEmailService.stop();
 });

@@ -153,6 +153,7 @@ const procurementOffers = [];
 const procurementOrders = [];
 const procurementReceipts = [];
 const procurementDocuments = [];
+const procurementEmailImports = [];
 const suppliers = [{ id: 'supplier-1', name: 'DLRG Fachhandel', contact: 'Vertrieb', address: '', customerNumber: '', email: 'info@fachhandel.example', phone: '', website: '', paymentTerms: '14 Tage netto', active: true }];
 const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
@@ -185,6 +186,7 @@ module.exports = {
     procurementOrders,
     procurementReceipts,
     procurementDocuments,
+    procurementEmailImports,
     suppliers,
     documents,
     auditLogs,

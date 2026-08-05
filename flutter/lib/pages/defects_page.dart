@@ -731,6 +731,11 @@ class _DefectsPageState extends State<DefectsPage> {
                 body: {'status': target}));
           }
 
+          Future<void> printReport() async {
+            final data = await _request('/api/defects/${detail['id']}/print');
+            if (data is Map) await _saveDownloadPayload(data);
+          }
+
           Future<void> addComment() async {
             final controller = TextEditingController();
             final value = await showDialog<String>(
@@ -800,11 +805,7 @@ class _DefectsPageState extends State<DefectsPage> {
                       DropdownButtonFormField<String>(
                         initialValue: type,
                         decoration: const InputDecoration(labelText: 'Art'),
-                        items: const [
-                          'Reparatur',
-                          'Beschaffung',
-                          'Aussonderung'
-                        ]
+                        items: const ['Reparatur', 'Beschaffung']
                             .map((value) => DropdownMenuItem(
                                 value: value, child: Text(value)))
                             .toList(),
@@ -841,6 +842,132 @@ class _DefectsPageState extends State<DefectsPage> {
             await _request('/api/defects/${detail['id']}/related-actions',
                 method: 'POST', body: payload);
             await replaceFrom(await _request('/api/defects/${detail['id']}'));
+          }
+
+          Future<void> disposeAndProcure() async {
+            final disposalQuantity = TextEditingController(
+                text: detail['affectedQuantity']?.toString() ?? '1');
+            final replacementQuantity = TextEditingController(
+                text: detail['affectedQuantity']?.toString() ?? '1');
+            final budget = TextEditingController(
+                text: detail['estimatedCost']?.toString() ?? '');
+            final reason = TextEditingController(
+                text:
+                    'Ersatzbeschaffung nach Aussonderung wegen Mangel ${detail['defectNumber']}.');
+            final department = TextEditingController(
+                text: detail['responsibleDepartment']?.toString() ?? '');
+            final costCenter = TextEditingController();
+            final desiredDate = TextEditingController();
+            final payload = await showDialog<Map<String, dynamic>>(
+              context: dialogContext,
+              builder: (context) => AlertDialog(
+                title: const Text('Aussondern und Ersatz beschaffen'),
+                content: SizedBox(
+                  width: 560,
+                  child: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Text(
+                          'Der Artikel wird ausgesondert und gleichzeitig ein vorbefüllter Beschaffungsentwurf angelegt.'),
+                      TextField(
+                          controller: disposalQuantity,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration: const InputDecoration(
+                              labelText: 'Auszusondernde Menge *')),
+                      TextField(
+                          controller: replacementQuantity,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration: const InputDecoration(
+                              labelText: 'Zu beschaffende Ersatzmenge *')),
+                      TextField(
+                          controller: budget,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration: const InputDecoration(
+                              labelText: 'Beantragtes Bruttobudget (€) *')),
+                      TextField(
+                          controller: reason,
+                          maxLines: 3,
+                          decoration:
+                              const InputDecoration(labelText: 'Begründung *')),
+                      TextField(
+                          controller: department,
+                          decoration:
+                              const InputDecoration(labelText: 'Fachbereich')),
+                      TextField(
+                          controller: costCenter,
+                          decoration:
+                              const InputDecoration(labelText: 'Kostenstelle')),
+                      DateInputField(
+                          controller: desiredDate, label: 'Wunschlieferdatum'),
+                    ]),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Abbrechen')),
+                  FilledButton.icon(
+                    onPressed: () {
+                      if ((num.tryParse(disposalQuantity.text
+                                      .replaceAll(',', '.')) ??
+                                  0) <=
+                              0 ||
+                          (num.tryParse(replacementQuantity.text
+                                      .replaceAll(',', '.')) ??
+                                  0) <=
+                              0 ||
+                          (num.tryParse(budget.text.replaceAll(',', '.')) ??
+                                  0) <=
+                              0 ||
+                          reason.text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text(
+                                'Bitte Mengen, Bruttobudget und Begründung vollständig angeben.')));
+                        return;
+                      }
+                      Navigator.pop(context, {
+                        'disposalQuantity': num.parse(
+                            disposalQuantity.text.replaceAll(',', '.')),
+                        'replacementQuantity': num.parse(
+                            replacementQuantity.text.replaceAll(',', '.')),
+                        'requestedBudgetGross':
+                            num.parse(budget.text.replaceAll(',', '.')),
+                        'reason': reason.text.trim(),
+                        'department': department.text.trim(),
+                        'costCenter': costCenter.text.trim(),
+                        'desiredDeliveryDate': dateInputToIso(desiredDate.text),
+                      });
+                    },
+                    icon: const Icon(Icons.delete_sweep),
+                    label: const Text('Aussondern & Entwurf anlegen'),
+                  ),
+                ],
+              ),
+            );
+            for (final controller in [
+              disposalQuantity,
+              replacementQuantity,
+              budget,
+              reason,
+              department,
+              costCenter,
+              desiredDate,
+            ]) {
+              controller.dispose();
+            }
+            if (payload == null) return;
+            final result = await _request(
+                '/api/defects/${detail['id']}/dispose-and-procure',
+                method: 'POST',
+                body: payload);
+            if (result is Map && result['defect'] is Map) {
+              final request = result['procurementRequest'] as Map?;
+              _message(
+                  'Artikel ausgesondert; Beschaffungsentwurf ${request?['number'] ?? ''} wurde angelegt.');
+              await replaceFrom(result['defect']);
+            }
           }
 
           Future<void> addFollowUp() async {
@@ -948,8 +1075,12 @@ class _DefectsPageState extends State<DefectsPage> {
                     const Divider(height: 28),
                     _facts(detail),
                     const SizedBox(height: 16),
-                    if (!archived)
-                      Wrap(spacing: 8, runSpacing: 8, children: [
+                    Wrap(spacing: 8, runSpacing: 8, children: [
+                      OutlinedButton.icon(
+                          onPressed: printReport,
+                          icon: const Icon(Icons.print_outlined),
+                          label: const Text('Mängelmeldung drucken')),
+                      if (!archived) ...[
                         if (_can('defects.edit'))
                           OutlinedButton.icon(
                               onPressed: edit,
@@ -960,6 +1091,18 @@ class _DefectsPageState extends State<DefectsPage> {
                               onPressed: assign,
                               icon: const Icon(Icons.person_add),
                               label: const Text('Zuweisen')),
+                        if (_can('defects.edit') &&
+                            _can('procurement.request') &&
+                            detail['disposal'] == null &&
+                            ((detail['entityType'] == 'MaterialItem' &&
+                                    _can('inventory.write')) ||
+                                (detail['entityType'] == 'ClothingItem' &&
+                                    _can('clothing.write'))))
+                          FilledButton.icon(
+                              onPressed: disposeAndProcure,
+                              icon: const Icon(Icons.delete_sweep),
+                              label:
+                                  const Text('Aussondern & Ersatz beschaffen')),
                         if (_nextStatus.containsKey(detail['status']))
                           FilledButton.icon(
                               onPressed: transition,
@@ -974,7 +1117,8 @@ class _DefectsPageState extends State<DefectsPage> {
                                   method: 'POST',
                                   body: {'status': 'Neu'})),
                               child: const Text('Wieder öffnen')),
-                      ]),
+                      ],
+                    ]),
                     const Divider(height: 28),
                     Row(children: [
                       Text('Checkliste',
@@ -1009,7 +1153,8 @@ class _DefectsPageState extends State<DefectsPage> {
                       if (!archived && _can('defects.edit'))
                         IconButton(
                             onPressed: addRelatedAction,
-                            tooltip: 'Reparatur, Beschaffung oder Aussonderung',
+                            tooltip:
+                                'Reparatur oder bestehende Beschaffung verknüpfen',
                             icon: const Icon(Icons.link)),
                     ]),
                     if (relatedActions.isEmpty)

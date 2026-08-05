@@ -5,6 +5,7 @@ const { loadRuntimeConfig } = require('./src/config');
 const { verifyAccountMailTransport } = require('./src/mailer');
 const { createDefectMailMonitor } = require('./src/defect-mail-monitor');
 const { createStocktakeMailMonitor } = require('./src/stocktake-mail-monitor');
+const { createProcurementMailMonitor } = require('./src/procurement-mail-monitor');
 
 async function start() {
   const config = loadRuntimeConfig();
@@ -74,6 +75,12 @@ async function start() {
       persistData: () => app.locals.persistData(),
     });
     stocktakeMailMonitor.start();
+    const procurementMailMonitor = createProcurementMailMonitor({
+      store,
+      service: app.locals.procurementEmailService,
+      persistData: () => app.locals.persistData(),
+    });
+    procurementMailMonitor.start();
     let shuttingDown = false;
     const shutdown = (signal) => {
       if (shuttingDown) return;
@@ -96,6 +103,10 @@ async function start() {
         }
         try { await stocktakeMailMonitor.stop(); } catch (monitorError) {
           console.error('Inventur-Mail-Eingang konnte nicht beendet werden:', monitorError);
+          process.exitCode = 1;
+        }
+        try { await procurementMailMonitor.stop(); } catch (monitorError) {
+          console.error('Angebots-Mail-Eingang konnte nicht beendet werden:', monitorError);
           process.exitCode = 1;
         }
         try { await store.close(); } catch (closeError) {

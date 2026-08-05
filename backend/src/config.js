@@ -94,9 +94,11 @@ function loadRuntimeConfig(env = process.env) {
       );
     }
     if (env.DEFECT_IMAP_SECURE === 'false'
-      || env.DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED === 'false') {
+      || env.DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED === 'false'
+      || env.PROCUREMENT_IMAP_SECURE === 'false'
+      || env.PROCUREMENT_IMAP_TLS_REJECT_UNAUTHORIZED === 'false') {
       throw new Error(
-        'Das Mängel-Postfach muss im Produktivbetrieb TLS mit Zertifikatsprüfung verwenden.',
+        'E-Mail-Postfächer müssen im Produktivbetrieb TLS mit Zertifikatsprüfung verwenden.',
       );
     }
     if (env.INITIAL_ADMIN_PASSWORD
@@ -119,6 +121,16 @@ function loadRuntimeConfig(env = process.env) {
     if (missingDefectImapSettings.length > 0) {
       throw new Error(
         `Für das Mängel-Postfach fehlen IMAP-Einstellungen: ${missingDefectImapSettings.join(', ')}.`,
+      );
+    }
+    const missingProcurementImapSettings = [
+      'PROCUREMENT_IMAP_HOST',
+      'PROCUREMENT_IMAP_USER',
+      'PROCUREMENT_IMAP_PASSWORD',
+    ].filter((name) => !env[name]);
+    if (missingProcurementImapSettings.length > 0) {
+      throw new Error(
+        `Für das Angebots-Postfach fehlen IMAP-Einstellungen: ${missingProcurementImapSettings.join(', ')}.`,
       );
     }
     if (!env.MAILBOX_PROVISIONER_TOKEN || env.MAILBOX_PROVISIONER_TOKEN.length < 32

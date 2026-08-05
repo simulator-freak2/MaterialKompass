@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
@@ -18,14 +20,17 @@ import 'wardrobe_page.dart';
 import 'stocktakes_page.dart';
 
 typedef DashboardLoader = Future<Map<String, dynamic>> Function();
+typedef AppExit = Future<void> Function();
 
 class DashboardPage extends StatefulWidget {
   final String token;
   final DashboardLoader? dashboardLoader;
+  final AppExit? appExit;
 
   const DashboardPage({
     required this.token,
     this.dashboardLoader,
+    this.appExit,
     super.key,
   });
 
@@ -75,6 +80,31 @@ class _DashboardPageState extends State<DashboardPage> {
       MaterialPageRoute(builder: (_) => const LoginPage()),
       (route) => false,
     );
+  }
+
+  Future<void> _exitApplication(BuildContext context) async {
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('MaterialKompass beenden?'),
+        content: const Text(
+          'Die Software wird geschlossen. Nicht gespeicherte Eingaben gehen verloren.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Beenden'),
+          ),
+        ],
+      ),
+    );
+    if (shouldExit != true) return;
+
+    await (widget.appExit?.call() ?? SystemNavigator.pop());
   }
 
   Future<void> _refresh() async {
@@ -145,6 +175,12 @@ class _DashboardPageState extends State<DashboardPage> {
             tooltip: 'Abmelden',
             onPressed: () => _logout(context),
           ),
+          if (!kIsWeb)
+            IconButton(
+              icon: const Icon(Icons.power_settings_new),
+              tooltip: 'Software beenden',
+              onPressed: () => _exitApplication(context),
+            ),
         ],
       ),
       body: FutureBuilder<Map<String, dynamic>>(

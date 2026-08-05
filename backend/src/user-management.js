@@ -39,7 +39,7 @@ function permissionsForRoles(roleNames, roles) {
   return [...new Set(roleNames.flatMap((name) => roles.find((role) => role.name === name)?.permissions || []))];
 }
 
-function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete, now = Date.now }) {
+function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete, now = Date.now, defaultMailMessageFor = () => null }) {
   const appBaseUrl = process.env.APP_BASE_URL || 'https://materialkompass.org';
   const saveUser = (user) => userStore?.saveUser(user) || Promise.resolve();
   const deleteStoredUser = (id) => userStore?.deleteUser(id) || Promise.resolve();
@@ -79,7 +79,26 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       && users.filter((entry) => entry.active && entry.roles?.includes('Admin')).length <= 1;
   }
 
-  async function issueVerification(user) {
+  function validateMailMessage(value) {
+    if (value == null || !String(value.content || '').trim()) return { value: null };
+    const content = String(value.content).trim();
+    const format = String(value.format || 'markdown');
+    const placement = String(value.placement || 'before-action');
+    if (content.length > 20000) return { error: 'Die individuelle Nachricht darf höchstens 20.000 Zeichen enthalten.' };
+    if (!['markdown', 'html'].includes(format)) return { error: 'Das Nachrichtenformat ist ungültig.' };
+    if (!['before-content', 'before-action', 'after-action'].includes(placement)) {
+      return { error: 'Die Position der individuellen Nachricht ist ungültig.' };
+    }
+    return { value: { content, format, placement } };
+  }
+
+  function requestedMessage(value, defaultTarget) {
+    const validated = validateMailMessage(value);
+    if (validated.error || validated.value) return validated;
+    return { value: defaultMailMessageFor(defaultTarget) };
+  }
+
+  async function issueVerification(user, customMessage = null) {
     const issuedAt = now();
     const token = crypto.randomBytes(32).toString('hex');
     user.verificationTokenHash = tokenHash(token);
@@ -89,9 +108,10 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     return accountMailSender({
       to: user.email,
       subject: 'E-Mail-Adresse für MaterialKompass bestätigen',
-      text: `Bitte bestätigen Sie Ihre E-Mail-Adresse innerhalb von 24 Stunden:\n\n${url}`,
+      text: `Hallo${user.name ? ` ${user.name}` : ''},\n\nbitte bestätigen Sie Ihre E-Mail-Adresse innerhalb von 24 Stunden. Erst danach können Sie MaterialKompass vollständig nutzen.\n\n${url}\n\nWenn Sie kein MaterialKompass-Konto angelegt oder keine Änderung Ihrer E-Mail-Adresse veranlasst haben, können Sie diese Nachricht ignorieren.`,
       actionUrl: url,
       actionLabel: 'E-Mail-Adresse bestätigen',
+      customMessage,
     }).catch((error) => console.error('Verifizierungs-E-Mail fehlgeschlagen:', error.message));
   }
 
@@ -107,7 +127,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     logEvent('email_verification_resent', 'User', { id: user.id }, actor);
   }
 
-  async function issuePasswordReset(user) {
+  async function issuePasswordReset(user, customMessage = null) {
     const token = crypto.randomBytes(32).toString('hex');
     user.passwordResetTokenHash = tokenHash(token);
     user.passwordResetExpiresAt = new Date(Date.now() + RESET_TTL).toISOString();
@@ -116,9 +136,10 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     return accountMailSender({
       to: user.email,
       subject: 'MaterialKompass-Passwort zurücksetzen',
-      text: `Über diesen Link können Sie innerhalb einer Stunde ein neues Passwort setzen:\n\n${url}`,
+      text: `Hallo${user.name ? ` ${user.name}` : ''},\n\nfür Ihr MaterialKompass-Konto wurde das Zurücksetzen des Passworts angefordert. Über den folgenden Link können Sie innerhalb einer Stunde ein neues Passwort setzen:\n\n${url}\n\nWenn Sie das Zurücksetzen nicht angefordert haben, können Sie diese Nachricht ignorieren. Ihr bisheriges Passwort bleibt unverändert.`,
       actionUrl: url,
       actionLabel: 'Neues Passwort setzen',
+      customMessage,
     }).catch((error) => console.error('Passwort-E-Mail fehlgeschlagen:', error.message));
   }
 
@@ -272,6 +293,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (!roleNamesAreValid(roleNames)) return res.status(400).json({ error: 'Mindestens eine gültige Rolle ist erforderlich.' });
     const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
     if (departmentError) return res.status(400).json({ error: departmentError });
+    const mailMessage = requestedMessage(req.body.mailMessage, 'user-create');
+    if (mailMessage.error) return res.status(400).json({ error: mailMessage.error });
     const user = {
       id: nextId('user', users), name: String(name || '').trim(), username: String(username).trim(),
       email: normalize(email), passwordHash: await bcrypt.hash(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: roleNames,
@@ -281,8 +304,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       createdAt: new Date().toISOString(), lastLoginAt: null,
     };
     users.push(user);
-    if (!skipEmailVerification) await issueVerification(user);
-    if (!hasStartPassword) await issuePasswordReset(user);
+    if (!skipEmailVerification) await issueVerification(user, mailMessage.value);
+    if (!hasStartPassword) await issuePasswordReset(user, mailMessage.value);
     await saveUser(user);
     logEvent('create', 'User', { id: user.id }, req.user.username);
     return res.status(201).json(publicUser(user));
@@ -320,7 +343,9 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
 
   app.post('/api/users/:id/password-reset', authMiddleware, requirePermission('users.write'), async (req, res) => {
     const user = users.find((entry) => entry.id === req.params.id);
-    if (user) { await issuePasswordReset(user); await saveUser(user); logEvent('password_reset_requested', 'User', { id: user.id }, req.user.username); }
+    const mailMessage = requestedMessage(req.body.mailMessage, 'password-reset');
+    if (mailMessage.error) return res.status(400).json({ error: mailMessage.error });
+    if (user) { await issuePasswordReset(user, mailMessage.value); await saveUser(user); logEvent('password_reset_requested', 'User', { id: user.id }, req.user.username); }
     return res.status(202).json({ message: 'Wenn das Konto existiert, wurde eine E-Mail versendet.' });
   });
 
@@ -343,6 +368,9 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   });
 
   app.post('/api/users/:id/verification/confirm', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    if (!req.user.roles?.includes('Admin')) {
+      return res.status(403).json({ error: 'Diese Aktion ist nur für Admins verfügbar.' });
+    }
     const user = users.find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     if (user.emailVerifiedAt) {
@@ -407,7 +435,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   app.post('/api/auth/password-reset', authRateLimit, async (req, res) => {
     const user = findUser(req.body.email || req.body.identifier);
     if (user?.active) {
-      await issuePasswordReset(user);
+      await issuePasswordReset(user, defaultMailMessageFor('password-reset'));
       await saveUser(user);
       logEvent('password_reset_requested', 'User', { id: user.id }, user.username);
     }

@@ -74,7 +74,7 @@ test('desktop downloads report availability and stream configured release files'
     const updateResponse = await fetch(`${baseUrl}/api/client-updates/windows?currentVersion=0.9.0`);
     assert.equal(updateResponse.status, 200);
     const update = await updateResponse.json();
-    assert.equal(update.version, '1.1.0');
+    assert.equal(update.version, '1.2.0');
     assert.equal(update.updateAvailable, true);
     assert.equal(update.required, false);
     assert.equal(update.downloadUrl, '/api/downloads/windows');
@@ -125,6 +125,9 @@ test('runtime configuration validates network settings', () => {
     DEFECT_IMAP_HOST: 'imap.example.org',
     DEFECT_IMAP_USER: 'maengel@example.org',
     DEFECT_IMAP_PASSWORD: 'secret',
+    PROCUREMENT_IMAP_HOST: 'imap.example.org',
+    PROCUREMENT_IMAP_USER: 'angebote@example.org',
+    PROCUREMENT_IMAP_PASSWORD: 'secret',
     MAILBOX_PROVISIONER_TOKEN: 'b'.repeat(64),
     MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
     MAILBOX_PROVISIONER_SOCKET: '/run/materialkompass/provisioner.sock',

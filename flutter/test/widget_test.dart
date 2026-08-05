@@ -166,6 +166,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Dashboard asks for confirmation before exiting the software',
+      (WidgetTester tester) async {
+    var exitCount = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        token: 'demo',
+        appExit: () async => exitCount += 1,
+        dashboardLoader: () async => {
+          'summary': const {},
+          'currentUser': {
+            'name': 'Testnutzer',
+            'roles': ['Nutzer'],
+            'permissions': const [],
+          },
+          'recentActivity': const [],
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Software beenden'));
+    await tester.pumpAndSettle();
+    expect(find.text('MaterialKompass beenden?'), findsOneWidget);
+    expect(exitCount, 0);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Beenden'));
+    await tester.pumpAndSettle();
+    expect(exitCount, 1);
+  });
+
   testWidgets('Admin user dialog covers accounts and roles',
       (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(
@@ -377,6 +407,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: ProcurementRequestDialog(
+          departments: const [],
           categories: const [
             {'id': '02', 'name': 'Werkzeug', 'parentId': null},
             {'id': '02-02', 'name': 'Handwerk', 'parentId': '02'},
@@ -402,6 +433,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: ProcurementRequestDialog(
+          departments: const [],
           categories: const [
             {'id': '02', 'name': 'Werkzeug', 'parentId': null},
           ],

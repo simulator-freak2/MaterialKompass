@@ -133,6 +133,72 @@ class _WardrobePageState extends State<WardrobePage> {
     } catch (_) {}
   }
 
+  Future<void> _printDefect(Map<String, dynamic> item) async {
+    final defects = (item['defects'] as List? ?? const [])
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+    if (defects.isEmpty) return;
+    Map<String, dynamic>? selected = defects.singleOrNull;
+    if (defects.length > 1) {
+      selected = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Mängelmeldung auswählen'),
+          content: SizedBox(
+            width: 520,
+            child: ListView(
+              shrinkWrap: true,
+              children: defects
+                  .map((defect) => ListTile(
+                        leading: const Icon(Icons.report_problem_outlined),
+                        title: Text(
+                            '${defect['defectNumber']} · ${defect['title']}'),
+                        subtitle:
+                            Text('${defect['status']} · ${defect['priority']}'),
+                        onTap: () => Navigator.pop(context, defect),
+                      ))
+                  .toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Abbrechen')),
+          ],
+        ),
+      );
+    }
+    if (selected == null) return;
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/defects/${selected['id']}/print'),
+      headers: {'Authorization': 'Bearer ${widget.token}'},
+    );
+    if (response.statusCode != 200) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Die Mängelmeldung konnte nicht erstellt werden.')),
+        );
+      }
+      return;
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final fileName = data['fileName']?.toString() ?? 'maengelmeldung.pdf';
+    final dot = fileName.lastIndexOf('.');
+    await FileSaver.instance.saveFile(
+      name: dot > 0 ? fileName.substring(0, dot) : fileName,
+      bytes: base64Decode(data['fileBase64'].toString()),
+      fileExtension: dot > 0 ? fileName.substring(dot + 1) : 'pdf',
+      mimeType: MimeType.custom,
+      customMimeType: data['mimeType']?.toString() ?? 'application/pdf',
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$fileName wurde zum Drucken erstellt.')),
+      );
+    }
+  }
+
   Future<List<Map<String, dynamic>>> _fetchTransactions() async {
     try {
       final response = await http.get(
@@ -2198,6 +2264,16 @@ class _WardrobePageState extends State<WardrobePage> {
                                             tooltip: 'Etikett drucken',
                                             icon: const Icon(
                                                 Icons.print_outlined),
+                                          ),
+                                        if ((item['defects'] as List?)
+                                                ?.isNotEmpty ==
+                                            true)
+                                          IconButton(
+                                            onPressed: () => _printDefect(item),
+                                            tooltip:
+                                                'Ausgefüllte Mängelmeldung drucken',
+                                            icon: const Icon(
+                                                Icons.report_outlined),
                                           ),
                                         OutlinedButton(
                                           onPressed: () =>

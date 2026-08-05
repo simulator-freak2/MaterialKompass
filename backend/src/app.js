@@ -11,6 +11,10 @@ const {
   registerStocktakeEmailRoutes,
 } = require('./stocktake-email-ingestion');
 const { registerProcurementRoutes } = require('./procurement');
+const {
+  createProcurementEmailService,
+  registerProcurementEmailRoutes,
+} = require('./procurement-email-ingestion');
 const { nextInventoryNumber } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { registerDefectManagement } = require('./defects');
@@ -22,6 +26,7 @@ const { registerQrLoginRoutes } = require('./qr-login');
 const { registerScannerEmailRoutes } = require('./scanner-email-addresses');
 const { createMailboxProvisioner } = require('./mailbox-provisioner-client');
 const { createMailboxCredentialVault } = require('./mailbox-credential-vault');
+const { registerMailManagementRoutes } = require('./mail-management');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -44,8 +49,9 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'defectReports', 'notifications', 'defectEmailImports',
   'procurementRequests', 'procurementOffers', 'procurementOrders',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
+  'procurementEmailImports',
   'auditLogs', 'exportLogs',
-  'qrLoginCredentials', 'scannerEmailAddresses',
+  'qrLoginCredentials', 'scannerEmailAddresses', 'mailTemplates',
   'stocktakes', 'stocktakeEmailImports',
 ]);
 
@@ -153,8 +159,10 @@ function createApp(options = {}) {
   const exportLogs = appData.exportLogs;
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
   const scannerEmailAddresses = (appData.scannerEmailAddresses ||= []);
+  const mailTemplates = (appData.mailTemplates ||= []);
   const stocktakes = (appData.stocktakes ||= []);
   const stocktakeEmailImports = (appData.stocktakeEmailImports ||= []);
+  const procurementEmailImports = (appData.procurementEmailImports ||= []);
   const defaultDownloadsDirectory = path.resolve(__dirname, '..', 'downloads');
   const downloadSources = options.downloads || {
     windows: {
@@ -634,6 +642,19 @@ function createApp(options = {}) {
         .filter((entry) => entry.clothingId === item.id)
         .slice()
         .reverse(),
+      defects: defectReports
+        .filter((entry) => entry.entityType === 'ClothingItem' && entry.entityId === item.id)
+        .slice()
+        .reverse()
+        .map((entry) => ({
+          id: entry.id,
+          defectNumber: entry.defectNumber,
+          title: entry.title,
+          description: entry.description,
+          status: entry.status,
+          priority: entry.priority,
+          createdAt: entry.createdAt,
+        })),
     };
   }
 
@@ -793,6 +814,15 @@ function createApp(options = {}) {
     PERSISTED_COLLECTIONS.forEach((name) => anonymize(appData[name] || []));
   }
 
+  const mailManagement = registerMailManagementRoutes({
+    app,
+    mailTemplates,
+    authMiddleware,
+    requirePermission,
+    logEvent,
+    accountMailSender: options.accountMailSender,
+  });
+
   const userManagement = registerUserRoutes({
     app, users, roles, permissions, departments, authMiddleware, requirePermission, logEvent,
     departmentReferences: procurementRequests,
@@ -804,6 +834,7 @@ function createApp(options = {}) {
     dataSubjectExporter: exportDataSubject,
     onBeforeUserDelete: anonymizeDataSubject,
     now: options.now,
+    defaultMailMessageFor: mailManagement.defaultMessageFor,
   });
 
   registerScannerEmailRoutes({
@@ -973,6 +1004,18 @@ function createApp(options = {}) {
     res.json(locations);
   });
 
+  const stocktakeReferences = (field, id) => stocktakes.some((stocktake) => {
+    const scopeField = field === 'locationId' ? 'locationIds' : 'stockStructureIds';
+    if ((stocktake.scope?.[scopeField] || []).includes(id)) return true;
+    return (stocktake.entries || []).some((entry) => {
+      const expectedField = field === 'locationId' ? 'expectedLocationId' : 'expectedStockStructureId';
+      const actualField = field === 'locationId' ? 'actualLocationId' : 'actualStockStructureId';
+      return entry[expectedField] === id
+        || entry[actualField] === id
+        || (entry.attempts || []).some((attempt) => attempt[actualField] === id);
+    });
+  });
+
   app.post('/api/locations', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const name = String(req.body.name || '').trim();
     const code = String(req.body.code || '').trim().toUpperCase();
@@ -1003,7 +1046,16 @@ function createApp(options = {}) {
   app.delete('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = locations.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Lagerort nicht gefunden.' });
-    if (materials.some((entry) => entry.locationId === req.params.id) || clothingItems.some((entry) => entry.locationId === req.params.id)) return res.status(409).json({ error: 'Der Lagerort ist noch Inventar oder Kleidung zugeordnet.' });
+    const nestedStockIds = new Set(stockStructures
+      .filter((entry) => entry.locationId === req.params.id)
+      .map((entry) => entry.id));
+    const inventoryReferences = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
+      .some((entry) => entry.locationId === req.params.id || nestedStockIds.has(entry.stockStructureId));
+    const stocktakeUsesLocation = stocktakeReferences('locationId', req.params.id)
+      || [...nestedStockIds].some((id) => stocktakeReferences('stockStructureId', id));
+    if (inventoryReferences || stocktakeUsesLocation) {
+      return res.status(409).json({ error: 'Der Lagerort wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
+    }
     for (let i = stockStructures.length - 1; i >= 0; i -= 1) if (stockStructures[i].locationId === req.params.id) stockStructures.splice(i, 1);
     const [removed] = locations.splice(index, 1);
     logEvent('delete', 'Location', { id: removed.id }, req.user.username);
@@ -1041,8 +1093,12 @@ function createApp(options = {}) {
 
   app.delete('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = stockStructures.findIndex((entry) => entry.id === req.params.id);
-    if (index < 0) return res.status(404).json({ error: 'Regal/Fach nicht gefunden.' });
-    if (materials.some((entry) => entry.stockStructureId === req.params.id) || clothingItems.some((entry) => entry.stockStructureId === req.params.id)) return res.status(409).json({ error: 'Regal/Fach ist noch Inventar oder Kleidung zugeordnet.' });
+    if (index < 0) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
+    const inventoryReferences = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
+      .some((entry) => entry.stockStructureId === req.params.id);
+    if (inventoryReferences || stocktakeReferences('stockStructureId', req.params.id)) {
+      return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
+    }
     const [removed] = stockStructures.splice(index, 1);
     logEvent('delete', 'StockStructure', { id: removed.id }, req.user.username);
     res.status(204).end();
@@ -1175,6 +1231,7 @@ function createApp(options = {}) {
   const defectManagement = registerDefectManagement({
     app, authMiddleware, requirePermission, hasPermission, defectReports,
     materials, clothingItems, users, notifications, logEvent, nextId, XLSX,
+    categories, departments, procurementRequests, locations, stockStructures,
   });
   app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
   const defectEmailService = createDefectEmailService({
@@ -1737,6 +1794,22 @@ function createApp(options = {}) {
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
     addMonths,
   });
+  const procurementEmailService = createProcurementEmailService({
+    procurementEmailImports,
+    procurementRequests: appData.procurementRequests,
+    suppliers: appData.suppliers,
+    nextId,
+    persistData: () => app.locals.persistData(),
+  });
+  registerProcurementEmailRoutes({
+    app, authMiddleware, requirePermission, procurementEmailImports,
+    procurementRequests: appData.procurementRequests,
+    procurementOffers: appData.procurementOffers,
+    procurementDocuments: appData.procurementDocuments,
+    suppliers: appData.suppliers, nextId, logEvent,
+  });
+  app.locals.procurementEmailService = procurementEmailService;
+  app.locals.procurementEmailImports = procurementEmailImports;
 
   app.get('/api/documents', authMiddleware, requirePermission('documents.read'), (req, res) => {
     res.json(documents);

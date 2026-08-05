@@ -1,6 +1,6 @@
 {
   "name": "materialkompass-backend",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "REST backend for MaterialKompass",
   "main": "server.js",
   "engines": {
@@ -24,6 +24,7 @@
     "nodemailer": "^9.0.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "5.4.296",
+    "sanitize-html": "2.17.5",
     "sharp": "^0.35.3",
     "tesseract.js": "^7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"

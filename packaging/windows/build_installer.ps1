@@ -1,6 +1,6 @@
 param(
     [string]$ApiBaseUrl = "https://materialkompass.org",
-    [string]$Version = "1.1.0",
+    [string]$Version = "1.2.0",
     [string]$CertificateThumbprint = $env:WINDOWS_CERT_THUMBPRINT,
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$AllowUnsigned
@@ -10,6 +10,12 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $flutterRoot = Join-Path $repositoryRoot "flutter"
 $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+if (-not $iscc) {
+    $iscc = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+}
 if (-not $iscc) {
     throw "Inno Setup 6 wurde nicht gefunden. Installiere es von https://jrsoftware.org/isinfo.php."
 }

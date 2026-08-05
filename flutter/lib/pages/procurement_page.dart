@@ -28,8 +28,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _locations = [];
   List<Map<String, dynamic>> _stocks = [];
+  List<Map<String, dynamic>> _departments = [];
+  List<Map<String, dynamic>> _emailInbox = [];
+  String _offerEmailAddress = 'angebote@materialkompass.org';
   Set<String> _permissions = {};
   Set<String> _roles = {};
+  Set<String> _departmentIds = {};
   bool _loading = true;
   String? _status;
 
@@ -41,6 +45,13 @@ class _ProcurementPageState extends State<ProcurementPage> {
   bool _can(String permission) => _permissions.contains(permission);
   bool get _canPrintLabels =>
       LabelPrintService.instance.supported && userMayPrintLabels(_roles);
+
+  List<Map<String, dynamic>> get _availableDepartments => _departments
+      .where((entry) =>
+          entry['active'] != false &&
+          (!_roles.contains('Fachbereichsleiter') ||
+              _departmentIds.contains(entry['id']?.toString())))
+      .toList();
 
   @override
   void initState() {
@@ -76,6 +87,9 @@ class _ProcurementPageState extends State<ProcurementPage> {
         http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
             headers: _headers),
         http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: _headers),
+        http.get(Uri.parse('$apiBaseUrl/api/procurement-email-inbox'),
+            headers: _headers),
+        http.get(Uri.parse('$apiBaseUrl/api/departments'), headers: _headers),
       ]);
       if (responses.any((response) => response.statusCode == 401)) {
         widget.onLogout?.call();
@@ -85,6 +99,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
         throw Exception('Beschaffungsdaten konnten nicht geladen werden.');
       }
       final user = jsonDecode(responses[5].body)['user'] as Map;
+      final inbox = jsonDecode(responses[6].body) as Map;
       if (!mounted) return;
       setState(() {
         _requests = _asList(responses[0]);
@@ -92,10 +107,18 @@ class _ProcurementPageState extends State<ProcurementPage> {
         _categories = _asList(responses[2]);
         _locations = _asList(responses[3]);
         _stocks = _asList(responses[4]);
+        _departments = _asList(responses[7]);
+        _emailInbox = ((inbox['entries'] as List?) ?? const [])
+            .map((entry) => Map<String, dynamic>.from(entry as Map))
+            .toList();
+        _offerEmailAddress = inbox['address']?.toString() ?? _offerEmailAddress;
         _permissions = ((user['permissions'] as List?) ?? const [])
             .map((value) => value.toString())
             .toSet();
         _roles = ((user['roles'] as List?) ?? const [])
+            .map((value) => value.toString())
+            .toSet();
+        _departmentIds = ((user['departmentIds'] as List?) ?? const [])
             .map((value) => value.toString())
             .toSet();
         _loading = false;
@@ -187,6 +210,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       barrierDismissible: false,
       builder: (_) => ProcurementRequestDialog(
         categories: _categories,
+        departments: _availableDepartments,
         suppliers:
             _suppliers.where((entry) => entry['active'] != false).toList(),
       ),
@@ -206,6 +230,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
       barrierDismissible: false,
       builder: (_) => ProcurementRequestDialog(
         categories: _categories,
+        departments: _availableDepartments,
         suppliers:
             _suppliers.where((entry) => entry['active'] != false).toList(),
         request: request,
@@ -592,6 +617,188 @@ class _ProcurementPageState extends State<ProcurementPage> {
     _message('$fileName wurde erstellt.');
   }
 
+  Future<void> _downloadEmailAttachment(
+      Map<String, dynamic> email, Map<String, dynamic> attachment) async {
+    final data = await _request(
+        '/api/procurement-email-inbox/${email['id']}/attachments/${attachment['id']}');
+    if (data == null) return;
+    final fileName = data['fileName'].toString();
+    final extension = fileName.contains('.') ? fileName.split('.').last : 'bin';
+    final baseName = fileName.endsWith('.$extension')
+        ? fileName.substring(0, fileName.length - extension.length - 1)
+        : fileName;
+    await FileSaver.instance.saveFile(
+      name: baseName,
+      bytes: base64Decode(data['fileBase64']),
+      fileExtension: extension,
+      mimeType: MimeType.custom,
+      customMimeType: fileMimeType(extension),
+    );
+  }
+
+  Future<void> _processEmailOffer(Map<String, dynamic> email) async {
+    final eligibleRequests = _requests
+        .where((request) =>
+            request['status'] == 'Beantragt' ||
+            request['status'] == 'Genehmigt')
+        .toList();
+    final activeSuppliers =
+        _suppliers.where((entry) => entry['active'] != false).toList();
+    if (eligibleRequests.isEmpty || activeSuppliers.isEmpty) {
+      _message(
+          'Es wird ein offener Vorgang und ein aktiver Lieferant benötigt.',
+          error: true);
+      return;
+    }
+    var requestId = email['requestId']?.toString();
+    if (!eligibleRequests.any((entry) => entry['id'] == requestId)) {
+      requestId = eligibleRequests.first['id'].toString();
+    }
+    var supplierId = email['supplierId']?.toString();
+    if (!activeSuppliers.any((entry) => entry['id'] == supplierId)) {
+      supplierId = activeSuppliers.first['id'].toString();
+    }
+    final number = TextEditingController();
+    final total = TextEditingController();
+    final shipping = TextEditingController(text: '0,00');
+    final offerDate = TextEditingController();
+    final validUntil = TextEditingController();
+    final deliveryDays = TextEditingController();
+    final notes = TextEditingController(text: email['messageText']?.toString());
+    final payload = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+                  title: const Text('Angebot aus E-Mail übernehmen'),
+                  content: SizedBox(
+                      width: 620,
+                      child: SingleChildScrollView(
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                        DropdownButtonFormField<String>(
+                            initialValue: requestId,
+                            decoration: const InputDecoration(
+                                labelText: 'Beschaffungsvorgang *'),
+                            items: eligibleRequests
+                                .map((entry) => DropdownMenuItem(
+                                    value: entry['id'].toString(),
+                                    child: Text(
+                                        '${entry['number']} · ${entry['title']}')))
+                                .toList(),
+                            onChanged: (value) =>
+                                setDialogState(() => requestId = value)),
+                        DropdownButtonFormField<String>(
+                            initialValue: supplierId,
+                            decoration:
+                                const InputDecoration(labelText: 'Lieferant *'),
+                            items: activeSuppliers
+                                .map((entry) => DropdownMenuItem(
+                                    value: entry['id'].toString(),
+                                    child: Text(entry['name'].toString())))
+                                .toList(),
+                            onChanged: (value) =>
+                                setDialogState(() => supplierId = value)),
+                        TextField(
+                            controller: number,
+                            decoration: const InputDecoration(
+                                labelText: 'Angebotsnummer')),
+                        Row(children: [
+                          Expanded(
+                              child: TextField(
+                                  controller: total,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                      labelText: 'Angebot brutto *'))),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              child: TextField(
+                                  controller: shipping,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                      labelText: 'Versand brutto')))
+                        ]),
+                        Row(children: [
+                          Expanded(
+                              child: TextField(
+                                  controller: offerDate,
+                                  decoration: const InputDecoration(
+                                      labelText:
+                                          'Angebotsdatum (JJJJ-MM-TT)'))),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              child: TextField(
+                                  controller: validUntil,
+                                  decoration: const InputDecoration(
+                                      labelText: 'Gültig bis (JJJJ-MM-TT)')))
+                        ]),
+                        TextField(
+                            controller: deliveryDays,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                                labelText: 'Lieferzeit in Tagen')),
+                        TextField(
+                            controller: notes,
+                            minLines: 2,
+                            maxLines: 5,
+                            decoration:
+                                const InputDecoration(labelText: 'Notizen')),
+                      ]))),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Abbrechen')),
+                    FilledButton.icon(
+                        onPressed: () => Navigator.pop(context, {
+                              'requestId': requestId,
+                              'supplierId': supplierId,
+                              'offerNumber': number.text.trim(),
+                              'grossTotal': total.text.trim(),
+                              'shippingGross': shipping.text.trim(),
+                              'offerDate': offerDate.text.trim().isEmpty
+                                  ? null
+                                  : offerDate.text.trim(),
+                              'validUntil': validUntil.text.trim().isEmpty
+                                  ? null
+                                  : validUntil.text.trim(),
+                              'deliveryDays': deliveryDays.text.trim(),
+                              'notes': notes.text.trim(),
+                            }),
+                        icon: const Icon(Icons.move_to_inbox_outlined),
+                        label: const Text('Übernehmen'))
+                  ],
+                )));
+    for (final controller in [
+      number,
+      total,
+      shipping,
+      offerDate,
+      validUntil,
+      deliveryDays,
+      notes
+    ]) {
+      controller.dispose();
+    }
+    if (payload == null) return;
+    final result = await _request(
+        '/api/procurement-email-inbox/${email['id']}/process',
+        method: 'POST',
+        body: payload);
+    if (result != null) {
+      _message('Angebot und Anhänge wurden übernommen.');
+      await _load();
+    }
+  }
+
+  Future<void> _discardEmailOffer(Map<String, dynamic> email) async {
+    final reason = await _textPrompt('E-Mail verwerfen', 'Begründung');
+    if (reason == null) return;
+    final result = await _request(
+        '/api/procurement-email-inbox/${email['id']}/discard',
+        method: 'POST',
+        body: {'reason': reason});
+    if (result != null) await _load();
+  }
+
   Future<void> _supplierDialog([Map<String, dynamic>? supplier]) async {
     final payload = await showDialog<Map<String, dynamic>>(
         context: context, builder: (_) => SupplierDialog(supplier: supplier));
@@ -674,13 +881,14 @@ class _ProcurementPageState extends State<ProcurementPage> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Beschaffung'),
-          bottom: const TabBar(tabs: [
+          bottom: const TabBar(isScrollable: true, tabs: [
             Tab(icon: Icon(Icons.list_alt), text: 'Vorgänge'),
             Tab(icon: Icon(Icons.approval_outlined), text: 'Freigaben'),
+            Tab(icon: Icon(Icons.inbox_outlined), text: 'Postbox'),
             Tab(icon: Icon(Icons.local_shipping_outlined), text: 'Lieferanten')
           ]),
           actions: [
@@ -709,8 +917,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                children: [_overview(), _approvals(), _supplierView()]),
+            : TabBarView(children: [
+                _overview(),
+                _approvals(),
+                _emailInboxView(),
+                _supplierView()
+              ]),
         floatingActionButton: _can('procurement.request')
             ? FloatingActionButton.extended(
                 onPressed: _createRequest,
@@ -802,6 +1014,115 @@ class _ProcurementPageState extends State<ProcurementPage> {
                   style: Theme.of(context).textTheme.titleMedium))),
       const SizedBox(height: 8),
       Expanded(child: _requestList(pending, approvalButtons: true))
+    ]);
+  }
+
+  Widget _emailInboxView() {
+    final open = _emailInbox
+        .where((entry) =>
+            entry['status'] != 'verarbeitet' && entry['status'] != 'verworfen')
+        .toList();
+    return Column(children: [
+      Padding(
+          padding: const EdgeInsets.all(20),
+          child: Card(
+              child: ListTile(
+                  leading: const Icon(Icons.forward_to_inbox_outlined),
+                  title: const Text('Angebote per E-Mail empfangen'),
+                  subtitle: Text(
+                      'Lieferanten senden Angebote an $_offerEmailAddress. Die Vorgangsnummer im Betreff ermöglicht die automatische Zuordnung.'),
+                  trailing: Chip(label: Text('${open.length} offen'))))),
+      Expanded(
+          child: _emailInbox.isEmpty
+              ? const Center(
+                  child: Text('Noch keine Angebots-E-Mails eingegangen.'))
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                  itemCount: _emailInbox.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final email = _emailInbox[index];
+                    final attachments = ((email['attachments'] as List?) ??
+                            const [])
+                        .map((entry) => Map<String, dynamic>.from(entry as Map))
+                        .toList();
+                    final request = _requests
+                        .where((entry) => entry['id'] == email['requestId'])
+                        .firstOrNull;
+                    final completed = email['status'] == 'verarbeitet' ||
+                        email['status'] == 'verworfen';
+                    return Card(
+                        child: ExpansionTile(
+                            leading: Icon(completed
+                                ? Icons.mark_email_read_outlined
+                                : Icons.mark_email_unread_outlined),
+                            title: Text(
+                                email['subject']?.toString() ?? 'Ohne Betreff'),
+                            subtitle: Text([
+                              email['senderName']?.toString().isNotEmpty == true
+                                  ? '${email['senderName']} <${email['sender']}>'
+                                  : email['sender'],
+                              request == null
+                                  ? 'nicht zugeordnet'
+                                  : '${request['number']} · ${request['title']}',
+                              email['status']
+                            ].join(' · ')),
+                            childrenPadding:
+                                const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                            children: [
+                          if (email['problem']?.toString().isNotEmpty == true)
+                            Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(email['problem'].toString(),
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .error))),
+                          if (email['messageText']?.toString().isNotEmpty ==
+                              true)
+                            Align(
+                                alignment: Alignment.centerLeft,
+                                child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    child: Text(email['messageText'].toString(),
+                                        maxLines: 8,
+                                        overflow: TextOverflow.ellipsis))),
+                          Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: attachments
+                                  .map((attachment) => ActionChip(
+                                      avatar: const Icon(
+                                          Icons.attach_file_outlined,
+                                          size: 18),
+                                      label: Text(
+                                          attachment['fileName'].toString()),
+                                      onPressed: () => _downloadEmailAttachment(
+                                          email, attachment)))
+                                  .toList()),
+                          if (!completed && _can('procurement.request')) ...[
+                            const SizedBox(height: 12),
+                            Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  TextButton.icon(
+                                      onPressed: () =>
+                                          _discardEmailOffer(email),
+                                      icon: const Icon(Icons.delete_outline),
+                                      label: const Text('Verwerfen')),
+                                  const SizedBox(width: 8),
+                                  FilledButton.icon(
+                                      onPressed: attachments.isEmpty
+                                          ? null
+                                          : () => _processEmailOffer(email),
+                                      icon: const Icon(
+                                          Icons.move_to_inbox_outlined),
+                                      label: const Text('Angebot übernehmen'))
+                                ])
+                          ]
+                        ]));
+                  }))
     ]);
   }
 
@@ -917,10 +1238,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
 
 class ProcurementRequestDialog extends StatefulWidget {
   final List<Map<String, dynamic>> categories;
+  final List<Map<String, dynamic>> departments;
   final List<Map<String, dynamic>> suppliers;
   final Map<String, dynamic>? request;
   const ProcurementRequestDialog(
       {required this.categories,
+      required this.departments,
       required this.suppliers,
       this.request,
       super.key});
@@ -932,13 +1255,13 @@ class ProcurementRequestDialog extends StatefulWidget {
 class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
   final title = TextEditingController(),
       reason = TextEditingController(),
-      department = TextEditingController(),
       costCenter = TextEditingController(),
       requestedBudget = TextEditingController(),
       desiredDate = TextEditingController(),
       notes = TextEditingController();
   final items = <_RequestItemControllers>[];
   String priority = 'Normal';
+  String? departmentId;
   String? supplier;
 
   Map<String, dynamic>? _category(String? id) => widget.categories
@@ -971,7 +1294,15 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
     }
     title.text = request['title']?.toString() ?? '';
     reason.text = request['reason']?.toString() ?? '';
-    department.text = request['department']?.toString() ?? '';
+    departmentId = request['departmentId']?.toString();
+    if (!widget.departments
+        .any((entry) => entry['id']?.toString() == departmentId)) {
+      final departmentName = request['department']?.toString();
+      departmentId = widget.departments
+          .where((entry) => entry['name']?.toString() == departmentName)
+          .map((entry) => entry['id']?.toString())
+          .firstOrNull;
+    }
     costCenter.text = request['costCenter']?.toString() ?? '';
     requestedBudget.text = request['requestedBudgetGross']?.toString() ?? '';
     desiredDate.text = formatDateForInput(request['desiredDeliveryDate']);
@@ -988,7 +1319,6 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
     for (final c in [
       title,
       reason,
-      department,
       costCenter,
       requestedBudget,
       desiredDate,
@@ -1015,7 +1345,24 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                     children: [
                   Wrap(spacing: 12, runSpacing: 12, children: [
                     field(title, 'Titel *', 420),
-                    field(department, 'Abteilung/Fachbereich', 210),
+                    SizedBox(
+                        width: 260,
+                        child: DropdownButtonFormField<String>(
+                            initialValue: departmentId,
+                            isExpanded: true,
+                            decoration:
+                                const InputDecoration(labelText: 'Fachbereich'),
+                            hint: const Text('Bitte auswählen'),
+                            items: widget.departments
+                                .map((entry) => DropdownMenuItem(
+                                    value: entry['id'].toString(),
+                                    child: Text(entry['name'].toString(),
+                                        overflow: TextOverflow.ellipsis)))
+                                .toList(),
+                            onChanged: widget.departments.isEmpty
+                                ? null
+                                : (value) =>
+                                    setState(() => departmentId = value))),
                     field(costCenter, 'Kostenstelle', 180),
                     field(requestedBudget, 'Beantragtes Budget *', 210),
                     field(reason, 'Begründung *', 640, lines: 2),
@@ -1183,7 +1530,7 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
     Navigator.pop(context, {
       'title': title.text.trim(),
       'reason': reason.text.trim(),
-      'department': department.text.trim(),
+      'departmentId': departmentId,
       'costCenter': costCenter.text.trim(),
       'requestedBudgetGross':
           double.tryParse(requestedBudget.text.replaceAll(',', '.')),

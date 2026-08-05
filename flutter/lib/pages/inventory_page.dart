@@ -576,6 +576,8 @@ class _InventoryPageState extends State<InventoryPage> {
         await _addDefect(fresh);
       } else if (action == 'print') {
         await _printItems([Map<String, dynamic>.from(fresh as Map)]);
+      } else if (action?.startsWith('print-defect:') == true) {
+        await _printDefect(action!.substring('print-defect:'.length));
       } else {
         return;
       }
@@ -678,6 +680,21 @@ class _InventoryPageState extends State<InventoryPage> {
       ),
     ));
     await _load();
+  }
+
+  Future<void> _printDefect(String defectId) async {
+    final data = await _request('/api/defects/$defectId/print');
+    if (data is! Map) return;
+    final fileName = data['fileName']?.toString() ?? 'maengelmeldung.pdf';
+    final dot = fileName.lastIndexOf('.');
+    await FileSaver.instance.saveFile(
+      name: dot > 0 ? fileName.substring(0, dot) : fileName,
+      bytes: base64Decode(data['fileBase64'].toString()),
+      fileExtension: dot > 0 ? fileName.substring(dot + 1) : 'pdf',
+      mimeType: MimeType.custom,
+      customMimeType: data['mimeType']?.toString() ?? 'application/pdf',
+    );
+    if (mounted) _message('$fileName wurde zum Drucken erstellt.');
   }
 
   Future<void> _archive(Map<String, dynamic> item) async {
@@ -1791,6 +1808,12 @@ class InventoryDetailDialog extends StatelessWidget {
                 title: Text(entry['description']),
                 subtitle: Text(
                     '${entry['status']} · ${_formatDate(entry['createdAt'], includeTime: true)}'),
+                trailing: IconButton(
+                  onPressed: () =>
+                      Navigator.pop(context, 'print-defect:${entry['id']}'),
+                  tooltip: 'Ausgefüllte Mängelmeldung drucken',
+                  icon: const Icon(Icons.print_outlined),
+                ),
               )),
           const SizedBox(height: 16),
           Text('Dokumente', style: Theme.of(context).textTheme.titleLarge),

@@ -21,6 +21,7 @@ class _UsersPageState extends State<UsersPage> {
   List<Map<String, dynamic>> roles = [];
   List<Map<String, dynamic>> departments = [];
   List<Map<String, dynamic>> scannerEmailAddresses = [];
+  List<Map<String, dynamic>> mailTemplates = [];
   List<String> scannerEmailDestinations = [];
   String scannerEmailDomain = 'materialkompass.org';
   bool isAdmin = false;
@@ -47,6 +48,7 @@ class _UsersPageState extends State<UsersPage> {
       http.get(Uri.parse('$apiBaseUrl/api/departments'), headers: headers),
       http.get(Uri.parse('$apiBaseUrl/api/scanner-email-addresses'),
           headers: headers),
+      http.get(Uri.parse('$apiBaseUrl/api/mail/templates'), headers: headers),
     ]);
     if (!mounted) return;
     if (responses.take(3).any((response) => response.statusCode != 200)) {
@@ -79,6 +81,12 @@ class _UsersPageState extends State<UsersPage> {
                 .cast<Map>()
                 .map((entry) => Map<String, dynamic>.from(entry))
                 .toList();
+        if (responses[4].statusCode == 200) {
+          mailTemplates = (jsonDecode(responses[4].body) as List)
+              .cast<Map>()
+              .map((entry) => Map<String, dynamic>.from(entry))
+              .toList();
+        }
       }
     }
     setState(() => loading = false);
@@ -113,7 +121,8 @@ class _UsersPageState extends State<UsersPage> {
       builder: (_) => UserDialog(
           user: user,
           roles: roles.map((role) => role['name'].toString()).toList(),
-          departments: departments),
+          departments: departments,
+          mailTemplates: mailTemplates),
     );
     if (result == null) return;
     final ok = await _send(user == null ? 'POST' : 'PUT',
@@ -123,6 +132,86 @@ class _UsersPageState extends State<UsersPage> {
           ? 'Nutzer wurde angelegt; E-Mails zur Bestätigung und Passwortvergabe wurden versendet.'
           : 'Nutzer wurde aktualisiert.');
       await load();
+    }
+  }
+
+  Future<void> sendPasswordReset(Map<String, dynamic> user) async {
+    final message = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => AccountMessageDialog(
+        title: 'Passwort-Reset senden',
+        description:
+            'Die Standardmail enthält weiterhin den sicheren Reset-Link. Optional können Sie eine individuelle Nachricht ergänzen.',
+        templates: mailTemplates
+            .where((entry) =>
+                entry['purpose'] == 'general' ||
+                entry['purpose'] == 'password-reset')
+            .toList(),
+      ),
+    );
+    if (message == null) return;
+    if (await _send('POST', '/api/users/${user['id']}/password-reset', {
+      if (message.isNotEmpty) 'mailMessage': message,
+    })) {
+      _message('Reset-E-Mail wurde angefordert.');
+    }
+  }
+
+  Future<void> editMailTemplate([Map<String, dynamic>? template]) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => MailTemplateDialog(template: template),
+    );
+    if (result == null) return;
+    final ok = await _send(
+      template == null ? 'POST' : 'PUT',
+      template == null
+          ? '/api/mail/templates'
+          : '/api/mail/templates/${template['id']}',
+      result,
+    );
+    if (ok) {
+      _message(template == null
+          ? 'Mailvorlage wurde angelegt.'
+          : 'Mailvorlage wurde aktualisiert.');
+      await load();
+    }
+  }
+
+  Future<void> deleteMailTemplate(Map<String, dynamic> template) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Mailvorlage löschen?'),
+        content: Text('„${template['name']}“ wird dauerhaft gelöscht.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Löschen')),
+        ],
+      ),
+    );
+    if (confirmed == true &&
+        await _send('DELETE', '/api/mail/templates/${template['id']}')) {
+      _message('Mailvorlage wurde gelöscht.');
+      await load();
+    }
+  }
+
+  Future<void> composeIndividualMail() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => IndividualMailDialog(
+        templates: mailTemplates,
+        users: users,
+      ),
+    );
+    if (result == null) return;
+    if (await _send('POST', '/api/mail/send', result)) {
+      _message('E-Mail wurde an den Mailserver übergeben.');
     }
   }
 
@@ -658,9 +747,96 @@ class _UsersPageState extends State<UsersPage> {
     return 'E-Mail unbestätigt · erneut ab ${dateTime(availableAt)}';
   }
 
+  String mailPurposeLabel(Object? value) => switch (value) {
+        'user-create' => 'Nutzeranlage',
+        'password-reset' => 'Passwort-Reset',
+        _ => 'Allgemein',
+      };
+
+  String placementLabel(Object? value) => switch (value) {
+        'before-content' => 'Vor dem Standardtext',
+        'after-action' => 'Nach dem Aktionsbutton',
+        _ => 'Vor dem Aktionsbutton',
+      };
+
+  Widget mailTab() => Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(children: [
+                  const Icon(Icons.info_outline),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Individuelle Nachrichten unterstützen Markdown oder bereinigtes HTML. '
+                      'Standardvorlagen werden automatisch bei Nutzeranlage oder Passwort-Reset verwendet, sofern im Vorgang keine andere Nachricht gewählt wird.',
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: composeIndividualMail,
+                  icon: const Icon(Icons.send),
+                  label: const Text('Individuelle E-Mail senden'),
+                ),
+                FilledButton.icon(
+                  onPressed: () => editMailTemplate(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Vorlage anlegen'),
+                ),
+              ],
+            ),
+          ]),
+        ),
+        Expanded(
+          child: mailTemplates.isEmpty
+              ? const Center(child: Text('Noch keine Mailvorlagen angelegt.'))
+              : ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  children: mailTemplates.map((template) {
+                    final defaultFor = template['defaultFor'];
+                    return Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.description_outlined),
+                        title: Text(template['name'].toString()),
+                        subtitle: Text(
+                          '${mailPurposeLabel(template['purpose'])} · ${template['format'] == 'html' ? 'HTML' : 'Markdown'} · ${placementLabel(template['placement'])}'
+                          '${defaultFor == null ? '' : '\nStandard für ${mailPurposeLabel(defaultFor)}'}',
+                        ),
+                        isThreeLine: defaultFor != null,
+                        trailing: Wrap(children: [
+                          IconButton(
+                            tooltip: 'Vorlage bearbeiten',
+                            onPressed: () => editMailTemplate(template),
+                            icon: const Icon(Icons.edit),
+                          ),
+                          IconButton(
+                            tooltip: 'Vorlage löschen',
+                            onPressed: () => deleteMailTemplate(template),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ]),
+                      ),
+                    );
+                  }).toList(),
+                ),
+        ),
+      ]);
+
   @override
   Widget build(BuildContext context) => DefaultTabController(
-        length: isAdmin ? 4 : 3,
+        length: isAdmin ? 5 : 3,
         child: Scaffold(
           appBar: AppBar(
               title: const Text('Nutzerverwaltung'),
@@ -669,6 +845,8 @@ class _UsersPageState extends State<UsersPage> {
                 const Tab(
                     text: 'Rollen', icon: Icon(Icons.admin_panel_settings)),
                 const Tab(text: 'Fachbereiche', icon: Icon(Icons.account_tree)),
+                if (isAdmin)
+                  const Tab(text: 'E-Mails', icon: Icon(Icons.mail_outline)),
                 if (isAdmin)
                   const Tab(
                       text: 'Scanner-E-Mails',
@@ -730,13 +908,7 @@ class _UsersPageState extends State<UsersPage> {
                                       icon: const Icon(Icons.qr_code_2)),
                                   IconButton(
                                       tooltip: 'Passwort-Reset senden',
-                                      onPressed: () async {
-                                        if (await _send('POST',
-                                            '/api/users/${user['id']}/password-reset')) {
-                                          _message(
-                                              'Reset-E-Mail wurde angefordert.');
-                                        }
-                                      },
+                                      onPressed: () => sendPasswordReset(user),
                                       icon: const Icon(Icons.password)),
                                   IconButton(
                                       tooltip:
@@ -756,7 +928,8 @@ class _UsersPageState extends State<UsersPage> {
                                   IconButton(
                                       tooltip:
                                           'E-Mail-Adresse manuell bestätigen',
-                                      onPressed: user['emailVerifiedAt'] == null
+                                      onPressed: isAdmin &&
+                                              user['emailVerifiedAt'] == null
                                           ? () => confirmEmailManually(user)
                                           : null,
                                       icon: const Icon(Icons.mark_email_read)),
@@ -844,9 +1017,466 @@ class _UsersPageState extends State<UsersPage> {
                                         ]))))
                                 .toList())),
                   ]),
+                  if (isAdmin) mailTab(),
                   if (isAdmin) scannerEmailTab(),
                 ]),
         ),
+      );
+}
+
+class AccountMessageDialog extends StatefulWidget {
+  final String title;
+  final String description;
+  final List<Map<String, dynamic>> templates;
+
+  const AccountMessageDialog({
+    required this.title,
+    required this.description,
+    required this.templates,
+    super.key,
+  });
+
+  @override
+  State<AccountMessageDialog> createState() => _AccountMessageDialogState();
+}
+
+class _AccountMessageDialogState extends State<AccountMessageDialog> {
+  final content = TextEditingController();
+  String? templateId;
+  String format = 'markdown';
+  String placement = 'before-action';
+
+  void applyTemplate(String? id) {
+    final matches = widget.templates.where((entry) => entry['id'] == id);
+    final template = matches.isEmpty ? null : matches.first;
+    setState(() {
+      templateId = id;
+      content.text = template?['content']?.toString() ?? '';
+      format = template?['format']?.toString() ?? 'markdown';
+      placement = template?['placement']?.toString() ?? 'before-action';
+    });
+  }
+
+  @override
+  void dispose() {
+    content.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.title),
+        content: SizedBox(
+          width: 620,
+          child: SingleChildScrollView(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(widget.description),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String?>(
+                    initialValue: templateId,
+                    decoration: const InputDecoration(
+                      labelText: 'Vorlage (optional)',
+                      helperText:
+                          'Systemstandard verwendet die als Standard markierte Vorlage.',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                          value: null, child: Text('Systemstandard')),
+                      ...widget.templates
+                          .map((template) => DropdownMenuItem<String?>(
+                                value: template['id'].toString(),
+                                child: Text(template['name'].toString()),
+                              )),
+                    ],
+                    onChanged: applyTemplate,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: content,
+                    minLines: 5,
+                    maxLines: 10,
+                    decoration: const InputDecoration(
+                      labelText: 'Individuelle Nachricht (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(format),
+                        initialValue: format,
+                        decoration: const InputDecoration(
+                            labelText: 'Format', border: OutlineInputBorder()),
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'markdown', child: Text('Markdown')),
+                          DropdownMenuItem(value: 'html', child: Text('HTML')),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => format = value ?? format),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(placement),
+                        initialValue: placement,
+                        decoration: const InputDecoration(
+                            labelText: 'Position',
+                            border: OutlineInputBorder()),
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'before-content',
+                              child: Text('Vor Standardtext')),
+                          DropdownMenuItem(
+                              value: 'before-action',
+                              child: Text('Vor Aktionsbutton')),
+                          DropdownMenuItem(
+                              value: 'after-action',
+                              child: Text('Nach Aktionsbutton')),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => placement = value ?? placement),
+                      ),
+                    ),
+                  ]),
+                ]),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen')),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(
+                context,
+                content.text.trim().isEmpty
+                    ? <String, dynamic>{}
+                    : {
+                        'content': content.text.trim(),
+                        'format': format,
+                        'placement': placement,
+                      }),
+            icon: const Icon(Icons.send),
+            label: const Text('E-Mail senden'),
+          ),
+        ],
+      );
+}
+
+class IndividualMailDialog extends StatefulWidget {
+  final List<Map<String, dynamic>> templates;
+  final List<Map<String, dynamic>> users;
+
+  const IndividualMailDialog({
+    required this.templates,
+    required this.users,
+    super.key,
+  });
+
+  @override
+  State<IndividualMailDialog> createState() => _IndividualMailDialogState();
+}
+
+class _IndividualMailDialogState extends State<IndividualMailDialog> {
+  final subject = TextEditingController();
+  final content = TextEditingController();
+  String recipient = '';
+  String? templateId;
+  String format = 'markdown';
+
+  void applyTemplate(String? id) {
+    final matches = widget.templates.where((entry) => entry['id'] == id);
+    final template = matches.isEmpty ? null : matches.first;
+    setState(() {
+      templateId = id;
+      subject.text = template?['subject']?.toString() ?? '';
+      content.text = template?['content']?.toString() ?? '';
+      format = template?['format']?.toString() ?? 'markdown';
+    });
+  }
+
+  @override
+  void dispose() {
+    subject.dispose();
+    content.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Individuelle E-Mail senden'),
+        content: SizedBox(
+          width: 680,
+          child: SingleChildScrollView(
+            child: Column(children: [
+              Autocomplete<String>(
+                optionsBuilder: (value) {
+                  final query = value.text.toLowerCase();
+                  return widget.users
+                      .map((user) => user['email'].toString())
+                      .where((email) => email.toLowerCase().contains(query));
+                },
+                onSelected: (value) => recipient = value,
+                fieldViewBuilder:
+                    (context, controller, focusNode, onFieldSubmitted) {
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Empfängeradresse *',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) => recipient = value,
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String?>(
+                initialValue: templateId,
+                decoration: const InputDecoration(
+                    labelText: 'Vorlage (optional)',
+                    border: OutlineInputBorder()),
+                items: [
+                  const DropdownMenuItem<String?>(
+                      value: null, child: Text('Keine Vorlage')),
+                  ...widget.templates
+                      .map((template) => DropdownMenuItem<String?>(
+                            value: template['id'].toString(),
+                            child: Text(template['name'].toString()),
+                          )),
+                ],
+                onChanged: applyTemplate,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: subject,
+                decoration: const InputDecoration(
+                    labelText: 'Betreff *', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: content,
+                minLines: 7,
+                maxLines: 14,
+                decoration: const InputDecoration(
+                    labelText: 'Nachricht *', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: ValueKey(format),
+                initialValue: format,
+                decoration: const InputDecoration(
+                    labelText: 'Format', border: OutlineInputBorder()),
+                items: const [
+                  DropdownMenuItem(value: 'markdown', child: Text('Markdown')),
+                  DropdownMenuItem(value: 'html', child: Text('HTML')),
+                ],
+                onChanged: (value) => setState(() => format = value ?? format),
+              ),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen')),
+          FilledButton.icon(
+            onPressed: () {
+              if (recipient.trim().isEmpty ||
+                  subject.text.trim().isEmpty ||
+                  content.text.trim().isEmpty) {
+                return;
+              }
+              Navigator.pop(context, {
+                'to': recipient.trim(),
+                'subject': subject.text.trim(),
+                'content': content.text.trim(),
+                'format': format,
+              });
+            },
+            icon: const Icon(Icons.send),
+            label: const Text('Senden'),
+          ),
+        ],
+      );
+}
+
+class MailTemplateDialog extends StatefulWidget {
+  final Map<String, dynamic>? template;
+  const MailTemplateDialog({this.template, super.key});
+
+  @override
+  State<MailTemplateDialog> createState() => _MailTemplateDialogState();
+}
+
+class _MailTemplateDialogState extends State<MailTemplateDialog> {
+  late final name =
+      TextEditingController(text: widget.template?['name']?.toString() ?? '');
+  late final subject = TextEditingController(
+      text: widget.template?['subject']?.toString() ?? '');
+  late final content = TextEditingController(
+      text: widget.template?['content']?.toString() ?? '');
+  late String format = widget.template?['format']?.toString() ?? 'markdown';
+  late String purpose = widget.template?['purpose']?.toString() ?? 'general';
+  late String placement =
+      widget.template?['placement']?.toString() ?? 'before-action';
+  late String defaultFor = widget.template?['defaultFor']?.toString() ?? '';
+
+  @override
+  void dispose() {
+    name.dispose();
+    subject.dispose();
+    content.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.template == null
+            ? 'Mailvorlage anlegen'
+            : 'Mailvorlage bearbeiten'),
+        content: SizedBox(
+          width: 680,
+          child: SingleChildScrollView(
+            child: Column(children: [
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(
+                    labelText: 'Vorlagenname *', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: subject,
+                decoration: const InputDecoration(
+                  labelText: 'Betreff (für freie E-Mails)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: content,
+                minLines: 7,
+                maxLines: 14,
+                decoration: const InputDecoration(
+                    labelText: 'Nachricht *', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: format,
+                    decoration: const InputDecoration(
+                        labelText: 'Format', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'markdown', child: Text('Markdown')),
+                      DropdownMenuItem(value: 'html', child: Text('HTML')),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => format = value ?? format),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: purpose,
+                    decoration: const InputDecoration(
+                        labelText: 'Verwendung', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'general', child: Text('Allgemein')),
+                      DropdownMenuItem(
+                          value: 'user-create', child: Text('Nutzeranlage')),
+                      DropdownMenuItem(
+                          value: 'password-reset',
+                          child: Text('Passwort-Reset')),
+                    ],
+                    onChanged: (value) => setState(() {
+                      purpose = value ?? purpose;
+                      if (purpose != 'general' &&
+                          defaultFor.isNotEmpty &&
+                          defaultFor != purpose) {
+                        defaultFor = '';
+                      }
+                    }),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: placement,
+                decoration: const InputDecoration(
+                  labelText: 'Position in Konto-E-Mails',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'before-content',
+                      child: Text('Vor dem Standardtext')),
+                  DropdownMenuItem(
+                      value: 'before-action',
+                      child: Text('Vor dem Aktionsbutton')),
+                  DropdownMenuItem(
+                      value: 'after-action',
+                      child: Text('Nach dem Aktionsbutton')),
+                ],
+                onChanged: (value) =>
+                    setState(() => placement = value ?? placement),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: ValueKey('$purpose-$defaultFor'),
+                initialValue: defaultFor,
+                decoration: const InputDecoration(
+                  labelText: 'Als Standard verwenden',
+                  helperText:
+                      'Pro Vorgang kann genau eine Standardvorlage aktiv sein.',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  const DropdownMenuItem(
+                      value: '', child: Text('Nicht als Standard')),
+                  if (purpose == 'general' || purpose == 'user-create')
+                    const DropdownMenuItem(
+                        value: 'user-create', child: Text('Nutzeranlage')),
+                  if (purpose == 'general' || purpose == 'password-reset')
+                    const DropdownMenuItem(
+                        value: 'password-reset', child: Text('Passwort-Reset')),
+                ],
+                onChanged: (value) =>
+                    setState(() => defaultFor = value ?? defaultFor),
+              ),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen')),
+          FilledButton(
+            onPressed: () {
+              if (name.text.trim().isEmpty || content.text.trim().isEmpty) {
+                return;
+              }
+              Navigator.pop(context, {
+                'name': name.text.trim(),
+                'subject': subject.text.trim(),
+                'content': content.text.trim(),
+                'format': format,
+                'purpose': purpose,
+                'placement': placement,
+                'defaultFor': defaultFor.isEmpty ? null : defaultFor,
+              });
+            },
+            child: const Text('Speichern'),
+          ),
+        ],
       );
 }
 
@@ -1014,10 +1644,12 @@ class UserDialog extends StatefulWidget {
   final Map<String, dynamic>? user;
   final List<String> roles;
   final List<Map<String, dynamic>> departments;
+  final List<Map<String, dynamic>> mailTemplates;
   const UserDialog(
       {required this.user,
       required this.roles,
       this.departments = const [],
+      this.mailTemplates = const [],
       super.key});
   @override
   State<UserDialog> createState() => _UserDialogState();
@@ -1031,6 +1663,10 @@ class _UserDialogState extends State<UserDialog> {
   late final email =
       TextEditingController(text: widget.user?['email']?.toString());
   final password = TextEditingController();
+  final mailMessage = TextEditingController();
+  String mailFormat = 'markdown';
+  String mailPlacement = 'before-action';
+  String? selectedTemplateId;
   late bool active = widget.user?['active'] != false;
   late Set<String> selectedRoles =
       ((widget.user?['roles'] as List?)?.map((e) => e.toString()).toSet()) ??
@@ -1040,6 +1676,36 @@ class _UserDialogState extends State<UserDialog> {
               ?.map((e) => e.toString())
               .toSet()) ??
           {};
+
+  List<Map<String, dynamic>> get availableTemplates => widget.mailTemplates
+      .where((entry) =>
+          entry['purpose'] == 'general' || entry['purpose'] == 'user-create')
+      .toList();
+
+  void applyTemplate(String? id) {
+    setState(() {
+      selectedTemplateId = id;
+      final matches = availableTemplates.where((entry) => entry['id'] == id);
+      final template = matches.isEmpty ? null : matches.first;
+      if (template != null) {
+        mailMessage.text = template['content']?.toString() ?? '';
+        mailFormat = template['format']?.toString() ?? 'markdown';
+        mailPlacement = template['placement']?.toString() ?? 'before-action';
+      } else {
+        mailMessage.clear();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    username.dispose();
+    email.dispose();
+    password.dispose();
+    mailMessage.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -1058,6 +1724,88 @@ class _UserDialogState extends State<UserDialog> {
               TextField(
                   controller: email,
                   decoration: const InputDecoration(labelText: 'E-Mail *')),
+              if (widget.user == null) ...[
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String?>(
+                  initialValue: selectedTemplateId,
+                  decoration: const InputDecoration(
+                    labelText: 'Mailvorlage (optional)',
+                    helperText:
+                        'Ohne Auswahl wird die hinterlegte Standardvorlage verwendet.',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Systemstandard'),
+                    ),
+                    ...availableTemplates
+                        .map((template) => DropdownMenuItem<String?>(
+                              value: template['id'].toString(),
+                              child: Text(template['name'].toString()),
+                            )),
+                  ],
+                  onChanged: applyTemplate,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: mailMessage,
+                  minLines: 4,
+                  maxLines: 8,
+                  decoration: const InputDecoration(
+                    labelText: 'Individuelle Nachricht (optional)',
+                    hintText:
+                        'Diese Nachricht wird in die Konto-E-Mails eingefügt.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      key: ValueKey(mailFormat),
+                      isExpanded: true,
+                      initialValue: mailFormat,
+                      decoration: const InputDecoration(
+                        labelText: 'Format',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'markdown', child: Text('Markdown')),
+                        DropdownMenuItem(value: 'html', child: Text('HTML')),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => mailFormat = value ?? mailFormat),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      key: ValueKey(mailPlacement),
+                      isExpanded: true,
+                      initialValue: mailPlacement,
+                      decoration: const InputDecoration(
+                        labelText: 'Position',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'before-content',
+                            child: Text('Vor Standardtext')),
+                        DropdownMenuItem(
+                            value: 'before-action',
+                            child: Text('Vor Aktionsbutton')),
+                        DropdownMenuItem(
+                            value: 'after-action',
+                            child: Text('Nach Aktionsbutton')),
+                      ],
+                      onChanged: (value) => setState(
+                          () => mailPlacement = value ?? mailPlacement),
+                    ),
+                  ),
+                ]),
+              ],
               if (widget.user != null)
                 TextField(
                     controller: password,
@@ -1128,6 +1876,13 @@ class _UserDialogState extends State<UserDialog> {
                 };
                 if (password.text.isNotEmpty) {
                   result['password'] = password.text;
+                }
+                if (widget.user == null && mailMessage.text.trim().isNotEmpty) {
+                  result['mailMessage'] = {
+                    'content': mailMessage.text.trim(),
+                    'format': mailFormat,
+                    'placement': mailPlacement,
+                  };
                 }
                 Navigator.pop(context, result);
               },
