@@ -586,11 +586,32 @@ class _DefectsPageState extends State<DefectsPage> {
               if (_can('defects.edit'))
                 TextButton.icon(
                     onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: dialogContext,
+                        builder: (confirmContext) => AlertDialog(
+                          title: const Text('E-Mail endgültig löschen?'),
+                          content: const Text(
+                              'Die E-Mail wird aus MaterialKompass und endgültig aus dem Mängel-Postfach gelöscht. Dies kann nicht rückgängig gemacht werden.'),
+                          actions: [
+                            TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(confirmContext, false),
+                                child: const Text('Abbrechen')),
+                            FilledButton.icon(
+                                onPressed: () =>
+                                    Navigator.pop(confirmContext, true),
+                                icon: const Icon(Icons.delete_forever),
+                                label: const Text('Endgültig löschen')),
+                          ],
+                        ),
+                      );
+                      if (confirmed != true) return;
                       final discarded = await _request(
                           '/api/defect-email-imports/${entry['id']}/discard',
                           method: 'POST',
                           body: {'reason': reason.text.trim()});
                       if (discarded != null && dialogContext.mounted) {
+                        _message('E-Mail wurde endgültig gelöscht.');
                         Navigator.pop(dialogContext, true);
                       }
                     },

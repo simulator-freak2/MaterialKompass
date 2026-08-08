@@ -89,7 +89,7 @@ function publicEntry(entry) {
 
 function registerStocktakeEmailRoutes({
   app, authMiddleware, requirePermission, stocktakeEmailImports, stocktakes,
-  users, logEvent,
+  users, logEvent, deleteMessage,
 }) {
   function visible(req, entry) {
     if (req.user.roles?.includes('Admin') || req.user.roles?.includes('Jugendvorsitzender') || req.user.roles?.includes('Jugendvorsitz')) return true;
@@ -132,6 +132,25 @@ function registerStocktakeEmailRoutes({
     entry.status = 'verarbeitet'; entry.processedAt = new Date().toISOString(); entry.processedBy = req.user.username;
     logEvent('email-import', 'Stocktake', { id: entry.stocktakeId, emailImportId: entry.id }, req.user.username);
     res.json(publicEntry(entry));
+  });
+
+  app.post('/api/stocktake-email-imports/:id/discard', authMiddleware, requirePermission('stocktakes.count'), async (req, res) => {
+    const entry = find(req, res); if (!entry) return;
+    if (entry.status === 'verarbeitet') {
+      return res.status(409).json({ error: 'Diese E-Mail wurde bereits verarbeitet.' });
+    }
+    const reason = text(req.body.reason || 'Manuell verworfen', 1000);
+    try {
+      await deleteMessage(entry.emailSource);
+    } catch (error) {
+      console.error(`Inventur-E-Mail ${entry.id} konnte nicht gelöscht werden:`, error.message);
+      return res.status(502).json({
+        error: 'Die E-Mail konnte im Inventur-Postfach nicht endgültig gelöscht werden. Sie bleibt erhalten.',
+      });
+    }
+    stocktakeEmailImports.splice(stocktakeEmailImports.indexOf(entry), 1);
+    logEvent('discard', 'StocktakeEmailImport', { id: entry.id, reason }, req.user.username);
+    return res.json({ success: true, id: entry.id });
   });
 }
 

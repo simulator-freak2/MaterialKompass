@@ -10,7 +10,7 @@ const IMPORT_ALIASES = {
   inventarnummer: 'inventoryNumber', bezeichnung: 'name', name: 'name',
   hauptkategorie: 'categoryCode', hauptkategorieid: 'categoryCode',
   unterkategorie: 'subcategoryCode', unterkategorieid: 'subcategoryCode',
-  standort: 'locationId', lagerplatz: 'stockStructureId', regalfach: 'stockStructureId',
+  standort: 'locationId', ort: 'locationId', lagerplatz: 'storagePositionId', lagercode: 'storagePositionId', regalfach: 'stockStructureId',
   status: 'status', anzahl: 'quantity', einheit: 'unit', typ: 'itemType',
   hersteller: 'manufacturer', modell: 'model', seriennummer: 'serialNumber',
   anschaffungsdatum: 'purchaseDate', kaufpreis: 'purchasePrice',
@@ -50,20 +50,22 @@ function registerInventoryRoutes({
     const name = String(body.name ?? existing?.name ?? '').trim();
     const categoryCode = String(body.categoryCode ?? existing?.categoryCode ?? '').trim();
     const subcategoryCode = String(body.subcategoryCode ?? existing?.subcategoryCode ?? '').trim();
-    const locationId = String(body.locationId ?? existing?.locationId ?? '').trim();
-    const stockStructureId = String(body.stockStructureId ?? existing?.stockStructureId ?? '').trim();
+    const rawLocation = String(body.locationId ?? existing?.locationId ?? '').trim();
+    const locationId = locations.find((entry) => entry.id === rawLocation || entry.code === rawLocation.toUpperCase() || entry.name.toLowerCase() === rawLocation.toLowerCase())?.id || rawLocation;
+    const rawPosition = String(body.storagePositionId ?? body.stockStructureId ?? existing?.storagePositionId ?? existing?.stockStructureId ?? '').trim();
+    const stockStructureId = stockStructures.find((entry) => entry.id === rawPosition || entry.fullCode === rawPosition.toUpperCase())?.id || rawPosition;
     const status = String(body.status ?? existing?.status ?? 'Lagernd').trim();
     const itemType = String(body.itemType ?? existing?.itemType ?? 'individual').trim();
     const quantity = itemType === 'individual' ? 1 : number(body.quantity ?? existing?.quantity, 0);
     const pair = categoryPair(categoryCode, subcategoryCode);
-    if (!name || !categoryCode || !locationId || !status) return { error: 'Bezeichnung, Kategorie, Standort und Status sind Pflichtfelder.' };
+    if (!name || !categoryCode || !locationId || !stockStructureId || !status) return { error: 'Bezeichnung, Kategorie, Lagerplatz und Status sind Pflichtfelder.' };
     if (!pair.main || (subcategoryCode && !pair.child)) return { error: 'Die gewählte Haupt-/Unterkategorie ist ungültig.' };
     if (!locations.some((entry) => entry.id === locationId)) return { error: 'Der gewählte Standort ist ungültig.' };
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return { error: 'Der Lagerplatz gehört nicht zum gewählten Standort.' };
     if (!MATERIAL_STATUSES.includes(status)) return { error: 'Der gewählte Status ist ungültig.' };
     if (!['individual', 'bulk'].includes(itemType) || quantity <= 0) return { error: 'Art und Anzahl des Artikels sind ungültig.' };
     if (existing && quantity < number(existing.issuedQuantity)) return { error: 'Die Anzahl darf nicht unter die ausgegebene Menge fallen.' };
-    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, status, itemType, quantity };
+    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, storagePositionId: stockStructureId, stockStructureId, status, itemType, quantity };
   }
 
   function responseItem(item) {
@@ -213,7 +215,7 @@ function registerInventoryRoutes({
   app.post('/api/material/relocate/bulk', authMiddleware, requirePermission('inventory.relocate'), (req, res) => {
     const ids = Array.from(new Set(Array.isArray(req.body.materialIds) ? req.body.materialIds : []));
     const locationId = String(req.body.locationId || '').trim();
-    const stockStructureId = String(req.body.stockStructureId || '').trim();
+    const stockStructureId = String(req.body.storagePositionId || req.body.stockStructureId || '').trim();
     const targetLocation = locations.find((entry) => entry.id === locationId);
     const targetStock = stockStructureId ? stockStructures.find((entry) => entry.id === stockStructureId && entry.locationId === locationId) : null;
     const items = ids.map((id) => materials.find((entry) => entry.id === id));
@@ -221,7 +223,7 @@ function registerInventoryRoutes({
     if (items.some((item) => !item || item.archived || number(item.issuedQuantity) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes oder archiviertes Material ist nicht zulässig.' });
     const created = items.map((item) => {
       const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
-      item.locationId = locationId; item.stockStructureId = stockStructureId || null; materialMovements.push(movement); return movement;
+      item.locationId = locationId; item.storagePositionId = stockStructureId; item.stockStructureId = stockStructureId; materialMovements.push(movement); return movement;
     });
     logEvent('relocate', 'MaterialMovement', { materialIds: ids, locationId }, req.user.username);
     res.status(201).json(created);
@@ -295,7 +297,10 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, 'Regal/Fach': item.stockStructureId || '', Status: item.status, Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => {
+      const position = stockStructures.find((entry) => entry.id === (item.storagePositionId || item.stockStructureId));
+      return { Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Ort: position?.locationName || item.locationId, Regal: position?.shelfName || '', Ebene: position?.levelName || '', Lagerplatz: position?.name || '', Lagercode: position?.fullCode || '', Status: item.status, Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' };
+    });
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), archived ? 'Archiv' : 'Inventar');
     const fileName = `${archived ? 'inventar-archiv' : 'inventar'}-${new Date().toISOString().slice(0, 10)}.${format}`;
     res.json({ fileName, fileBase64: XLSX.write(workbook, { type: 'buffer', bookType: format }).toString('base64') });

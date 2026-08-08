@@ -1,4 +1,10 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+
+const MATERIALKOMPASS_LOGO_PATH = path.join(
+  __dirname, 'assets', 'materialkompass-logo-with-wordmark.png',
+);
 
 const STOCKTAKE_STATUSES = Object.freeze(['Angelegt', 'In Arbeit', 'Auswertung', 'Abgeschlossen']);
 const ENTITY_TYPES = Object.freeze(['MaterialItem', 'ClothingItem']);
@@ -23,8 +29,8 @@ function number(value) {
 
 function registerStocktakeRoutes({
   app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
-  clothingItems, locations, stockStructures, departments, users, logEvent, nextId,
-  XLSX, defectManagement,
+  clothingItems, locations, shelves = [], storageLevels = [], stockStructures, departments, users, logEvent, nextId,
+  XLSX, defectManagement, stocktakeEmailImports = [],
 }) {
   const nowIso = () => new Date().toISOString();
 
@@ -76,7 +82,12 @@ function registerStocktakeRoutes({
 
   function matchesScope(item, scope) {
     if (scope.locationIds.length && !scope.locationIds.includes(String(item.locationId || ''))) return false;
-    if (scope.stockStructureIds.length && !scope.stockStructureIds.includes(String(item.stockStructureId || ''))) return false;
+    const positionId = String(item.storagePositionId || item.stockStructureId || '');
+    const position = stockStructures.find((entry) => entry.id === positionId);
+    if ((scope.shelfIds || []).length && !scope.shelfIds.includes(String(position?.shelfId || ''))) return false;
+    if ((scope.levelIds || []).length && !scope.levelIds.includes(String(position?.levelId || ''))) return false;
+    const positionScope = scope.storagePositionIds || scope.stockStructureIds || [];
+    if (positionScope.length && !positionScope.includes(positionId)) return false;
     if (scope.departments.length && !scope.departments.includes(String(item.department || ''))) return false;
     return true;
   }
@@ -93,11 +104,13 @@ function registerStocktakeRoutes({
       unit: item.unit || 'Stück',
       expectedQuantity: isBulk ? Number(item.quantity || 0) : 1,
       expectedLocationId: item.locationId || null,
-      expectedStockStructureId: item.stockStructureId || null,
+      expectedStoragePositionId: item.storagePositionId || item.stockStructureId || null,
+      expectedStockStructureId: item.storagePositionId || item.stockStructureId || null,
       expectedStatus: item.status || '',
       actualQuantity: null,
       result: null,
       actualLocationId: null,
+      actualStoragePositionId: null,
       actualStockStructureId: null,
       notes: '',
       countedAt: null,
@@ -170,7 +183,10 @@ function registerStocktakeRoutes({
       notes: text(body.notes),
       scope: {
         locationIds: uniqueStrings(body.scope?.locationIds),
-        stockStructureIds: uniqueStrings(body.scope?.stockStructureIds),
+        shelfIds: uniqueStrings(body.scope?.shelfIds),
+        levelIds: uniqueStrings(body.scope?.levelIds),
+        storagePositionIds: uniqueStrings(body.scope?.storagePositionIds || body.scope?.stockStructureIds),
+        stockStructureIds: uniqueStrings(body.scope?.storagePositionIds || body.scope?.stockStructureIds),
         departments: uniqueStrings(body.scope?.departments),
       },
     };
@@ -179,6 +195,9 @@ function registerStocktakeRoutes({
   app.get('/api/stocktakes/options', authMiddleware, requirePermission('stocktakes.read'), (req, res) => {
     res.json({
       locations,
+      shelves,
+      storageLevels,
+      storagePositions: stockStructures,
       stockStructures,
       departments,
       responsibleUsers: users.filter((entry) => entry.active).map((entry) => ({
@@ -252,7 +271,7 @@ function registerStocktakeRoutes({
     const entry = stocktake.entries.find((candidate) => candidate.id === req.params.entryId);
     if (!entry) return res.status(404).json({ error: 'Inventurposition nicht gefunden.' });
     const actualLocationId = text(req.body.actualLocationId, 64) || entry.expectedLocationId;
-    const actualStockStructureId = text(req.body.actualStockStructureId, 64) || null;
+    const actualStockStructureId = text(req.body.actualStoragePositionId || req.body.actualStockStructureId, 64) || null;
     if (actualLocationId && !locations.some((candidate) => candidate.id === actualLocationId)) return res.status(400).json({ error: 'Der erfasste Standort ist ungültig.' });
     if (actualStockStructureId && !stockStructures.some((candidate) => candidate.id === actualStockStructureId && candidate.locationId === actualLocationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum erfassten Standort.' });
     let actualQuantity = null; let result = null;
@@ -276,6 +295,7 @@ function registerStocktakeRoutes({
     entry.result = attempt.result;
     entry.actualLocationId = attempt.actualLocationId;
     entry.actualStockStructureId = attempt.actualStockStructureId;
+    entry.actualStoragePositionId = attempt.actualStockStructureId;
     entry.notes = attempt.notes;
     entry.countedAt = attempt.at;
     entry.countedBy = attempt.actor;
@@ -349,6 +369,11 @@ function registerStocktakeRoutes({
     }
     stocktake.status = 'Abgeschlossen'; stocktake.completedAt = nowIso(); stocktake.completedBy = req.user.username;
     stocktake.correctionsApplied = applyCorrections;
+    stocktakeEmailImports.filter((entry) => entry.stocktakeId === stocktake.id
+      && !entry.emailSource?.deletedAt).forEach((entry) => {
+      entry.emailSource ||= {};
+      entry.emailSource.deleteRequestedAt ||= stocktake.completedAt;
+    });
     addHistory(stocktake, req.user, 'abgeschlossen', { applyCorrections });
     logEvent('complete', 'Stocktake', { id: stocktake.id, itemName: stocktake.name, applyCorrections }, req.user.username);
     res.json(publicStocktake(stocktake, true));
@@ -387,6 +412,7 @@ function registerStocktakeRoutes({
         actualQuantity: entry.itemType === 'bulk' ? actualQuantity : (result === 'nicht vorhanden' ? 0 : 1),
         result, actualLocationId: entry.expectedLocationId,
         actualStockStructureId: entry.expectedStockStructureId,
+        actualStoragePositionId: entry.expectedStockStructureId,
         notes: text(normalized.notizen || normalized.bemerkung, 2000),
         at: nowIso(), actor: req.user.username, actorName: req.user.name || req.user.username,
         source: 'table-import',
@@ -396,6 +422,7 @@ function registerStocktakeRoutes({
       entry.result = attempt.result;
       entry.actualLocationId = attempt.actualLocationId;
       entry.actualStockStructureId = attempt.actualStockStructureId;
+      entry.actualStoragePositionId = attempt.actualStockStructureId;
       entry.notes = attempt.notes;
       entry.countedAt = attempt.at;
       entry.countedBy = attempt.actor;
@@ -436,25 +463,59 @@ function registerStocktakeRoutes({
       mimeType = format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.oasis.opendocument.spreadsheet';
     } else {
       const pdf = await PDFDocument.create(); const font = await pdf.embedFont(StandardFonts.Helvetica); const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-      const pageWidth = 842; const pageHeight = 595; const margin = 28; const rowHeight = 20;
+      const logo = await pdf.embedPng(fs.readFileSync(MATERIALKOMPASS_LOGO_PATH));
+      const pageWidth = 595; const pageHeight = 842; const margin = 28; const rowHeight = 20;
+      const logoWidth = 150; const logoHeight = logo.height * (logoWidth / logo.width);
+      const headerTextWidth = pageWidth - (2 * margin) - logoWidth - 18;
       let page; let y;
-      const addPage = () => {
-        page = pdf.addPage([pageWidth, pageHeight]); y = pageHeight - margin;
-        page.drawText(`MaterialKompass - ${blank ? 'Zaehlliste' : differencesOnly ? 'Differenzliste' : 'Inventurergebnis'}`, { x: margin, y, size: 14, font: bold, color: rgb(0.72, 0.1, 0.1) });
-        y -= 20; page.drawText(`${stocktake.name} | Beginn ${stocktake.startDate} | Verantwortlich ${stocktake.responsibleName}`, { x: margin, y, size: 9, font });
-        y -= 24;
+      const fitText = (value, targetFont, size, maxWidth) => {
+        const original = String(value || '');
+        let fitted = original;
+        while (fitted && targetFont.widthOfTextAtSize(fitted, size) > maxWidth) fitted = fitted.slice(0, -1);
+        return fitted === original ? fitted : `${fitted.slice(0, -3)}...`;
       };
-      addPage();
+      const addPage = (shelfLabel = '') => {
+        page = pdf.addPage([pageWidth, pageHeight]); y = pageHeight - margin;
+        const logoBottomY = y - logoHeight;
+        // The PNG has a small transparent lower margin. Offset the text so its
+        // visible bottom aligns with the visible bottom of the logo artwork.
+        const subtitleY = logoBottomY + 7;
+        page.drawImage(logo, {
+          x: pageWidth - margin - logoWidth, y: logoBottomY,
+          width: logoWidth, height: logoHeight,
+        });
+        page.drawText(blank ? 'Zaehlliste' : differencesOnly ? 'Differenzliste' : 'Inventurergebnis', { x: margin, y: subtitleY + 20, size: 14, font: bold, color: rgb(0.72, 0.1, 0.1) });
+        const subtitle = `${stocktake.name} | Beginn ${stocktake.startDate} | Verantwortlich ${stocktake.responsibleName}`;
+        page.drawText(fitText(subtitle, font, 9, headerTextWidth), { x: margin, y: subtitleY, size: 9, font });
+        y = logoBottomY - 18;
+        if (shelfLabel) {
+          page.drawText(`Regal: ${shelfLabel}`, { x: margin, y, size: 10, font: bold });
+          y -= 22;
+        }
+      };
+      const shelfGroups = new Map();
       for (const entry of exportedEntries) {
-        if (y < 55) addPage();
-        const target = `${entry.inventoryNumber} | ${entry.name} | ${locationName(entry.expectedLocationId)} / ${stockName(entry.expectedStockStructureId)}`.slice(0, 120);
-        page.drawText(target, { x: margin, y, size: 8, font: bold }); y -= 10;
-        let detail = entry.itemType === 'bulk'
-          ? `Ist-Menge: ${blank ? '____________' : entry.actualQuantity ?? '-'} ${entry.unit}    Notiz: ${blank ? '____________________________' : entry.notes || '-'}`
-          : `Ergebnis: ${blank ? '[ ] vorhanden   [ ] beschaedigt   [ ] nicht vorhanden' : entry.result || '-'}    Notiz: ${blank ? '________________' : entry.notes || '-'}`;
-        if (!blank && discrepancy(entry).length) detail += `    Abweichung: ${discrepancy(entry).join(', ')}`;
-        page.drawText(detail.slice(0, 135), { x: margin + 8, y, size: 8, font }); y -= rowHeight;
-        page.drawLine({ start: { x: margin, y: y + 7 }, end: { x: pageWidth - margin, y: y + 7 }, thickness: 0.4, color: rgb(0.75, 0.75, 0.75) });
+        const position = stockStructures.find((candidate) => candidate.id === entry.expectedStockStructureId);
+        const shelfId = position?.shelfId || `position:${entry.expectedStockStructureId || 'none'}`;
+        const shelfLabel = shelves.find((candidate) => candidate.id === position?.shelfId)?.name
+          || stockName(entry.expectedStockStructureId) || 'Ohne Regal';
+        if (!shelfGroups.has(shelfId)) shelfGroups.set(shelfId, { label: shelfLabel, entries: [] });
+        shelfGroups.get(shelfId).entries.push(entry);
+      }
+      if (!shelfGroups.size) addPage('Keine Positionen');
+      for (const group of shelfGroups.values()) {
+        addPage(group.label);
+        for (const entry of group.entries) {
+          if (y < 55) addPage(group.label);
+          const target = `${entry.inventoryNumber} | ${entry.name} | ${locationName(entry.expectedLocationId)} / ${stockName(entry.expectedStockStructureId)}`.slice(0, 120);
+          page.drawText(target, { x: margin, y, size: 8, font: bold }); y -= 10;
+          let detail = entry.itemType === 'bulk'
+            ? `Ist-Menge: ${blank ? '____________' : entry.actualQuantity ?? '-'} ${entry.unit}    Notiz: ${blank ? '____________________________' : entry.notes || '-'}`
+            : `Ergebnis: ${blank ? '[ ] vorhanden   [ ] beschaedigt   [ ] nicht vorhanden' : entry.result || '-'}    Notiz: ${blank ? '________________' : entry.notes || '-'}`;
+          if (!blank && discrepancy(entry).length) detail += `    Abweichung: ${discrepancy(entry).join(', ')}`;
+          page.drawText(detail.slice(0, 135), { x: margin + 8, y, size: 8, font }); y -= rowHeight;
+          page.drawLine({ start: { x: margin, y: y + 7 }, end: { x: pageWidth - margin, y: y + 7 }, thickness: 0.4, color: rgb(0.75, 0.75, 0.75) });
+        }
       }
       bytes = Buffer.from(await pdf.save()); mimeType = 'application/pdf';
     }

@@ -52,4 +52,33 @@ void main() {
     expect(find.text('Seitenhierarchie'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('knowledge base contains the current operational workflows',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: KnowledgeBasePage()),
+    );
+
+    expect(find.text('Stand: August 2026'), findsOneWidget);
+    expect(find.text('Inventuren'), findsWidgets);
+
+    await tester.enterText(find.byType(SearchBar), 'Blindzählung');
+    await tester.pump();
+    expect(find.text('Inventur anlegen und vorbereiten'), findsOneWidget);
+
+    await tester.enterText(
+        find.byType(SearchBar), 'angebote@materialkompass.org');
+    await tester.pump();
+    expect(find.text('Angebote aus der Postbox übernehmen'), findsOneWidget);
+
+    await tester.enterText(find.byType(SearchBar), 'HL-A-01-01');
+    await tester.pump();
+    expect(find.text('Lagerstruktur anlegen und pflegen'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

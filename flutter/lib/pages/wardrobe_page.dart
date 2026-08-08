@@ -12,6 +12,7 @@ import '../constants.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/label_print_dialogs.dart';
+import '../widgets/storage_position_picker.dart';
 import 'login_page.dart';
 
 class WardrobePage extends StatefulWidget {
@@ -267,7 +268,7 @@ class _WardrobePageState extends State<WardrobePage> {
       final responses = await Future.wait([
         http.get(Uri.parse('$apiBaseUrl/api/locations'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        http.get(Uri.parse('$apiBaseUrl/api/storage-positions'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
       ]);
       if (responses.any((response) => response.statusCode != 200) || !mounted) {
@@ -481,6 +482,11 @@ class _WardrobePageState extends State<WardrobePage> {
       );
       return;
     }
+    if (stockController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Bitte einen Lagerplatz scannen oder auswählen.')));
+      return;
+    }
 
     final payload = {
       'name': name,
@@ -495,6 +501,7 @@ class _WardrobePageState extends State<WardrobePage> {
       'stockStructureId': stockController.text.trim().isEmpty
           ? null
           : stockController.text.trim(),
+      'storagePositionId': stockController.text.trim(),
       'status': statusController.text.trim().isEmpty
           ? 'Lagernd'
           : statusController.text.trim(),
@@ -663,7 +670,8 @@ class _WardrobePageState extends State<WardrobePage> {
 
   String _storageLabel(Map<String, dynamic> item) {
     final locationId = item['locationId']?.toString();
-    final stockId = item['stockStructureId']?.toString();
+    final stockId =
+        (item['storagePositionId'] ?? item['stockStructureId'])?.toString();
     final location = _locations.cast<Map<String, dynamic>?>().firstWhere(
           (entry) => entry?['id']?.toString() == locationId,
           orElse: () => null,
@@ -674,7 +682,7 @@ class _WardrobePageState extends State<WardrobePage> {
         );
     final locationName = location?['name']?.toString() ?? locationId ?? '-';
     if (stock == null) return locationName;
-    return '$locationName · ${stock['name']} (${stock['section']})';
+    return '${stock['path'] ?? locationName} · ${stock['fullCode'] ?? ''}';
   }
 
   String _categoryPath(Map<String, dynamic> category) {
@@ -690,57 +698,18 @@ class _WardrobePageState extends State<WardrobePage> {
   }
 
   List<Widget> _buildStorageFields(VoidCallback refreshDialog) {
-    final locationIds =
-        _locations.map((entry) => entry['id'].toString()).toSet();
-    final selectedLocation = locationIds.contains(locationController.text)
-        ? locationController.text
-        : (_locations.isEmpty ? null : _locations.first['id'].toString());
-    if (selectedLocation != null &&
-        locationController.text != selectedLocation) {
-      locationController.text = selectedLocation;
-    }
-    final availableStocks = _stocks
-        .where((entry) => entry['locationId']?.toString() == selectedLocation)
-        .toList();
-    final stockIds =
-        availableStocks.map((entry) => entry['id'].toString()).toSet();
-    final selectedStock =
-        stockIds.contains(stockController.text) ? stockController.text : null;
-    if (selectedStock == null && stockController.text.isNotEmpty) {
-      stockController.clear();
-    }
     return [
-      DropdownButtonFormField<String>(
-        initialValue: selectedLocation,
-        decoration: const InputDecoration(labelText: 'Lagerort *'),
-        items: _locations
-            .map((entry) => DropdownMenuItem(
-                  value: entry['id'].toString(),
-                  child: Text('${entry['name']} (${entry['code']})'),
-                ))
-            .toList(),
-        onChanged: _locations.isEmpty
-            ? null
-            : (value) {
-                locationController.text = value ?? '';
-                stockController.clear();
-                refreshDialog();
-              },
-      ),
-      const SizedBox(height: 12),
-      DropdownButtonFormField<String>(
-        initialValue: selectedStock,
-        decoration: const InputDecoration(labelText: 'Regal / Fach'),
-        items: [
-          const DropdownMenuItem<String>(
-              value: null, child: Text('Kein Regal/Fach')),
-          ...availableStocks.map((entry) => DropdownMenuItem(
-                value: entry['id'].toString(),
-                child: Text('${entry['name']} · ${entry['section']}'),
-              )),
-        ],
-        onChanged: (value) => stockController.text = value ?? '',
-      ),
+      StoragePositionPicker(
+          positions: _stocks,
+          value: stockController.text.isEmpty ? null : stockController.text,
+          onChanged: (value) {
+            stockController.text = value ?? '';
+            final position = _stocks
+                .where((entry) => entry['id']?.toString() == value)
+                .firstOrNull;
+            locationController.text = position?['locationId']?.toString() ?? '';
+            refreshDialog();
+          }),
     ];
   }
 
@@ -830,7 +799,9 @@ class _WardrobePageState extends State<WardrobePage> {
     purchaseDateController.text =
         item['purchaseDate'] == null ? '' : _formatDate(item['purchaseDate']);
     locationController.text = item['locationId']?.toString() ?? 'loc-2';
-    stockController.text = item['stockStructureId']?.toString() ?? '';
+    stockController.text =
+        (item['storagePositionId'] ?? item['stockStructureId'])?.toString() ??
+            '';
     statusController.text = item['status']?.toString() ?? 'Lagernd';
     assignedPersonController.text = item['assignedPerson']?.toString() ?? '';
 

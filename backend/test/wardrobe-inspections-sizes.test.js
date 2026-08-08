@@ -97,6 +97,8 @@ test('wardrobe categories define sizes, intervals and PSAgE inspection rules', a
         name: 'PSA-Jacke',
         categoryId: '04-04',
         size: 'M',
+        locationId: 'loc-2',
+        storagePositionId: 'stock-2',
       }),
     });
     assert.equal(createResponse.status, 201);

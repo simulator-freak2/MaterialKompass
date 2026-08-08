@@ -99,7 +99,7 @@ function createProcurementEmailService({
 function registerProcurementEmailRoutes({
   app, authMiddleware, requirePermission, procurementEmailImports,
   procurementRequests, procurementOffers, procurementDocuments, suppliers,
-  nextId, logEvent,
+  nextId, logEvent, deleteMessage,
 }) {
   const address = process.env.PROCUREMENT_EMAIL_ADDRESS
     || process.env.PROCUREMENT_IMAP_USER
@@ -187,13 +187,21 @@ function registerProcurementEmailRoutes({
     return res.json({ entry: publicEntry(entry), offer });
   });
 
-  app.post('/api/procurement-email-inbox/:id/discard', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+  app.post('/api/procurement-email-inbox/:id/discard', authMiddleware, requirePermission('procurement.request'), async (req, res) => {
     const entry = find(req, res); if (!entry) return;
     if (entry.status === 'verarbeitet') return res.status(409).json({ error: 'Das Angebot wurde bereits übernommen.' });
-    entry.status = 'verworfen'; entry.problem = text(req.body.reason || 'Manuell verworfen', 1000);
-    entry.processedAt = new Date().toISOString(); entry.processedBy = req.user.username;
-    logEvent('discard', 'ProcurementEmailImport', { id: entry.id, reason: entry.problem }, req.user.username);
-    return res.json(publicEntry(entry));
+    const reason = text(req.body.reason || 'Manuell verworfen', 1000);
+    try {
+      await deleteMessage(entry.emailSource);
+    } catch (error) {
+      console.error(`Angebots-E-Mail ${entry.id} konnte nicht gelöscht werden:`, error.message);
+      return res.status(502).json({
+        error: 'Die E-Mail konnte im Angebots-Postfach nicht endgültig gelöscht werden. Sie bleibt erhalten.',
+      });
+    }
+    procurementEmailImports.splice(procurementEmailImports.indexOf(entry), 1);
+    logEvent('discard', 'ProcurementEmailImport', { id: entry.id, reason }, req.user.username);
+    return res.json({ success: true, id: entry.id });
   });
 }
 

@@ -4,12 +4,39 @@ import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants.dart';
 import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/label_print_dialogs.dart';
+import '../widgets/storage_position_picker.dart';
+
+const _showCompletedPreferenceKey = 'materialkompass.procurement.showCompleted';
+
+List<Map<String, dynamic>> filterProcurementRequests(
+  List<Map<String, dynamic>> requests, {
+  required String query,
+  required String? status,
+  required bool showCompleted,
+}) {
+  final normalizedQuery = query.trim().toLowerCase();
+  final completedAreRelevant =
+      showCompleted || normalizedQuery.isNotEmpty || status == 'Abgeschlossen';
+  return requests.where((entry) {
+    final text = [
+      entry['number'],
+      entry['title'],
+      entry['department'],
+      entry['costCenter'],
+      entry['requestedBy']
+    ].join(' ').toLowerCase();
+    return (completedAreRelevant || entry['status'] != 'Abgeschlossen') &&
+        (status == null || entry['status'] == status) &&
+        (normalizedQuery.isEmpty || text.contains(normalizedQuery));
+  }).toList();
+}
 
 class ProcurementPage extends StatefulWidget {
   final String token;
@@ -35,6 +62,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
   Set<String> _roles = {};
   Set<String> _departmentIds = {};
   bool _loading = true;
+  bool _showCompleted = false;
   String? _status;
 
   Map<String, String> get _headers => {
@@ -57,7 +85,14 @@ class _ProcurementPageState extends State<ProcurementPage> {
   void initState() {
     super.initState();
     _search.addListener(_refreshView);
-    _load();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    _showCompleted = preferences.getBool(_showCompletedPreferenceKey) ?? false;
+    await _load();
   }
 
   @override
@@ -84,7 +119,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
         http.get(Uri.parse('$apiBaseUrl/api/suppliers'), headers: _headers),
         http.get(Uri.parse('$apiBaseUrl/api/categories'), headers: _headers),
         http.get(Uri.parse('$apiBaseUrl/api/locations'), headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        http.get(Uri.parse('$apiBaseUrl/api/storage-positions'),
             headers: _headers),
         http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: _headers),
         http.get(Uri.parse('$apiBaseUrl/api/procurement-email-inbox'),
@@ -190,18 +225,18 @@ class _ProcurementPageState extends State<ProcurementPage> {
       '${(num.tryParse(value?.toString() ?? '') ?? 0).toStringAsFixed(2).replaceAll('.', ',')} €';
 
   List<Map<String, dynamic>> get _filtered {
-    final query = _search.text.trim().toLowerCase();
-    return _requests.where((entry) {
-      final text = [
-        entry['number'],
-        entry['title'],
-        entry['department'],
-        entry['costCenter'],
-        entry['requestedBy']
-      ].join(' ').toLowerCase();
-      return (_status == null || entry['status'] == _status) &&
-          (query.isEmpty || text.contains(query));
-    }).toList();
+    return filterProcurementRequests(
+      _requests,
+      query: _search.text,
+      status: _status,
+      showCompleted: _showCompleted,
+    );
+  }
+
+  Future<void> _setShowCompleted(bool value) async {
+    setState(() => _showCompleted = value);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_showCompletedPreferenceKey, value);
   }
 
   Future<void> _createRequest() async {
@@ -790,13 +825,42 @@ class _ProcurementPageState extends State<ProcurementPage> {
   }
 
   Future<void> _discardEmailOffer(Map<String, dynamic> email) async {
-    final reason = await _textPrompt('E-Mail verwerfen', 'Begründung');
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('E-Mail endgültig löschen?'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text(
+              'Die E-Mail wird aus MaterialKompass und endgültig aus dem Angebots-Postfach gelöscht. Dies kann nicht rückgängig gemacht werden.'),
+          const SizedBox(height: 12),
+          TextField(
+              controller: controller,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Begründung')),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen')),
+          FilledButton.icon(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              icon: const Icon(Icons.delete_forever),
+              label: const Text('Endgültig löschen')),
+        ],
+      ),
+    );
+    controller.dispose();
     if (reason == null) return;
     final result = await _request(
         '/api/procurement-email-inbox/${email['id']}/discard',
         method: 'POST',
         body: {'reason': reason});
-    if (result != null) await _load();
+    if (result != null) {
+      _message('E-Mail wurde endgültig gelöscht.');
+      await _load();
+    }
   }
 
   Future<void> _supplierDialog([Map<String, dynamic>? supplier]) async {
@@ -973,6 +1037,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
                                 child: Text(value)))
                             .toList(),
                         onChanged: (value) => setState(() => _status = value))),
+              if (!approvalsOnly)
+                FilterChip(
+                  label: const Text('Abgeschlossene anzeigen'),
+                  selected: _showCompleted,
+                  onSelected: _setShowCompleted,
+                ),
               if (!approvalsOnly && _can('procurement.request'))
                 FilledButton.icon(
                     onPressed: _createRequest,
@@ -1966,43 +2036,22 @@ class _TransferDialogState extends State<TransferDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final availableStocks = widget.stocks
-        .where((entry) => entry['locationId'] == location)
-        .toList();
     return AlertDialog(
         title: const Text('Manuell prüfen und ins Inventar übernehmen'),
         content: SizedBox(
             width: 620,
             child: Wrap(spacing: 12, runSpacing: 12, children: [
-              SizedBox(
-                  width: 260,
-                  child: DropdownButtonFormField<String>(
-                      initialValue: location,
-                      decoration: const InputDecoration(
-                          labelText: 'Standort *',
-                          border: OutlineInputBorder()),
-                      items: widget.locations
-                          .map((v) => DropdownMenuItem(
-                              value: v['id'].toString(),
-                              child: Text(v['name'])))
-                          .toList(),
-                      onChanged: (v) => setState(() {
-                            location = v;
-                            stock = null;
-                          }))),
-              SizedBox(
-                  width: 260,
-                  child: DropdownButtonFormField<String>(
-                      initialValue: stock,
-                      decoration: const InputDecoration(
-                          labelText: 'Lagerplatz',
-                          border: OutlineInputBorder()),
-                      items: availableStocks
-                          .map((v) => DropdownMenuItem(
-                              value: v['id'].toString(),
-                              child: Text('${v['name']} · ${v['section']}')))
-                          .toList(),
-                      onChanged: (v) => setState(() => stock = v))),
+              StoragePositionPicker(
+                  positions: widget.stocks,
+                  value: stock,
+                  onChanged: (value) => setState(() {
+                        stock = value;
+                        location = widget.stocks
+                            .where((entry) => entry['id']?.toString() == value)
+                            .firstOrNull?['locationId']
+                            ?.toString();
+                      }),
+                  width: 532),
               SizedBox(
                   width: 220,
                   child: DropdownButtonFormField<String>(
@@ -2071,7 +2120,7 @@ class _TransferDialogState extends State<TransferDialog> {
               child: const Text('Abbrechen')),
           FilledButton(
               onPressed: () {
-                if (location == null) return;
+                if (location == null || stock == null) return;
                 Navigator.pop(context, {
                   'complaintResolved': resolved,
                   'items': (widget.receipt['items'] as List).map((raw) {
@@ -2079,6 +2128,7 @@ class _TransferDialogState extends State<TransferDialog> {
                     return {
                       'requestItemId': receiptItem['requestItemId'],
                       'locationId': location,
+                      'storagePositionId': stock,
                       'stockStructureId': stock,
                       'itemType': itemType,
                       'manufacturer': manufacturer.text,

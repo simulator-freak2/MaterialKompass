@@ -35,6 +35,7 @@ test('automatically generated clothing numbers use category IDs', async () => {
         categoryId: '04-04',
         size: 'M',
         locationId: 'loc-2',
+        storagePositionId: 'stock-2',
       }),
     });
     assert.equal(response.status, 201);
@@ -72,6 +73,7 @@ test('edit clothing item updates stored values', async () => {
         inventoryNumber: 'KK-0100',
         size: 'M',
         locationId: 'loc-2',
+        storagePositionId: 'stock-2',
         status: 'Lagernd',
       }),
     });
@@ -90,6 +92,7 @@ test('edit clothing item updates stored values', async () => {
         inventoryNumber: 'KK-0101',
         size: 'L',
         locationId: 'loc-3',
+        storagePositionId: 'stock-3',
         status: 'Lagernd',
       }),
     });
@@ -133,6 +136,7 @@ test('delete clothing item removes it from storage', async () => {
         inventoryNumber: 'KK-0200',
         size: 'S',
         locationId: 'loc-2',
+        storagePositionId: 'stock-2',
         status: 'Lagernd',
       }),
     });
@@ -193,6 +197,7 @@ test('history endpoint returns deleted clothing entries', async () => {
         inventoryNumber: 'KK-0300',
         size: 'XL',
         locationId: 'loc-3',
+        storagePositionId: 'stock-3',
         status: 'Lagernd',
       }),
     });
@@ -252,6 +257,7 @@ test('bulk transaction with multiple clothing items succeeds', async () => {
           inventoryNumber: 'KK-0400',
           size: 'M',
           locationId: 'loc-2',
+          storagePositionId: 'stock-2',
           status: 'Lagernd',
         }),
       }).then((res) => res.json()),
@@ -266,6 +272,7 @@ test('bulk transaction with multiple clothing items succeeds', async () => {
           inventoryNumber: 'KK-0401',
           size: 'L',
           locationId: 'loc-2',
+          storagePositionId: 'stock-2',
           status: 'Lagernd',
         }),
       }).then((res) => res.json()),
@@ -400,6 +407,7 @@ test('bulk category change moves same-category clothing and assigns new inventor
           categoryId: '04-01',
           size: 'M',
           locationId: 'loc-2',
+          storagePositionId: 'stock-2',
         }),
       }).then((response) => response.json())));
 
@@ -451,6 +459,7 @@ test('bulk category change is atomic for mixed source categories or incompatible
         categoryId: '04-04',
         size: 'M',
         locationId: 'loc-2',
+        storagePositionId: 'stock-2',
       }),
     }).then((response) => response.json());
 
@@ -507,7 +516,7 @@ test('new app instances start with independent seed data', async () => {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ name: 'Nur in Instanz 1' }),
+      body: JSON.stringify({ name: 'Nur in Instanz 1', locationId: 'loc-2', storagePositionId: 'stock-2' }),
     });
     assert.equal(createResponse.status, 201);
   } finally {

@@ -12,7 +12,7 @@ function registerProcurementRoutes({
   app, authMiddleware, requirePermission, data, categories, departments = [], locations,
   stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
   nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
-  addMonths,
+  addMonths, procurementEmailImports = [],
 }) {
   const requests = data.procurementRequests;
   const offers = data.procurementOffers;
@@ -330,17 +330,17 @@ function registerProcurementRoutes({
         const inspectionIntervalMonths = categoryInspectionInterval(clothingCategoryId);
         const count = Math.max(1, Math.floor(receiptItem.quantity));
         for (let index = 0; index < count; index += 1) {
-          const item = { id: nextId('clothing', clothingItems), inventoryNumber: nextClothingInventoryNumber(clothingCategoryId), name: source.name, categoryId: clothingCategoryId, size, locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', assignedPerson: null, manufacturer: String(mapping.manufacturer || ''), manufacturingYear: String(mapping.manufacturingYear || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, inspectionIntervalMonths, lastInspectionDate: null, nextInspectionDate: addMonths(receipt.receivedAt, inspectionIntervalMonths), createdAt: now() };
+          const item = { id: nextId('clothing', clothingItems), inventoryNumber: nextClothingInventoryNumber(clothingCategoryId), name: source.name, categoryId: clothingCategoryId, size, locationId: mapping.locationId, storagePositionId: mapping.stockStructureId, stockStructureId: mapping.stockStructureId, status: 'Lagernd', assignedPerson: null, manufacturer: String(mapping.manufacturer || ''), manufacturingYear: String(mapping.manufacturingYear || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, inspectionIntervalMonths, lastInspectionDate: null, nextInspectionDate: addMonths(receipt.receivedAt, inspectionIntervalMonths), createdAt: now() };
           clothingItems.push(item); created.push({ entity: 'clothing', ...item });
         }
       } else if (mapping.itemType === 'bulk') {
-        const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'bulk', quantity: receiptItem.quantity, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: '', purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
+        const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, storagePositionId: mapping.stockStructureId, stockStructureId: mapping.stockStructureId, status: 'Lagernd', itemType: 'bulk', quantity: receiptItem.quantity, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: '', purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
         item.manufacturingYear = String(mapping.manufacturingYear || '');
         materials.push(item); created.push({ entity: 'material', ...item });
       } else {
         const count = Math.max(1, Math.floor(receiptItem.quantity));
         for (let index = 0; index < count; index += 1) {
-          const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, stockStructureId: mapping.stockStructureId || null, status: 'Lagernd', itemType: 'individual', quantity: 1, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: String((mapping.serialNumbers || [])[index] || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
+          const item = { id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: nextMaterialNumber(source.categoryId, source.subcategoryId), name: source.name, categoryCode: source.categoryId, subcategoryCode: source.subcategoryId || '', locationId: mapping.locationId, storagePositionId: mapping.stockStructureId, stockStructureId: mapping.stockStructureId, status: 'Lagernd', itemType: 'individual', quantity: 1, issuedQuantity: 0, unit: source.unit, manufacturer: String(mapping.manufacturer || ''), model: String(mapping.model || ''), serialNumber: String((mapping.serialNumbers || [])[index] || ''), purchaseDate: receipt.receivedAt, purchasePrice: purchaseUnitPrice, department: request.department, inspectionIntervalMonths: Number(mapping.inspectionIntervalMonths) || null, archived: false, createdAt: now() };
           item.manufacturingYear = String(mapping.manufacturingYear || '');
           materials.push(item); created.push({ entity: 'material', ...item });
         }
@@ -348,7 +348,16 @@ function registerProcurementRoutes({
     }
     receipt.inventoryTransferred = true; receipt.status = 'Übernommen'; receipt.transferredAt = now(); receipt.createdInventory = created;
     const requestReceipts = receipts.filter((entry) => entry.requestId === request.id);
-    if (request.status === 'Geliefert' && requestReceipts.length && requestReceipts.every((entry) => entry.inventoryTransferred)) request.status = 'Abgeschlossen';
+    if (request.status === 'Geliefert' && requestReceipts.length
+      && requestReceipts.every((entry) => entry.inventoryTransferred)) {
+      request.status = 'Abgeschlossen';
+      const completedAt = now();
+      procurementEmailImports.filter((entry) => entry.requestId === request.id
+        && !entry.emailSource?.deletedAt).forEach((entry) => {
+        entry.emailSource ||= {};
+        entry.emailSource.deleteRequestedAt ||= completedAt;
+      });
+    }
     event(request, 'Wareneingang ins Inventar übernommen', req.user.username, { receiptId: receipt.id, created: created.length }); res.json({ receipt, created });
   });
 

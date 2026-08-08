@@ -40,7 +40,7 @@ test('dashboard only returns activity from permitted areas', async () => {
     const locationResponse = await fetch(`${baseUrl}/api/locations`, {
       method: 'POST',
       headers: headers(admin),
-      body: JSON.stringify({ name: 'Geheimes Lager', code: 'GL', type: 'Lager' }),
+      body: JSON.stringify({ name: 'Geheimes Lager', street: 'Geheimweg', houseNumber: '1', postalCode: '12345', city: 'Musterstadt', code: 'GL', type: 'Lager' }),
     });
     assert.equal(locationResponse.status, 201);
 
@@ -52,6 +52,7 @@ test('dashboard only returns activity from permitted areas', async () => {
         categoryCode: '02',
         subcategoryCode: '02-02',
         locationId: 'loc-1',
+        storagePositionId: 'stock-1',
         status: 'Lagernd',
         itemType: 'individual',
         quantity: 1,
@@ -88,6 +89,7 @@ test('dashboard excludes logins and describes article activity without email add
         categoryCode: '02',
         subcategoryCode: '02-02',
         locationId: 'loc-1',
+        storagePositionId: 'stock-1',
         status: 'Lagernd',
         itemType: 'individual',
         quantity: 1,

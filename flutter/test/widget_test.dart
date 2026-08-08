@@ -402,6 +402,69 @@ void main() {
     expect(find.text('Lieferanten'), findsOneWidget);
   });
 
+  test('Procurement filtering hides completed requests by default', () {
+    final requests = <Map<String, dynamic>>[
+      {
+        'number': 'B-2026-0001',
+        'title': 'Offener Vorgang',
+        'status': 'Beantragt',
+      },
+      {
+        'number': 'B-2026-0002',
+        'title': 'Neue Rettungswesten',
+        'status': 'Abgeschlossen',
+      },
+    ];
+
+    expect(
+      filterProcurementRequests(
+        requests,
+        query: '',
+        status: null,
+        showCompleted: false,
+      ).map((entry) => entry['number']),
+      ['B-2026-0001'],
+    );
+    expect(
+      filterProcurementRequests(
+        requests,
+        query: '',
+        status: null,
+        showCompleted: true,
+      ),
+      hasLength(2),
+    );
+  });
+
+  test('Procurement search and status filter include completed requests', () {
+    final requests = <Map<String, dynamic>>[
+      {
+        'number': 'B-2026-0002',
+        'title': 'Neue Rettungswesten',
+        'status': 'Abgeschlossen',
+      },
+    ];
+
+    expect(
+      filterProcurementRequests(
+        requests,
+        query: 'rettungswesten',
+        status: null,
+        showCompleted: false,
+      ),
+      hasLength(1),
+    );
+    expect(
+      filterProcurementRequests(
+        requests,
+        query: '',
+        status: 'Abgeschlossen',
+        showCompleted: false,
+      ),
+      hasLength(1),
+    );
+  });
+
   testWidgets('Procurement request dialog can create line items',
       (WidgetTester tester) async {
     await tester.pumpWidget(MaterialApp(

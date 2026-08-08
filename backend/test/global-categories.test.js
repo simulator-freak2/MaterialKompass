@@ -145,6 +145,8 @@ test('clothing uses global categories and protects referenced categories', async
       body: JSON.stringify({
         name: 'Allgemeine Kleidung',
         categoryId: '04',
+        locationId: 'loc-2',
+        storagePositionId: 'stock-2',
       }),
     });
     assert.equal(mainCategoryResponse.status, 201);
@@ -155,6 +157,8 @@ test('clothing uses global categories and protects referenced categories', async
       body: JSON.stringify({
         name: 'Einsatzhose',
         categoryId: '04-01',
+        locationId: 'loc-2',
+        storagePositionId: 'stock-2',
       }),
     });
     assert.equal(createResponse.status, 201);
@@ -199,6 +203,8 @@ test('a category can be deleted after its clothing items were deleted', async ()
       body: JSON.stringify({
         name: 'Vorübergehender Artikel',
         categoryId: 'DELETE-AFTER-CLOTHING',
+        locationId: 'loc-2',
+        storagePositionId: 'stock-2',
       }),
     });
     assert.equal(clothingResponse.status, 201);

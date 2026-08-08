@@ -13,6 +13,7 @@ import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/label_print_dialogs.dart';
+import '../widgets/storage_position_picker.dart';
 import 'defects_page.dart';
 
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
@@ -109,8 +110,11 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
     subcategoryCode =
         value('subcategoryCode').isEmpty ? null : value('subcategoryCode');
     locationId = value('locationId').isEmpty ? null : value('locationId');
-    stockId =
-        value('stockStructureId').isEmpty ? null : value('stockStructureId');
+    stockId = value('storagePositionId').isNotEmpty
+        ? value('storagePositionId')
+        : value('stockStructureId').isEmpty
+            ? null
+            : value('stockStructureId');
   }
 
   @override
@@ -198,9 +202,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
     final subs = widget.categories
         .where((entry) => entry['parentId'] == categoryCode)
         .toList();
-    final availableStocks = widget.stocks
-        .where((entry) => entry['locationId'] == locationId)
-        .toList();
     return AlertDialog(
       title: Text(
           widget.item == null ? 'Material anlegen' : 'Material bearbeiten'),
@@ -226,16 +227,16 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
               }),
               _entityDropdown('Unterkategorie', subcategoryCode, subs,
                   (value) => setState(() => subcategoryCode = value)),
-              _entityDropdown('Standort *', locationId, widget.locations,
-                  (value) {
-                setState(() {
-                  locationId = value;
-                  stockId = null;
-                });
-              }),
-              _entityDropdown('Regal/Fach', stockId, availableStocks,
-                  (value) => setState(() => stockId = value),
-                  stock: true),
+              StoragePositionPicker(
+                  positions: widget.stocks,
+                  value: stockId,
+                  onChanged: (value) => setState(() {
+                        stockId = value;
+                        locationId = widget.stocks
+                            .where((entry) => entry['id']?.toString() == value)
+                            .firstOrNull?['locationId']
+                            ?.toString();
+                      })),
               SizedBox(
                 width: 230,
                 child: DropdownButtonFormField<String>(
@@ -322,6 +323,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       'categoryCode': categoryCode,
       'subcategoryCode': subcategoryCode ?? '',
       'locationId': locationId,
+      'storagePositionId': stockId,
       'stockStructureId': stockId,
       'status': status,
       'itemType': itemType,
@@ -398,7 +400,7 @@ class _InventoryPageState extends State<InventoryPage> {
             headers: headers),
         http.get(Uri.parse('$apiBaseUrl/api/categories'), headers: headers),
         http.get(Uri.parse('$apiBaseUrl/api/locations'), headers: headers),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        http.get(Uri.parse('$apiBaseUrl/api/storage-positions'),
             headers: headers),
         http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: headers),
       ]);
@@ -465,7 +467,11 @@ class _InventoryPageState extends State<InventoryPage> {
 
   String _name(List<Map<String, dynamic>> source, dynamic id) {
     for (final entry in source) {
-      if (entry['id'] == id) return entry['name'].toString();
+      if (entry['id'] == id) {
+        return entry['fullCode'] == null
+            ? entry['name'].toString()
+            : '${entry['path']} (${entry['fullCode']})';
+      }
     }
     return '-';
   }
@@ -938,8 +944,6 @@ class _InventoryPageState extends State<InventoryPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(builder: (context, update) {
-        final availableStocks =
-            stocks.where((entry) => entry['locationId'] == locationId).toList();
         final query = materialSearch.text.trim().toLowerCase();
         final movableItems = items.where((item) {
           if ((num.tryParse(item['issuedQuantity'].toString()) ?? 0) > 0) {
@@ -980,38 +984,17 @@ class _InventoryPageState extends State<InventoryPage> {
               width: 680,
               height: 540,
               child: Column(children: [
-                Row(children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      decoration:
-                          const InputDecoration(labelText: 'Neuer Standort'),
-                      items: locations
-                          .map((entry) => DropdownMenuItem(
-                              value: entry['id'].toString(),
-                              child: Text(entry['name'].toString())))
-                          .toList(),
-                      onChanged: (value) => update(() {
-                        locationId = value;
-                        stockId = null;
-                      }),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: stockId,
-                      decoration:
-                          const InputDecoration(labelText: 'Regal/Fach'),
-                      items: availableStocks
-                          .map((entry) => DropdownMenuItem(
-                              value: entry['id'].toString(),
-                              child: Text(
-                                  '${entry['name']} · ${entry['section']}')))
-                          .toList(),
-                      onChanged: (value) => update(() => stockId = value),
-                    ),
-                  ),
-                ]),
+                StoragePositionPicker(
+                    positions: stocks,
+                    value: stockId,
+                    onChanged: (value) => update(() {
+                          stockId = value;
+                          locationId = stocks
+                              .where(
+                                  (entry) => entry['id']?.toString() == value)
+                              .firstOrNull?['locationId']
+                              ?.toString();
+                        })),
                 const SizedBox(height: 12),
                 TextField(
                   controller: materialSearch,
@@ -1063,7 +1046,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 onPressed: () => Navigator.pop(context, false),
                 child: const Text('Abbrechen')),
             FilledButton(
-                onPressed: locationId == null || dialogSelection.isEmpty
+                onPressed: stockId == null || dialogSelection.isEmpty
                     ? null
                     : () => Navigator.pop(context, true),
                 child: const Text('Umbuchen')),
@@ -1076,6 +1059,7 @@ class _InventoryPageState extends State<InventoryPage> {
         await _request('/api/material/relocate/bulk', method: 'POST', body: {
       'materialIds': dialogSelection.toList(),
       'locationId': locationId,
+      'storagePositionId': stockId,
       'stockStructureId': stockId,
     });
     if (result != null) {
@@ -1646,7 +1630,11 @@ class InventoryDetailDialog extends StatelessWidget {
 
   String _name(List<Map<String, dynamic>> source, dynamic id) {
     for (final entry in source) {
-      if (entry['id'] == id) return entry['name'].toString();
+      if (entry['id'] == id) {
+        return entry['fullCode'] == null
+            ? entry['name'].toString()
+            : '${entry['path']} (${entry['fullCode']})';
+      }
     }
     return '-';
   }

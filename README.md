@@ -55,6 +55,11 @@ werden, wenn Betreff oder Dateiname diese ID enthält. Der IMAP-Eingang ordnet d
 der Inventur zu und stellt den Originalanhang zur kontrollierten Übertragung bereit;
 nicht eindeutig erkannte E-Mails landen beim Jugendvorsitz zur manuellen Zuordnung.
 Dies vermeidet unkontrollierte Bestandsänderungen durch unsichere Handschrift-OCR.
+Beim Abschluss der Inventur werden alle ihr zugeordneten Original-E-Mails dauerhaft
+aus dem IMAP-Postfach gelöscht. Übernommene Anhänge und Protokolldaten bleiben in
+MaterialKompass erhalten. Ist das Postfach vorübergehend nicht erreichbar, wird die
+Löschung bei den folgenden Prüfungen erneut versucht; dies gilt auch rückwirkend für
+bereits abgeschlossene Inventuren.
 
 Materialwarte dürfen Materialinventuren, Kleiderwarte Kleiderkammerinventuren anlegen
 und zählen. Der Jugendvorsitz darf beide Bereiche bearbeiten, auswerten und abschließen.
@@ -284,6 +289,11 @@ eigenen IMAP-Postfach gelesen und nach dem Import serverseitig in den Ordner
 werden. Enthält Betreff, Nachricht oder Dateiname eine Beschaffungsnummer wie
 `BA-2026-0001`, ordnet MaterialKompass die E-Mail automatisch zu. Auch der Lieferant
 wird anhand seiner hinterlegten Absenderadresse vorgeschlagen.
+Sobald der Beschaffungsvorgang abgeschlossen ist, werden alle zugeordneten
+Original-E-Mails dauerhaft aus dem IMAP-Postfach gelöscht. Übernommene Angebotsdateien
+und Protokolldaten bleiben in MaterialKompass erhalten. Fehlgeschlagene Löschungen
+werden bei späteren Postfachprüfungen wiederholt; bereits abgeschlossene Vorgänge
+werden dabei ebenfalls berücksichtigt.
 
 Für den produktiven Betrieb werden `PROCUREMENT_IMAP_HOST`,
 `PROCUREMENT_IMAP_USER` (üblicherweise `angebote@materialkompass.org`) und

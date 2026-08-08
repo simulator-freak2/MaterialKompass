@@ -43,6 +43,7 @@ for (const format of ['xlsx', 'ods']) {
           Name: 'Importierte Einsatzjacke',
           'Größe': 'L',
           Standort: 'loc-2',
+          Lagercode: 'KK-K-01-01',
           Status: 'Lagernd',
         },
         {

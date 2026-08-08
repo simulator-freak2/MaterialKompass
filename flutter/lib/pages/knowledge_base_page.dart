@@ -262,6 +262,13 @@ class _GuideHero extends StatelessWidget {
                       color: colors.onSecondary.withValues(alpha: 0.88),
                     ),
               ),
+              const SizedBox(height: 8),
+              Text(
+                'Stand: August 2026',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: colors.onSecondary.withValues(alpha: 0.78),
+                    ),
+              ),
               const SizedBox(height: 22),
               SearchBar(
                 controller: controller,
@@ -875,6 +882,7 @@ const _categories = [
   _GuideCategory('Erste Schritte', Icons.rocket_launch_outlined),
   _GuideCategory('Inventar', Icons.inventory_2_outlined),
   _GuideCategory('Kleiderkammer', Icons.checkroom_outlined),
+  _GuideCategory('Inventuren', Icons.fact_check_outlined),
   _GuideCategory('Beschaffung', Icons.shopping_cart_outlined),
   _GuideCategory('Mängel & Prüfungen', Icons.report_problem_outlined),
   _GuideCategory('Struktur & Lagerorte', Icons.warehouse_outlined),
@@ -929,7 +937,7 @@ const _articles = [
         'Sie benötigen Schreibrechte für das Inventar sowie eine passende Kategorie und einen Lagerplatz.',
     steps: [
       'Öffnen Sie „Inventar“ und wählen Sie „Material anlegen“.',
-      'Tragen Sie Bezeichnung, Kategorie und Lagerort ein.',
+      'Tragen Sie Bezeichnung und Kategorie ein und wählen Sie den vollständigen Lagerplatz aus Ort, Regal, Ebene und Platz.',
       'Wählen Sie, ob es sich um einen einzeln verfolgten Artikel oder einen Mengenbestand handelt.',
       'Ergänzen Sie bei prüfpflichtigem Material das Prüfintervall und den nächsten Prüftermin.',
       'Kontrollieren Sie die Angaben und speichern Sie den Datensatz.',
@@ -989,6 +997,109 @@ const _articles = [
     keywords: ['person', 'uniform', 'ausgabe', 'rückgabe'],
   ),
   _GuideArticle(
+    category: 'Inventuren',
+    title: 'Inventur anlegen und vorbereiten',
+    summary:
+        'Bereiche, Zählmodus und Umfang einer digitalen oder papiergestützten Inventur festlegen.',
+    icon: Icons.playlist_add_check_circle_outlined,
+    readingMinutes: 4,
+    prerequisite:
+        'Sie benötigen das Recht, Inventuren anzulegen; Orte und Lagerplätze sollten vorher vollständig gepflegt sein.',
+    steps: [
+      'Öffnen Sie „Inventuren“ und wählen Sie „Inventur anlegen“.',
+      'Vergeben Sie eine Bezeichnung, eine verantwortliche Person und ein Beginn-Datum.',
+      'Wählen Sie „Digital“ oder „Papier/Offline“ sowie Blindzählung oder sichtbaren Sollbestand.',
+      'Aktivieren Sie Inventar, Kleiderkammer oder beide Bereiche und grenzen Sie die Zählung bei Bedarf auf Orte, Lagerplätze und Fachbereiche ein.',
+      'Prüfen Sie den Umfang und legen Sie die Inventur zunächst im Status „Angelegt“ an.',
+    ],
+    tip:
+        'Ändern Sie Lagerstruktur und Inventurumfang vor dem Start; nachfolgende Statuswechsel schützen die Nachvollziehbarkeit.',
+    keywords: [
+      'bestandsaufnahme',
+      'blindzählung',
+      'papier',
+      'offline',
+      'umfang'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Inventuren',
+    title: 'Bestand zählen und nachzählen',
+    summary:
+        'Mengen, Einzelartikel, abweichende Lagerplätze und unbekannte Fundstücke erfassen.',
+    icon: Icons.qr_code_scanner,
+    readingMinutes: 5,
+    prerequisite: 'Die Inventur muss gestartet und im Status „In Arbeit“ sein.',
+    steps: [
+      'Öffnen Sie die Inventur und starten Sie sie mit „Inventur starten“.',
+      'Suchen Sie eine Position oder scannen Sie ihre Inventarnummer per Kamera beziehungsweise USB-Handscanner.',
+      'Erfassen Sie bei Mengenartikeln die Ist-Menge; bewerten Sie Einzelartikel als vorhanden, beschädigt oder nicht vorhanden.',
+      'Tragen Sie einen abweichenden gefundenen Ort oder Lagerplatz ein und ergänzen Sie bei Bedarf eine Notiz.',
+      'Scannen Sie unbekannte Inventarnummern als Fundstück ein. Bereits gezählte Positionen können beliebig nachgezählt werden; der Verlauf bleibt erhalten.',
+    ],
+    tip:
+        'Nutzen Sie den Filter „Offen“, um vor dem Ende der Zählung noch nicht bearbeitete Positionen zu finden.',
+    keywords: [
+      'ist-menge',
+      'fundstück',
+      'handscanner',
+      'kamera',
+      'abweichung',
+      'nachzählung'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Inventuren',
+    title: 'Papierliste per E-Mail übernehmen',
+    summary:
+        'Zähllisten exportieren, dem Inventurpostfach zuordnen und kontrolliert übernehmen.',
+    icon: Icons.mark_email_read_outlined,
+    readingMinutes: 4,
+    prerequisite:
+        'Für den E-Mail-Import muss das Inventurpostfach eingerichtet sein; unterstützt werden PDF, JPG, PNG, XLSX und ODS.',
+    steps: [
+      'Erzeugen Sie über „Listen und Berichte“ eine leere Zählliste als PDF, XLSX oder ODS.',
+      'Senden Sie die ausgefüllte Datei an inventur@materialkompass.org und nennen Sie die Inventur-ID im Betreff oder Dateinamen.',
+      'Öffnen Sie „Eingescannte Listen“, prüfen Sie Absender und Originalanhang und ordnen Sie nicht eindeutig erkannte Nachrichten manuell zu.',
+      'Übertragen Sie die geprüften Werte in die Inventur. Eine automatische Handschrift-OCR verändert den Bestand bewusst nicht.',
+      'Verwerfen Sie unbrauchbare Nachrichten nur nach Prüfung; dabei wird die Original-E-Mail endgültig aus dem Postfach gelöscht.',
+    ],
+    tip:
+        'Der importierte Anhang und das Protokoll bleiben in MaterialKompass erhalten, auch wenn die Original-E-Mail beim Abschluss der Inventur gelöscht wird.',
+    keywords: [
+      'inventur@materialkompass.org',
+      'zählliste',
+      'xlsx',
+      'ods',
+      'pdf',
+      'postfach'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Inventuren',
+    title: 'Inventur auswerten und abschließen',
+    summary:
+        'Abweichungen prüfen, Folgevorgänge erzeugen und Korrekturen kontrolliert übernehmen.',
+    icon: Icons.task_alt_outlined,
+    readingMinutes: 4,
+    prerequisite:
+        'Alle erreichbaren Positionen sollten gezählt oder nachvollziehbar als offen dokumentiert sein.',
+    steps: [
+      'Wählen Sie „Auswertung starten“, um die Zählung zu beenden und Abweichungen festzuschreiben.',
+      'Prüfen Sie die Ergebnis- oder Differenzliste; Fehlbestände und technische Schäden erzeugen nachvollziehbare Folge- beziehungsweise Mangelvorgänge.',
+      'Entscheiden Sie beim Abschluss ausdrücklich, ob Bestands- und Standortkorrekturen übernommen werden sollen.',
+      'Bestätigen Sie „Abschließen“. Die Inventur ist danach revisionssicher unveränderlich.',
+      'Zugeordnete Original-E-Mails werden aus dem Postfach gelöscht; bei einer Störung versucht MaterialKompass die Löschung später erneut.',
+    ],
+    keywords: [
+      'auswertung',
+      'differenzliste',
+      'korrektur',
+      'abschließen',
+      'fehlbestand'
+    ],
+  ),
+  _GuideArticle(
     category: 'Beschaffung',
     title: 'Beschaffungsantrag erstellen',
     summary:
@@ -996,17 +1107,67 @@ const _articles = [
     icon: Icons.post_add_outlined,
     readingMinutes: 5,
     prerequisite:
-        'Sie benötigen Schreibrechte im Bereich Beschaffung und möglichst bereits Vergleichspreise.',
+        'Sie benötigen Schreibrechte im Bereich Beschaffung und ein begründetes Gesamtbudget.',
     steps: [
       'Öffnen Sie „Beschaffung“, wechseln Sie zu „Vorgänge“ und legen Sie einen neuen Antrag an.',
       'Formulieren Sie einen eindeutigen Titel und eine nachvollziehbare Begründung.',
-      'Fügen Sie alle Positionen mit Menge, Kategorie und geschätztem Preis hinzu.',
+      'Fügen Sie alle Positionen mit Bezeichnung, Kategorie, Menge, Einheit und Mehrwertsteuersatz hinzu. Einzelpreise werden im Antrag nicht erfasst.',
       'Tragen Sie das beantragte Bruttobudget und gegebenenfalls einen bevorzugten Lieferanten ein.',
       'Speichern Sie zunächst als Entwurf oder reichen Sie den vollständigen Antrag zur Freigabe ein.',
     ],
     tip:
         'Fassen Sie zusammengehörige Positionen in einem Antrag zusammen, damit Freigabe und Wareneingang übersichtlich bleiben.',
     keywords: ['antrag', 'budget', 'lieferant', 'freigabe', 'bestellung'],
+  ),
+  _GuideArticle(
+    category: 'Beschaffung',
+    title: 'Angebote aus der Postbox übernehmen',
+    summary:
+        'Eingegangene Angebots-E-Mails einem Vorgang und Lieferanten zuordnen.',
+    icon: Icons.inbox_outlined,
+    readingMinutes: 4,
+    prerequisite:
+        'Es werden ein offener Beschaffungsvorgang und ein aktiver Lieferant benötigt.',
+    steps: [
+      'Bitten Sie den Lieferanten, die Vorgangsnummer wie „BA-2026-0001“ in Betreff, Nachricht oder Dateiname zu schreiben und an angebote@materialkompass.org zu senden.',
+      'Öffnen Sie in „Beschaffung“ den Reiter „Postbox“ und prüfen Sie Absender, erkannte Vorgangsnummer und Anhänge.',
+      'Wählen Sie „Angebot übernehmen“, ordnen Sie Vorgang und Lieferant zu und ergänzen Sie Angebotsnummer, Bruttosumme, Datum und Lieferzeit.',
+      'Kontrollieren Sie die Anhänge und bestätigen Sie die Übernahme. Der Lieferant wird anhand seiner hinterlegten Absenderadresse vorgeschlagen.',
+      'Löschen Sie unbrauchbare E-Mails nur über „Verwerfen“; die Nachricht wird dann unwiderruflich aus MaterialKompass und dem Postfach entfernt.',
+    ],
+    tip:
+        'Übernommene Angebotsdateien und Protokolldaten bleiben erhalten; die Original-E-Mails werden nach Abschluss des Vorgangs aus dem Postfach gelöscht.',
+    keywords: [
+      'angebote@materialkompass.org',
+      'postbox',
+      'imap',
+      'angebotsvergleich',
+      'verwerfen'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Beschaffung',
+    title: 'Freigeben, bestellen und Angebote vergleichen',
+    summary:
+        'Budgetentscheidung dokumentieren, ein Angebot auswählen und Bestellungen aufteilen.',
+    icon: Icons.approval_outlined,
+    readingMinutes: 5,
+    prerequisite:
+        'Der Antrag muss eingereicht sein; Freigaben dürfen Vorsitz oder Schatzmeister erteilen.',
+    steps: [
+      'Prüfen Sie Begründung, Positionen und beantragtes Bruttobudget und erteilen oder verweigern Sie die Freigabe mit nachvollziehbarer Notiz.',
+      'Erfassen oder übernehmen Sie Angebote und vergleichen Sie Gesamtsumme, Lieferzeit und Gültigkeit.',
+      'Wählen Sie das wirtschaftlich passende Angebot. Begründen Sie ausdrücklich, wenn nicht das günstigste gewählt wird.',
+      'Legen Sie eine oder mehrere Bestellungen an und verteilen Sie die benötigten Mengen auf Lieferanten.',
+      'Achten Sie darauf, dass das freigegebene Budget nicht überschritten wird.',
+    ],
+    keywords: [
+      'vorsitz',
+      'schatzmeister',
+      'genehmigung',
+      'angebotsvergleich',
+      'teilbestellung'
+    ],
   ),
   _GuideArticle(
     category: 'Beschaffung',
@@ -1020,8 +1181,8 @@ const _articles = [
       'Öffnen Sie den bestellten Beschaffungsvorgang.',
       'Vergleichen Sie Lieferung, Lieferschein und bestellte Mengen.',
       'Erfassen Sie die tatsächlich eingegangenen Mengen sowie Abweichungen oder Schäden.',
-      'Ordnen Sie inventarisierungspflichtige Artikel Kategorie und Lagerort zu.',
-      'Schließen Sie den Wareneingang erst ab, wenn alle Angaben geprüft sind.',
+      'Öffnen Sie „Prüfen & übernehmen“ und ordnen Sie inventarisierungspflichtige Artikel Kategorie und vollständigem Lagerplatz zu.',
+      'Übernehmen Sie den Wareneingang erst nach der Kontrolle ins Inventar. Sind alle Lieferungen übernommen, wird der Vorgang abgeschlossen.',
     ],
     keywords: ['lieferung', 'eingang', 'bestellung', 'lager'],
   ),
@@ -1047,6 +1208,32 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Mängel & Prüfungen',
+    title: 'Mangel per E-Mail übernehmen',
+    summary:
+        'Eingesandte PDF- oder Bildberichte prüfen und daraus eine Mängelmeldung anlegen.',
+    icon: Icons.forward_to_inbox_outlined,
+    readingMinutes: 4,
+    prerequisite:
+        'Senden Sie einen PDF-, PNG- oder JPEG-Bericht an maengel@materialkompass.org; die Auswertung erfolgt lokal im Backend.',
+    steps: [
+      'Öffnen Sie die Liste der zu prüfenden E-Mail-Meldungen im Bereich „Mängel“.',
+      'Kontrollieren Sie erkannte Inventarnummer, Kontaktdaten, Beschreibung, Maßnahmen und getrennte Schadensbilder am Originalbericht.',
+      'Ergänzen oder korrigieren Sie unsichere Angaben und wählen Sie das betroffene Material.',
+      'Wählen Sie „Mangel anlegen“. Der E-Mail-Text wird als Kommentar und die geprüften Bilder werden als Nachweise übernommen.',
+      'Verwerfen Sie Spam oder unbrauchbare Meldungen nur nach Bestätigung; die Original-E-Mail wird dabei endgültig gelöscht.',
+    ],
+    tip:
+        'Nutzen Sie nach Möglichkeit die leere oder vorbefüllte PDF-Vorlage aus der Anwendung, damit Angaben zuverlässig erkannt werden.',
+    keywords: [
+      'maengel@materialkompass.org',
+      'ocr',
+      'pdf-vorlage',
+      'schadensbild',
+      'postfach'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Mängel & Prüfungen',
     title: 'Fällige Prüfung dokumentieren',
     summary:
         'Prüfergebnis erfassen und den nächsten Termin korrekt fortschreiben.',
@@ -1065,20 +1252,30 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',
-    title: 'Lagerort und Lagerplatz anlegen',
-    summary: 'Die physische Lagerstruktur eindeutig und auffindbar abbilden.',
+    title: 'Lagerstruktur anlegen und pflegen',
+    summary:
+        'Orte, Regale, Ebenen und Lagerplätze mit eindeutigen vollständigen Lagercodes abbilden.',
     icon: Icons.warehouse_outlined,
     readingMinutes: 3,
     prerequisite: 'Sie benötigen Verwaltungsrechte für Lagerorte.',
     steps: [
-      'Öffnen Sie „Lagerorte“ und legen Sie zunächst den übergeordneten Standort an.',
-      'Ergänzen Sie darunter eindeutig benannte Lagerplätze wie Raum, Regal und Fach.',
-      'Verwenden Sie kurze Codes, die auch vor Ort auf Beschriftungen passen.',
-      'Speichern Sie die Struktur und ordnen Sie anschließend vorhandenes Material zu.',
+      'Öffnen Sie „Lagerstruktur“ und legen Sie einen Ort mit Name, vollständiger Anschrift, Kürzel und Typ an.',
+      'Ergänzen Sie darunter in dieser Reihenfolge Regal, Ebene und Lagerplatz.',
+      'Vergeben Sie auf jeder Stufe kurze Kürzel aus Buchstaben, Zahlen, „_“ oder „-“; MaterialKompass bildet daraus einen vollständigen Code wie „HL-A-01-01“.',
+      'Zeigen oder drucken Sie bei Bedarf den Barcode eines Lagerplatzes und ordnen Sie anschließend Material oder Kleidung zu.',
+      'Verschieben oder löschen Sie Strukturen nur nach Prüfung. Belegte oder in Inventuren verwendete Lagerplätze sind geschützt.',
     ],
     tip:
-        'Ein einheitliches Schema wie „Raum – Regal – Fach“ erleichtert Suche, Inventur und Übergabe.',
-    keywords: ['standort', 'raum', 'regal', 'fach', 'lager'],
+        'Ein einheitliches Schema „Ort – Regal – Ebene – Lagerplatz“ erleichtert Suche, Scan, Inventur und Übergabe.',
+    keywords: [
+      'standort',
+      'anschrift',
+      'regal',
+      'ebene',
+      'lagerplatz',
+      'barcode',
+      'lagercode'
+    ],
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',

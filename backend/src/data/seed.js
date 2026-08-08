@@ -73,15 +73,32 @@ const departments = [
 ];
 
 const locations = [
-  { id: 'loc-1', name: 'Hauptlager', code: 'HL', type: 'Lager' },
-  { id: 'loc-2', name: 'Kleiderkammer', code: 'KK', type: 'Kleidung' },
-  { id: 'loc-3', name: 'Nebenlager', code: 'NL', type: 'Lager' },
+  { id: 'loc-1', name: 'Hauptlager', street: 'Musterstraße', houseNumber: '1', postalCode: '12345', city: 'Musterstadt', code: 'HL', type: 'Lager' },
+  { id: 'loc-2', name: 'Kleiderkammer', street: 'Musterstraße', houseNumber: '1', postalCode: '12345', city: 'Musterstadt', code: 'KK', type: 'Kleidung' },
+  { id: 'loc-3', name: 'Nebenlager', street: 'Nebenstraße', houseNumber: '2', postalCode: '12345', city: 'Musterstadt', code: 'NL', type: 'Lager' },
 ];
 
-const stockStructures = [
-  { id: 'stock-1', name: 'Regal A', locationId: 'loc-1', section: 'A1' },
-  { id: 'stock-2', name: 'Kleiderregal', locationId: 'loc-2', section: 'K1' },
+const shelves = [
+  { id: 'shelf-1', name: 'Regal A', code: 'A', locationId: 'loc-1' },
+  { id: 'shelf-2', name: 'Kleiderregal', code: 'K', locationId: 'loc-2' },
+  { id: 'shelf-3', name: 'Regal A', code: 'A', locationId: 'loc-3' },
 ];
+
+const storageLevels = [
+  { id: 'level-1', name: 'Ebene 1', code: '01', shelfId: 'shelf-1' },
+  { id: 'level-2', name: 'Ebene 1', code: '01', shelfId: 'shelf-2' },
+  { id: 'level-3', name: 'Ebene 1', code: '01', shelfId: 'shelf-3' },
+];
+
+const storagePositions = [
+  { id: 'stock-1', name: 'Platz 1', code: '01', levelId: 'level-1', shelfId: 'shelf-1', locationId: 'loc-1', fullCode: 'HL-A-01-01' },
+  { id: 'stock-2', name: 'Platz 1', code: '01', levelId: 'level-2', shelfId: 'shelf-2', locationId: 'loc-2', fullCode: 'KK-K-01-01' },
+  { id: 'stock-3', name: 'Platz 1', code: '01', levelId: 'level-3', shelfId: 'shelf-3', locationId: 'loc-3', fullCode: 'NL-A-01-01' },
+];
+
+// Wird nur noch zum Einlesen alter Sicherungen vorgehalten. Neue Daten werden
+// ausschließlich in shelves, storageLevels und storagePositions gespeichert.
+const stockStructures = [];
 
 const categories = [
   { id: '02', name: 'Werkzeug', parentId: null, useInWardrobe: false },
@@ -107,6 +124,7 @@ const materials = [
     quantity: 1,
     unit: 'Stück',
     issuedQuantity: 0,
+    storagePositionId: 'stock-1',
     stockStructureId: 'stock-1',
     manufacturer: 'Stihl',
     model: '',
@@ -135,6 +153,7 @@ const clothingItems = [
     categoryId: '04-01',
     size: 'M',
     locationId: 'loc-2',
+    storagePositionId: 'stock-2',
     stockStructureId: 'stock-2',
     status: 'Lagernd',
     assignedPerson: null,
@@ -170,6 +189,9 @@ module.exports = {
     departments,
     locations,
     stockStructures,
+    shelves,
+    storageLevels,
+    storagePositions,
     categories,
     materials,
     materialMovements,

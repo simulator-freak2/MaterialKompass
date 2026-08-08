@@ -413,7 +413,7 @@ function registerDefectManagement({
     const locationName = (id) => locations.find((entry) => entry.id === id)?.name || id || '';
     const stockName = (id) => {
       const stock = stockStructures.find((entry) => entry.id === id);
-      return stock ? [stock.name, stock.section].filter(Boolean).join(' / ') : id || '';
+      return stock ? `${stock.path || stock.name}${stock.fullCode ? ` (${stock.fullCode})` : ''}` : id || '';
     };
     const details = [
       { label: 'Mangelnummer', value: report.defectNumber },
@@ -423,7 +423,7 @@ function registerDefectManagement({
       { label: 'Kategorie', value: entity.categoryId
         ? categoryName(entity.categoryId)
         : [categoryName(entity.categoryCode), categoryName(entity.subcategoryCode)].filter(Boolean).join(' / ') },
-      { label: 'Standort / Lagerplatz', value: [locationName(entity.locationId), stockName(entity.stockStructureId)].filter(Boolean).join(' / ') },
+      { label: 'Lagerplatz', value: stockName(entity.storagePositionId || entity.stockStructureId) },
       { label: 'Artikelstatus', value: entity.status },
       { label: 'Bestand / betroffene Menge', value: `${entity.quantity ?? 1} / ${report.affectedQuantity}` },
       { label: 'Größe', value: entity.size },

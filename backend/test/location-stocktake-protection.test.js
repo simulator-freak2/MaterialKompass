@@ -5,8 +5,10 @@ const { seedData } = require('../src/data/seed');
 
 test('locations referenced by stocktakes remain protected', async () => {
   const data = structuredClone(seedData);
-  data.locations.push({ id: 'loc-history', name: 'Historisches Lager', code: 'HIST', type: 'Lager' });
-  data.stockStructures.push({ id: 'stock-history', name: 'Altes Regal', section: 'A1', locationId: 'loc-history' });
+  data.locations.push({ id: 'loc-history', name: 'Historisches Lager', street: 'Altweg', houseNumber: '1', postalCode: '12345', city: 'Musterstadt', code: 'HIST', type: 'Lager' });
+  data.shelves.push({ id: 'shelf-history', name: 'Altes Regal', code: 'A', locationId: 'loc-history' });
+  data.storageLevels.push({ id: 'level-history', name: 'Ebene 1', code: '01', shelfId: 'shelf-history' });
+  data.storagePositions.push({ id: 'stock-history', name: 'Platz 1', code: '01', levelId: 'level-history' });
   data.stocktakes.push({
     id: 'stocktake-history',
     scope: { locationIds: ['loc-history'], stockStructureIds: ['stock-history'] },

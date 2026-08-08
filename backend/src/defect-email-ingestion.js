@@ -901,6 +901,8 @@ function registerDefectEmailRoutes({
   defectManagement,
   materials,
   clothingItems,
+  deleteMessage,
+  logEvent,
 }) {
   function canAccess(req, entry) {
     const entityType = entry.extractedData?.entityType;
@@ -956,9 +958,26 @@ function registerDefectEmailRoutes({
     authMiddleware, requirePermission('defects.edit'), async (req, res) => {
       const entry = findEntry(req, res);
       if (!entry) return;
-      const result = await defectEmailService.discard(entry, req.body.reason, req.user);
-      if (result.error) return res.status(409).json({ error: result.error });
-      return res.json(defectEmailService.publicImport(result.entry));
+      if (entry.status !== 'pending') {
+        return res.status(409).json({ error: 'Diese E-Mail wurde bereits abgeschlossen.' });
+      }
+      const reason = normalizeText(req.body.reason) || 'Manuell verworfen';
+      try {
+        await deleteMessage({
+          ...entry.emailSource,
+          mailbox: entry.processedMailbox || entry.emailSource?.mailbox,
+          uid: entry.processedUid || entry.emailSource?.uid,
+          uidValidity: entry.processedUidValidity || entry.emailSource?.uidValidity,
+        });
+      } catch (error) {
+        console.error(`Mängel-E-Mail ${entry.id} konnte nicht gelöscht werden:`, error.message);
+        return res.status(502).json({
+          error: 'Die E-Mail konnte im Mängel-Postfach nicht endgültig gelöscht werden. Sie bleibt erhalten.',
+        });
+      }
+      defectEmailImports.splice(defectEmailImports.indexOf(entry), 1);
+      logEvent('discard', 'DefectEmailImport', { id: entry.id, reason }, req.user.username);
+      return res.json({ success: true, id: entry.id, reason });
     });
 
   app.get('/api/defect-report-template', authMiddleware, requirePermission('defects.read'), async (req, res) => {

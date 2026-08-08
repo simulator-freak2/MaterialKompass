@@ -32,6 +32,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { SUPPORTED_PLATFORMS, createCorsOptions, parseTrustProxy } = require('./config');
 const { legalInformation } = require('./legal-config');
+const { createConfiguredDeleter } = require('./imap-message-deleter');
 const { version } = require('../package.json');
 
 const API_VERSION = '1';
@@ -43,7 +44,8 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_REQUESTS = 10;
 const MAX_IMPORT_ROWS = 1000;
 const PERSISTED_COLLECTIONS = Object.freeze([
-  'permissions', 'departments', 'locations', 'stockStructures', 'categories', 'materials',
+  'permissions', 'departments', 'locations', 'stockStructures', 'shelves',
+  'storageLevels', 'storagePositions', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
@@ -60,6 +62,11 @@ function createApp(options = {}) {
     throw new Error('JWT_SECRET muss im Produktivbetrieb mindestens 32 Zeichen lang sein.');
   }
   const app = express();
+  const mailDeleters = options.mailDeleters || {
+    defects: createConfiguredDeleter(process.env, 'DEFECT'),
+    stocktakes: createConfiguredDeleter(process.env, 'INVENTORY'),
+    procurement: createConfiguredDeleter(process.env, 'PROCUREMENT'),
+  };
   const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
   if (trustProxy !== null) app.set('trust proxy', trustProxy);
   app.disable('x-powered-by');
@@ -138,7 +145,54 @@ function createApp(options = {}) {
   const users = appData.users;
   const departments = (appData.departments ||= []);
   const locations = appData.locations;
-  const stockStructures = appData.stockStructures;
+  const legacyStockStructures = (appData.stockStructures ||= []);
+  const shelves = (appData.shelves ||= []);
+  const storageLevels = (appData.storageLevels ||= []);
+  const storagePositions = (appData.storagePositions ||= []);
+  // Interne Altschnittstellen arbeiten weiterhin mit diesem Namen. Der Inhalt
+  // ist jetzt jedoch die eindeutige unterste Ebene (Lagerplatz).
+  const stockStructures = storagePositions;
+  const storageCodePattern = /^[A-Z0-9_-]{1,16}$/;
+  const storageCode = (value) => String(value || '').trim().toUpperCase();
+  const refreshStoragePaths = () => {
+    for (const position of storagePositions) {
+      const level = storageLevels.find((entry) => entry.id === position.levelId);
+      const shelf = level && shelves.find((entry) => entry.id === level.shelfId);
+      const location = shelf && locations.find((entry) => entry.id === shelf.locationId);
+      position.shelfId = shelf?.id || null;
+      position.locationId = location?.id || null;
+      position.section = position.code;
+      position.fullCode = [location?.code, shelf?.code, level?.code, position.code]
+        .filter(Boolean).join('-');
+      position.locationName = location?.name || '';
+      position.shelfName = shelf?.name || '';
+      position.shelfCode = shelf?.code || '';
+      position.levelName = level?.name || '';
+      position.levelCode = level?.code || '';
+      position.path = [location?.name, shelf?.name, level?.name, position.name].filter(Boolean).join(' / ');
+    }
+  };
+  refreshStoragePaths();
+  const syncStorageReference = (entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const id = entry.storagePositionId || entry.stockStructureId;
+    if (id) {
+      entry.storagePositionId = id;
+      entry.stockStructureId = id;
+      const position = storagePositions.find((candidate) => candidate.id === id);
+      if (position?.locationId) entry.locationId = position.locationId;
+    }
+  };
+  app.use((req, _res, next) => {
+    const normalize = (body) => {
+      if (!body || typeof body !== 'object') return;
+      if (body.storagePositionId && !body.stockStructureId) body.stockStructureId = body.storagePositionId;
+      if (body.actualStoragePositionId && !body.actualStockStructureId) body.actualStockStructureId = body.actualStoragePositionId;
+      if (Array.isArray(body.items)) body.items.forEach(normalize);
+    };
+    normalize(req.body);
+    next();
+  });
   const categories = appData.categories;
   const materials = appData.materials;
   const deletedMaterials = (appData.deletedMaterials ||= []);
@@ -148,6 +202,7 @@ function createApp(options = {}) {
   const clothingItems = appData.clothingItems;
   const clothingInspections = appData.clothingInspections || [];
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
+  [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems].forEach(syncStorageReference);
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
   const notifications = (appData.notifications ||= []);
@@ -671,11 +726,13 @@ function createApp(options = {}) {
     kategorieid: 'categoryId',
     categoryid: 'categoryId',
     standort: 'locationId',
+    ort: 'locationId',
     location: 'locationId',
     locationid: 'locationId',
     regalfach: 'stockStructureId',
     lagerplatz: 'stockStructureId',
     stockstructureid: 'stockStructureId',
+    lagercode: 'storagePositionId',
     status: 'status',
     zugewiesenan: 'assignedPerson',
     assignedperson: 'assignedPerson',
@@ -719,8 +776,10 @@ function createApp(options = {}) {
   }
 
   function buildClothingWorkbook() {
-    const headers = ['Inventarnummer', 'Name', 'Kategorie-ID', 'Kategorie', 'Größe', 'Hersteller', 'Baujahr', 'Anschaffungsdatum', 'Standort', 'Regal/Fach', 'Status', 'Zugewiesen an'];
-    const rows = clothingItems.map((item) => ({
+    const headers = ['Inventarnummer', 'Name', 'Kategorie-ID', 'Kategorie', 'Größe', 'Hersteller', 'Baujahr', 'Anschaffungsdatum', 'Ort', 'Regal', 'Ebene', 'Lagerplatz', 'Lagercode', 'Status', 'Zugewiesen an'];
+    const rows = clothingItems.map((item) => {
+      const position = stockStructures.find((entry) => entry.id === (item.storagePositionId || item.stockStructureId));
+      return ({
       Inventarnummer: item.inventoryNumber || '',
       Name: item.name || '',
       'Kategorie-ID': item.categoryId || '',
@@ -729,11 +788,14 @@ function createApp(options = {}) {
       Hersteller: item.manufacturer || '',
       Baujahr: item.manufacturingYear || '',
       Anschaffungsdatum: item.purchaseDate || '',
-      Standort: item.locationId || '',
-      'Regal/Fach': item.stockStructureId || '',
+      Ort: position?.locationName || item.locationId || '',
+      Regal: position?.shelfName || '',
+      Ebene: position?.levelName || '',
+      Lagerplatz: position?.name || '',
+      Lagercode: position?.fullCode || '',
       Status: item.status || 'Lagernd',
       'Zugewiesen an': item.assignedPerson || '',
-    }));
+    }); });
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
     worksheet['!cols'] = [
       { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 22 }, { wch: 12 },
@@ -746,7 +808,7 @@ function createApp(options = {}) {
     const helpSheet = XLSX.utils.aoa_to_sheet([
       ['Importhinweise'],
       ['Pflichtfeld', 'Name'],
-      ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Hersteller, Baujahr, Anschaffungsdatum, Standort, Regal/Fach, Status, Zugewiesen an'],
+      ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Hersteller, Baujahr, Anschaffungsdatum, Ort, Regal, Ebene, Lagerplatz, Lagercode, Status, Zugewiesen an'],
       ['Statuswerte', 'Lagernd oder Ausgegeben'],
       ['Duplikate', 'Bereits vorhandene Inventarnummern werden übersprungen.'],
     ]);
@@ -1020,10 +1082,14 @@ function createApp(options = {}) {
     const name = String(req.body.name || '').trim();
     const code = String(req.body.code || '').trim().toUpperCase();
     const type = String(req.body.type || '').trim();
-    if (!name || !code || !type) return res.status(400).json({ error: 'Name, Kürzel und Typ sind Pflichtfelder.' });
+    const street = String(req.body.street || '').trim();
+    const houseNumber = String(req.body.houseNumber || '').trim();
+    const postalCode = String(req.body.postalCode || '').trim();
+    const city = String(req.body.city || '').trim();
+    if (!name || !street || !houseNumber || !postalCode || !city || !code || !type) return res.status(400).json({ error: 'Name, vollständige Adresse, Kürzel und Typ sind Pflichtfelder.' });
     if (!/^[A-Z0-9_-]{1,16}$/.test(code)) return res.status(400).json({ error: 'Das Kürzel darf nur Buchstaben, Zahlen, _ und - enthalten.' });
     if (locations.some((entry) => entry.name.toLowerCase() === name.toLowerCase() || entry.code.toLowerCase() === code.toLowerCase())) return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
-    const location = { id: nextId('loc', locations), name, code, type };
+    const location = { id: nextId('loc', locations), name, street, houseNumber, postalCode, city, code, type };
     locations.push(location);
     logEvent('create', 'Location', { id: location.id }, req.user.username);
     res.status(201).json(location);
@@ -1035,10 +1101,15 @@ function createApp(options = {}) {
     const name = String(req.body.name ?? location.name).trim();
     const code = String(req.body.code ?? location.code).trim().toUpperCase();
     const type = String(req.body.type ?? location.type).trim();
-    if (!name || !code || !type) return res.status(400).json({ error: 'Name, Kürzel und Typ sind Pflichtfelder.' });
+    const street = String(req.body.street ?? location.street ?? '').trim();
+    const houseNumber = String(req.body.houseNumber ?? location.houseNumber ?? '').trim();
+    const postalCode = String(req.body.postalCode ?? location.postalCode ?? '').trim();
+    const city = String(req.body.city ?? location.city ?? '').trim();
+    if (!name || !street || !houseNumber || !postalCode || !city || !code || !type) return res.status(400).json({ error: 'Name, vollständige Adresse, Kürzel und Typ sind Pflichtfelder.' });
     if (!/^[A-Z0-9_-]{1,16}$/.test(code)) return res.status(400).json({ error: 'Das Kürzel ist ungültig.' });
     if (locations.some((entry) => entry.id !== location.id && (entry.name.toLowerCase() === name.toLowerCase() || entry.code.toLowerCase() === code.toLowerCase()))) return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
-    Object.assign(location, { name, code, type, updatedAt: new Date().toISOString() });
+    Object.assign(location, { name, street, houseNumber, postalCode, city, code, type, updatedAt: new Date().toISOString() });
+    refreshStoragePaths();
     logEvent('update', 'Location', { id: location.id }, req.user.username);
     res.json(location);
   });
@@ -1046,8 +1117,10 @@ function createApp(options = {}) {
   app.delete('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = locations.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Lagerort nicht gefunden.' });
+    const nestedShelfIds = new Set(shelves.filter((entry) => entry.locationId === req.params.id).map((entry) => entry.id));
+    const nestedLevelIds = new Set(storageLevels.filter((entry) => nestedShelfIds.has(entry.shelfId)).map((entry) => entry.id));
     const nestedStockIds = new Set(stockStructures
-      .filter((entry) => entry.locationId === req.params.id)
+      .filter((entry) => nestedLevelIds.has(entry.levelId))
       .map((entry) => entry.id));
     const inventoryReferences = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
       .some((entry) => entry.locationId === req.params.id || nestedStockIds.has(entry.stockStructureId));
@@ -1056,53 +1129,101 @@ function createApp(options = {}) {
     if (inventoryReferences || stocktakeUsesLocation) {
       return res.status(409).json({ error: 'Der Lagerort wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
     }
-    for (let i = stockStructures.length - 1; i >= 0; i -= 1) if (stockStructures[i].locationId === req.params.id) stockStructures.splice(i, 1);
+    for (let i = stockStructures.length - 1; i >= 0; i -= 1) if (nestedStockIds.has(stockStructures[i].id)) stockStructures.splice(i, 1);
+    for (let i = storageLevels.length - 1; i >= 0; i -= 1) if (nestedLevelIds.has(storageLevels[i].id)) storageLevels.splice(i, 1);
+    for (let i = shelves.length - 1; i >= 0; i -= 1) if (nestedShelfIds.has(shelves[i].id)) shelves.splice(i, 1);
     const [removed] = locations.splice(index, 1);
     logEvent('delete', 'Location', { id: removed.id }, req.user.username);
     res.status(204).end();
   });
 
-  app.get('/api/stock-structures', authMiddleware, requirePermission('locations.read'), (req, res) => {
-    res.json(stockStructures);
+  const positionView = (position) => {
+    const level = storageLevels.find((entry) => entry.id === position.levelId);
+    const shelf = level && shelves.find((entry) => entry.id === level.shelfId);
+    const location = shelf && locations.find((entry) => entry.id === shelf.locationId);
+    return { ...position, storagePositionId: position.id, levelName: level?.name || '', levelCode: level?.code || '', shelfName: shelf?.name || '', shelfCode: shelf?.code || '', locationName: location?.name || '', path: [location?.name, shelf?.name, level?.name, position.name].filter(Boolean).join(' / ') };
+  };
+
+  app.get('/api/shelves', authMiddleware, requirePermission('locations.read'), (_req, res) => res.json(shelves));
+  app.get('/api/storage-levels', authMiddleware, requirePermission('locations.read'), (_req, res) => res.json(storageLevels));
+  app.get(['/api/storage-positions', '/api/stock-structures'], authMiddleware, requirePermission('locations.read'), (_req, res) => {
+    refreshStoragePaths();
+    res.json(storagePositions.map(positionView));
   });
 
-  app.post('/api/stock-structures', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const name = String(req.body.name || '').trim();
-    const section = String(req.body.section || '').trim();
-    const locationId = String(req.body.locationId || '').trim();
-    if (!name || !section || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, Fach/Abschnitt und ein gültiger Lagerort sind erforderlich.' });
-    if (stockStructures.some((entry) => entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.section.toLowerCase() === section.toLowerCase()))) return res.status(409).json({ error: 'Name oder Fach/Abschnitt existiert an diesem Lagerort bereits.' });
-    const stock = { id: nextId('stock', stockStructures), name, section, locationId };
-    stockStructures.push(stock);
-    logEvent('create', 'StockStructure', { id: stock.id, locationId }, req.user.username);
-    res.status(201).json(stock);
+  const createNamedCode = (body) => ({ name: String(body.name || '').trim(), code: storageCode(body.code) });
+  app.post('/api/shelves', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const { name, code } = createNamedCode(req.body); const locationId = String(req.body.locationId || '').trim();
+    if (!name || !storageCodePattern.test(code) || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, gültiges Kürzel und Ort sind erforderlich.' });
+    if (shelves.some((entry) => entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.code === code))) return res.status(409).json({ error: 'Name oder Kürzel ist an diesem Ort bereits vergeben.' });
+    const shelf = { id: nextId('shelf', shelves), name, code, locationId }; shelves.push(shelf); refreshStoragePaths();
+    logEvent('create', 'Shelf', { id: shelf.id, locationId }, req.user.username); res.status(201).json(shelf);
+  });
+  app.put('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const shelf = shelves.find((entry) => entry.id === req.params.id); if (!shelf) return res.status(404).json({ error: 'Regal nicht gefunden.' });
+    const name = String(req.body.name ?? shelf.name).trim(); const code = storageCode(req.body.code ?? shelf.code); const locationId = String(req.body.locationId ?? shelf.locationId).trim();
+    if (!name || !storageCodePattern.test(code) || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, gültiges Kürzel und Ort sind erforderlich.' });
+    if (shelves.some((entry) => entry.id !== shelf.id && entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.code === code))) return res.status(409).json({ error: 'Name oder Kürzel ist an diesem Ort bereits vergeben.' });
+    Object.assign(shelf, { name, code, locationId, updatedAt: new Date().toISOString() }); refreshStoragePaths(); logEvent('update', 'Shelf', { id: shelf.id, locationId }, req.user.username); res.json(shelf);
   });
 
-  app.put('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const stock = stockStructures.find((entry) => entry.id === req.params.id);
-    if (!stock) return res.status(404).json({ error: 'Regal/Fach nicht gefunden.' });
-    const name = String(req.body.name ?? stock.name).trim();
-    const section = String(req.body.section ?? stock.section).trim();
-    const locationId = String(req.body.locationId ?? stock.locationId).trim();
-    if (!name || !section || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, Fach/Abschnitt und ein gültiger Lagerort sind erforderlich.' });
-    if (stockStructures.some((entry) => entry.id !== stock.id && entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.section.toLowerCase() === section.toLowerCase()))) return res.status(409).json({ error: 'Name oder Fach/Abschnitt existiert an diesem Lagerort bereits.' });
-    Object.assign(stock, { name, section, locationId, updatedAt: new Date().toISOString() });
-    logEvent('update', 'StockStructure', { id: stock.id, locationId }, req.user.username);
-    res.json(stock);
+  app.post('/api/storage-levels', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const { name, code } = createNamedCode(req.body); const shelfId = String(req.body.shelfId || '').trim();
+    if (!name || !storageCodePattern.test(code) || !shelves.some((entry) => entry.id === shelfId)) return res.status(400).json({ error: 'Bezeichnung, gültiges Kürzel und Regal sind erforderlich.' });
+    if (storageLevels.some((entry) => entry.shelfId === shelfId && (entry.name.toLowerCase() === name.toLowerCase() || entry.code === code))) return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Regal bereits vergeben.' });
+    const level = { id: nextId('level', storageLevels), name, code, shelfId }; storageLevels.push(level); refreshStoragePaths(); logEvent('create', 'StorageLevel', { id: level.id, shelfId }, req.user.username); res.status(201).json(level);
+  });
+  app.put('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const level = storageLevels.find((entry) => entry.id === req.params.id); if (!level) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
+    const name = String(req.body.name ?? level.name).trim(); const code = storageCode(req.body.code ?? level.code); const shelfId = String(req.body.shelfId ?? level.shelfId).trim();
+    if (!name || !storageCodePattern.test(code) || !shelves.some((entry) => entry.id === shelfId)) return res.status(400).json({ error: 'Bezeichnung, gültiges Kürzel und Regal sind erforderlich.' });
+    if (storageLevels.some((entry) => entry.id !== level.id && entry.shelfId === shelfId && (entry.name.toLowerCase() === name.toLowerCase() || entry.code === code))) return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Regal bereits vergeben.' });
+    Object.assign(level, { name, code, shelfId, updatedAt: new Date().toISOString() }); refreshStoragePaths(); logEvent('update', 'StorageLevel', { id: level.id, shelfId }, req.user.username); res.json(level);
   });
 
-  app.delete('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+  app.post(['/api/storage-positions', '/api/stock-structures'], authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const { name, code } = createNamedCode(req.body); const levelId = String(req.body.levelId || '').trim();
+    if (!name || !storageCodePattern.test(code) || !storageLevels.some((entry) => entry.id === levelId)) return res.status(400).json({ error: 'Bezeichnung, gültiges Kürzel und Ebene sind erforderlich.' });
+    if (storagePositions.some((entry) => entry.levelId === levelId && (entry.name.toLowerCase() === name.toLowerCase() || entry.code === code))) return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist auf dieser Ebene bereits vergeben.' });
+    const position = { id: nextId('position', storagePositions), name, code, levelId }; storagePositions.push(position); refreshStoragePaths(); logEvent('create', 'StoragePosition', { id: position.id, levelId }, req.user.username); res.status(201).json(positionView(position));
+  });
+  app.put(['/api/storage-positions/:id', '/api/stock-structures/:id'], authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const position = storagePositions.find((entry) => entry.id === req.params.id); if (!position) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
+    const name = String(req.body.name ?? position.name).trim(); const code = storageCode(req.body.code ?? position.code); const levelId = String(req.body.levelId ?? position.levelId).trim();
+    if (!name || !storageCodePattern.test(code) || !storageLevels.some((entry) => entry.id === levelId)) return res.status(400).json({ error: 'Bezeichnung, gültiges Kürzel und Ebene sind erforderlich.' });
+    if (storagePositions.some((entry) => entry.id !== position.id && entry.levelId === levelId && (entry.name.toLowerCase() === name.toLowerCase() || entry.code === code))) return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist auf dieser Ebene bereits vergeben.' });
+    Object.assign(position, { name, code, levelId, updatedAt: new Date().toISOString() }); refreshStoragePaths(); logEvent('update', 'StoragePosition', { id: position.id, levelId }, req.user.username); res.json(positionView(position));
+  });
+
+  app.delete(['/api/storage-positions/:id', '/api/stock-structures/:id'], authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = stockStructures.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
     const inventoryReferences = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
-      .some((entry) => entry.stockStructureId === req.params.id);
+      .some((entry) => (entry.storagePositionId || entry.stockStructureId) === req.params.id);
     if (inventoryReferences || stocktakeReferences('stockStructureId', req.params.id)) {
       return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
     }
     const [removed] = stockStructures.splice(index, 1);
-    logEvent('delete', 'StockStructure', { id: removed.id }, req.user.username);
+    logEvent('delete', 'StoragePosition', { id: removed.id }, req.user.username);
     res.status(204).end();
   });
+
+  const deleteContainer = (kind, collection, children, parentField) => (req, res) => {
+    const index = collection.findIndex((entry) => entry.id === req.params.id);
+    if (index < 0) return res.status(404).json({ error: `${kind} nicht gefunden.` });
+    const childIds = new Set(children.filter((entry) => entry[parentField] === req.params.id).map((entry) => entry.id));
+    const positionIds = kind === 'Regal'
+      ? new Set(storagePositions.filter((entry) => childIds.has(entry.levelId)).map((entry) => entry.id))
+      : new Set(storagePositions.filter((entry) => childIds.has(entry.id)).map((entry) => entry.id));
+    const used = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems].some((entry) => positionIds.has(entry.storagePositionId || entry.stockStructureId))
+      || [...positionIds].some((id) => stocktakeReferences('stockStructureId', id));
+    if (used) return res.status(409).json({ error: `${kind} enthält belegte oder in Inventuren verwendete Lagerplätze.` });
+    for (let i = storagePositions.length - 1; i >= 0; i -= 1) if (positionIds.has(storagePositions[i].id)) storagePositions.splice(i, 1);
+    if (kind === 'Regal') for (let i = storageLevels.length - 1; i >= 0; i -= 1) if (childIds.has(storageLevels[i].id)) storageLevels.splice(i, 1);
+    const [removed] = collection.splice(index, 1); logEvent('delete', kind === 'Regal' ? 'Shelf' : 'StorageLevel', { id: removed.id }, req.user.username); return res.status(204).end();
+  };
+  app.delete('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), deleteContainer('Regal', shelves, storageLevels, 'shelfId'));
+  app.delete('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), deleteContainer('Ebene', storageLevels, storagePositions, 'levelId'));
 
   app.get('/api/categories', authMiddleware, requirePermission('categories.read'), (req, res) => {
     res.json(categories);
@@ -1251,6 +1372,8 @@ function createApp(options = {}) {
     defectManagement,
     materials,
     clothingItems,
+    deleteMessage: (source) => mailDeleters.defects.deleteMessage(source),
+    logEvent,
   });
   app.locals.defectEmailService = defectEmailService;
   app.locals.applyDefectEmailRetentionPolicy = defectEmailService.applyRetentionPolicy;
@@ -1264,8 +1387,8 @@ function createApp(options = {}) {
 
   registerStocktakeRoutes({
     app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
-    clothingItems, locations, stockStructures, departments, users, logEvent, nextId,
-    XLSX, defectManagement,
+    clothingItems, locations, shelves, storageLevels, stockStructures, departments, users, logEvent, nextId,
+    XLSX, defectManagement, stocktakeEmailImports,
   });
   app.locals.stocktakes = stocktakes;
   app.locals.stocktakeEmailImports = stocktakeEmailImports;
@@ -1276,6 +1399,7 @@ function createApp(options = {}) {
   registerStocktakeEmailRoutes({
     app, authMiddleware, requirePermission, stocktakeEmailImports, stocktakes,
     users, logEvent,
+    deleteMessage: (source) => mailDeleters.stocktakes.deleteMessage(source),
   });
   app.locals.stocktakeEmailService = stocktakeEmailService;
 
@@ -1299,9 +1423,9 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'Die Größe ist für diese Kategorie nicht vorgesehen.' });
     }
     const locationId = String(req.body.locationId || 'loc-2').trim() || 'loc-2';
-    const stockStructureId = String(req.body.stockStructureId || '').trim();
+    const stockStructureId = String(req.body.storagePositionId || req.body.stockStructureId || '').trim();
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
-    if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
+    if (!stockStructureId || !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Ein gültiger Lagerplatz ist erforderlich.' });
     const requestedInventoryNumber = String(req.body.inventoryNumber || '').trim();
     const inventoryNumber = requestedInventoryNumber || nextClothingInventoryNumber(categoryId);
     if ([...materials, ...clothingItems, ...deletedClothingItems].some((item) => item.inventoryNumber === inventoryNumber)) {
@@ -1315,7 +1439,8 @@ function createApp(options = {}) {
       inventoryNumber,
       categoryId: categoryId || null,
       locationId,
-      stockStructureId: stockStructureId || null,
+      storagePositionId: stockStructureId,
+      stockStructureId,
       size,
       manufacturer: String(req.body.manufacturer || '').trim(),
       manufacturingYear: String(req.body.manufacturingYear || '').trim(),
@@ -1372,9 +1497,9 @@ function createApp(options = {}) {
     }
     const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
     const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
-    const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
+    const stockStructureId = String(req.body.storagePositionId ?? req.body.stockStructureId ?? item.storagePositionId ?? item.stockStructureId ?? '').trim();
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
-    if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
+    if (!stockStructureId || !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Ein gültiger Lagerplatz ist erforderlich.' });
 
     const updatedItem = {
       ...item,
@@ -1388,7 +1513,8 @@ function createApp(options = {}) {
       manufacturingYear: String(req.body.manufacturingYear ?? item.manufacturingYear ?? '').trim(),
       purchaseDate: req.body.purchaseDate ?? item.purchaseDate ?? null,
       locationId,
-      stockStructureId: stockStructureId || null,
+      storagePositionId: stockStructureId,
+      stockStructureId,
       inspectionIntervalMonths,
       nextInspectionDate: addMonths(
         item.lastInspectionDate || item.createdAt,
@@ -1646,10 +1772,12 @@ function createApp(options = {}) {
         });
         return;
       }
-      const locationId = String(row.locationId || '').trim() || 'loc-2';
-      const stockStructureId = String(row.stockStructureId || '').trim();
-      if (!locations.some((entry) => entry.id === locationId) || (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId))) {
-        skippedRows.push({ row: rowNumber, reason: 'Lagerort oder Regal/Fach ist ungültig' });
+      const rawLocation = String(row.locationId || '').trim() || 'loc-2';
+      const locationId = locations.find((entry) => entry.id === rawLocation || entry.code === rawLocation.toUpperCase() || entry.name.toLowerCase() === rawLocation.toLowerCase())?.id || rawLocation;
+      const rawPosition = String(row.storagePositionId || row.stockStructureId || '').trim();
+      const stockStructureId = stockStructures.find((entry) => entry.id === rawPosition || entry.fullCode === rawPosition.toUpperCase())?.id || rawPosition;
+      if (!locations.some((entry) => entry.id === locationId) || !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) {
+        skippedRows.push({ row: rowNumber, reason: 'Ort oder Lagercode ist ungültig' });
         return;
       }
       if (!inventoryNumber) {
@@ -1665,7 +1793,8 @@ function createApp(options = {}) {
         manufacturingYear: String(row.manufacturingYear || '').trim(),
         purchaseDate: row.purchaseDate || null,
         locationId,
-        stockStructureId: stockStructureId || null,
+        storagePositionId: stockStructureId,
+        stockStructureId,
         status,
         assignedPerson,
         inspectionIntervalMonths: categoryInspectionInterval(category?.id || null),
@@ -1792,7 +1921,7 @@ function createApp(options = {}) {
     app, authMiddleware, requirePermission, data: appData, categories, departments, locations,
     stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
-    addMonths,
+    addMonths, procurementEmailImports,
   });
   const procurementEmailService = createProcurementEmailService({
     procurementEmailImports,
@@ -1807,6 +1936,7 @@ function createApp(options = {}) {
     procurementOffers: appData.procurementOffers,
     procurementDocuments: appData.procurementDocuments,
     suppliers: appData.suppliers, nextId, logEvent,
+    deleteMessage: (source) => mailDeleters.procurement.deleteMessage(source),
   });
   app.locals.procurementEmailService = procurementEmailService;
   app.locals.procurementEmailImports = procurementEmailImports;

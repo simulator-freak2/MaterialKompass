@@ -156,6 +156,7 @@ test('inventory only permanently deletes archived items and does not reuse their
         categoryCode: '02',
         subcategoryCode: '02-02',
         locationId: 'loc-1',
+        storagePositionId: 'stock-1',
         status: 'Lagernd',
         itemType: 'individual',
       }),

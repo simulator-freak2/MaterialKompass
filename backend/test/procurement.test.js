@@ -17,7 +17,7 @@ async function start() {
     return (await response.json()).token;
   };
   const admin = await login('admin@materialkompass.org', 'MaterialKompass2026!');
-  return { server, baseUrl, login, admin };
+  return { app, server, baseUrl, login, admin };
 }
 
 const headers = (token) => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' });
@@ -126,7 +126,7 @@ test('department heads can only request and see their assigned departments', asy
 });
 
 test('procurement supports offer selection, split workflow, receipts and inventory transfer', async () => {
-  const { server, baseUrl, login, admin } = await start();
+  const { app, server, baseUrl, login, admin } = await start();
   try {
     const material = await login('materialwart@materialkompass.local', 'Material123!');
     const created = await jsonRequest(`${baseUrl}/api/procurement`, material, 'POST', {
@@ -171,9 +171,16 @@ test('procurement supports offer selection, split workflow, receipts and invento
 
     const finalReceipt = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/orders/${order.data.id}/receipts`, material, 'POST', { deliveryNoteNumber: 'LS-2', items: [{ requestItemId: created.data.items[0].id, quantity: 6 }] });
     assert.equal(finalReceipt.response.status, 201);
+    const emailImport = {
+      id: 'procurement-email-test', requestId: created.data.id,
+      emailSource: { messageId: '<procurement-test@example.org>' },
+    };
+    app.locals.procurementEmailImports.push(emailImport);
     await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/receipts/${finalReceipt.data.id}/transfer`, material, 'POST', { items: [{ requestItemId: created.data.items[0].id, locationId: 'loc-1', itemType: 'bulk' }] });
     detail = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, material);
     assert.equal(detail.data.status, 'Abgeschlossen');
+    assert.ok(emailImport.emailSource.deleteRequestedAt);
+    assert.equal(emailImport.emailSource.deletedAt, undefined);
 
     const inventory = await jsonRequest(`${baseUrl}/api/material`, material);
     assert.ok(inventory.data.some((item) => item.name === 'Karabiner' && item.quantity === 4));

@@ -72,12 +72,16 @@ async function start() {
     const stocktakeMailMonitor = createStocktakeMailMonitor({
       store,
       service: app.locals.stocktakeEmailService,
+      stocktakes: app.locals.stocktakes,
+      stocktakeEmailImports: app.locals.stocktakeEmailImports,
       persistData: () => app.locals.persistData(),
     });
     stocktakeMailMonitor.start();
     const procurementMailMonitor = createProcurementMailMonitor({
       store,
       service: app.locals.procurementEmailService,
+      procurementRequests: data.procurementRequests,
+      procurementEmailImports: app.locals.procurementEmailImports,
       persistData: () => app.locals.persistData(),
     });
     procurementMailMonitor.start();

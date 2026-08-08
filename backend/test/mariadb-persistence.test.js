@@ -24,7 +24,7 @@ test('a write is persisted before its API response completes', async () => {
     const response = await fetch(`${baseUrl}/api/locations`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'DB-Lager', code: 'DB', type: 'Lager' }),
+      body: JSON.stringify({ name: 'DB-Lager', street: 'Datenweg', houseNumber: '1', postalCode: '12345', city: 'Musterstadt', code: 'DB', type: 'Lager' }),
     });
     assert.equal(response.status, 201);
     const location = await response.json();

@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { PDFDocument, PDFName } = require('pdf-lib');
 const XLSX = require('xlsx');
 const { createApp } = require('../src/app');
 
@@ -89,8 +90,15 @@ test('evaluation creates discrepancy defects and completion applies corrections 
 
     const before = await request(baseUrl, headers, `/api/material/${materialResponse.data.id}`);
     assert.equal(before.data.quantity, 10);
+    const emailImport = {
+      id: 'stocktake-email-test', stocktakeId: created.id,
+      emailSource: { messageId: '<stocktake-test@example.org>' },
+    };
+    app.locals.stocktakeEmailImports.push(emailImport);
     const completed = await request(baseUrl, headers, `/api/stocktakes/${created.id}/complete`, 'POST', { applyCorrections: true });
     assert.equal(completed.data.status, 'Abgeschlossen');
+    assert.ok(emailImport.emailSource.deleteRequestedAt);
+    assert.equal(emailImport.emailSource.deletedAt, undefined);
     const after = await request(baseUrl, headers, `/api/material/${materialResponse.data.id}`);
     assert.equal(after.data.quantity, 7);
     assert.equal(after.data.locationId, 'loc-3');
@@ -104,12 +112,23 @@ test('offline exports and spreadsheet import are available', async () => {
   try {
     const created = (await request(baseUrl, headers, '/api/stocktakes', 'POST', {
       name: 'Papierinventur', responsibleUserId: 'user-admin', method: 'offline',
-      startDate: '2026-07-31', entityTypes: ['MaterialItem'], scope: {}, countMode: 'blind',
+      startDate: '2026-07-31', entityTypes: ['MaterialItem', 'ClothingItem'], scope: {}, countMode: 'blind',
     })).data;
     await request(baseUrl, headers, `/api/stocktakes/${created.id}/start`, 'POST', {});
     const pdf = await request(baseUrl, headers, `/api/stocktakes/${created.id}/export?format=pdf&blank=true`);
     assert.equal(pdf.response.status, 200);
-    assert.equal(Buffer.from(pdf.data.fileBase64, 'base64').subarray(0, 4).toString(), '%PDF');
+    const pdfBytes = Buffer.from(pdf.data.fileBase64, 'base64');
+    assert.equal(pdfBytes.subarray(0, 4).toString(), '%PDF');
+    const pdfDocument = await PDFDocument.load(pdfBytes);
+    assert.equal(pdfDocument.getPageCount(), 2, 'Jedes Regal muss auf einer neuen Seite beginnen');
+    assert.ok(
+      pdfDocument.getPages().every((page) => page.getWidth() < page.getHeight()),
+      'Inventurlisten müssen im Hochformat sein',
+    );
+    assert.ok(
+      pdfDocument.getPages().every((page) => page.node.Resources().get(PDFName.of('XObject'))),
+      'Das MaterialKompass-Logo mit Schriftzug muss eingebettet sein',
+    );
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{

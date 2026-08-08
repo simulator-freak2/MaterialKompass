@@ -1,6 +1,15 @@
 const { ImapFlow } = require('imapflow');
 
-function createProcurementMailMonitor({ store, service, persistData = async () => {}, clientFactory, env = process.env, logger = console } = {}) {
+function normalizeMessageId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  return normalized.startsWith('<') ? normalized : `<${normalized}>`;
+}
+
+function createProcurementMailMonitor({
+  store, service, procurementRequests = [], procurementEmailImports = [],
+  persistData = async () => {}, clientFactory, env = process.env, logger = console,
+} = {}) {
   if (!store || !service) throw new Error('Store und Dienst sind für den Angebots-Mail-Eingang erforderlich.');
   const mailbox = env.PROCUREMENT_IMAP_MAILBOX || 'INBOX';
   const processedMailbox = env.PROCUREMENT_IMAP_PROCESSED_MAILBOX || 'Verarbeitet';
@@ -42,21 +51,68 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
         for await (const message of connection.fetch(`${state.lastUid + 1}:${lastUid}`, { uid: true, source: true, envelope: true }, { uid: true })) messages.push(message);
         messages.sort((left, right) => left.uid - right.uid);
         for (const message of messages) {
-          const sourceInfo = { mailbox, uid: message.uid, uidValidity, messageId: String(message.envelope?.messageId || '') };
+          const sourceInfo = { mailbox, uid: message.uid, uidValidity, messageId: normalizeMessageId(message.envelope?.messageId) };
           let entry;
           try { entry = (await service.ingestSource(message.source, sourceInfo)).entry; }
           catch (error) { entry = await service.recordFailure(sourceInfo, error); }
           await ensureProcessed(connection);
           const moved = await connection.messageMove([message.uid], processedMailbox, { uid: true });
-          await service.updateMoved(entry, { mailbox: processedMailbox, uid: moved?.uidMap?.get(message.uid) || null });
+          const status = await connection.status(processedMailbox, { uidValidity: true });
+          await service.updateMoved(entry, {
+            mailbox: processedMailbox,
+            uid: moved?.uidMap?.get(message.uid) || null,
+            uidValidity: String(status.uidValidity || ''),
+          });
           state.lastUid = message.uid; await store.saveMailboxProcessingState(state);
         }
       }
+      await deleteCompletedMessages(connection);
       await persistData(); return true;
     } finally {
       if (connection.usable) await connection.logout().catch(() => connection.close());
       running = false;
     }
+  }
+
+  async function findMessage(connection, entry, selected) {
+    const source = entry.emailSource || {};
+    if (source.uid && String(source.uidValidity || '') === String(selected.uidValidity)) {
+      try {
+        const existing = await connection.fetchOne(source.uid, { uid: true }, { uid: true });
+        if (existing?.uid) return [existing.uid];
+      } catch (_) {
+        // The processed folder may have been changed outside MaterialKompass.
+      }
+    }
+    if (!source.messageId) return [];
+    return connection.search({
+      header: { 'message-id': normalizeMessageId(source.messageId) },
+    }, { uid: true });
+  }
+
+  async function deleteCompletedMessages(connection) {
+    const completedIds = new Set(procurementRequests.filter((entry) => entry.status === 'Abgeschlossen')
+      .map((entry) => entry.id));
+    const pending = procurementEmailImports.filter((entry) => completedIds.has(entry.requestId)
+      && !entry.emailSource?.deletedAt);
+    if (!pending.length) return;
+    await ensureProcessed(connection);
+    const selected = await connection.mailboxOpen(processedMailbox);
+    for (const entry of pending) {
+      entry.emailSource ||= {};
+      entry.emailSource.deleteRequestedAt ||= new Date().toISOString();
+      try {
+        const uids = await findMessage(connection, entry, selected);
+        if (uids.length) await connection.messageDelete(uids, { uid: true });
+        entry.emailSource.deletedAt = new Date().toISOString();
+        entry.emailSource.deleteResult = uids.length ? 'deleted' : 'not-found';
+        delete entry.emailSource.deleteError;
+      } catch (error) {
+        entry.emailSource.deleteError = String(error?.message || error).slice(0, 1000);
+        logger.error(`Angebots-E-Mail ${entry.id} konnte nicht gelöscht werden:`, error);
+      }
+    }
+    await persistData();
   }
 
   function start() {
@@ -66,7 +122,7 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
   }
 
   async function stop() { if (timer) clearInterval(timer); timer = null; if (activeRun) await activeRun; await service.stop(); }
-  return { runOnce, start, stop };
+  return { runOnce, start, stop, deleteCompletedMessages };
 }
 
 module.exports = { createProcurementMailMonitor };

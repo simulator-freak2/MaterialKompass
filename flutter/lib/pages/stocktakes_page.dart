@@ -5,10 +5,43 @@ import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../widgets/storage_position_picker.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../services/file_save_mime_type.dart';
+
+Future<String?> _confirmPermanentEmailDiscard(
+    BuildContext context, String mailbox) async {
+  final controller = TextEditingController();
+  final reason = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('E-Mail endgültig löschen?'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(
+            'Die E-Mail wird aus MaterialKompass und endgültig aus dem $mailbox-Postfach gelöscht. Dies kann nicht rückgängig gemacht werden.'),
+        const SizedBox(height: 12),
+        TextField(
+            controller: controller,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'Begründung')),
+      ]),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen')),
+        FilledButton.icon(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            icon: const Icon(Icons.delete_forever),
+            label: const Text('Endgültig löschen')),
+      ],
+    ),
+  );
+  controller.dispose();
+  return reason;
+}
 
 class StocktakesPage extends StatefulWidget {
   final String token;
@@ -201,6 +234,19 @@ class _StocktakesPageState extends State<StocktakesPage> {
     }
   }
 
+  Future<void> _discardEmail(Map<String, dynamic> email) async {
+    final reason = await _confirmPermanentEmailDiscard(context, 'Inventur');
+    if (reason == null) return;
+    final result = await _request(
+        '/api/stocktake-email-imports/${email['id']}/discard',
+        method: 'POST',
+        body: {'reason': reason});
+    if (result != null) {
+      _message('E-Mail wurde endgültig gelöscht.');
+      await _load();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -259,10 +305,23 @@ class _StocktakesPageState extends State<StocktakesPage> {
                                             subtitle: Text(
                                                 email['sender']?.toString() ??
                                                     ''),
-                                            trailing: TextButton(
-                                                onPressed: () =>
-                                                    _assignEmail(email),
-                                                child: const Text('Zuordnen')),
+                                            trailing: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                if (can('stocktakes.count'))
+                                                  IconButton(
+                                                      onPressed: () =>
+                                                          _discardEmail(email),
+                                                      tooltip: 'Verwerfen',
+                                                      icon: const Icon(Icons
+                                                          .delete_outline)),
+                                                TextButton(
+                                                    onPressed: () =>
+                                                        _assignEmail(email),
+                                                    child:
+                                                        const Text('Zuordnen')),
+                                              ],
+                                            ),
                                           ))
                                       .toList(),
                                 ),
@@ -371,6 +430,8 @@ class _CreateStocktakeDialogState extends State<_CreateStocktakeDialog> {
   String countMode = 'blind';
   final entityTypes = <String>{};
   final locationIds = <String>{};
+  final shelfIds = <String>{};
+  final levelIds = <String>{};
   final stockIds = <String>{};
   final departments = <String>{};
 
@@ -527,8 +588,9 @@ class _CreateStocktakeDialogState extends State<_CreateStocktakeDialog> {
                     style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 12),
                 chips('Standorte', list('locations'), locationIds),
-                chips('Lagerorte / Lagerplätze', list('stockStructures'),
-                    stockIds),
+                chips('Regale', list('shelves'), shelfIds),
+                chips('Ebenen', list('storageLevels'), levelIds),
+                chips('Lagerplätze', list('storagePositions'), stockIds),
                 chips('Fachbereiche', list('departments'), departments,
                     idKey: 'name'),
                 TextField(
@@ -561,6 +623,9 @@ class _CreateStocktakeDialogState extends State<_CreateStocktakeDialog> {
               'entityTypes': entityTypes.toList(),
               'scope': {
                 'locationIds': locationIds.toList(),
+                'shelfIds': shelfIds.toList(),
+                'levelIds': levelIds.toList(),
+                'storagePositionIds': stockIds.toList(),
                 'stockStructureIds': stockIds.toList(),
                 'departments': departments.toList()
               },
@@ -690,6 +755,19 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
         body: {});
     if (data != null) {
       message('Eingescannte Liste wurde als verarbeitet markiert.');
+      await _load();
+    }
+  }
+
+  Future<void> _discardEmail(Map<String, dynamic> email) async {
+    final reason = await _confirmPermanentEmailDiscard(context, 'Inventur');
+    if (reason == null) return;
+    final data = await request(
+        '/api/stocktake-email-imports/${email['id']}/discard',
+        method: 'POST',
+        body: {'reason': reason});
+    if (data != null) {
+      message('E-Mail wurde endgültig gelöscht.');
       await _load();
     }
   }
@@ -871,18 +949,15 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
         entry['expectedLocationId']?.toString();
     String? stockId = entry['actualStockStructureId']?.toString() ??
         entry['expectedStockStructureId']?.toString();
-    final locations =
-        (widget.options['locations'] as List? ?? const []).cast<Map>();
-    final stocks =
-        (widget.options['stockStructures'] as List? ?? const []).cast<Map>();
+    final stocks = (widget.options['storagePositions'] as List? ??
+            widget.options['stockStructures'] as List? ??
+            const [])
+        .cast<Map>();
     final values = await showDialog<Map<String, dynamic>>(
         context: context,
         barrierDismissible: false,
         builder: (context) =>
             StatefulBuilder(builder: (context, setDialogState) {
-              final locationStocks = stocks
-                  .where((stock) => stock['locationId'] == locationId)
-                  .toList();
               return AlertDialog(
                 title: Text('${entry['inventoryNumber']} · ${entry['name']}'),
                 content: SizedBox(
@@ -925,36 +1000,19 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                             onChanged: (value) =>
                                 setDialogState(() => result = value!)),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                          initialValue: locationId,
-                          decoration: const InputDecoration(
-                              labelText: 'Gefundener Standort'),
-                          items: locations
-                              .map((location) => DropdownMenuItem(
-                                  value: location['id'].toString(),
-                                  child: Text(location['name'].toString())))
+                      StoragePositionPicker(
+                          positions: stocks
+                              .map((e) => Map<String, dynamic>.from(e))
                               .toList(),
+                          value: stockId,
                           onChanged: (value) => setDialogState(() {
-                                locationId = value;
-                                stockId = null;
+                                stockId = value;
+                                locationId = stocks
+                                    .where((entry) =>
+                                        entry['id']?.toString() == value)
+                                    .firstOrNull?['locationId']
+                                    ?.toString();
                               })),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                          initialValue: locationStocks
-                                  .any((stock) => stock['id'] == stockId)
-                              ? stockId
-                              : null,
-                          decoration: const InputDecoration(
-                              labelText: 'Gefundener Lagerplatz'),
-                          items: [
-                            const DropdownMenuItem<String>(
-                                value: null, child: Text('Kein Lagerplatz')),
-                            ...locationStocks.map((stock) => DropdownMenuItem(
-                                value: stock['id'].toString(),
-                                child: Text(stock['name'].toString())))
-                          ],
-                          onChanged: (value) =>
-                              setDialogState(() => stockId = value)),
                       const SizedBox(height: 12),
                       TextField(
                           controller: notes,
@@ -993,6 +1051,7 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                               : null,
                           'result': bulk ? null : result,
                           'actualLocationId': locationId,
+                          'actualStoragePositionId': stockId,
                           'actualStockStructureId': stockId,
                           'notes': notes.text.trim()
                         });
@@ -1335,11 +1394,23 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                                 can('stocktakes.count'))
                               Padding(
                                 padding: const EdgeInsets.all(12),
-                                child: FilledButton.icon(
-                                  onPressed: () => _markEmailProcessed(email),
-                                  icon: const Icon(Icons.done_all),
-                                  label: const Text(
-                                      'Nach Übertragung als verarbeitet markieren'),
+                                child: Wrap(
+                                  alignment: WrapAlignment.end,
+                                  spacing: 8,
+                                  children: [
+                                    TextButton.icon(
+                                      onPressed: () => _discardEmail(email),
+                                      icon: const Icon(Icons.delete_outline),
+                                      label: const Text('Verwerfen'),
+                                    ),
+                                    FilledButton.icon(
+                                      onPressed: () =>
+                                          _markEmailProcessed(email),
+                                      icon: const Icon(Icons.done_all),
+                                      label: const Text(
+                                          'Nach Übertragung als verarbeitet markieren'),
+                                    ),
+                                  ],
                                 ),
                               ),
                           ],
