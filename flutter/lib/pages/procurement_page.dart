@@ -101,8 +101,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
             headers: _headers),
         AppHttpClient.get(Uri.parse('$apiBaseUrl/api/auth/me'),
             headers: _headers),
-        AppHttpClient.get(
-            Uri.parse('$apiBaseUrl/api/procurement-email-inbox'),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/procurement-email-inbox'),
             headers: _headers),
         AppHttpClient.get(Uri.parse('$apiBaseUrl/api/departments'),
             headers: _headers),
