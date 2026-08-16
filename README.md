@@ -391,7 +391,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.0.0
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.3.0
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -399,7 +399,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.0.0
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.3.0
 ```
 
 macOS wird auf einem Mac als DMG gebaut:
