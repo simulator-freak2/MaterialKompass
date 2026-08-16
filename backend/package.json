@@ -12,14 +12,14 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^1.0.2",
+    "@napi-rs/canvas": "1.0.2",
     "@tesseract.js-data/deu": "^1.0.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "imapflow": "^1.5.0",
+    "imapflow": "^1.7.1",
     "jsonwebtoken": "^9.0.1",
-    "mailparser": "^3.9.14",
+    "mailparser": "^3.9.15",
     "mariadb": "^3.4.5",
     "nodemailer": "^9.0.3",
     "pdf-lib": "^1.17.1",

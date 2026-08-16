@@ -9,6 +9,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
+import '../services/app_http_client.dart';
+import '../services/authenticated_api_client.dart';
+import '../services/debouncer.dart';
 import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
@@ -354,6 +357,7 @@ class _InventoryPageState extends State<InventoryPage> {
     'Verloren',
   ];
   final search = TextEditingController();
+  final searchDebouncer = Debouncer();
   List<Map<String, dynamic>> items = [];
   List<Map<String, dynamic>> categories = [];
   List<Map<String, dynamic>> locations = [];
@@ -371,6 +375,7 @@ class _InventoryPageState extends State<InventoryPage> {
         'Authorization': 'Bearer ${widget.token}',
         'Content-Type': 'application/json',
       };
+  AuthenticatedApiClient get api => AuthenticatedApiClient(widget.token);
   bool can(String value) => permissions.contains(value);
   bool get canPrintLabels =>
       LabelPrintService.instance.supported && userMayPrintLabels(roles);
@@ -383,6 +388,7 @@ class _InventoryPageState extends State<InventoryPage> {
 
   @override
   void dispose() {
+    searchDebouncer.dispose();
     search.dispose();
     super.dispose();
   }
@@ -394,13 +400,17 @@ class _InventoryPageState extends State<InventoryPage> {
     setState(() => loading = true);
     try {
       final responses = await Future.wait([
-        http.get(Uri.parse('$apiBaseUrl/api/material?archived=$archived'),
+        AppHttpClient.get(
+            Uri.parse('$apiBaseUrl/api/material?archived=$archived'),
             headers: headers),
-        http.get(Uri.parse('$apiBaseUrl/api/categories'), headers: headers),
-        http.get(Uri.parse('$apiBaseUrl/api/locations'), headers: headers),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/categories'),
             headers: headers),
-        http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/locations'),
+            headers: headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+            headers: headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/auth/me'),
+            headers: headers),
       ]);
       if (responses.any((response) => response.statusCode == 401)) {
         widget.onLogout?.call();
@@ -441,26 +451,13 @@ class _InventoryPageState extends State<InventoryPage> {
 
   Future<dynamic> _request(String path,
       {String method = 'GET', Object? body}) async {
-    final uri = Uri.parse('$apiBaseUrl$path');
-    final response = method == 'POST'
-        ? await http.post(uri,
-            headers: headers, body: body == null ? null : jsonEncode(body))
-        : method == 'PUT'
-            ? await http.put(uri, headers: headers, body: jsonEncode(body))
-            : method == 'DELETE'
-                ? await http.delete(uri, headers: headers)
-                : await http.get(uri, headers: headers);
-    final data =
-        response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      _message(
-          data is Map
-              ? data['error']?.toString() ?? 'Aktion fehlgeschlagen.'
-              : 'Aktion fehlgeschlagen.',
-          error: true);
+    try {
+      return await api.request(path, method: method, body: body);
+    } on AuthenticatedApiException catch (error) {
+      if (error.statusCode == 401) widget.onLogout?.call();
+      _message(error.message, error: true);
       return null;
     }
-    return data;
   }
 
   String _name(List<Map<String, dynamic>> source, dynamic id) {
@@ -1259,7 +1256,9 @@ class _InventoryPageState extends State<InventoryPage> {
                             width: 340,
                             child: TextField(
                               controller: search,
-                              onChanged: (_) => setState(() {}),
+                              onChanged: (_) => searchDebouncer.run(() {
+                                if (mounted) setState(() {});
+                              }),
                               decoration: InputDecoration(
                                 border: const OutlineInputBorder(),
                                 prefixIcon: const Icon(Icons.search),
@@ -1448,10 +1447,16 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Widget _tableView() {
+    final visibleItems = filtered;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
       scrollDirection: Axis.horizontal,
-      child: DataTable(
+      child: PaginatedDataTable(
+        header: Text('${visibleItems.length} Inventareinträge'),
+        rowsPerPage: 10,
+        availableRowsPerPage: const [10, 25, 50],
+        showFirstLastButtons: true,
+        showCheckboxColumn: false,
         columns: const [
           DataColumn(label: Text('')),
           DataColumn(label: Text('Inventarnummer')),
@@ -1464,63 +1469,31 @@ class _InventoryPageState extends State<InventoryPage> {
           DataColumn(label: Text('Prüftermin')),
           DataColumn(label: Text('Aktionen')),
         ],
-        rows: filtered
-            .map((item) => DataRow(
-                  selected: selected.contains(item['id']),
-                  cells: [
-                    DataCell(Checkbox(
-                      value: selected.contains(item['id']),
-                      onChanged: (value) => setState(() => value == true
-                          ? selected.add(item['id'].toString())
-                          : selected.remove(item['id'])),
-                    )),
-                    DataCell(Text(item['inventoryNumber']?.toString() ?? '-'),
-                        onTap: () => _detail(item)),
-                    DataCell(Text(item['name']?.toString() ?? '-'),
-                        onTap: () => _detail(item)),
-                    DataCell(Text(
-                        '${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}')),
-                    DataCell(Text(
-                        '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}')),
-                    DataCell(Text(
-                        '${item['availableQuantity']}/${item['quantity']} ${item['unit']}')),
-                    DataCell(
-                        Chip(label: Text(item['status']?.toString() ?? '-'))),
-                    DataCell(Text(item['department']?.toString() ?? '-')),
-                    DataCell(Text(_formatDate(item['nextInspectionDate']))),
-                    DataCell(Row(children: [
-                      IconButton(
-                          onPressed: () => _detail(item),
-                          tooltip: 'Details',
-                          icon: const Icon(Icons.visibility_outlined)),
-                      if (canPrintLabels)
-                        IconButton(
-                            onPressed: () => _printItems([item]),
-                            tooltip: 'Etikett drucken',
-                            icon: const Icon(Icons.print_outlined)),
-                      if (can('inventory.write') && !archived)
-                        IconButton(
-                            onPressed: () => _edit(item),
-                            tooltip: 'Bearbeiten',
-                            icon: const Icon(Icons.edit_outlined)),
-                      if (can('inventory.archive'))
-                        IconButton(
-                            onPressed: () => _archive(item),
-                            tooltip:
-                                archived ? 'Wiederherstellen' : 'Archivieren',
-                            icon: Icon(archived
-                                ? Icons.unarchive
-                                : Icons.archive_outlined)),
-                      if (can('inventory.archive') && archived)
-                        IconButton(
-                            onPressed: () => _delete(item),
-                            tooltip: 'Endgültig löschen',
-                            color: Colors.red.shade700,
-                            icon: const Icon(Icons.delete_outline)),
-                    ])),
-                  ],
-                ))
-            .toList(),
+        source: _InventoryTableSource(
+          items: visibleItems,
+          selected: selected,
+          categoryName: (id) => _name(categories, id),
+          locationName: (id) => _name(locations, id),
+          stockName: (id) => _name(stocks, id),
+          formatDate: _formatDate,
+          canPrint: canPrintLabels,
+          canWrite: can('inventory.write') && !archived,
+          canArchive: can('inventory.archive'),
+          archived: archived,
+          onSelectionChanged: (item, value) => setState(() {
+            final id = item['id']?.toString() ?? '';
+            if (value) {
+              selected.add(id);
+            } else {
+              selected.remove(id);
+            }
+          }),
+          onDetail: _detail,
+          onPrint: (item) => _printItems([item]),
+          onEdit: _edit,
+          onArchive: _archive,
+          onDelete: _delete,
+        ),
       ),
     );
   }
@@ -1624,6 +1597,129 @@ class _InventoryPageState extends State<InventoryPage> {
       },
     );
   }
+}
+
+class _InventoryTableSource extends DataTableSource {
+  _InventoryTableSource({
+    required this.items,
+    required this.selected,
+    required this.categoryName,
+    required this.locationName,
+    required this.stockName,
+    required this.formatDate,
+    required this.canPrint,
+    required this.canWrite,
+    required this.canArchive,
+    required this.archived,
+    required this.onSelectionChanged,
+    required this.onDetail,
+    required this.onPrint,
+    required this.onEdit,
+    required this.onArchive,
+    required this.onDelete,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final Set<String> selected;
+  final String Function(dynamic id) categoryName;
+  final String Function(dynamic id) locationName;
+  final String Function(dynamic id) stockName;
+  final String Function(dynamic value) formatDate;
+  final bool canPrint;
+  final bool canWrite;
+  final bool canArchive;
+  final bool archived;
+  final void Function(Map<String, dynamic> item, bool selected)
+      onSelectionChanged;
+  final void Function(Map<String, dynamic> item) onDetail;
+  final void Function(Map<String, dynamic> item) onPrint;
+  final void Function(Map<String, dynamic>? item) onEdit;
+  final void Function(Map<String, dynamic> item) onArchive;
+  final void Function(Map<String, dynamic> item) onDelete;
+
+  @override
+  DataRow? getRow(int index) {
+    if (index >= items.length) return null;
+    final item = items[index];
+    final id = item['id']?.toString() ?? '';
+    final isSelected = selected.contains(id);
+    return DataRow.byIndex(
+      index: index,
+      selected: isSelected,
+      cells: [
+        DataCell(Checkbox(
+          value: isSelected,
+          onChanged: (value) => onSelectionChanged(item, value == true),
+        )),
+        DataCell(
+          Text(item['inventoryNumber']?.toString() ?? '-'),
+          onTap: () => onDetail(item),
+        ),
+        DataCell(
+          Text(item['name']?.toString() ?? '-'),
+          onTap: () => onDetail(item),
+        ),
+        DataCell(Text(
+          '${categoryName(item['categoryCode'])} / '
+          '${categoryName(item['subcategoryCode'])}',
+        )),
+        DataCell(Text(
+          '${locationName(item['locationId'])} · '
+          '${stockName(item['stockStructureId'])}',
+        )),
+        DataCell(Text(
+          '${item['availableQuantity']}/${item['quantity']} ${item['unit']}',
+        )),
+        DataCell(Chip(label: Text(item['status']?.toString() ?? '-'))),
+        DataCell(Text(item['department']?.toString() ?? '-')),
+        DataCell(Text(formatDate(item['nextInspectionDate']))),
+        DataCell(Row(children: [
+          IconButton(
+            onPressed: () => onDetail(item),
+            tooltip: 'Details',
+            icon: const Icon(Icons.visibility_outlined),
+          ),
+          if (canPrint)
+            IconButton(
+              onPressed: () => onPrint(item),
+              tooltip: 'Etikett drucken',
+              icon: const Icon(Icons.print_outlined),
+            ),
+          if (canWrite)
+            IconButton(
+              onPressed: () => onEdit(item),
+              tooltip: 'Bearbeiten',
+              icon: const Icon(Icons.edit_outlined),
+            ),
+          if (canArchive)
+            IconButton(
+              onPressed: () => onArchive(item),
+              tooltip: archived ? 'Wiederherstellen' : 'Archivieren',
+              icon: Icon(
+                archived ? Icons.unarchive : Icons.archive_outlined,
+              ),
+            ),
+          if (canArchive && archived)
+            IconButton(
+              onPressed: () => onDelete(item),
+              tooltip: 'Endgültig löschen',
+              color: Colors.red.shade700,
+              icon: const Icon(Icons.delete_outline),
+            ),
+        ])),
+      ],
+    );
+  }
+
+  @override
+  bool get isRowCountApproximate => false;
+
+  @override
+  int get rowCount => items.length;
+
+  @override
+  int get selectedRowCount =>
+      items.where((item) => selected.contains(item['id']?.toString())).length;
 }
 
 class InventoryDetailDialog extends StatelessWidget {

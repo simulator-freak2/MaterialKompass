@@ -1,6 +1,7 @@
 const { ImapFlow } = require('imapflow');
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_BATCH_SIZE = 10;
 
 function normalizeMessageId(value) {
   const normalized = String(value || '').trim();
@@ -23,6 +24,7 @@ function createDefectMailMonitor({
   const processedMailbox = env.DEFECT_IMAP_PROCESSED_MAILBOX || 'Verarbeitet';
   const mailboxKey = `defects:${env.DEFECT_IMAP_USER || ''}:${mailbox}`;
   const intervalMs = Number(env.DEFECT_IMAP_POLL_INTERVAL_MS || DEFAULT_INTERVAL_MS);
+  const batchSize = Math.min(Math.max(Number(env.DEFECT_IMAP_BATCH_SIZE) || DEFAULT_BATCH_SIZE, 1), 100);
   let running = false;
   let timer = null;
   let activeRun = null;
@@ -81,15 +83,11 @@ function createDefectMailMonitor({
       logger.log(`Mängel-Mail-Eingang für ${mailbox} ab UID 1 aktiviert.`);
     }
     const firstUid = state.lastUid + 1;
-    const lastUid = Math.max(0, Number(selected.uidNext || 1) - 1);
+    const mailboxLastUid = Math.max(0, Number(selected.uidNext || 1) - 1);
+    const lastUid = Math.min(mailboxLastUid, firstUid + batchSize - 1);
     if (firstUid > lastUid) return;
-    const messages = [];
     for await (const message of client.fetch(`${firstUid}:${lastUid}`,
       { uid: true, source: true, envelope: true }, { uid: true })) {
-      messages.push(message);
-    }
-    messages.sort((left, right) => left.uid - right.uid);
-    for (const message of messages) {
       const messageId = normalizeMessageId(message.envelope?.messageId);
       let entry;
       try {
@@ -113,6 +111,13 @@ function createDefectMailMonitor({
       }
       await moveProcessed(client, entry, message.uid);
       state.lastUid = message.uid;
+      await store.saveMailboxProcessingState(state);
+    }
+    // Deleted messages create UID gaps. Advancing to the bounded range end
+    // prevents an empty range from being fetched forever without retaining
+    // all message sources in memory.
+    if (state.lastUid < lastUid) {
+      state.lastUid = lastUid;
       await store.saveMailboxProcessingState(state);
     }
   }

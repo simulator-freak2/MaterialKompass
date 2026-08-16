@@ -4,6 +4,12 @@ const { sendAccountMail } = require('./mailer');
 
 const VERIFY_TTL = 24 * 60 * 60 * 1000;
 const RESET_TTL = 60 * 60 * 1000;
+const MAX_NAME_LENGTH = 255;
+const MAX_USERNAME_LENGTH = 100;
+const MAX_EMAIL_LENGTH = 255;
+const MAX_PASSWORD_BYTES = 72;
+const MAX_USER_RECORDS = 10_000;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function normalize(value) {
   return String(value || '').trim().toLowerCase();
@@ -31,8 +37,17 @@ function publicUser(user) {
 
 function passwordIsValid(password) {
   return typeof password === 'string' && password.length >= 12
+    && Buffer.byteLength(password, 'utf8') <= MAX_PASSWORD_BYTES
     && /[a-z]/.test(password) && /[A-Z]/.test(password)
     && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+}
+
+function accountFieldsAreValid({ name = '', username, email }) {
+  return String(name).length <= MAX_NAME_LENGTH
+    && String(username || '').trim().length > 0
+    && String(username).trim().length <= MAX_USERNAME_LENGTH
+    && normalize(email).length <= MAX_EMAIL_LENGTH
+    && EMAIL_PATTERN.test(normalize(email));
 }
 
 function permissionsForRoles(roleNames, roles) {
@@ -279,12 +294,17 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     const search = normalize(req.query.search);
     const result = search ? users.filter((user) => [user.name, user.username, user.email]
       .some((value) => normalize(value).includes(search))) : users;
-    return res.json(result.map(publicUser));
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    return res.json(result.slice(offset, offset + limit).map(publicUser));
   });
 
   app.post('/api/users', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    if (users.length >= MAX_USER_RECORDS) {
+      return res.status(507).json({ error: 'Die maximale Anzahl an Nutzerkonten ist erreicht.' });
+    }
     const { name, username, email, password, roles: roleNames = ['Nutzer'], departmentIds = [] } = req.body;
-    if (!String(username || '').trim() || !normalize(email).includes('@')) {
+    if (!accountFieldsAreValid({ name, username, email })) {
       return res.status(400).json({ error: 'Nutzername und gültige E-Mail-Adresse sind erforderlich.' });
     }
     if (findUser(username) || findUser(email)) return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
@@ -318,7 +338,9 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     const username = String(req.body.username ?? user.username).trim();
     const roleNames = req.body.roles ?? user.roles;
     const departmentIds = req.body.departmentIds ?? user.departmentIds ?? [];
-    if (!username || !email.includes('@')) return res.status(400).json({ error: 'Ungültige Nutzerdaten.' });
+    if (!accountFieldsAreValid({ name: req.body.name ?? user.name, username, email })) {
+      return res.status(400).json({ error: 'Ungültige Nutzerdaten.' });
+    }
     if (users.some((entry) => entry.id !== user.id && (normalize(entry.email) === email || normalize(entry.username) === normalize(username)))) {
       return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
     }
@@ -401,7 +423,10 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (!valid) return res.status(403).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
     if (req.body.email) {
       const email = normalize(req.body.email);
-      if (!email.includes('@') || users.some((entry) => entry.id !== user.id && normalize(entry.email) === email)) return res.status(409).json({ error: 'Ungültige oder bereits verwendete E-Mail-Adresse.' });
+      if (email.length > MAX_EMAIL_LENGTH || !EMAIL_PATTERN.test(email)
+        || users.some((entry) => entry.id !== user.id && normalize(entry.email) === email)) {
+        return res.status(409).json({ error: 'Ungültige oder bereits verwendete E-Mail-Adresse.' });
+      }
       if (email !== normalize(user.email)) { user.email = email; user.emailVerifiedAt = null; await issueVerification(user); }
     }
     if (req.body.password) {
@@ -438,6 +463,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       await issuePasswordReset(user, defaultMailMessageFor('password-reset'));
       await saveUser(user);
       logEvent('password_reset_requested', 'User', { id: user.id }, user.username);
+      req.persistenceRequired = true;
     }
     return res.status(202).json({ message: 'Wenn das Konto existiert, wurde eine E-Mail versendet.' });
   });
@@ -456,6 +482,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     user.lockedUntil = null;
     await saveUser(user);
     logEvent('password_reset_completed', 'User', { id: user.id }, user.username);
+    req.persistenceRequired = true;
     return res.json({ message: 'Das Passwort wurde geändert.' });
   });
 
@@ -470,6 +497,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     user.verificationExpiresAt = null;
     await saveUser(user);
     logEvent('email_verified', 'User', { id: user.id }, user.username);
+    req.persistenceRequired = true;
     return res.json({ message: 'Die E-Mail-Adresse wurde bestätigt.' });
   });
 
@@ -477,6 +505,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     const user = findUser(req.body.email || req.body.identifier);
     if (verificationCanBeResent(user)) {
       await resendVerification(user, user.username);
+      req.persistenceRequired = true;
     }
     return res.status(202).json({
       message: 'Wenn eine Bestätigung erforderlich ist und die letzte E-Mail mindestens 24 Stunden alt ist, wurde eine E-Mail versendet.',

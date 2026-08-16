@@ -9,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
+import '../services/app_http_client.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/label_print_dialogs.dart';
@@ -94,7 +95,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Future<List<Map<String, dynamic>>> _fetchClothing() async {
     try {
-      final response = await http.get(
+      final response = await AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/clothing'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
@@ -119,7 +120,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Future<void> _fetchPrintRoles() async {
     try {
-      final response = await http.get(
+      final response = await AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/auth/me'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
@@ -201,7 +202,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Future<List<Map<String, dynamic>>> _fetchTransactions() async {
     try {
-      final response = await http.get(
+      final response = await AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/transactions'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
@@ -223,7 +224,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Future<void> _fetchCategories() async {
     try {
-      final response = await http.get(
+      final response = await AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/categories'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
@@ -265,9 +266,9 @@ class _WardrobePageState extends State<WardrobePage> {
   Future<void> _fetchStorageLocations() async {
     try {
       final responses = await Future.wait([
-        http.get(Uri.parse('$apiBaseUrl/api/locations'),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/locations'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
             headers: {'Authorization': 'Bearer ${widget.token}'}),
       ]);
       if (responses.any((response) => response.statusCode != 200) || !mounted) {
@@ -286,7 +287,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Future<List<Map<String, dynamic>>> _fetchHistory() async {
     try {
-      final response = await http.get(
+      final response = await AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/clothing/history'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
@@ -329,7 +330,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
     setState(() => _isTransferringTable = true);
     try {
-      final response = await http.post(
+      final response = await AppHttpClient.post(
         Uri.parse('$apiBaseUrl/api/clothing/import'),
         headers: {
           'Authorization': 'Bearer ${widget.token}',
@@ -406,7 +407,7 @@ class _WardrobePageState extends State<WardrobePage> {
   Future<void> _exportClothingTable(String format) async {
     setState(() => _isTransferringTable = true);
     try {
-      final response = await http.get(
+      final response = await AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/clothing/export?format=$format'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
@@ -508,7 +509,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
     final isEditing = _editingClothingId != null;
     final response = !isEditing
-        ? await http.post(
+        ? await AppHttpClient.post(
             Uri.parse('$apiBaseUrl/api/clothing'),
             headers: {
               'Authorization': 'Bearer ${widget.token}',
@@ -516,7 +517,7 @@ class _WardrobePageState extends State<WardrobePage> {
             },
             body: jsonEncode(payload),
           )
-        : await http.put(
+        : await AppHttpClient.put(
             Uri.parse('$apiBaseUrl/api/clothing/$_editingClothingId'),
             headers: {
               'Authorization': 'Bearer ${widget.token}',
@@ -1003,7 +1004,7 @@ class _WardrobePageState extends State<WardrobePage> {
             ),
             FilledButton(
               onPressed: () async {
-                final response = await http.post(
+                final response = await AppHttpClient.post(
                   Uri.parse(
                       '$apiBaseUrl/api/clothing/${item['id']}/inspections'),
                   headers: {
@@ -1066,7 +1067,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
     late final http.Response response;
     try {
-      response = await http.post(
+      response = await AppHttpClient.post(
         Uri.parse('$apiBaseUrl/api/transactions'),
         headers: {
           'Authorization': 'Bearer ${widget.token}',
@@ -1148,7 +1149,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
     if (confirmed != true) return;
 
-    final response = await http.delete(
+    final response = await AppHttpClient.delete(
       Uri.parse('$apiBaseUrl/api/clothing/$clothingId'),
       headers: {'Authorization': 'Bearer ${widget.token}'},
     );
@@ -1666,7 +1667,7 @@ class _WardrobePageState extends State<WardrobePage> {
         continue;
       }
       try {
-        final response = await http.delete(
+        final response = await AppHttpClient.delete(
           Uri.parse('$apiBaseUrl/api/clothing/$id'),
           headers: {'Authorization': 'Bearer ${widget.token}'},
         );
@@ -1807,7 +1808,7 @@ class _WardrobePageState extends State<WardrobePage> {
                       var dialogClosed = false;
                       setDialogState(() => isSaving = true);
                       try {
-                        final response = await http.post(
+                        final response = await AppHttpClient.post(
                           Uri.parse('$apiBaseUrl/api/clothing/bulk-category'),
                           headers: {
                             'Authorization': 'Bearer ${widget.token}',

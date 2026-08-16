@@ -2,6 +2,9 @@ services:
   db:
     image: mariadb:11.4
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
     environment:
       MARIADB_DATABASE: ${DB_NAME}
       MARIADB_USER: ${DB_USER}
@@ -17,18 +20,52 @@ services:
       retries: 10
       start_period: 20s
 
+  backup:
+    image: mariadb:11.4
+    restart: unless-stopped
+    init: true
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-2}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+      - ./ops/backup-mariadb.sh:/usr/local/bin/backup-mariadb.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/usr/local/bin/backup-mariadb.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   backend:
     build:
       context: ./backend
     restart: unless-stopped
     init: true
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 256
     environment:
       JWT_SECRET: ${JWT_SECRET}
       TRUST_PROXY: ${TRUST_PROXY:-loopback}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       APP_BASE_URL: ${APP_BASE_URL}
       CORS_ORIGIN: ${CORS_ORIGIN}
-      JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-12mb}
+      JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-1mb}
+      LARGE_JSON_BODY_LIMIT: ${LARGE_JSON_BODY_LIMIT:-12mb}
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -48,6 +85,7 @@ services:
       DEFECT_IMAP_MAILBOX: ${DEFECT_IMAP_MAILBOX:-INBOX}
       DEFECT_IMAP_PROCESSED_MAILBOX: ${DEFECT_IMAP_PROCESSED_MAILBOX:-Verarbeitet}
       DEFECT_IMAP_POLL_INTERVAL_MS: ${DEFECT_IMAP_POLL_INTERVAL_MS:-300000}
+      DEFECT_IMAP_BATCH_SIZE: ${DEFECT_IMAP_BATCH_SIZE:-10}
       DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED: ${DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED:-true}
       INVENTORY_IMAP_HOST: ${INVENTORY_IMAP_HOST}
       INVENTORY_IMAP_PORT: ${INVENTORY_IMAP_PORT:-993}
@@ -131,6 +169,9 @@ services:
     build:
       context: ./mailbox-provisioner
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
     environment:
       SOCKET_PATH: /run/materialkompass/mailbox-provisioner.sock
       MAILSERVER_CONTAINER: ${MAILSERVER_CONTAINER:-mailserver}

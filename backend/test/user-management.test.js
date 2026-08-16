@@ -313,12 +313,12 @@ test('password reset waits until the account email has been handed to SMTP', asy
     await new Promise((resolve) => server.close(resolve));
   }
 });
-test('login is locked after five failed attempts', async () => {
+test('failed guesses do not let an attacker lock another user out', async () => {
   const { server, request } = await setup();
   try {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       assert.equal((await request('/api/auth/login', { method: 'POST', body: { identifier: 'admin', password: 'wrong' } })).response.status, 401);
     }
-    assert.equal((await request('/api/auth/login', { method: 'POST', body: { identifier: 'admin', password: 'MaterialKompass2026!' } })).response.status, 423);
+    assert.equal((await request('/api/auth/login', { method: 'POST', body: { identifier: 'admin', password: 'MaterialKompass2026!' } })).response.status, 200);
   } finally { server.close(); }
 });

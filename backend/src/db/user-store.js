@@ -34,6 +34,7 @@ function createUserStore(database = mariadb) {
   });
   let processLockConnection;
   let processLockName;
+  const serializedCollections = new Map();
 
   return {
     async acquireProcessLock(
@@ -167,21 +168,33 @@ function createUserStore(database = mariadb) {
     async deleteRole(id) { await pool.query('DELETE FROM roles WHERE id = ?', [id]); },
     async loadCollections() {
       const rows = await pool.query('SELECT name, data_json FROM application_collections');
-      return Object.fromEntries(rows.map((row) => [row.name, parseJson(row.data_json)]));
+      return Object.fromEntries(rows.map((row) => {
+        const data = parseJson(row.data_json);
+        serializedCollections.set(row.name, JSON.stringify(data));
+        return [row.name, data];
+      }));
     },
     async saveCollections(collections) {
-      const entries = Object.entries(collections);
+      // Most requests touch one domain collection plus the audit log. Avoid
+      // rewriting every JSON collection on every mutation while retaining the
+      // existing atomic snapshot semantics for the collections that changed.
+      const entries = Object.entries(collections)
+        .map(([name, data]) => [name, JSON.stringify(data)])
+        .filter(([name, serialized]) => serializedCollections.get(name) !== serialized);
       if (entries.length === 0) return;
       let connection;
       try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        for (const [name, data] of entries) {
+        for (const [name, serialized] of entries) {
           await connection.query(`INSERT INTO application_collections (name, data_json)
             VALUES (?, ?) ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)`,
-          [name, JSON.stringify(data)]);
+          [name, serialized]);
         }
         await connection.commit();
+        entries.forEach(([name, serialized]) => {
+          serializedCollections.set(name, serialized);
+        });
       } catch (error) {
         if (connection) await connection.rollback();
         throw error;

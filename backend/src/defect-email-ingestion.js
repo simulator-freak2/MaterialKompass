@@ -1,21 +1,62 @@
 const { createHash, randomUUID } = require('node:crypto');
-const { simpleParser } = require('mailparser');
-const sharp = require('sharp');
-const {
-  PDFDocument,
-  PDFCheckBox,
-  PDFTextField,
-} = require('pdf-lib');
-const { createWorker, OEM, PSM } = require('tesseract.js');
-const germanLanguage = require('@tesseract.js-data/deu');
-const { createCanvas, DOMMatrix, ImageData, Path2D } = require('@napi-rs/canvas');
-const { generateDefectReportPdf } = require('./defect-report-template');
+
+// Mail parsing, image conversion, PDF rendering and OCR are optional but
+// comparatively heavy. Load each capability on first use so the regular API
+// can start and idle with substantially less memory on small systems.
+let mailParserModule;
+let sharpModule;
+let pdfLibModule;
+let tesseractModule;
+let germanLanguageModule;
+let canvasModule;
+let defectReportTemplateModule;
+
+function mailParser() {
+  mailParserModule ||= require('mailparser');
+  return mailParserModule;
+}
+
+function imageProcessor() {
+  sharpModule ||= require('sharp');
+  return sharpModule;
+}
+
+function pdfLib() {
+  pdfLibModule ||= require('pdf-lib');
+  return pdfLibModule;
+}
+
+function tesseract() {
+  tesseractModule ||= require('tesseract.js');
+  return tesseractModule;
+}
+
+function germanLanguageData() {
+  germanLanguageModule ||= require('@tesseract.js-data/deu');
+  return germanLanguageModule;
+}
+
+function canvasApi() {
+  canvasModule ||= require('@napi-rs/canvas');
+  return canvasModule;
+}
+
+function defectReportTemplate() {
+  defectReportTemplateModule ||= require('./defect-report-template');
+  return defectReportTemplateModule;
+}
 
 const MAX_MESSAGE_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENTS_BYTES = 20 * 1024 * 1024;
 const MAX_REPORT_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGES = 10;
+const MAX_ATTACHMENTS = 20;
+const MAX_IMAGE_PIXELS = 40 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 12_000;
+const MAX_PDF_CANVAS_PIXELS = 20 * 1024 * 1024;
+const MAX_EMAIL_IMPORT_RECORDS = 50_000;
+const MAX_IMPORT_STORAGE_BYTES = 256 * 1024 * 1024;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OPERATIONAL_SAFETY = new Set([
   'Nicht einsatzfähig',
@@ -231,6 +272,7 @@ function mergeExtracted(primary, fallback) {
 
 let pdfJsPromise;
 async function pdfJs() {
+  const { DOMMatrix, ImageData, Path2D } = canvasApi();
   globalThis.DOMMatrix ||= DOMMatrix;
   globalThis.ImageData ||= ImageData;
   globalThis.Path2D ||= Path2D;
@@ -253,7 +295,14 @@ async function renderPdfPages(bytes) {
   for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 5); pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const viewport = page.getViewport({ scale: 2 });
-    const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+    if (viewport.width > MAX_IMAGE_DIMENSION || viewport.height > MAX_IMAGE_DIMENSION
+      || viewport.width * viewport.height > MAX_PDF_CANVAS_PIXELS) {
+      throw new Error('Eine PDF-Seite überschreitet die zulässigen Bildabmessungen.');
+    }
+    const canvas = canvasApi().createCanvas(
+      Math.ceil(viewport.width),
+      Math.ceil(viewport.height),
+    );
     const context = canvas.getContext('2d');
     await page.render({ canvasContext: context, viewport }).promise;
     pages.push(canvas.toBuffer('image/png'));
@@ -283,6 +332,7 @@ async function extractPdfText(bytes) {
 async function extractPdfFields(bytes) {
   const values = {};
   try {
+    const { PDFDocument, PDFCheckBox, PDFTextField } = pdfLib();
     const document = await PDFDocument.load(bytes, { ignoreEncryption: true });
     for (const field of document.getForm().getFields()) {
       const name = field.getName();
@@ -407,6 +457,8 @@ function createDefectEmailService({
   let workerPromise;
 
   async function worker() {
+    const { createWorker, OEM, PSM } = tesseract();
+    const germanLanguage = germanLanguageData();
     workerPromise ||= createWorker(
       germanLanguage.code,
       OEM.LSTM_ONLY,
@@ -431,8 +483,14 @@ function createDefectEmailService({
     return workerPromise;
   }
 
-  async function ocrImage(bytes, pageSegmentationMode = PSM.SPARSE_TEXT) {
-    const normalized = await sharp(bytes)
+  async function ocrImage(bytes, pageSegmentationMode) {
+    const selectedPageSegmentationMode = pageSegmentationMode
+      ?? tesseract().PSM.SPARSE_TEXT;
+    const normalized = await imageProcessor()(bytes, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      sequentialRead: true,
+      failOn: 'warning',
+    })
       .rotate()
       .flatten({ background: '#ffffff' })
       .greyscale()
@@ -441,7 +499,7 @@ function createDefectEmailService({
       .toBuffer();
     const instance = await worker();
     await instance.setParameters({
-      tessedit_pageseg_mode: pageSegmentationMode,
+      tessedit_pageseg_mode: selectedPageSegmentationMode,
       preserve_interword_spaces: '1',
     });
     const result = await instance.recognize(normalized);
@@ -459,10 +517,18 @@ function createDefectEmailService({
   }
 
   async function ocrTemplateTextField(page, region) {
-    const metadata = await sharp(page).metadata();
+    const metadata = await imageProcessor()(page, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      sequentialRead: true,
+      failOn: 'warning',
+    }).metadata();
     if (!metadata.width || !metadata.height) return '';
     const extract = templateRegion(metadata, region);
-    const fieldImage = await sharp(page)
+    const fieldImage = await imageProcessor()(page, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      sequentialRead: true,
+      failOn: 'warning',
+    })
       .extract(extract)
       .resize({ width: Math.max(extract.width * 2, 600), withoutEnlargement: false })
       .greyscale()
@@ -472,18 +538,26 @@ function createDefectEmailService({
       .toBuffer();
     return cleanOcrField(await ocrImage(
       fieldImage,
-      region.singleLine ? PSM.SINGLE_LINE : PSM.SINGLE_BLOCK,
+      region.singleLine ? tesseract().PSM.SINGLE_LINE : tesseract().PSM.SINGLE_BLOCK,
     ));
   }
 
   async function checkedTemplateValue(page, options) {
     if (!page) return '';
-    const metadata = await sharp(page).metadata();
+    const metadata = await imageProcessor()(page, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      sequentialRead: true,
+      failOn: 'warning',
+    }).metadata();
     if (!metadata.width || !metadata.height) return '';
     const checked = [];
     for (const option of options) {
       const extract = templateRegion(metadata, option, 1.8);
-      const { data, info } = await sharp(page)
+      const { data, info } = await imageProcessor()(page, {
+        limitInputPixels: MAX_IMAGE_PIXELS,
+        sequentialRead: true,
+        failOn: 'warning',
+      })
         .extract(extract)
         .greyscale()
         .raw()
@@ -538,6 +612,16 @@ function createDefectEmailService({
   }
 
   async function normalizeImage(attachment, type) {
+    const metadata = await imageProcessor()(attachment.content, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      sequentialRead: true,
+      failOn: 'warning',
+    }).metadata();
+    if (!metadata.width || !metadata.height
+      || metadata.width > MAX_IMAGE_DIMENSION || metadata.height > MAX_IMAGE_DIMENSION
+      || metadata.width * metadata.height > MAX_IMAGE_PIXELS) {
+      throw new Error('Das Bild überschreitet die zulässigen Abmessungen.');
+    }
     if (type === 'image/jpeg' || type === 'image/png') {
       return {
         bytes: attachment.content,
@@ -545,7 +629,11 @@ function createDefectEmailService({
         fileName: safeFileName(attachment.filename, type === 'image/png' ? 'bild.png' : 'bild.jpg'),
       };
     }
-    const bytes = await sharp(attachment.content)
+    const bytes = await imageProcessor()(attachment.content, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      sequentialRead: true,
+      failOn: 'warning',
+    })
       .rotate()
       .jpeg({ quality: 88, mozjpeg: true })
       .toBuffer();
@@ -562,6 +650,9 @@ function createDefectEmailService({
       return !(isInline && attachment.content.length < 100 * 1024);
     });
     const totalBytes = substantive.reduce((sum, attachment) => sum + attachment.content.length, 0);
+    if (substantive.length > MAX_ATTACHMENTS) {
+      return { problems: [`Es sind maximal ${MAX_ATTACHMENTS} Anhänge pro E-Mail erlaubt.`], attachments: [], extracted: {} };
+    }
     if (totalBytes > MAX_ATTACHMENTS_BYTES) {
       return { problems: ['Die Anhänge überschreiten zusammen 20 MB.'], attachments: [], extracted: {} };
     }
@@ -741,11 +832,14 @@ function createDefectEmailService({
   }
 
   async function ingestSource(source, sourceInfo = {}) {
+    if (defectEmailImports.length >= MAX_EMAIL_IMPORT_RECORDS) {
+      throw new Error('Die maximale Anzahl gespeicherter E-Mail-Importe ist erreicht.');
+    }
     if (!Buffer.isBuffer(source)) source = Buffer.from(source);
     if (source.length > MAX_MESSAGE_BYTES) {
       throw new Error('Die E-Mail überschreitet die maximalen 25 MB.');
     }
-    const parsed = await simpleParser(source, {
+    const parsed = await mailParser().simpleParser(source, {
       skipHtmlToText: false,
       skipImageLinks: true,
       maxHtmlLengthToParse: 2 * 1024 * 1024,
@@ -754,13 +848,23 @@ function createDefectEmailService({
       parsed.messageId
       || sourceInfo.messageId
       || `sha256:${createHash('sha256').update(source).digest('hex')}`,
-    );
+    ).slice(0, 255);
     const duplicate = defectEmailImports.find((entry) =>
       messageId && entry.messageId === messageId);
     if (duplicate) return { duplicate: true, entry: duplicate };
     const analysis = await analyzeAttachments(parsed);
-    const sender = parsed.from?.value?.[0]?.address?.toLowerCase() || '';
-    const senderName = normalizeText(parsed.from?.value?.[0]?.name || '');
+    const storedAttachmentBytes = defectEmailImports.reduce((sum, entry) => sum
+      + (entry.attachments || []).reduce((inner, attachment) => inner
+        + Buffer.byteLength(attachment.fileBase64 || '', 'base64'), 0), 0);
+    const incomingAttachmentBytes = analysis.attachments.reduce((sum, attachment) => sum
+      + Buffer.byteLength(attachment.fileBase64 || '', 'base64'), 0);
+    if (storedAttachmentBytes + incomingAttachmentBytes > MAX_IMPORT_STORAGE_BYTES) {
+      throw new Error('Das Speicherlimit für E-Mail-Anhänge ist erreicht.');
+    }
+    const sender = String(parsed.from?.value?.[0]?.address || '')
+      .toLowerCase()
+      .slice(0, 255);
+    const senderName = normalizeText(parsed.from?.value?.[0]?.name || '').slice(0, 255);
     const extractedData = { ...analysis.extracted };
     if (EMAIL_PATTERN.test(sender)
       && (!EMAIL_PATTERN.test(extractedData.contactEmail)
@@ -776,8 +880,8 @@ function createDefectEmailService({
       messageId: messageId || null,
       sender,
       senderName,
-      subject: normalizeText(parsed.subject || ''),
-      emailText: normalizeText(parsed.text || ''),
+      subject: normalizeText(parsed.subject || '').slice(0, 500),
+      emailText: normalizeText(parsed.text || '').slice(0, 100_000),
       receivedAt: parsed.date?.toISOString?.() || new Date().toISOString(),
       mailbox: sourceInfo.mailbox || null,
       uid: sourceInfo.uid || null,
@@ -824,6 +928,7 @@ function createDefectEmailService({
       attachments: [],
       createdAt: new Date().toISOString(),
     };
+    if (defectEmailImports.length >= MAX_EMAIL_IMPORT_RECORDS) return entry;
     defectEmailImports.push(entry);
     await persistData();
     return entry;
@@ -977,7 +1082,7 @@ function registerDefectEmailRoutes({
       }
       inventoryNumber = match.item.inventoryNumber;
     }
-    const buffer = await generateDefectReportPdf({
+    const buffer = await defectReportTemplate().generateDefectReportPdf({
       inventoryNumber,
       contactName: inventoryNumber ? req.user.name || req.user.username : '',
       contactEmail: inventoryNumber ? req.user.email : '',

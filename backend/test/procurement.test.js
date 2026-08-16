@@ -2,8 +2,8 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
 
-async function start() {
-  const app = createApp({ skipEmailVerification: true });
+async function start(options = {}) {
+  const app = createApp({ skipEmailVerification: true, ...options });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -39,6 +39,63 @@ async function createApprovers(baseUrl, admin, login) {
     treasurer: await login('schatz@test.local', 'Testpasswort123!'),
   };
 }
+
+test('suppliers require structured addresses and expose address suggestions', async () => {
+  const calls = [];
+  const addressLookup = {
+    async localities(input) {
+      calls.push(['localities', input]);
+      return { supported: true, suggestions: ['Neustadt', 'Neustadt am Rübenberge'] };
+    },
+    async streets(input) {
+      calls.push(['streets', input]);
+      return { supported: true, suggestions: ['Hauptstraße', 'Hauptweg'] };
+    },
+  };
+  const { server, baseUrl, admin } = await start({ addressLookup });
+  try {
+    const incomplete = await jsonRequest(`${baseUrl}/api/suppliers`, admin, 'POST', {
+      name: 'Ohne Anschrift',
+    });
+    assert.equal(incomplete.response.status, 400);
+    assert.match(incomplete.data.error, /Straße.*Hausnummer.*Postleitzahl.*Ort.*Land/);
+
+    const created = await jsonRequest(`${baseUrl}/api/suppliers`, admin, 'POST', {
+      name: 'Adresshandel', street: 'Hauptstraße', houseNumber: '12 / Hinterhaus',
+      postalCode: '31535', city: 'Neustadt', country: 'Deutschland', active: true,
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.data.street, 'Hauptstraße');
+    assert.equal(created.data.address,
+      'Hauptstraße 12 / Hinterhaus, 31535 Neustadt, Deutschland');
+
+    const invalidPostalCode = await jsonRequest(
+      `${baseUrl}/api/suppliers/${created.data.id}`, admin, 'PUT',
+      { ...created.data, postalCode: '1234' },
+    );
+    assert.equal(invalidPostalCode.response.status, 400);
+    assert.match(invalidPostalCode.data.error, /fünf Ziffern/);
+
+    const localities = await jsonRequest(
+      `${baseUrl}/api/address-suggestions/localities?country=Deutschland&postalCode=31535`,
+      admin,
+    );
+    assert.equal(localities.response.status, 200);
+    assert.deepEqual(localities.data.suggestions, ['Neustadt', 'Neustadt am Rübenberge']);
+    const streets = await jsonRequest(
+      `${baseUrl}/api/address-suggestions/streets?country=Deutschland&postalCode=31535&city=Neustadt&query=Hau`,
+      admin,
+    );
+    assert.equal(streets.response.status, 200);
+    assert.deepEqual(streets.data.suggestions, ['Hauptstraße', 'Hauptweg']);
+    assert.deepEqual(calls, [
+      ['localities', { country: 'Deutschland', postalCode: '31535' }],
+      ['streets', {
+        country: 'Deutschland', postalCode: '31535', city: 'Neustadt', query: 'Hau',
+      }],
+    ]);
+  } finally { server.close(); }
+});
 
 test('procurement persists requested budget and needs one approval', async () => {
   const { server, baseUrl, login, admin } = await start();
@@ -137,7 +194,11 @@ test('procurement supports offer selection, split workflow, receipts and invento
     const approved = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/approval`, admin, 'POST', { decision: 'approve', role: 'Vorsitz', approvedBudgetGross: 60 });
     assert.equal(approved.data.status, 'Genehmigt');
 
-    const supplier = await jsonRequest(`${baseUrl}/api/suppliers`, admin, 'POST', { name: 'Testhandel', email: 'test@example.org', active: true });
+    const supplier = await jsonRequest(`${baseUrl}/api/suppliers`, admin, 'POST', {
+      name: 'Testhandel', email: 'test@example.org', active: true,
+      street: 'Handelsweg', houseNumber: '12a', postalCode: '30159',
+      city: 'Hannover', country: 'Deutschland',
+    });
     assert.equal(supplier.response.status, 201);
     const cheap = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', { supplierId: 'supplier-1', grossTotal: 48, shippingGross: 0 });
     const expensive = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', { supplierId: supplier.data.id, grossTotal: 50, shippingGross: 5 });
@@ -183,11 +244,11 @@ test('procurement supports offer selection, split workflow, receipts and invento
     assert.match(exported.data.fileName, /\.xlsx$/);
     const document = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/documents`, material, 'POST', {
       fileName: 'Rechnung.pdf', documentType: 'Rechnung',
-      fileBase64: Buffer.from('%PDF test').toString('base64'),
+      fileBase64: Buffer.from('%PDF-1.4\n%%EOF').toString('base64'),
     });
     assert.equal(document.response.status, 201);
     const downloaded = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/documents/${document.data.id}`, material);
-    assert.equal(Buffer.from(downloaded.data.fileBase64, 'base64').toString(), '%PDF test');
+    assert.equal(Buffer.from(downloaded.data.fileBase64, 'base64').toString(), '%PDF-1.4\n%%EOF');
     for (const type of ['orders', 'offers', 'receipts']) {
       const printed = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/print/${type}`, material);
       assert.equal(printed.response.status, 200);

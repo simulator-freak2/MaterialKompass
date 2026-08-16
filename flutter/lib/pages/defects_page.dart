@@ -4,9 +4,9 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
-import '../constants.dart';
+import '../services/authenticated_api_client.dart';
+import '../services/debouncer.dart';
 import '../services/file_save_mime_type.dart';
 import '../widgets/date_input_field.dart';
 
@@ -44,6 +44,7 @@ class DefectsPage extends StatefulWidget {
 }
 
 class _DefectsPageState extends State<DefectsPage> {
+  final _searchDebouncer = Debouncer();
   bool _loading = true;
   bool _showArchived = false;
   String _search = '';
@@ -58,10 +59,7 @@ class _DefectsPageState extends State<DefectsPage> {
   Set<String> _roles = {};
   bool _initialCreateOpened = false;
 
-  Map<String, String> get _headers => {
-        'Authorization': 'Bearer ${widget.token}',
-        'Content-Type': 'application/json',
-      };
+  AuthenticatedApiClient get _api => AuthenticatedApiClient(widget.token);
 
   bool _can(String permission) =>
       _roles.contains('Admin') || _permissions.contains(permission);
@@ -72,44 +70,20 @@ class _DefectsPageState extends State<DefectsPage> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchDebouncer.dispose();
+    super.dispose();
+  }
+
   Future<dynamic> _request(String path,
       {String method = 'GET', Map<String, dynamic>? body}) async {
-    final uri = Uri.parse('$apiBaseUrl$path');
-    late http.Response response;
     try {
-      switch (method) {
-        case 'POST':
-          response = await http.post(uri,
-              headers: _headers, body: jsonEncode(body ?? {}));
-          break;
-        case 'PUT':
-          response = await http.put(uri,
-              headers: _headers, body: jsonEncode(body ?? {}));
-          break;
-        case 'PATCH':
-          response = await http.patch(uri,
-              headers: _headers, body: jsonEncode(body ?? {}));
-          break;
-        case 'DELETE':
-          response = await http.delete(uri, headers: _headers);
-          break;
-        default:
-          response = await http.get(uri, headers: _headers);
-      }
-    } catch (error) {
-      if (mounted) _message('Verbindung fehlgeschlagen: $error');
+      return await _api.request(path, method: method, body: body);
+    } on AuthenticatedApiException catch (error) {
+      if (mounted) _message(error.message);
       return null;
     }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      var message = 'Die Anfrage ist fehlgeschlagen.';
-      try {
-        message = jsonDecode(response.body)['error']?.toString() ?? message;
-      } catch (_) {}
-      if (mounted) _message(message);
-      return null;
-    }
-    if (response.body.isEmpty) return <String, dynamic>{};
-    return jsonDecode(response.body);
   }
 
   void _message(String value) {
@@ -1377,6 +1351,20 @@ class _DefectsPageState extends State<DefectsPage> {
   Widget build(BuildContext context) {
     final unread =
         _notifications.where((entry) => entry['readAt'] == null).length;
+    final filteredDefects = _filtered;
+    final pendingEmailCount =
+        _emailImports.where((entry) => entry['status'] == 'pending').length;
+    var openDefectCount = 0;
+    var defectsInProgressCount = 0;
+    for (final defect in _defects) {
+      if (defect['status'] != 'Geprüft/Geschlossen' &&
+          defect['archivedAt'] == null) {
+        openDefectCount += 1;
+      }
+      if (defect['status'] == 'In Bearbeitung') {
+        defectsInProgressCount += 1;
+      }
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Mängelmanagement'),
@@ -1415,127 +1403,145 @@ class _DefectsPageState extends State<DefectsPage> {
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _load,
-              child: ListView(
+              child: ListView.builder(
                 padding: const EdgeInsets.all(16),
-                children: [
-                  Card(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Wrap(
-                        spacing: 16,
-                        runSpacing: 12,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          const Icon(Icons.forward_to_inbox_outlined, size: 34),
-                          const SizedBox(
-                            width: 470,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                itemCount: filteredDefects.length + 2,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Card(
+                          color: Theme.of(context).colorScheme.primaryContainer,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Wrap(
+                              spacing: 16,
+                              runSpacing: 12,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                Text('Mängel auch per E-Mail melden',
-                                    style: TextStyle(
-                                        fontSize: 17,
-                                        fontWeight: FontWeight.bold)),
-                                SizedBox(height: 4),
-                                SelectableText(
-                                    'Ausgefüllten Bericht als PDF, PNG oder JPEG zusammen mit optionalen Schadensbildern an maengel@materialkompass.org senden.'),
+                                const Icon(Icons.forward_to_inbox_outlined,
+                                    size: 34),
+                                const SizedBox(
+                                  width: 470,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Mängel auch per E-Mail melden',
+                                          style: TextStyle(
+                                              fontSize: 17,
+                                              fontWeight: FontWeight.bold)),
+                                      SizedBox(height: 4),
+                                      SelectableText(
+                                          'Ausgefüllten Bericht als PDF, PNG oder JPEG zusammen mit optionalen Schadensbildern an maengel@materialkompass.org senden.'),
+                                    ],
+                                  ),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: _downloadTemplate,
+                                  icon:
+                                      const Icon(Icons.picture_as_pdf_outlined),
+                                  label: const Text('Vorlage herunterladen'),
+                                ),
+                                Badge(
+                                  isLabelVisible: pendingEmailCount > 0,
+                                  label: Text('$pendingEmailCount'),
+                                  child: FilledButton.icon(
+                                    onPressed: _showEmailQueue,
+                                    icon:
+                                        const Icon(Icons.rule_folder_outlined),
+                                    label: const Text('Prüfwarteschlange'),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
-                          OutlinedButton.icon(
-                            onPressed: _downloadTemplate,
-                            icon: const Icon(Icons.picture_as_pdf_outlined),
-                            label: const Text('Vorlage herunterladen'),
-                          ),
-                          Badge(
-                            isLabelVisible: _emailImports
-                                .any((entry) => entry['status'] == 'pending'),
-                            label: Text(
-                                '${_emailImports.where((entry) => entry['status'] == 'pending').length}'),
-                            child: FilledButton.icon(
-                              onPressed: _showEmailQueue,
-                              icon: const Icon(Icons.rule_folder_outlined),
-                              label: const Text('Prüfwarteschlange'),
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(spacing: 12, runSpacing: 12, children: [
+                          SizedBox(
+                            width: 280,
+                            child: TextField(
+                              decoration: const InputDecoration(
+                                  prefixIcon: Icon(Icons.search),
+                                  labelText: 'Suchen'),
+                              onChanged: (value) => _searchDebouncer.run(() {
+                                if (mounted) setState(() => _search = value);
+                              }),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Wrap(spacing: 12, runSpacing: 12, children: [
-                    SizedBox(
-                      width: 280,
-                      child: TextField(
-                        decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search),
-                            labelText: 'Suchen'),
-                        onChanged: (value) => setState(() => _search = value),
-                      ),
-                    ),
-                    _filter('Status', ['Alle', ..._statuses], _status,
-                        (value) => setState(() => _status = value)),
-                    _filter('Priorität', ['Alle', ..._priorities], _priority,
-                        (value) => setState(() => _priority = value)),
-                    _filter(
-                        'Bereich',
-                        const ['Alle', 'MaterialItem', 'ClothingItem'],
-                        _entityType,
-                        (value) => setState(() => _entityType = value),
-                        labels: const {
-                          'Alle': 'Alle',
-                          'MaterialItem': 'Inventar',
-                          'ClothingItem': 'Kleidung',
-                        }),
-                    FilterChip(
-                      label: const Text('Archiv anzeigen'),
-                      selected: _showArchived,
-                      onSelected: (value) async {
-                        _showArchived = value;
-                        await _load();
-                      },
-                    ),
-                  ]),
-                  const SizedBox(height: 16),
-                  Wrap(spacing: 12, children: [
-                    Chip(
-                        avatar: const Icon(Icons.warning_amber, size: 18),
-                        label: Text(
-                            '${_defects.where((d) => d['status'] != 'Geprüft/Geschlossen' && d['archivedAt'] == null).length} offen')),
-                    Chip(
-                        avatar: const Icon(Icons.build, size: 18),
-                        label: Text(
-                            '${_defects.where((d) => d['status'] == 'In Bearbeitung').length} in Bearbeitung')),
-                  ]),
-                  if (_filtered.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(40),
-                      child: Center(child: Text('Keine Mängel gefunden.')),
-                    ),
-                  ..._filtered.map((defect) => Card(
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: _priorityColor(
-                                defect['priority']?.toString() ?? 'Normal'),
-                            foregroundColor: Colors.white,
-                            child: const Icon(Icons.report_problem),
+                          _filter('Status', ['Alle', ..._statuses], _status,
+                              (value) => setState(() => _status = value)),
+                          _filter(
+                              'Priorität',
+                              ['Alle', ..._priorities],
+                              _priority,
+                              (value) => setState(() => _priority = value)),
+                          _filter(
+                              'Bereich',
+                              const ['Alle', 'MaterialItem', 'ClothingItem'],
+                              _entityType,
+                              (value) => setState(() => _entityType = value),
+                              labels: const {
+                                'Alle': 'Alle',
+                                'MaterialItem': 'Inventar',
+                                'ClothingItem': 'Kleidung',
+                              }),
+                          FilterChip(
+                            label: const Text('Archiv anzeigen'),
+                            selected: _showArchived,
+                            onSelected: (value) async {
+                              _showArchived = value;
+                              await _load();
+                            },
                           ),
-                          title: Text(
-                              '${defect['defectNumber']} · ${defect['title']}'),
-                          subtitle: Text(
-                              '${defect['entityName']} · ${defect['inventoryNumber'] ?? '-'}\n'
-                              '${defect['status']} · ${defect['priority']}'
-                              '${defect['assignee']?.toString().isNotEmpty == true ? ' · ${defect['assignee']}' : ''}'),
-                          isThreeLine: true,
-                          trailing: defect['archivedAt'] == null
-                              ? const Icon(Icons.chevron_right)
-                              : const Icon(Icons.archive),
-                          onTap: () => _showDetail(defect),
-                        ),
-                      )),
-                  const SizedBox(height: 80),
-                ],
+                        ]),
+                        const SizedBox(height: 16),
+                        Wrap(spacing: 12, children: [
+                          Chip(
+                              avatar: const Icon(Icons.warning_amber, size: 18),
+                              label: Text('$openDefectCount offen')),
+                          Chip(
+                              avatar: const Icon(Icons.build, size: 18),
+                              label: Text(
+                                  '$defectsInProgressCount in Bearbeitung')),
+                        ]),
+                        if (filteredDefects.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.all(40),
+                            child:
+                                Center(child: Text('Keine Mängel gefunden.')),
+                          ),
+                      ],
+                    );
+                  }
+                  if (index == filteredDefects.length + 1) {
+                    return const SizedBox(height: 80);
+                  }
+                  final defect = filteredDefects[index - 1];
+                  return Card(
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: _priorityColor(
+                            defect['priority']?.toString() ?? 'Normal'),
+                        foregroundColor: Colors.white,
+                        child: const Icon(Icons.report_problem),
+                      ),
+                      title: Text(
+                          '${defect['defectNumber']} · ${defect['title']}'),
+                      subtitle: Text(
+                          '${defect['entityName']} · ${defect['inventoryNumber'] ?? '-'}\n'
+                          '${defect['status']} · ${defect['priority']}'
+                          '${defect['assignee']?.toString().isNotEmpty == true ? ' · ${defect['assignee']}' : ''}'),
+                      isThreeLine: true,
+                      trailing: defect['archivedAt'] == null
+                          ? const Icon(Icons.chevron_right)
+                          : const Icon(Icons.archive),
+                      onTap: () => _showDetail(defect),
+                    ),
+                  );
+                },
               ),
             ),
     );

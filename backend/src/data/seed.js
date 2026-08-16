@@ -1,5 +1,3 @@
-const bcrypt = require('bcryptjs');
-
 const permissions = [
   'users.read', 'users.write',
   'roles.read',
@@ -17,7 +15,7 @@ const permissions = [
   'procurement.approve', 'procurement.order', 'procurement.receive',
   'procurement.export', 'suppliers.write',
   'documents.read',
-  'reports.read',
+  'reports.read', 'reports.write',
   'dashboard.read',
   'stocktakes.read', 'stocktakes.create', 'stocktakes.count',
   'stocktakes.evaluate', 'stocktakes.export', 'stocktakes.email.import',
@@ -25,7 +23,7 @@ const permissions = [
 
 const roles = [
   { id: 'role-admin', name: 'Admin', permissions },
-  { id: 'role-user', name: 'Nutzer', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.export', 'dashboard.read'] },
+  { id: 'role-user', name: 'Nutzer', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'dashboard.read'] },
   { id: 'role-materialwart', name: 'Materialwart', permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.write', 'defects.report', 'defects.edit', 'defects.assign', 'defects.close', 'defects.archive', 'defects.delete', 'defects.export', 'documents.read', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
   { id: 'role-kleiderwart', name: 'Kleiderwart', permissions: ['categories.read', 'locations.read', 'clothing.read', 'clothing.write', 'clothing.inspect', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.report', 'defects.edit', 'defects.assign', 'defects.close', 'defects.archive', 'defects.delete', 'defects.export', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'] },
   { id: 'role-fachbereichsleiter', name: 'Fachbereichsleiter', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'procurement.read', 'procurement.request', 'procurement.export', 'reports.read', 'dashboard.read'] },
@@ -41,7 +39,9 @@ const users = [
     name: 'Admin User',
     username: 'admin',
     email: 'admin@materialkompass.org',
-    passwordHash: bcrypt.hashSync(process.env.INITIAL_ADMIN_PASSWORD || 'MaterialKompass2026!', 12),
+    // Hash of the documented local-development password. Production replaces
+    // it when the first database user is created (see server.js).
+    passwordHash: '$2a$12$7nR.kNwGpXK1APgVoIKTU.uCtrzO8CXZ.ECmSIWYpJ7tthBB75qOu',
     roles: ['Admin'],
     departmentIds: [],
     permissions,
@@ -56,7 +56,7 @@ const users = [
     name: 'Miriam Material',
     username: 'materialwart',
     email: 'materialwart@materialkompass.local',
-    passwordHash: bcrypt.hashSync('Material123!', 10),
+    passwordHash: '$2a$10$BLFjpHTdxbS9fHNO70twwu1mH1cq42P45wvLlcdnvetS6D/ZqtpcC',
     roles: ['Materialwart'],
     departmentIds: [],
     permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'transactions.read', 'transactions.write', 'defects.read', 'defects.write', 'documents.read', 'procurement.read', 'procurement.request', 'procurement.order', 'procurement.receive', 'procurement.export', 'suppliers.write', 'dashboard.read'],
@@ -154,7 +154,23 @@ const procurementOrders = [];
 const procurementReceipts = [];
 const procurementDocuments = [];
 const procurementEmailImports = [];
-const suppliers = [{ id: 'supplier-1', name: 'DLRG Fachhandel', contact: 'Vertrieb', address: '', customerNumber: '', email: 'info@fachhandel.example', phone: '', website: '', paymentTerms: '14 Tage netto', active: true }];
+const suppliers = [{
+  id: 'supplier-1',
+  name: 'DLRG Fachhandel',
+  contact: 'Vertrieb',
+  address: 'Musterstraße 1, 12345 Musterstadt, Deutschland',
+  street: 'Musterstraße',
+  houseNumber: '1',
+  postalCode: '12345',
+  city: 'Musterstadt',
+  country: 'Deutschland',
+  customerNumber: '',
+  email: 'info@fachhandel.example',
+  phone: '',
+  website: '',
+  paymentTerms: '14 Tage netto',
+  active: true,
+}];
 const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
 const exportLogs = [];

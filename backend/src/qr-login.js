@@ -239,6 +239,7 @@ function registerQrLoginRoutes({
     user.lastLoginAt = new Date().toISOString();
     await saveUser(user);
     logEvent('qr_login', 'User', { id: user.id }, user.username);
+    req.persistenceRequired = true;
     return res.json({ token: createToken(user), expiresIn: 3600, user: publicUser(user) });
   });
 }

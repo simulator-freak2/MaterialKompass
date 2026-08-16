@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const XLSX = require('xlsx');
 const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
 const { registerStocktakeRoutes } = require('./stocktakes');
@@ -32,16 +31,52 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { SUPPORTED_PLATFORMS, createCorsOptions, parseTrustProxy } = require('./config');
 const { legalInformation } = require('./legal-config');
+const { inspectZipArchive, neutralizeSpreadsheetCell } = require('./security-utils');
+const { configurePersistence } = require('./persistence-coordinator');
+const { createRateLimiter } = require('./request-rate-limiter');
 const { version } = require('../package.json');
+
+// Spreadsheet support is sizeable and only needed for explicit import/export
+// requests. Keeping it out of the normal server startup path lowers the idle
+// memory footprint on small installations without changing the API.
+let xlsxModule;
+function xlsx() {
+  xlsxModule ||= require('xlsx');
+  return xlsxModule;
+}
+const XLSX = new Proxy({}, {
+  get(_target, property) {
+    return xlsx()[property];
+  },
+});
 
 const API_VERSION = '1';
 const JWT_ISSUER = 'materialkompass-backend';
 const JWT_AUDIENCE = 'materialkompass-clients';
 const DEVELOPMENT_JWT_SECRET = randomUUID() + randomUUID();
-const DUMMY_PASSWORD_HASH = bcrypt.hashSync(randomUUID(), 12);
+// A fixed, valid hash keeps unknown-account checks timing-compatible without
+// performing an expensive synchronous hash during every process start.
+const DUMMY_PASSWORD_HASH = '$2a$12$tEwsha9iOj5Uyyv0aMD6Xu.E4qatRuDZsHCHJPpisY/SuIk8qs52.';
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_REQUESTS = 10;
+const PUBLIC_WINDOW_MS = 60 * 1000;
+const PUBLIC_MAX_REQUESTS = 60;
+const MUTATION_WINDOW_MS = 60 * 1000;
+const MUTATION_MAX_REQUESTS = 120;
 const MAX_IMPORT_ROWS = 1000;
+const MAX_BULK_ITEMS = 500;
+const MAX_PRIMARY_RECORDS = 100_000;
+const MAX_AUDIT_RECORDS = 100_000;
+const MAX_EXPORT_RECORDS = 10_000;
+const DEFAULT_JSON_BODY_LIMIT = '1mb';
+const LARGE_JSON_BODY_LIMIT = '12mb';
+const LARGE_BODY_ROUTES = [
+  /^\/api\/clothing\/import$/,
+  /^\/api\/material\/import$/,
+  /^\/api\/material\/[^/]+\/documents$/,
+  /^\/api\/procurement\/[^/]+\/documents$/,
+  /^\/api\/defects\/[^/]+\/images$/,
+];
 const PERSISTED_COLLECTIONS = Object.freeze([
   'permissions', 'departments', 'locations', 'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
@@ -60,6 +95,23 @@ function createApp(options = {}) {
     throw new Error('JWT_SECRET muss im Produktivbetrieb mindestens 32 Zeichen lang sein.');
   }
   const app = express();
+  // Express 4 does not forward rejected promises from async route handlers to
+  // the error middleware. Wrap every route handler centrally so a transient
+  // database, SMTP or file-processing failure cannot become an unhandled
+  // rejection that terminates the Node.js process.
+  for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
+    const register = app[method].bind(app);
+    app[method] = (route, ...handlers) => register(route, ...handlers.map((handler) => {
+      if (typeof handler !== 'function') return handler;
+      return function safeRouteHandler(req, res, next) {
+        try {
+          return Promise.resolve(handler(req, res, next)).catch(next);
+        } catch (error) {
+          return next(error);
+        }
+      };
+    }));
+  }
   const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
   if (trustProxy !== null) app.set('trust proxy', trustProxy);
   app.disable('x-powered-by');
@@ -112,12 +164,49 @@ function createApp(options = {}) {
     });
   });
   app.use(cors(createCorsOptions()));
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '12mb' }));
+  const standardJsonParser = express.json({
+    limit: process.env.JSON_BODY_LIMIT || DEFAULT_JSON_BODY_LIMIT,
+  });
+  const largeJsonParser = express.json({
+    limit: process.env.LARGE_JSON_BODY_LIMIT || LARGE_JSON_BODY_LIMIT,
+  });
+  app.use((req, res, next) => {
+    const allowsLargeBody = LARGE_BODY_ROUTES.some((pattern) => pattern.test(req.path));
+    return (allowsLargeBody ? largeJsonParser : standardJsonParser)(req, res, next);
+  });
   app.use((req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
     if (req.body === undefined) req.body = {};
     if (req.body === null || Array.isArray(req.body) || typeof req.body !== 'object') {
       return res.status(400).json({ error: 'Der Request-Body muss ein JSON-Objekt sein.' });
+    }
+    return next();
+  });
+  app.use((req, res, next) => {
+    if (!req.body || typeof req.body !== 'object') return next();
+    const stack = [{ value: req.body, depth: 0, key: '' }];
+    let nodes = 0;
+    while (stack.length) {
+      const { value, depth, key } = stack.pop();
+      nodes += 1;
+      if (nodes > 10_000 || depth > 20) {
+        return res.status(413).json({ error: 'Der Request ist zu tief oder zu komplex.' });
+      }
+      if (typeof value === 'string') {
+        const maximum = key === 'fileBase64' ? 12_000_000 : 10_000;
+        if (value.length > maximum) {
+          return res.status(413).json({ error: `Das Feld ${key || '(unbekannt)'} ist zu groß.` });
+        }
+      } else if (Array.isArray(value)) {
+        if (value.length > 2_000) {
+          return res.status(413).json({ error: 'Eine Liste enthält zu viele Einträge.' });
+        }
+        value.forEach((entry) => stack.push({ value: entry, depth: depth + 1, key }));
+      } else if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([childKey, entry]) => {
+          stack.push({ value: entry, depth: depth + 1, key: childKey });
+        });
+      }
     }
     return next();
   });
@@ -280,81 +369,38 @@ function createApp(options = {}) {
     return 0;
   }
 
-  if (options.dataStore) {
-    let saveQueue = Promise.resolve();
-    const saveState = () => {
-      // Capture immediately so concurrent requests cannot change a queued
-      // snapshot before its database transaction starts.
-      const snapshot = Object.fromEntries(PERSISTED_COLLECTIONS.map((name) => [
-        name, JSON.parse(JSON.stringify(appData[name] || [])),
-      ]));
-      saveQueue = saveQueue.catch(() => {}).then(() => options.dataStore.saveCollections(snapshot));
-      return saveQueue;
-    };
-    app.locals.persistData = saveState;
-    app.use((req, res, next) => {
-      const stateChangingGet = req.method === 'GET'
-        && ['/api/auth/verify-email', '/api/users'].includes(req.path);
-      if (!stateChangingGet && !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
-      const originalEnd = res.end.bind(res);
-      let ending = false;
-      res.end = function persistentEnd(chunk, encoding, callback) {
-        if (ending) return res;
-        ending = true;
-        saveState()
-          .then(() => originalEnd(chunk, encoding, callback))
-          .catch((error) => {
-            console.error('MariaDB-Persistenz fehlgeschlagen:', error);
-            if (res.headersSent) return res.destroy(error);
-            const body = JSON.stringify({
-              error: 'Die Daten konnten nicht dauerhaft gespeichert werden.',
-              requestId: req.requestId,
-            });
-            res.statusCode = 503;
-            res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.setHeader('Content-Length', Buffer.byteLength(body));
-            return originalEnd(body, 'utf8', callback);
-          });
-        return res;
-      };
-      return next();
-    });
-  } else {
-    app.locals.persistData = async () => {};
-  }
+  configurePersistence({
+    app,
+    appData,
+    dataStore: options.dataStore,
+    collectionNames: PERSISTED_COLLECTIONS,
+  });
 
   const jwtSecret = process.env.JWT_SECRET || DEVELOPMENT_JWT_SECRET;
-  const authAttempts = new Map();
+
+  // Rate limits are defined next to authentication because several route
+  // modules receive authRateLimit as an explicit dependency.
+  const authRateLimit = createRateLimiter({
+    windowMs: AUTH_WINDOW_MS,
+    maxRequests: AUTH_MAX_REQUESTS,
+    exposePolicyHeaders: true,
+  });
+  const publicRateLimit = createRateLimiter({
+    windowMs: PUBLIC_WINDOW_MS,
+    maxRequests: PUBLIC_MAX_REQUESTS,
+    keyFor: (req) => `${req.ip}:${req.route?.path || req.path}`,
+  });
+  const mutationRateLimit = createRateLimiter({
+    windowMs: MUTATION_WINDOW_MS,
+    maxRequests: MUTATION_MAX_REQUESTS,
+    appliesTo: (req) => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method),
+    errorMessage: 'Zu viele Änderungen. Bitte später erneut versuchen.',
+  });
 
   function securityVersion(user) {
     return createHash('sha256').update(JSON.stringify([
       user.passwordHash, user.active, user.emailVerifiedAt, user.roles, user.permissions,
     ])).digest('base64url').slice(0, 22);
-  }
-
-  function authRateLimit(req, res, next) {
-    const now = Date.now();
-    const key = req.ip;
-    if (!authAttempts.has(key) && authAttempts.size >= 10_000) {
-      for (const [storedKey, storedEntry] of authAttempts) {
-        if (storedEntry.resetAt <= now) authAttempts.delete(storedKey);
-      }
-      if (authAttempts.size >= 10_000) {
-        return res.status(429).json({ error: 'Zu viele Anfragen. Bitte später erneut versuchen.' });
-      }
-    }
-    let entry = authAttempts.get(key);
-    if (!entry || entry.resetAt <= now) entry = { count: 0, resetAt: now + AUTH_WINDOW_MS };
-    entry.count += 1;
-    authAttempts.set(key, entry);
-    res.set('RateLimit-Policy', `${AUTH_MAX_REQUESTS};w=${AUTH_WINDOW_MS / 1000}`);
-    res.set('RateLimit-Remaining', String(Math.max(0, AUTH_MAX_REQUESTS - entry.count)));
-    res.set('RateLimit-Reset', String(Math.ceil((entry.resetAt - now) / 1000)));
-    if (entry.count > AUTH_MAX_REQUESTS) {
-      res.set('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
-      return res.status(429).json({ error: 'Zu viele Anfragen. Bitte später erneut versuchen.' });
-    }
-    return next();
   }
 
   function createToken(user) {
@@ -395,6 +441,20 @@ function createApp(options = {}) {
     return user?.permissions?.includes(permission) || user?.roles?.includes('Admin');
   }
 
+  if (!permissions.includes('reports.write')) permissions.push('reports.write');
+  const basicUserRole = roles.find((role) => role.name === 'Nutzer');
+  if (basicUserRole) {
+    basicUserRole.permissions = basicUserRole.permissions
+      .filter((permission) => permission !== 'inventory.export');
+  }
+  users.filter((user) => (user.roles || []).includes('Nutzer')).forEach((user) => {
+    const anotherRoleGrantsExport = user.roles.some((roleName) => roleName !== 'Nutzer'
+      && roles.find((role) => role.name === roleName)?.permissions.includes('inventory.export'));
+    if (!anotherRoleGrantsExport) {
+      user.permissions = (user.permissions || [])
+        .filter((permission) => permission !== 'inventory.export');
+    }
+  });
   const defectPermissions = [
     'defects.report', 'defects.edit', 'defects.assign', 'defects.close',
     'defects.archive', 'defects.delete', 'defects.export',
@@ -464,13 +524,16 @@ function createApp(options = {}) {
     const publicActor = matchedUser?.username
       || (String(actor).includes('@') ? 'unbekannt' : actor);
     auditLogs.push({
-      id: `audit-${auditLogs.length + 1}`,
+      id: `audit-${randomUUID()}`,
       timestamp: new Date().toISOString(),
       actor: publicActor,
       action,
       entity,
       details,
     });
+    if (auditLogs.length > MAX_AUDIT_RECORDS) {
+      auditLogs.splice(0, auditLogs.length - MAX_AUDIT_RECORDS);
+    }
   }
 
   const activityAreas = Object.freeze({
@@ -695,14 +758,14 @@ function createApp(options = {}) {
   }
 
   function readClothingRows(fileBase64) {
-    const workbook = XLSX.read(Buffer.from(fileBase64, 'base64'), {
+    const workbook = xlsx().read(Buffer.from(fileBase64, 'base64'), {
       type: 'buffer',
       cellDates: true,
       sheetRows: MAX_IMPORT_ROWS + 2,
     });
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) return [];
-    const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
+    const rawRows = xlsx().utils.sheet_to_json(workbook.Sheets[firstSheetName], {
       defval: '',
       raw: false,
     });
@@ -734,16 +797,18 @@ function createApp(options = {}) {
       Status: item.status || 'Lagernd',
       'Zugewiesen an': item.assignedPerson || '',
     }));
-    const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+    const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
+      .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
+    const worksheet = xlsx().utils.json_to_sheet(safeRows, { header: headers });
     worksheet['!cols'] = [
       { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 22 }, { wch: 12 },
       { wch: 20 }, { wch: 10 }, { wch: 18 }, { wch: 16 }, { wch: 18 },
       { wch: 14 }, { wch: 24 },
     ];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Kleiderkammer');
+    const workbook = xlsx().utils.book_new();
+    xlsx().utils.book_append_sheet(workbook, worksheet, 'Kleiderkammer');
 
-    const helpSheet = XLSX.utils.aoa_to_sheet([
+    const helpSheet = xlsx().utils.aoa_to_sheet([
       ['Importhinweise'],
       ['Pflichtfeld', 'Name'],
       ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Hersteller, Baujahr, Anschaffungsdatum, Standort, Regal/Fach, Status, Zugewiesen an'],
@@ -751,16 +816,8 @@ function createApp(options = {}) {
       ['Duplikate', 'Bereits vorhandene Inventarnummern werden übersprungen.'],
     ]);
     helpSheet['!cols'] = [{ wch: 20 }, { wch: 70 }];
-    XLSX.utils.book_append_sheet(workbook, helpSheet, 'Hinweise');
+    xlsx().utils.book_append_sheet(workbook, helpSheet, 'Hinweise');
     return workbook;
-  }
-
-  function containsIdentity(value, identities) {
-    if (value === null || value === undefined) return false;
-    if (typeof value !== 'object') {
-      return identities.has(String(value).trim().toLowerCase());
-    }
-    return Object.values(value).some((entry) => containsIdentity(entry, identities));
   }
 
   function safeDataCopy(value) {
@@ -771,12 +828,43 @@ function createApp(options = {}) {
       .map(([key, entry]) => [key, safeDataCopy(entry)]));
   }
 
+  app.use(mutationRateLimit);
+
+  function personalDataMatches(value, identities, path = '', matches = []) {
+    if (value === null || value === undefined) return matches;
+    if (typeof value !== 'object') {
+      if (identities.has(String(value).trim().toLowerCase())) {
+        matches.push({ path, value });
+      }
+      return matches;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => personalDataMatches(
+        entry,
+        identities,
+        `${path}[${index}]`,
+        matches,
+      ));
+      return matches;
+    }
+    Object.entries(value).forEach(([key, entry]) => personalDataMatches(
+      entry,
+      identities,
+      path ? `${path}.${key}` : key,
+      matches,
+    ));
+    return matches;
+  }
+
   function exportDataSubject(user) {
     const identities = new Set([user.id, user.name, user.username, user.email]
       .filter(Boolean).map((entry) => String(entry).trim().toLowerCase()));
     const relatedData = {};
     for (const name of PERSISTED_COLLECTIONS) {
-      const matches = (appData[name] || []).filter((entry) => containsIdentity(entry, identities));
+      const matches = (appData[name] || []).map((entry) => ({
+        recordId: entry?.id || null,
+        matches: personalDataMatches(entry, identities),
+      })).filter((entry) => entry.matches.length > 0);
       if (matches.length) relatedData[name] = safeDataCopy(matches);
     }
     return {
@@ -785,7 +873,7 @@ function createApp(options = {}) {
       account: publicUser(user),
       relatedData,
       notes: [
-        'Die Datenkopie enthält Datensätze, die dem Konto anhand von Konto-ID, Name, Nutzername oder E-Mail-Adresse unmittelbar zugeordnet werden konnten.',
+        'Die Datenkopie enthält ausschließlich die Fundstellen, die dem Konto anhand von Konto-ID, Name, Nutzername oder E-Mail-Adresse unmittelbar zugeordnet werden konnten.',
         'Geheimnisse, Authentifizierungswerte und eingebettete Binärdateien sind aus Sicherheitsgründen nicht Bestandteil dieser maschinenlesbaren Kopie.',
       ],
     };
@@ -861,7 +949,7 @@ function createApp(options = {}) {
     timestamp: new Date().toISOString(),
   }));
 
-  app.get('/ready', async (req, res) => {
+  app.get('/ready', publicRateLimit, async (req, res) => {
     try {
       await options.dataStore?.checkHealth?.();
       return res.json({
@@ -887,7 +975,7 @@ function createApp(options = {}) {
 
   app.get('/api/legal', (_req, res) => res.json(legalInformation()));
 
-  app.get('/api/downloads', (req, res) => res.json(clientPlatforms.map((platform) => {
+  app.get('/api/downloads', publicRateLimit, (req, res) => res.json(clientPlatforms.map((platform) => {
     const download = desktopDownload(platform);
     return {
       platform,
@@ -899,7 +987,7 @@ function createApp(options = {}) {
     };
   })));
 
-  app.get('/api/client-updates/:platform', async (req, res, next) => {
+  app.get('/api/client-updates/:platform', publicRateLimit, async (req, res, next) => {
     const platform = req.params.platform;
     if (!clientPlatforms.includes(platform)) {
       return res.status(404).json({ error: 'Unbekannte Plattform.' });
@@ -929,7 +1017,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/api/downloads/:platform', (req, res, next) => {
+  app.get('/api/downloads/:platform', publicRateLimit, (req, res, next) => {
     if (!clientPlatforms.includes(req.params.platform)) {
       return res.status(404).json({ error: 'Unbekannte Plattform.' });
     }
@@ -948,6 +1036,12 @@ function createApp(options = {}) {
     await userManagement.applyRetentionPolicy();
     const { email, identifier, password } = req.body;
     const loginIdentifier = identifier || email;
+    if (String(loginIdentifier || '').length > 255
+      || typeof password !== 'string'
+      || Buffer.byteLength(password, 'utf8') > 72) {
+      await bcrypt.compare('', DUMMY_PASSWORD_HASH);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     const user = userManagement.findUser(loginIdentifier);
 
     if (!user) {
@@ -958,11 +1052,13 @@ function createApp(options = {}) {
     const valid = await bcrypt.compare(password || '', user.passwordHash);
     if (!valid) {
       user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-      if (user.failedLoginAttempts >= 5) {
-        user.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      }
+      // Do not globally lock the account based on attacker-controlled failed
+      // attempts. The IP limiter throttles guessing without allowing a third
+      // party to deny service to a known account.
+      user.failedLoginAttempts = Math.min(user.failedLoginAttempts, 1000);
       logEvent('login_failed', 'User', { id: user.id }, user.username);
       await options.userStore?.saveUser(user);
+      req.persistenceRequired = true;
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -977,6 +1073,7 @@ function createApp(options = {}) {
     user.lockedUntil = null;
     user.lastLoginAt = new Date().toISOString();
     await options.userStore?.saveUser(user);
+    req.persistenceRequired = true;
     const token = createToken(user);
     logEvent('login', 'User', { id: user.id }, user.username);
     res.json({ token, expiresIn: 3600, user: publicUser(user) });
@@ -1280,12 +1377,17 @@ function createApp(options = {}) {
   app.locals.stocktakeEmailService = stocktakeEmailService;
 
   app.get('/api/clothing', authMiddleware, requirePermission('clothing.read'), (req, res) => {
-    res.json(clothingItems.map(responseClothing));
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    res.json(clothingItems.slice(offset, offset + limit).map(responseClothing));
   });
 
   app.post('/api/clothing', authMiddleware, requirePermission('clothing.write'), (req, res) => {
+    if (clothingItems.length + deletedClothingItems.length >= MAX_PRIMARY_RECORDS) {
+      return res.status(507).json({ error: 'Die maximale Anzahl an Kleidungsdatensätzen ist erreicht.' });
+    }
     const name = String(req.body.name || '').trim();
-    if (!name) {
+    if (!name || name.length > 255) {
       return res.status(400).json({ error: 'name is required' });
     }
 
@@ -1304,12 +1406,16 @@ function createApp(options = {}) {
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
     const requestedInventoryNumber = String(req.body.inventoryNumber || '').trim();
     const inventoryNumber = requestedInventoryNumber || nextClothingInventoryNumber(categoryId);
+    if (inventoryNumber.length > 64 || size.length > 32
+      || String(req.body.manufacturer || '').length > 255
+      || String(req.body.manufacturingYear || '').length > 32) {
+      return res.status(400).json({ error: 'Mindestens ein Textfeld überschreitet die zulässige Länge.' });
+    }
     if ([...materials, ...clothingItems, ...deletedClothingItems].some((item) => item.inventoryNumber === inventoryNumber)) {
       return res.status(409).json({ error: 'inventoryNumber already exists' });
     }
 
     const item = {
-      ...req.body,
       id: nextId('clothing', [...clothingItems, ...deletedClothingItems]),
       name,
       inventoryNumber,
@@ -1348,7 +1454,7 @@ function createApp(options = {}) {
     }
 
     const name = String(req.body.name ?? item.name).trim();
-    if (!name) {
+    if (!name || name.length > 255) {
       return res.status(400).json({ error: 'name is required' });
     }
 
@@ -1366,6 +1472,11 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'invalid categoryId' });
     }
     const size = String(req.body.size ?? item.size ?? '').trim();
+    if (inventoryNumber.length > 64 || size.length > 32
+      || String(req.body.manufacturer ?? item.manufacturer ?? '').length > 255
+      || String(req.body.manufacturingYear ?? item.manufacturingYear ?? '').length > 32) {
+      return res.status(400).json({ error: 'Mindestens ein Textfeld überschreitet die zulässige Länge.' });
+    }
     const allowedSizes = categorySizes(categoryId);
     if (size && allowedSizes.length && !allowedSizes.includes(size)) {
       return res.status(400).json({ error: 'Die Größe ist für diese Kategorie nicht vorgesehen.' });
@@ -1378,7 +1489,6 @@ function createApp(options = {}) {
 
     const updatedItem = {
       ...item,
-      ...req.body,
       id: item.id,
       name,
       inventoryNumber,
@@ -1415,6 +1525,9 @@ function createApp(options = {}) {
     ));
     if (clothingIds.length === 0) {
       return res.status(400).json({ error: 'clothingIds are required' });
+    }
+    if (clothingIds.length > MAX_BULK_ITEMS) {
+      return res.status(413).json({ error: `Maximal ${MAX_BULK_ITEMS} Einträge dürfen gleichzeitig geändert werden.` });
     }
 
     const selectedItems = clothingIds.map((id) =>
@@ -1584,10 +1697,15 @@ function createApp(options = {}) {
 
     let rows;
     try {
+      const archive = inspectZipArchive(Buffer.from(fileBase64, 'base64'));
+      if (archive.error) return res.status(400).json({ error: archive.error });
       rows = readClothingRows(fileBase64);
     } catch (error) {
       if (error.status === 413) return res.status(413).json({ error: error.message });
       return res.status(400).json({ error: 'Die Tabelle konnte nicht gelesen werden.' });
+    }
+    if (clothingItems.length + deletedClothingItems.length + rows.length > MAX_PRIMARY_RECORDS) {
+      return res.status(507).json({ error: 'Der Import würde die maximale Anzahl an Kleidungsdatensätzen überschreiten.' });
     }
 
     const usedInventoryNumbers = new Set(
@@ -1696,7 +1814,7 @@ function createApp(options = {}) {
     }
 
     const fileName = `kleiderkammer-${new Date().toISOString().slice(0, 10)}.${format}`;
-    const buffer = XLSX.write(buildClothingWorkbook(), { type: 'buffer', bookType: format });
+    const buffer = xlsx().write(buildClothingWorkbook(), { type: 'buffer', bookType: format });
     const entry = {
       id: `export-${exportLogs.length + 1}`,
       exportType: `clothing-${format}`,
@@ -1705,6 +1823,7 @@ function createApp(options = {}) {
       createdAt: new Date().toISOString(),
     };
     exportLogs.push(entry);
+    if (exportLogs.length > MAX_EXPORT_RECORDS) exportLogs.splice(0, exportLogs.length - MAX_EXPORT_RECORDS);
     logEvent('export', 'ClothingItem', { format, itemCount: clothingItems.length }, req.user.username);
     res.json({ fileName, fileBase64: buffer.toString('base64') });
   });
@@ -1729,7 +1848,7 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'Invalid action. Use ausgegeben or zurückgegeben.' });
     }
 
-    if (clothingIds.length === 0) {
+    if (clothingIds.length === 0 || clothingIds.length > MAX_BULK_ITEMS) {
       return res.status(400).json({ error: 'clothingIds are required' });
     }
 
@@ -1792,7 +1911,7 @@ function createApp(options = {}) {
     app, authMiddleware, requirePermission, data: appData, categories, departments, locations,
     stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
-    addMonths,
+    addMonths, addressLookup: options.addressLookup,
   });
   const procurementEmailService = createProcurementEmailService({
     procurementEmailImports,
@@ -1893,9 +2012,19 @@ function createApp(options = {}) {
     });
   });
 
-  app.post('/api/export-log', authMiddleware, requirePermission('reports.read'), (req, res) => {
-    const entry = { id: `export-${exportLogs.length + 1}`, ...req.body, createdAt: new Date().toISOString() };
+  app.post('/api/export-log', authMiddleware, requirePermission('reports.write'), (req, res) => {
+    const exportType = String(req.body.exportType || '').trim().slice(0, 64);
+    const fileName = String(req.body.fileName || '').trim().slice(0, 255);
+    if (!exportType) return res.status(400).json({ error: 'exportType is required' });
+    const entry = {
+      id: `export-${exportLogs.length + 1}`,
+      exportType,
+      fileName: fileName || null,
+      requestedBy: req.user.username,
+      createdAt: new Date().toISOString(),
+    };
     exportLogs.push(entry);
+    if (exportLogs.length > MAX_EXPORT_RECORDS) exportLogs.splice(0, exportLogs.length - MAX_EXPORT_RECORDS);
     logEvent('export', 'ExportLog', { id: entry.id }, req.user.username);
     res.status(201).json(entry);
   });
