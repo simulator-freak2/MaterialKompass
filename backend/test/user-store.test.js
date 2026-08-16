@@ -43,7 +43,7 @@ test('saveUser converts every timestamp before sending it to MariaDB', async () 
   await store.close();
 });
 
-test('application collections are loaded and saved in one transaction', async () => {
+test('application collections save only changed values in one transaction', async () => {
   const calls = [];
   const connection = {
     async beginTransaction() { calls.push('begin'); },
@@ -74,6 +74,16 @@ test('application collections are loaded and saved in one transaction', async ()
   assert.equal(calls[0], 'begin');
   assert.equal(calls.filter((entry) => entry?.sql?.includes('INSERT INTO application_collections')).length, 2);
   assert.deepEqual(calls.slice(-2), ['commit', 'release']);
+
+  const callCount = calls.length;
+  await store.saveCollections({ locations: [{ id: 'loc-new' }], auditLogs: [] });
+  assert.equal(calls.length, callCount, 'an unchanged snapshot must not reach MariaDB');
+
+  await store.saveCollections({ locations: [{ id: 'loc-newer' }], auditLogs: [] });
+  assert.equal(
+    calls.slice(callCount).filter((entry) => entry?.sql?.includes('INSERT INTO application_collections')).length,
+    1,
+  );
 });
 
 test('process lock prevents concurrent snapshot-based backend instances', async () => {

@@ -1,4 +1,8 @@
-const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+let pdfLibModule;
+function pdfLib() {
+  pdfLibModule ||= require('pdf-lib');
+  return pdfLibModule;
+}
 
 const STOCKTAKE_STATUSES = Object.freeze(['Angelegt', 'In Arbeit', 'Auswertung', 'Abgeschlossen']);
 const ENTITY_TYPES = Object.freeze(['MaterialItem', 'ClothingItem']);
@@ -435,6 +439,7 @@ function registerStocktakeRoutes({
       bytes = XLSX.write(workbook, { type: 'buffer', bookType: format });
       mimeType = format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.oasis.opendocument.spreadsheet';
     } else {
+      const { PDFDocument, StandardFonts, rgb } = pdfLib();
       const pdf = await PDFDocument.create(); const font = await pdf.embedFont(StandardFonts.Helvetica); const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
       const pageWidth = 842; const pageHeight = 595; const margin = 28; const rowHeight = 20;
       let page; let y;

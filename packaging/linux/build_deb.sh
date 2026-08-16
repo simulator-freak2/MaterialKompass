@@ -2,7 +2,7 @@
 set -euo pipefail
 
 API_BASE_URL="${1:-https://materialkompass.org}"
-VERSION="${2:-1.2.0}"
+VERSION="${2:-1.3.0}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 FLUTTER_ROOT="$REPOSITORY_ROOT/flutter"

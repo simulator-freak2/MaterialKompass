@@ -3,8 +3,16 @@ const MATERIAL_STATUSES = [
   'In Reparatur', 'Ausgesondert', 'Verloren',
 ];
 const { nextInventoryNumber } = require('./inventory-number');
+const {
+  fileMagic, inspectZipArchive, neutralizeSpreadsheetCell, validBase64,
+} = require('./security-utils');
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAX_IMPORT_ROWS = 1000;
+const MAX_BULK_ITEMS = 500;
+const MAX_DOCUMENTS_PER_ITEM = 20;
+const MAX_DOCUMENTS_TOTAL = 5_000;
+const MAX_MATERIAL_RECORDS = 100_000;
+const MAX_DOCUMENT_STORAGE_BYTES = 256 * 1024 * 1024;
 
 const IMPORT_ALIASES = {
   inventarnummer: 'inventoryNumber', bezeichnung: 'name', name: 'name',
@@ -57,6 +65,10 @@ function registerInventoryRoutes({
     const quantity = itemType === 'individual' ? 1 : number(body.quantity ?? existing?.quantity, 0);
     const pair = categoryPair(categoryCode, subcategoryCode);
     if (!name || !categoryCode || !locationId || !status) return { error: 'Bezeichnung, Kategorie, Standort und Status sind Pflichtfelder.' };
+    if (name.length > 255 || categoryCode.length > 64 || subcategoryCode.length > 64
+      || locationId.length > 64 || stockStructureId.length > 64) {
+      return { error: 'Mindestens ein Textfeld überschreitet die zulässige Länge.' };
+    }
     if (!pair.main || (subcategoryCode && !pair.child)) return { error: 'Die gewählte Haupt-/Unterkategorie ist ungültig.' };
     if (!locations.some((entry) => entry.id === locationId)) return { error: 'Der gewählte Standort ist ungültig.' };
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return { error: 'Der Lagerplatz gehört nicht zum gewählten Standort.' };
@@ -79,11 +91,16 @@ function registerInventoryRoutes({
 
   app.get('/api/material', authMiddleware, requirePermission('inventory.read'), (req, res) => {
     const archived = String(req.query.archived || 'false') === 'true';
-    res.json(materials.filter((item) => item.archived === archived).map(responseItem));
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    res.json(materials.filter((item) => item.archived === archived)
+      .slice(offset, offset + limit).map(responseItem));
   });
 
   app.get('/api/material/history', authMiddleware, requirePermission('inventory.read'), (req, res) => {
-    res.json(materialMovements.slice().reverse());
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    res.json(materialMovements.slice().reverse().slice(offset, offset + limit));
   });
 
   app.get('/api/material/:id', authMiddleware, requirePermission('inventory.read'), (req, res) => {
@@ -93,6 +110,9 @@ function registerInventoryRoutes({
   });
 
   app.post('/api/material', authMiddleware, requirePermission('inventory.write'), (req, res) => {
+    if (materials.length + deletedMaterials.length >= MAX_MATERIAL_RECORDS) {
+      return res.status(507).json({ error: 'Die maximale Anzahl an Materialdatensätzen ist erreicht.' });
+    }
     const values = validate(req.body);
     if (values.error) return res.status(400).json({ error: values.error });
     const requested = String(req.body.inventoryNumber || '').trim();
@@ -100,7 +120,7 @@ function registerInventoryRoutes({
     const inv = requested || generated;
     if ([...materials, ...deletedMaterials].some((entry) => entry.inventoryNumber.toLowerCase() === inv.toLowerCase())) return res.status(409).json({ error: 'Die Inventarnummer existiert bereits.' });
     const item = {
-      ...req.body, ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: inv,
+      ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: inv,
       unit: String(req.body.unit || 'Stück').trim() || 'Stück', issuedQuantity: 0,
       manufacturer: String(req.body.manufacturer || '').trim(), model: String(req.body.model || '').trim(),
       serialNumber: String(req.body.serialNumber || '').trim(), purchaseDate: req.body.purchaseDate || null,
@@ -130,7 +150,21 @@ function registerInventoryRoutes({
     if (req.body.inventoryNumber && req.body.inventoryNumber !== item.inventoryNumber) return res.status(400).json({ error: 'Die Inventarnummer kann nachträglich nicht geändert werden.' });
     const values = validate(req.body, item);
     if (values.error) return res.status(400).json({ error: values.error });
-    Object.assign(item, req.body, values, {
+    Object.assign(item, values, {
+      unit: String(req.body.unit ?? item.unit ?? 'Stück').trim().slice(0, 32) || 'Stück',
+      manufacturer: String(req.body.manufacturer ?? item.manufacturer ?? '').trim().slice(0, 255),
+      model: String(req.body.model ?? item.model ?? '').trim().slice(0, 255),
+      serialNumber: String(req.body.serialNumber ?? item.serialNumber ?? '').trim().slice(0, 255),
+      purchaseDate: req.body.purchaseDate ?? item.purchaseDate ?? null,
+      manufacturingYear: String(req.body.manufacturingYear ?? item.manufacturingYear ?? '').trim().slice(0, 32),
+      purchasePrice: req.body.purchasePrice === '' || req.body.purchasePrice == null
+        ? item.purchasePrice ?? null : number(req.body.purchasePrice),
+      description: String(req.body.description ?? item.description ?? '').trim().slice(0, 10_000),
+      notes: String(req.body.notes ?? item.notes ?? '').trim().slice(0, 10_000),
+      department: String(req.body.department ?? item.department ?? '').trim().slice(0, 255),
+      inspectionIntervalMonths: req.body.inspectionIntervalMonths == null
+        ? item.inspectionIntervalMonths ?? null : number(req.body.inspectionIntervalMonths),
+      nextInspectionDate: req.body.nextInspectionDate ?? item.nextInspectionDate ?? null,
       id: item.id, inventoryNumber: item.inventoryNumber, issuedQuantity: item.issuedQuantity,
       archived: false, updatedAt: new Date().toISOString(),
     });
@@ -179,7 +213,7 @@ function registerInventoryRoutes({
     const action = String(req.body.action || '');
     const entries = Array.isArray(req.body.items) ? req.body.items : [];
     const recipient = String(req.body.recipient || '').trim();
-    if (!['issue', 'return'].includes(action) || !entries.length) return res.status(400).json({ error: 'Aktion und Materialpositionen sind erforderlich.' });
+    if (!['issue', 'return'].includes(action) || !entries.length || entries.length > MAX_BULK_ITEMS) return res.status(400).json({ error: `Aktion und 1 bis ${MAX_BULK_ITEMS} Materialpositionen sind erforderlich.` });
     if (action === 'issue' && !recipient) return res.status(400).json({ error: 'Ein Empfänger oder Verwendungsziel ist erforderlich.' });
     const checked = entries.map((entry) => {
       const item = materials.find((candidate) => candidate.id === entry.materialId);
@@ -217,7 +251,7 @@ function registerInventoryRoutes({
     const targetLocation = locations.find((entry) => entry.id === locationId);
     const targetStock = stockStructureId ? stockStructures.find((entry) => entry.id === stockStructureId && entry.locationId === locationId) : null;
     const items = ids.map((id) => materials.find((entry) => entry.id === id));
-    if (!ids.length || !targetLocation || (stockStructureId && !targetStock)) return res.status(400).json({ error: 'Material, Standort oder Lagerplatz ist ungültig.' });
+    if (!ids.length || ids.length > MAX_BULK_ITEMS || !targetLocation || (stockStructureId && !targetStock)) return res.status(400).json({ error: 'Material, Standort oder Lagerplatz ist ungültig.' });
     if (items.some((item) => !item || item.archived || number(item.issuedQuantity) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes oder archiviertes Material ist nicht zulässig.' });
     const created = items.map((item) => {
       const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
@@ -250,6 +284,29 @@ function registerInventoryRoutes({
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
     if (!String(req.body.fileName || '').trim() || !fileBase64) return res.status(400).json({ error: 'Dateiname und Datei sind erforderlich.' });
     if (fileBase64.length > 7_000_000) return res.status(413).json({ error: 'Die Datei ist zu groß. Maximal 5 MB sind erlaubt.' });
+    if (!validBase64(fileBase64)) return res.status(400).json({ error: 'Die Datei ist nicht gültig Base64-kodiert.' });
+    if (materialDocuments.filter((entry) => entry.materialId === item.id).length >= MAX_DOCUMENTS_PER_ITEM) {
+      return res.status(409).json({ error: `Pro Artikel sind maximal ${MAX_DOCUMENTS_PER_ITEM} Dokumente erlaubt.` });
+    }
+    if (materialDocuments.length >= MAX_DOCUMENTS_TOTAL) {
+      return res.status(507).json({ error: 'Die maximale Gesamtzahl an Materialdokumenten ist erreicht.' });
+    }
+    const extension = String(req.body.fileName).split('.').pop().toLowerCase();
+    const bytes = Buffer.from(fileBase64, 'base64');
+    const storedDocumentBytes = materialDocuments.reduce((sum, entry) =>
+      sum + Buffer.byteLength(entry.fileBase64 || '', 'base64'), 0);
+    if (storedDocumentBytes + bytes.length > MAX_DOCUMENT_STORAGE_BYTES) {
+      return res.status(507).json({ error: 'Das Speicherlimit für Materialdokumente ist erreicht.' });
+    }
+    const magic = fileMagic(bytes);
+    const allowed = { pdf: 'pdf', png: 'png', jpg: 'jpeg', jpeg: 'jpeg', docx: 'zip', xlsx: 'zip', ods: 'zip' };
+    if (!allowed[extension] || allowed[extension] !== magic) {
+      return res.status(400).json({ error: 'Dateiendung und tatsächlicher Dateityp stimmen nicht überein.' });
+    }
+    if (magic === 'zip') {
+      const archive = inspectZipArchive(bytes);
+      if (archive.error) return res.status(400).json({ error: archive.error });
+    }
     const document = { id: nextId('material-document', materialDocuments), materialId: item.id, title: String(req.body.title || req.body.fileName).trim(), documentType: String(req.body.documentType || 'Anleitung'), mimeType: req.body.mimeType || null, fileName: String(req.body.fileName).trim(), fileBase64, createdAt: new Date().toISOString() };
     materialDocuments.push(document); logEvent('document', 'MaterialItem', { id: item.id, documentId: document.id }, req.user.username);
     const { fileBase64: omitted, ...metadata } = document; res.status(201).json(metadata);
@@ -272,6 +329,8 @@ function registerInventoryRoutes({
     if (fileBytes.length > MAX_IMPORT_BYTES) {
       return res.status(413).json({ error: 'Die Importdatei darf höchstens 5 MB groß sein.' });
     }
+    const archive = inspectZipArchive(fileBytes);
+    if (archive.error) return res.status(400).json({ error: archive.error });
     let rows;
     try {
       const workbook = XLSX.read(fileBytes, { type: 'buffer', sheetRows: MAX_IMPORT_ROWS + 2 });
@@ -281,6 +340,9 @@ function registerInventoryRoutes({
       }
       rows = rawRows.map((row) => Object.entries(row).reduce((result, [key, value]) => { const field = IMPORT_ALIASES[normalizeHeader(key)]; if (field) result[field] = String(value ?? '').trim(); return result; }, {}));
     } catch (_) { return res.status(400).json({ error: 'Die Tabelle konnte nicht gelesen werden.' }); }
+    if (materials.length + deletedMaterials.length + rows.length > MAX_MATERIAL_RECORDS) {
+      return res.status(507).json({ error: 'Der Import würde die maximale Anzahl an Materialdatensätzen überschreiten.' });
+    }
     const skippedRows = []; const imported = [];
     rows.forEach((row, index) => {
       const values = validate(row); const requested = String(row.inventoryNumber || '').trim();
@@ -296,7 +358,9 @@ function registerInventoryRoutes({
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
     const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, 'Regal/Fach': item.stockStructureId || '', Status: item.status, Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
-    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), archived ? 'Archiv' : 'Inventar');
+    const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
+      .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
+    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');
     const fileName = `${archived ? 'inventar-archiv' : 'inventar'}-${new Date().toISOString().slice(0, 10)}.${format}`;
     res.json({ fileName, fileBase64: XLSX.write(workbook, { type: 'buffer', bookType: format }).toString('base64') });
   });

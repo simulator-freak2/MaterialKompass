@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -6,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/app_http_client.dart';
+import '../services/authenticated_api_client.dart';
+import '../services/debouncer.dart';
 import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
@@ -23,6 +27,7 @@ class ProcurementPage extends StatefulWidget {
 
 class _ProcurementPageState extends State<ProcurementPage> {
   final _search = TextEditingController();
+  final _searchDebouncer = Debouncer();
   List<Map<String, dynamic>> _requests = [];
   List<Map<String, dynamic>> _suppliers = [];
   List<Map<String, dynamic>> _categories = [];
@@ -41,6 +46,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
         'Authorization': 'Bearer ${widget.token}',
         'Content-Type': 'application/json',
       };
+  AuthenticatedApiClient get _api => AuthenticatedApiClient(widget.token);
 
   bool _can(String permission) => _permissions.contains(permission);
   bool get _canPrintLabels =>
@@ -63,12 +69,15 @@ class _ProcurementPageState extends State<ProcurementPage> {
   @override
   void dispose() {
     _search.removeListener(_refreshView);
+    _searchDebouncer.dispose();
     _search.dispose();
     super.dispose();
   }
 
   void _refreshView() {
-    if (mounted) setState(() {});
+    _searchDebouncer.run(() {
+      if (mounted) setState(() {});
+    });
   }
 
   List<Map<String, dynamic>> _asList(http.Response response) =>
@@ -80,16 +89,22 @@ class _ProcurementPageState extends State<ProcurementPage> {
     if (mounted) setState(() => _loading = true);
     try {
       final responses = await Future.wait([
-        http.get(Uri.parse('$apiBaseUrl/api/procurement'), headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/suppliers'), headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/categories'), headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/locations'), headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/procurement'),
             headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/procurement-email-inbox'),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/suppliers'),
             headers: _headers),
-        http.get(Uri.parse('$apiBaseUrl/api/departments'), headers: _headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/categories'),
+            headers: _headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/locations'),
+            headers: _headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
+            headers: _headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/auth/me'),
+            headers: _headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/procurement-email-inbox'),
+            headers: _headers),
+        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/departments'),
+            headers: _headers),
       ]);
       if (responses.any((response) => response.statusCode == 401)) {
         widget.onLogout?.call();
@@ -132,29 +147,13 @@ class _ProcurementPageState extends State<ProcurementPage> {
 
   Future<dynamic> _request(String path,
       {String method = 'GET', Object? body}) async {
-    final uri = Uri.parse('$apiBaseUrl$path');
-    late http.Response response;
-    if (method == 'POST') {
-      response = await http.post(uri,
-          headers: _headers, body: body == null ? null : jsonEncode(body));
-    } else if (method == 'PUT') {
-      response = await http.put(uri,
-          headers: _headers, body: body == null ? null : jsonEncode(body));
-    } else if (method == 'DELETE') {
-      response = await http.delete(uri, headers: _headers);
-    } else {
-      response = await http.get(uri, headers: _headers);
-    }
-    final data = response.body.isEmpty ? {} : jsonDecode(response.body);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      _message(
-          data is Map
-              ? data['error']?.toString() ?? 'Aktion fehlgeschlagen.'
-              : 'Aktion fehlgeschlagen.',
-          error: true);
+    try {
+      return await _api.request(path, method: method, body: body);
+    } on AuthenticatedApiException catch (error) {
+      if (error.statusCode == 401) widget.onLogout?.call();
+      _message(error.message, error: true);
       return null;
     }
-    return data;
   }
 
   void _message(String text, {bool error = false}) {
@@ -801,7 +800,9 @@ class _ProcurementPageState extends State<ProcurementPage> {
 
   Future<void> _supplierDialog([Map<String, dynamic>? supplier]) async {
     final payload = await showDialog<Map<String, dynamic>>(
-        context: context, builder: (_) => SupplierDialog(supplier: supplier));
+        context: context,
+        builder: (_) =>
+            SupplierDialog(supplier: supplier, token: widget.token));
     if (payload == null) return;
     final result = await _request(
         supplier == null
@@ -997,8 +998,25 @@ class _ProcurementPageState extends State<ProcurementPage> {
             ]),
       );
 
-  Widget _overview() =>
-      Column(children: [_toolbar(), Expanded(child: _requestList(_filtered))]);
+  Widget _overview() => Column(children: [
+        _toolbar(),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          child: Card(
+            child: ListTile(
+              leading: Icon(Icons.forward_to_inbox_outlined),
+              title: Text('Lieferscheine und Angebote per E-Mail einreichen'),
+              subtitle: Text(
+                'Lieferscheine und Angebote können über '
+                'angebote@materialkompass.org eingereicht werden. Wenn eine '
+                'eindeutige Zuordnung möglich ist, werden sie dem passenden '
+                'Vorgang zugeordnet.',
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: _requestList(_filtered)),
+      ]);
 
   Widget _approvals() {
     final pending =
@@ -1190,6 +1208,21 @@ class _ProcurementPageState extends State<ProcurementPage> {
         _ => Colors.blueGrey.shade700,
       };
 
+  String _supplierAddress(Map<String, dynamic> supplier) {
+    final structured = [
+      [supplier['street'], supplier['houseNumber']]
+          .where((value) => value?.toString().trim().isNotEmpty == true)
+          .join(' '),
+      [supplier['postalCode'], supplier['city']]
+          .where((value) => value?.toString().trim().isNotEmpty == true)
+          .join(' '),
+      supplier['country']?.toString().trim() ?? '',
+    ].where((value) => value.isNotEmpty).join(', ');
+    return structured.isNotEmpty
+        ? structured
+        : supplier['address']?.toString().trim() ?? '';
+  }
+
   Widget _supplierView() => Column(children: [
         Padding(
             padding: const EdgeInsets.all(20),
@@ -1218,6 +1251,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
                                   : Icons.local_shipping_outlined),
                               title: Text(supplier['name']),
                               subtitle: Text([
+                                _supplierAddress(supplier),
                                 supplier['customerNumber'],
                                 supplier['email'],
                                 supplier['phone'],
@@ -2097,14 +2131,51 @@ class _TransferDialogState extends State<TransferDialog> {
 
 class SupplierDialog extends StatefulWidget {
   final Map<String, dynamic>? supplier;
-  const SupplierDialog({this.supplier, super.key});
+  final String token;
+  const SupplierDialog({this.supplier, required this.token, super.key});
   @override
   State<SupplierDialog> createState() => _SupplierDialogState();
 }
 
 class _SupplierDialogState extends State<SupplierDialog> {
   late final Map<String, TextEditingController> c;
+  Timer? _localityTimer, _streetTimer;
+  List<String> _localities = [], _streets = [];
+  int _localityRequest = 0, _streetRequest = 0;
   bool active = true;
+  bool _loadingLocalities = false, _loadingStreets = false;
+  bool _suppressCityLookup = false, _suppressStreetLookup = false;
+  String? _lookupMessage, _validationMessage, _legacyAddress;
+
+  static const _countryAliases = {
+    'de': 'de',
+    'deutschland': 'de',
+    'germany': 'de',
+    'at': 'at',
+    'austria': 'at',
+    'österreich': 'at',
+    'oesterreich': 'at',
+    'ch': 'ch',
+    'schweiz': 'ch',
+    'switzerland': 'ch',
+    'suisse': 'ch',
+    'svizzera': 'ch',
+    'li': 'li',
+    'liechtenstein': 'li',
+  };
+
+  String? get _countryCode =>
+      _countryAliases[c['country']!.text.trim().toLowerCase()];
+
+  bool get _postalCodeComplete {
+    final postalCode = c['postalCode']!.text.trim();
+    return switch (_countryCode) {
+      'de' => RegExp(r'^\d{5}$').hasMatch(postalCode),
+      'at' || 'ch' || 'li' => RegExp(r'^\d{4}$').hasMatch(postalCode),
+      _ => false,
+    };
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2112,7 +2183,11 @@ class _SupplierDialogState extends State<SupplierDialog> {
       for (final key in [
         'name',
         'contact',
-        'address',
+        'street',
+        'houseNumber',
+        'postalCode',
+        'city',
+        'country',
         'customerNumber',
         'email',
         'phone',
@@ -2122,7 +2197,240 @@ class _SupplierDialogState extends State<SupplierDialog> {
         key:
             TextEditingController(text: widget.supplier?[key]?.toString() ?? '')
     };
+    if (c['country']!.text.trim().isEmpty) c['country']!.text = 'Deutschland';
+    final hasStructuredAddress = ['street', 'houseNumber', 'postalCode', 'city']
+        .any((key) => c[key]!.text.trim().isNotEmpty);
+    final oldAddress = widget.supplier?['address']?.toString().trim() ?? '';
+    if (!hasStructuredAddress && oldAddress.isNotEmpty) {
+      _legacyAddress = oldAddress;
+    }
     active = widget.supplier?['active'] != false;
+    c['postalCode']!.addListener(_scheduleLocalities);
+    c['country']!.addListener(_scheduleLocalities);
+    c['city']!.addListener(_cityChanged);
+    c['street']!.addListener(_scheduleStreets);
+  }
+
+  @override
+  void dispose() {
+    _localityTimer?.cancel();
+    _streetTimer?.cancel();
+    for (final controller in c.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _cityChanged() {
+    if (_suppressCityLookup) return;
+    if (_streets.isNotEmpty) setState(() => _streets = []);
+    _scheduleStreets();
+  }
+
+  void _scheduleLocalities() {
+    _localityTimer?.cancel();
+    _localityRequest++;
+    if (!_postalCodeComplete) {
+      final country = c['country']!.text.trim();
+      final postalCode = c['postalCode']!.text.trim();
+      final clearUnsupportedMessage = _countryCode != null &&
+          _lookupMessage?.startsWith('Für dieses Land') == true;
+      if (_localities.isNotEmpty ||
+          _loadingLocalities ||
+          clearUnsupportedMessage) {
+        setState(() {
+          _localities = [];
+          _loadingLocalities = false;
+          if (clearUnsupportedMessage) _lookupMessage = null;
+        });
+      }
+      if (_countryCode == null && country.isNotEmpty && postalCode.isNotEmpty) {
+        _localityTimer = Timer(const Duration(milliseconds: 450), () {
+          if (!mounted || country != c['country']!.text.trim()) return;
+          setState(() => _lookupMessage =
+              'Für dieses Land ist keine automatische Suche verfügbar. Die Adresse kann manuell eingegeben werden.');
+        });
+      }
+      return;
+    }
+    _localityTimer = Timer(const Duration(milliseconds: 450), _loadLocalities);
+  }
+
+  void _scheduleStreets() {
+    if (_suppressStreetLookup) return;
+    _streetTimer?.cancel();
+    _streetRequest++;
+    final query = c['street']!.text.trim();
+    if (!_postalCodeComplete ||
+        c['city']!.text.trim().isEmpty ||
+        query.length < 3) {
+      if (_streets.isNotEmpty || _loadingStreets) {
+        setState(() {
+          _streets = [];
+          _loadingStreets = false;
+        });
+      }
+      return;
+    }
+    _streetTimer = Timer(const Duration(milliseconds: 450), _loadStreets);
+  }
+
+  Future<Map<String, dynamic>?> _lookup(
+      String path, Map<String, String> queryParameters) async {
+    try {
+      final uri = Uri.parse('$apiBaseUrl$path')
+          .replace(queryParameters: queryParameters);
+      final response = await AppHttpClient.get(uri, headers: {
+        'Authorization': 'Bearer ${widget.token}',
+        'Content-Type': 'application/json',
+      }).timeout(const Duration(seconds: 7));
+      final data = jsonDecode(response.body);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(data is Map
+            ? data['error']?.toString() ?? 'Adresssuche fehlgeschlagen.'
+            : 'Adresssuche fehlgeschlagen.');
+      }
+      return Map<String, dynamic>.from(data as Map);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _lookupMessage =
+            'Die automatische Adresssuche ist momentan nicht verfügbar. Alle Felder können manuell ausgefüllt werden.');
+      }
+      return null;
+    }
+  }
+
+  List<String> _suggestions(Map<String, dynamic> data) =>
+      ((data['suggestions'] as List?) ?? const [])
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
+          .toList();
+
+  Future<void> _loadLocalities() async {
+    final request = ++_localityRequest;
+    setState(() {
+      _loadingLocalities = true;
+      _lookupMessage = null;
+    });
+    final data = await _lookup('/api/address-suggestions/localities', {
+      'country': c['country']!.text.trim(),
+      'postalCode': c['postalCode']!.text.trim(),
+    });
+    if (!mounted || request != _localityRequest) return;
+    final values = data == null ? <String>[] : _suggestions(data);
+    setState(() {
+      _loadingLocalities = false;
+      _localities = values;
+      if (data?['supported'] == false) {
+        _lookupMessage =
+            'Für dieses Land ist keine automatische Suche verfügbar. Der Ort kann manuell eingegeben werden.';
+      }
+    });
+    if (values.length == 1) _selectCity(values.single);
+  }
+
+  Future<void> _loadStreets() async {
+    final request = ++_streetRequest;
+    setState(() {
+      _loadingStreets = true;
+      _lookupMessage = null;
+    });
+    final data = await _lookup('/api/address-suggestions/streets', {
+      'country': c['country']!.text.trim(),
+      'postalCode': c['postalCode']!.text.trim(),
+      'city': c['city']!.text.trim(),
+      'query': c['street']!.text.trim(),
+    });
+    if (!mounted || request != _streetRequest) return;
+    setState(() {
+      _loadingStreets = false;
+      _streets = data == null ? [] : _suggestions(data);
+      if (data?['supported'] == false) {
+        _lookupMessage =
+            'Für dieses Land ist keine automatische Suche verfügbar. Die Straße kann manuell eingegeben werden.';
+      }
+    });
+  }
+
+  void _selectCity(String value) {
+    _suppressCityLookup = true;
+    c['city']!.text = value;
+    _suppressCityLookup = false;
+    setState(() {
+      _localities = [];
+      _streets = [];
+    });
+    _scheduleStreets();
+  }
+
+  void _selectStreet(String value) {
+    _suppressStreetLookup = true;
+    c['street']!.text = value;
+    _suppressStreetLookup = false;
+    setState(() => _streets = []);
+  }
+
+  Widget _addressField(
+          TextEditingController controller, String label, double width,
+          {bool loading = false, TextInputType? keyboardType}) =>
+      SizedBox(
+          width: width,
+          child: TextField(
+              controller: controller,
+              keyboardType: keyboardType,
+              decoration: InputDecoration(
+                  labelText: label,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: loading
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2)))
+                      : null)));
+
+  Widget _picker(
+          String label, List<String> values, ValueChanged<String> onSelected) =>
+      SizedBox(
+          width: 600,
+          child: DropdownButtonFormField<String>(
+              key: ValueKey('$label:${values.join('|')}'),
+              decoration: InputDecoration(
+                  labelText: label, border: const OutlineInputBorder()),
+              isExpanded: true,
+              items: values
+                  .map((value) => DropdownMenuItem(
+                      value: value,
+                      child: Text(value, overflow: TextOverflow.ellipsis)))
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) onSelected(value);
+              }));
+
+  void _save() {
+    final missing = [
+      'name',
+      'street',
+      'houseNumber',
+      'postalCode',
+      'city',
+      'country'
+    ].any((key) => c[key]!.text.trim().isEmpty);
+    if (missing) {
+      setState(() => _validationMessage =
+          'Bitte Name, Straße, Hausnummer, Postleitzahl, Ort und Land ausfüllen.');
+      return;
+    }
+    if (_countryCode == 'de' &&
+        !RegExp(r'^\d{5}$').hasMatch(c['postalCode']!.text.trim())) {
+      setState(() => _validationMessage =
+          'Eine deutsche Postleitzahl muss aus genau fünf Ziffern bestehen.');
+      return;
+    }
+    Navigator.pop(context, {
+      for (final entry in c.entries) entry.key: entry.value.text.trim(),
+      'active': active
+    });
   }
 
   @override
@@ -2132,37 +2440,90 @@ class _SupplierDialogState extends State<SupplierDialog> {
               : 'Lieferant bearbeiten'),
           content: SizedBox(
               width: 650,
-              child: Wrap(spacing: 12, runSpacing: 12, children: [
-                field(c['name']!, 'Name *', 300),
-                field(c['contact']!, 'Ansprechpartner', 280),
-                field(c['address']!, 'Anschrift', 600, lines: 2),
-                field(c['customerNumber']!, 'Kundennummer', 200),
-                field(c['email']!, 'E-Mail', 280),
-                field(c['phone']!, 'Telefon', 220),
-                field(c['website']!, 'Website', 280),
-                field(c['paymentTerms']!, 'Zahlungsbedingungen', 280),
-                SizedBox(
-                    width: 200,
-                    child: SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Aktiv'),
-                        value: active,
-                        onChanged: (v) => setState(() => active = v)))
-              ])),
+              child: SingleChildScrollView(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Wrap(spacing: 12, runSpacing: 12, children: [
+                  field(c['name']!, 'Name *', 300),
+                  field(c['contact']!, 'Ansprechpartner', 280),
+                ]),
+                const Padding(
+                    padding: EdgeInsets.only(top: 18, bottom: 12),
+                    child: Divider()),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Adresse',
+                        style: Theme.of(context).textTheme.titleMedium)),
+                if (_legacyAddress != null)
+                  Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(8)),
+                      child: Text(
+                          'Bisherige Anschrift: $_legacyAddress\nBitte in die strukturierten Felder übernehmen.')),
+                Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Wrap(spacing: 12, runSpacing: 12, children: [
+                      _addressField(c['street']!, 'Straße *', 430,
+                          loading: _loadingStreets),
+                      _addressField(c['houseNumber']!, 'Hausnummer *', 158),
+                      _addressField(c['postalCode']!, 'Postleitzahl *', 180,
+                          loading: _loadingLocalities),
+                      _addressField(c['city']!, 'Ort *', 408),
+                      _addressField(c['country']!, 'Land *', 300),
+                    ])),
+                if (_localities.length > 1)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child:
+                          _picker('Ort auswählen', _localities, _selectCity)),
+                if (_streets.isNotEmpty)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child:
+                          _picker('Straße auswählen', _streets, _selectStreet)),
+                if (_lookupMessage != null)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(_lookupMessage!,
+                              style: Theme.of(context).textTheme.bodySmall))),
+                const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Divider()),
+                Wrap(spacing: 12, runSpacing: 12, children: [
+                  field(c['customerNumber']!, 'Kundennummer', 200),
+                  field(c['email']!, 'E-Mail', 280),
+                  field(c['phone']!, 'Telefon', 220),
+                  field(c['website']!, 'Website', 280),
+                  field(c['paymentTerms']!, 'Zahlungsbedingungen', 280),
+                  SizedBox(
+                      width: 200,
+                      child: SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Aktiv'),
+                          value: active,
+                          onChanged: (v) => setState(() => active = v)))
+                ]),
+                if (_validationMessage != null)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(_validationMessage!,
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error))))
+              ]))),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Abbrechen')),
-            FilledButton(
-                onPressed: () {
-                  if (c['name']!.text.trim().isEmpty) return;
-                  Navigator.pop(context, {
-                    for (final entry in c.entries)
-                      entry.key: entry.value.text.trim(),
-                    'active': active
-                  });
-                },
-                child: const Text('Speichern'))
+            FilledButton(onPressed: _save, child: const Text('Speichern'))
           ]);
 }
 

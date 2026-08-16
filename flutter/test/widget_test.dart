@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:materialkompass/main.dart';
+import 'package:materialkompass/pages/categories_page.dart';
 import 'package:materialkompass/pages/dashboard_page.dart';
+import 'package:materialkompass/pages/inventory_page.dart';
+import 'package:materialkompass/pages/procurement_page.dart';
 import 'package:materialkompass/pages/users_page.dart';
+import 'package:materialkompass/pages/wardrobe_page.dart';
 import 'package:materialkompass/widgets/stat_card.dart';
 
 void main() {
@@ -464,6 +468,35 @@ void main() {
             widget.decoration?.labelText == 'Beantragtes Budget *'));
     expect(budgetField.controller?.text, '125.5');
     expect(find.text('Beschaffungsentwurf bearbeiten'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Supplier dialog requires a structured address and shows legacy data',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: SupplierDialog(
+          token: 'demo-token',
+          supplier: {
+            'name': 'Althandel',
+            'address': 'Alte Freitextanschrift 1, Beispielstadt',
+            'active': true,
+          },
+        ),
+      ),
+    ));
+
+    expect(find.text('Straße *'), findsOneWidget);
+    expect(find.text('Hausnummer *'), findsOneWidget);
+    expect(find.text('Postleitzahl *'), findsOneWidget);
+    expect(find.text('Ort *'), findsOneWidget);
+    expect(find.text('Land *'), findsOneWidget);
+    expect(find.textContaining('Bisherige Anschrift:'), findsOneWidget);
+
+    await tester.tap(find.text('Speichern'));
+    await tester.pump();
+    expect(
+        find.textContaining('Bitte Name, Straße, Hausnummer'), findsOneWidget);
   });
 
   testWidgets('Order dialog treats offer price as gross line total',

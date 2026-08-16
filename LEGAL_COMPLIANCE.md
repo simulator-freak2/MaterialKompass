@@ -58,6 +58,12 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
 | Audit/Export | pseudonymisierter Akteur, Aktion, Zeitpunkt | Sicherheit und Nachvollziehbarkeit | Standard 1095 bzw. 365 Tage, konfigurierbar |
 | E-Mail/QR | Postfachdaten, Metadaten, Anmeldecode-Metadaten | Import und Anmeldung | Import-Policy bzw. 30 Tage nach QR-Ablauf |
 
+Bei der optionalen Lieferanten-Adresssuche übermittelt das Backend nur Land,
+Postleitzahl, Ort und ein Straßennamen-Präfix an den konfigurierten OpenPLZ-Dienst.
+Lieferantenname und Kontaktdaten werden nicht übertragen. Vor Produktivbetrieb sind
+der konkrete Dienst, dessen Datenschutzhinweise und gegebenenfalls der Betrieb einer
+eigenen Instanz in das Verzeichnis der Verarbeitungstätigkeiten aufzunehmen.
+
 ## Betroffenenanfragen
 
 Die Datenkopie unter **Mein Account → Meine Daten herunterladen** erfasst

@@ -3,21 +3,21 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/app_http_client.dart';
 import '../widgets/stat_card.dart';
-import 'categories_page.dart';
-import 'defects_page.dart';
+import 'categories_page.dart' deferred as categories_page;
+import 'defects_page.dart' deferred as defects_page;
 import 'login_page.dart';
-import 'inventory_page.dart';
-import 'knowledge_base_page.dart';
-import 'locations_page.dart';
-import 'procurement_page.dart';
-import 'profile_page.dart';
-import 'users_page.dart';
-import 'wardrobe_page.dart';
-import 'stocktakes_page.dart';
+import 'inventory_page.dart' deferred as inventory_page;
+import 'knowledge_base_page.dart' deferred as knowledge_base_page;
+import 'locations_page.dart' deferred as locations_page;
+import 'procurement_page.dart' deferred as procurement_page;
+import 'profile_page.dart' deferred as profile_page;
+import 'stocktakes_page.dart' deferred as stocktakes_page;
+import 'users_page.dart' deferred as users_page;
+import 'wardrobe_page.dart' deferred as wardrobe_page;
 
 typedef DashboardLoader = Future<Map<String, dynamic>> Function();
 typedef AppExit = Future<void> Function();
@@ -62,9 +62,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<Map<String, dynamic>> loadDashboard() async {
     final responses = await Future.wait([
-      http.get(Uri.parse('$apiBaseUrl/api/dashboard'),
+      AppHttpClient.get(Uri.parse('$apiBaseUrl/api/dashboard'),
           headers: {'Authorization': 'Bearer ${widget.token}'}),
-      http.get(Uri.parse('$apiBaseUrl/api/auth/me'),
+      AppHttpClient.get(Uri.parse('$apiBaseUrl/api/auth/me'),
           headers: {'Authorization': 'Bearer ${widget.token}'}),
     ]);
     if (responses.any((response) => response.statusCode != 200)) {
@@ -111,6 +111,39 @@ class _DashboardPageState extends State<DashboardPage> {
     final future = _loadDashboard();
     setState(() => _dashboardFuture = future);
     await future;
+  }
+
+  Future<void> _loadAndOpen(
+    Future<void> Function() loadLibrary,
+    Widget Function() pageBuilder,
+  ) async {
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+    );
+    try {
+      await loadLibrary();
+      if (rootNavigator.mounted) rootNavigator.pop();
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => pageBuilder()),
+      );
+    } catch (_) {
+      if (rootNavigator.mounted) rootNavigator.pop();
+      if (mounted) {
+        messenger.showSnackBar(const SnackBar(
+          content: Text(
+            'Der Bereich konnte nicht geladen werden. Bitte die Verbindung prüfen.',
+          ),
+        ));
+      }
+    }
   }
 
   String _formatActivityTime(Object? value) {
@@ -164,11 +197,13 @@ class _DashboardPageState extends State<DashboardPage> {
           IconButton(
             icon: const Icon(Icons.account_circle_outlined),
             tooltip: 'Mein Account',
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => ProfilePage(
-                  token: widget.token,
-                  onAccountDeleted: () => _logout(context)),
-            )),
+            onPressed: () => _loadAndOpen(
+              profile_page.loadLibrary,
+              () => profile_page.ProfilePage(
+                token: widget.token,
+                onAccountDeleted: () => _logout(context),
+              ),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -256,33 +291,36 @@ class _DashboardPageState extends State<DashboardPage> {
                   icon: Icons.menu_book_outlined,
                   label: 'Handbuch',
                   description: 'Anleitungen und Antworten durchsuchen',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => const KnowledgeBasePage(),
-                  )),
+                  onTap: () => _loadAndOpen(
+                    knowledge_base_page.loadLibrary,
+                    () => knowledge_base_page.KnowledgeBasePage(),
+                  ),
                 ),
                 if (can('inventory.read'))
                   _DashboardAction(
                     icon: Icons.inventory_2_outlined,
                     label: 'Inventar',
                     description: 'Bestände und Material verwalten',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => InventoryPage(
+                    onTap: () => _loadAndOpen(
+                      inventory_page.loadLibrary,
+                      () => inventory_page.InventoryPage(
                         token: widget.token,
                         onLogout: () => _logout(context),
                       ),
-                    )),
+                    ),
                   ),
                 if (can('clothing.read'))
                   _DashboardAction(
                     icon: Icons.checkroom,
                     label: 'Kleiderkammer',
                     description: 'Kleidung und Ausgaben einsehen',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => WardrobePage(
+                    onTap: () => _loadAndOpen(
+                      wardrobe_page.loadLibrary,
+                      () => wardrobe_page.WardrobePage(
                         token: widget.token,
                         onLogout: () => _logout(context),
                       ),
-                    )),
+                    ),
                   ),
                 if (can('stocktakes.read'))
                   _DashboardAction(
@@ -290,60 +328,66 @@ class _DashboardPageState extends State<DashboardPage> {
                     label: 'Inventuren',
                     description:
                         'Bestände digital oder mit Zähllisten aufnehmen',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => StocktakesPage(
+                    onTap: () => _loadAndOpen(
+                      stocktakes_page.loadLibrary,
+                      () => stocktakes_page.StocktakesPage(
                         token: widget.token,
                         onLogout: () => _logout(context),
                       ),
-                    )),
+                    ),
                   ),
                 if (can('defects.read'))
                   _DashboardAction(
                     icon: Icons.report_problem_outlined,
                     label: 'Mängel',
                     description: 'Mängel und E-Mail-Meldungen bearbeiten',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => DefectsPage(token: widget.token),
-                    )),
+                    onTap: () => _loadAndOpen(
+                      defects_page.loadLibrary,
+                      () => defects_page.DefectsPage(token: widget.token),
+                    ),
                   ),
                 if (can('procurement.read'))
                   _DashboardAction(
                     icon: Icons.shopping_cart_outlined,
                     label: 'Beschaffung',
                     description: 'Anträge, Freigaben und Bestellungen',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => ProcurementPage(
+                    onTap: () => _loadAndOpen(
+                      procurement_page.loadLibrary,
+                      () => procurement_page.ProcurementPage(
                         token: widget.token,
                         onLogout: () => _logout(context),
                       ),
-                    )),
+                    ),
                   ),
                 if (can('categories.read'))
                   _DashboardAction(
                     icon: Icons.category_outlined,
                     label: 'Kategorien',
                     description: 'Materialstruktur einsehen',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => CategoriesPage(token: widget.token),
-                    )),
+                    onTap: () => _loadAndOpen(
+                      categories_page.loadLibrary,
+                      () => categories_page.CategoriesPage(token: widget.token),
+                    ),
                   ),
                 if (can('locations.read'))
                   _DashboardAction(
                     icon: Icons.warehouse_outlined,
                     label: 'Lagerorte',
                     description: 'Lager und Lagerplätze öffnen',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => LocationsPage(token: widget.token),
-                    )),
+                    onTap: () => _loadAndOpen(
+                      locations_page.loadLibrary,
+                      () => locations_page.LocationsPage(token: widget.token),
+                    ),
                   ),
                 if (can('users.read') && can('roles.read'))
                   _DashboardAction(
                     icon: Icons.manage_accounts_outlined,
                     label: 'Nutzerverwaltung',
                     description: 'Konten, Rollen und Fachbereiche',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => UsersPage(token: widget.token),
-                    )),
+                    onTap: () => _loadAndOpen(
+                      users_page.loadLibrary,
+                      () => users_page.UsersPage(token: widget.token),
+                    ),
                   ),
               ];
 

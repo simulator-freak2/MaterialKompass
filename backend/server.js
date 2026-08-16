@@ -6,6 +6,7 @@ const { verifyAccountMailTransport } = require('./src/mailer');
 const { createDefectMailMonitor } = require('./src/defect-mail-monitor');
 const { createStocktakeMailMonitor } = require('./src/stocktake-mail-monitor');
 const { createProcurementMailMonitor } = require('./src/procurement-mail-monitor');
+const bcrypt = require('bcryptjs');
 
 async function start() {
   const config = loadRuntimeConfig();
@@ -34,7 +35,16 @@ async function start() {
       if (config.nodeEnv === 'production' && !process.env.INITIAL_ADMIN_PASSWORD) {
         throw new Error('INITIAL_ADMIN_PASSWORD muss für den ersten Produktivstart gesetzt sein.');
       }
-      userData.users = [structuredClone(seedData.users.find((user) => user.roles.includes('Admin')))];
+      const initialAdmin = structuredClone(
+        seedData.users.find((user) => user.roles.includes('Admin')),
+      );
+      if (process.env.INITIAL_ADMIN_PASSWORD) {
+        initialAdmin.passwordHash = await bcrypt.hash(
+          process.env.INITIAL_ADMIN_PASSWORD,
+          12,
+        );
+      }
+      userData.users = [initialAdmin];
       await store.saveUser(userData.users[0]);
       console.warn('Erster Admin wurde angelegt. Startpasswort vor Produktivbetrieb ändern.');
     }

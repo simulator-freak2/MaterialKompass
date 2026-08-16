@@ -93,8 +93,8 @@ async function main() {
       'branding',
       'materialkompass_logo_mit_schriftzug.png',
     ),
-    1600,
-    534,
+    800,
+    267,
   );
   await renderTransparent(
     sourceIcon,

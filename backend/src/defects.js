@@ -17,7 +17,17 @@ const MAX_IMAGES = 10;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const REPORT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const MAX_REPORT_BYTES = 10 * 1024 * 1024;
-const { generateDefectReportPdf } = require('./defect-report-template');
+const MAX_DEFECT_RECORDS = 50_000;
+const MAX_DEFECT_IMAGES_TOTAL = 5_000;
+const MAX_NOTIFICATION_RECORDS = 100_000;
+const MAX_DEFECT_STORAGE_BYTES = 256 * 1024 * 1024;
+const { neutralizeSpreadsheetCell } = require('./security-utils');
+
+let defectReportTemplateModule;
+function defectReportTemplate() {
+  defectReportTemplateModule ||= require('./defect-report-template');
+  return defectReportTemplateModule;
+}
 
 function text(value, max = 10_000) {
   return String(value ?? '').trim().slice(0, max);
@@ -40,7 +50,7 @@ function similarity(left, right) {
 }
 
 function csvCell(value) {
-  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+  return `"${neutralizeSpreadsheetCell(value).replace(/"/g, '""')}"`;
 }
 
 function pdfEscape(value) {
@@ -233,6 +243,9 @@ function registerDefectManagement({
         message: `${report.title} · ${report.priority}`,
         defectId: report.id, readAt: null, createdAt: nowIso(),
       }));
+    if (notifications.length > MAX_NOTIFICATION_RECORDS) {
+      notifications.splice(0, notifications.length - MAX_NOTIFICATION_RECORDS);
+    }
   }
 
   function validateCreate(body) {
@@ -256,6 +269,9 @@ function registerDefectManagement({
   }
 
   function createReport(body, user, source = {}) {
+    if (defectReports.length >= MAX_DEFECT_RECORDS) {
+      return { error: 'Die maximale Anzahl an Mängelmeldungen ist erreicht.', status: 507 };
+    }
     const values = validateCreate(body);
     if (values.error) return values;
     const createdAt = nowIso();
@@ -331,7 +347,10 @@ function registerDefectManagement({
 
   app.get('/api/defects', authMiddleware, requirePermission('defects.read'), (req, res) => {
     const includeArchived = String(req.query.archived || '') === 'all' || String(req.query.archived) === 'true';
-    res.json(findVisible(req, includeArchived).slice().reverse().map((report) => publicDefect(report)));
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    res.json(findVisible(req, includeArchived).slice().reverse()
+      .slice(offset, offset + limit).map((report) => publicDefect(report)));
   });
 
   app.get('/api/defects/summary', authMiddleware, requirePermission('defects.read'), (req, res) => {
@@ -364,7 +383,9 @@ function registerDefectManagement({
     let buffer; let fileName; let mimeType;
     if (format === 'xlsx' || format === 'ods') {
       const workbook = XLSX.utils.book_new();
-      const sheet = XLSX.utils.json_to_sheet(rows);
+      const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
+        .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
+      const sheet = XLSX.utils.json_to_sheet(safeRows);
       sheet['!cols'] = Object.keys(rows[0] || { Mangelnummer: '' }).map(() => ({ wch: 22 }));
       XLSX.utils.book_append_sheet(workbook, sheet, 'Mängel');
       buffer = XLSX.write(workbook, { type: 'buffer', bookType: format });
@@ -391,7 +412,7 @@ function registerDefectManagement({
   app.post('/api/defects', authMiddleware, requirePermission('defects.report'), (req, res) => {
     if (!scopeFor(req.user, req.body.entityType)) return res.status(403).json({ error: 'Für diesen Bereich fehlt die Berechtigung.' });
     const result = createReport(req.body, req.user);
-    if (result.error) return res.status(400).json({ error: result.error });
+    if (result.error) return res.status(result.status || 400).json({ error: result.error });
     return res.status(201).json(publicDefect(result.report));
   });
 
@@ -459,7 +480,7 @@ function registerDefectManagement({
       { label: 'Änderungsverlauf', value: list(report.history, (item) => `${date(item.at)} ${item.actor || ''}: ${typeof item.details === 'string' ? item.details : item.action}`) },
     ];
     try {
-      const buffer = await generateDefectReportPdf({
+      const buffer = await defectReportTemplate().generateDefectReportPdf({
         inventoryNumber: entity.inventoryNumber,
         contactName: report.contactName,
         contactEmail: report.contactEmail,
@@ -793,11 +814,20 @@ function registerDefectManagement({
   app.post('/api/defects/:id/images', authMiddleware, requirePermission('defects.edit'), (req, res) => {
     const report = findDefect(req, res); if (!report) return;
     if (report.archivedAt || report.images.length >= MAX_IMAGES) return res.status(409).json({ error: `Maximal ${MAX_IMAGES} Bilder sind erlaubt.` });
+    if (defectReports.reduce((sum, entry) => sum + entry.images.length, 0) >= MAX_DEFECT_IMAGES_TOTAL) {
+      return res.status(507).json({ error: 'Die maximale Gesamtzahl an Mängelbildern ist erreicht.' });
+    }
     const mimeType = text(req.body.mimeType, 64).toLowerCase();
     const fileBase64 = String(req.body.fileBase64 || '').replace(/^data:[^;]+;base64,/, '');
     if (!IMAGE_MIME_TYPES.has(mimeType) || !fileBase64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(fileBase64)) return res.status(400).json({ error: 'Nur gültige JPEG- oder PNG-Bilder sind erlaubt.' });
     const bytes = Buffer.from(fileBase64, 'base64');
     if (bytes.length > MAX_IMAGE_BYTES) return res.status(413).json({ error: 'Ein Bild darf höchstens 8 MB groß sein.' });
+    const storedBinaryBytes = defectReports.reduce((sum, entry) => sum
+      + [...(entry.images || []), ...(entry.documents || [])].reduce((inner, file) =>
+        inner + Buffer.byteLength(file.fileBase64 || '', 'base64'), 0), 0);
+    if (storedBinaryBytes + bytes.length > MAX_DEFECT_STORAGE_BYTES) {
+      return res.status(507).json({ error: 'Das Speicherlimit für Mängeldateien ist erreicht.' });
+    }
     const validSignature = mimeType === 'image/png'
       ? bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
       : bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;

@@ -5,6 +5,10 @@ organisatorischen Maßnahmen stehen in [LEGAL_COMPLIANCE.md](LEGAL_COMPLIANCE.md
 
 MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Ortsgruppe.
 
+Neue Entwickler beginnen mit der [Architekturübersicht](ARCHITECTURE.md). Sie zeigt
+die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt für
+Änderungen.
+
 ## Aktueller Stand
 
 - Backend-API mit Express und JWT-Login
@@ -26,7 +30,8 @@ MaterialKompass ist eine interne Materialverwaltungssoftware für eine DLRG-Orts
 - Vollständige Beschaffung mit Anträgen, allgemeinen Kategorien und Brutto-Preisen
 - Beantragtes Budget auf Vorgangsebene ohne Einzelpreise im Antrag
 - Freigabeworkflow mit einer Freigabe durch Vorsitz oder Schatzmeister
-- Lieferanten- und Angebotsvergleich, teilbare Bestellungen und Budgetgrenzen
+- Lieferanten mit strukturierter Pflichtadresse und optionaler PLZ-/Straßensuche,
+  Angebotsvergleich, teilbare Bestellungen und Budgetgrenzen
 - Teil-/Mehrfachlieferungen, Beanstandungen und geprüfte Inventarübernahme
 - Beschaffungsdokumente sowie XLSX-, ODS- und PDF-Ausgabe
 
@@ -186,11 +191,61 @@ Neuaufbau des Backend-Containers erhalten. Das Schema wird bei einer leeren Date
 automatisch angelegt; Migrationen für bestehende Datenbanken werden weiterhin gezielt
 aus `backend/src/db/migrations` ausgeführt.
 
+### Automatische Datenbanksicherungen
+
+Der Compose-Dienst `backup` erstellt einmal täglich ab der in `BACKUP_HOUR_UTC`
+festgelegten UTC-Stunde einen transaktionskonsistenten, komprimierten MariaDB-Dump.
+Ein erfolgreicher Lauf wird für den jeweiligen UTC-Tag markiert, sodass Container-
+Neustarts keine unnötigen Mehrfachsicherungen erzeugen. Fehlgeschlagene Läufe werden
+alle 15 Minuten wiederholt. Standardmäßig liegen die Sicherungen im Serververzeichnis
+`/opt/materialkompass/backups`, wenn Compose aus `/opt/materialkompass` gestartet wird,
+und werden nach 30 Tagen entfernt. Ablage, Startstunde und Aufbewahrung werden in `.env`
+konfiguriert:
+
+```dotenv
+BACKUP_DIR=./backups
+BACKUP_HOUR_UTC=2
+BACKUP_RETENTION_DAYS=30
+```
+
+Jeder Dump erhält eine SHA-256-Prüfsumme. Status und Dateien lassen sich auf dem Server
+prüfen:
+
+```bash
+docker compose logs --tail=100 backup
+ls -la backups
+cd backups && sha256sum -c materialkompass-*.sql.gz.sha256
+```
+
+Vor dem ersten Produktiveinsatz und danach regelmäßig muss eine Wiederherstellung in
+eine separate Testdatenbank geprüft werden. Beispiel (Dateiname und Testdatenbank
+anpassen):
+
+```bash
+docker compose exec db sh -c \
+  'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -u root -e "CREATE DATABASE materialkompass_restore_test"'
+gunzip -c backups/materialkompass-20260701T020000Z.sql.gz \
+  | docker compose exec -T db sh -c \
+      'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb -u root materialkompass_restore_test'
+```
+
+Die Sicherungen liegen auf demselben Server und schützen damit vor Datenbankfehlern,
+nicht vor dem Ausfall oder Verlust des gesamten Servers. Für vollständige
+Ausfallsicherheit muss `BACKUP_DIR` zusätzlich verschlüsselt auf ein getrenntes System
+repliziert werden.
+
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
 `JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`, die MariaDB-,
 IONOS-SMTP- und `DEFECT_IMAP_*`-Werte müssen als Server-Umgebungsvariablen gesetzt werden. Der
 erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpasswort
 muss direkt nach der ersten Anmeldung geändert werden.
+
+Die Lieferantenverwaltung fragt Orte und Straßen ausschließlich über das Backend beim
+offenen DACH-Adressverzeichnis OpenPLZ ab. Übertragen werden dabei Land, Postleitzahl,
+Ort und die bereits eingegebenen Zeichen der Straße, jedoch keine Lieferanten- oder
+Kontaktdaten. Ohne erreichbaren Dienst bleiben alle Adressfelder manuell ausfüllbar.
+`ADDRESS_LOOKUP_BASE_URL` kann für den Betrieb einer eigenen OpenPLZ-Instanz angepasst
+werden; die Voreinstellung ist `https://openplzapi.org`.
 
 In Produktion muss `JWT_SECRET` mindestens 32 zufällige Zeichen enthalten und
 `APP_BASE_URL` HTTPS verwenden. Das Backend akzeptiert außerhalb von `/health` keine
@@ -228,6 +283,20 @@ Die Web-API ist beim Build konfigurierbar:
 ```bash
 flutter build web --dart-define=API_BASE_URL=https://materialkompass.org
 ```
+
+Der Web-Build teilt die Fachbereiche in bedarfsgeladene Module. Der eigene, bei jedem
+Build versionierte Service Worker hält die App-Oberfläche und bereits besuchte Bereiche
+bei kurzen Verbindungsabbrüchen verfügbar; API-Antworten werden aus Datenschutzgründen
+nicht darin gespeichert. Sichere Lesezugriffe werden bei vorübergehenden Netzfehlern
+einmal wiederholt, Schreibzugriffe dagegen nie automatisch.
+
+Android-Builds benötigen Java 17 oder neuer. Produktive APKs werden nur erstellt, wenn
+`flutter/android/key.properties` auf einen dauerhaften, nicht versionierten
+Release-Schlüssel verweist. Das Buildskript fällt absichtlich nicht auf einen
+Debug-Schlüssel zurück.
+
+Messwerte, Architekturentscheidungen, Plattformprüfungen und bekannte Grenzen stehen
+im [Performance- und Kompatibilitätsbericht](PERFORMANCE.md).
 
 Die Webanwendung muss auf `materialkompass.org` so ausgeliefert werden, dass Hash-Routen
 für `/#/verify-email` und `/#/password-reset` an Flutter gehen. Das Backend braucht für
@@ -322,7 +391,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.0.0
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.3.0
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -330,7 +399,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.0.0
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.3.0
 ```
 
 macOS wird auf einem Mac als DMG gebaut:
