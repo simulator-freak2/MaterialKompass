@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,9 @@ import 'package:flutter/services.dart';
 
 import '../constants.dart';
 import '../services/app_http_client.dart';
+import '../services/offline_http.dart' as offline_transport;
+import '../services/offline_session_service.dart';
+import '../services/offline_store.dart';
 import '../widgets/stat_card.dart';
 import 'categories_page.dart' deferred as categories_page;
 import 'defects_page.dart' deferred as defects_page;
@@ -26,11 +30,13 @@ class DashboardPage extends StatefulWidget {
   final String token;
   final DashboardLoader? dashboardLoader;
   final AppExit? appExit;
+  final WidgetBuilder? logoutPageBuilder;
 
   const DashboardPage({
     required this.token,
     this.dashboardLoader,
     this.appExit,
+    this.logoutPageBuilder,
     super.key,
   });
 
@@ -38,13 +44,37 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage>
+    with WidgetsBindingObserver {
   late Future<Map<String, dynamic>> _dashboardFuture;
+  Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(OfflineStore.instance.restoreStatus());
     _dashboardFuture = _loadDashboard();
+    _syncTimer = Timer.periodic(const Duration(minutes: 1), (_) => _sync());
+  }
+
+  Future<void> _sync() => offline_transport.flush(
+        headers: {'Authorization': 'Bearer ${widget.token}'},
+      );
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_sync());
+      unawaited(OfflineSessionService.prepare(widget.token));
+    }
+  }
+
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override
@@ -53,6 +83,7 @@ class _DashboardPageState extends State<DashboardPage> {
     if (oldWidget.token != widget.token ||
         oldWidget.dashboardLoader != widget.dashboardLoader) {
       _dashboardFuture = _loadDashboard();
+      unawaited(OfflineSessionService.prepare(widget.token));
     }
   }
 
@@ -75,7 +106,45 @@ class _DashboardPageState extends State<DashboardPage> {
     return dashboard;
   }
 
-  void _logout(BuildContext context) {
+  Future<void> _logout(BuildContext context) async {
+    final store = OfflineStore.instance;
+    final subject =
+        store.subjectFromHeaders({'Authorization': 'Bearer ${widget.token}'});
+    final pending = (await store.commands())
+        .where((entry) => entry.subject == subject)
+        .length;
+    if (pending > 0 && context.mounted) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Änderungen noch nicht synchronisiert'),
+          content: Text(
+            '$pending Offline-Änderungen sind noch nicht auf dem Server. '
+            'Zum Schutz vor Datenverlust bleibt die Anmeldung bestehen.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Angemeldet bleiben'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Änderungen verwerfen und abmelden'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true) return;
+      await store.discardCommands(subject);
+    }
+    if (!context.mounted) return;
+    if (widget.logoutPageBuilder != null) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: widget.logoutPageBuilder!),
+        (route) => false,
+      );
+      return;
+    }
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginPage()),
       (route) => false,
@@ -146,6 +215,175 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Future<void> _showOfflineStatus() async {
+    final store = OfflineStore.instance;
+    final headers = {'Authorization': 'Bearer ${widget.token}'};
+    final subject = store.subjectFromHeaders(headers);
+    final commands = (await store.commands())
+        .where((entry) => entry.subject == subject)
+        .toList();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Offline-Synchronisation'),
+          content: SizedBox(
+            width: 620,
+            child: commands.isEmpty
+                ? const Text('Alle Änderungen wurden synchronisiert.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: commands
+                        .map((entry) => ListTile(
+                              leading: Icon(entry.failure == null
+                                  ? Icons.schedule
+                                  : Icons.sync_problem),
+                              title: Text(
+                                  '${entry.method} ${Uri.parse(entry.uri).path}'),
+                              subtitle: Text(entry.failure ??
+                                  'Wartet seit ${_formatActivityTime(entry.createdAt.toIso8601String())} auf eine Verbindung.'),
+                              trailing: entry.failure == null
+                                  ? null
+                                  : IconButton(
+                                      tooltip: 'Abgelehnte Änderung verwerfen',
+                                      icon: const Icon(Icons.delete_outline),
+                                      onPressed: () async {
+                                        await store.discardCommand(
+                                            subject, entry.id);
+                                        commands.removeWhere((command) =>
+                                            command.id == entry.id);
+                                        setDialogState(() {});
+                                      },
+                                    ),
+                            ))
+                        .toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Schließen'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                await offline_transport.flush(headers: headers);
+                if (context.mounted) Navigator.pop(context);
+              },
+              icon: const Icon(Icons.sync),
+              label: const Text('Jetzt synchronisieren'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showOfflineSettings() async {
+    final store = OfflineStore.instance;
+    final settings = await store.settings();
+    final response = await AppHttpClient.get(
+      Uri.parse('$apiBaseUrl/api/locations'),
+      headers: {'Authorization': 'Bearer ${widget.token}'},
+    );
+    final locations = response.statusCode == 200
+        ? (jsonDecode(response.body) as List)
+            .cast<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList()
+        : <Map<String, dynamic>>[];
+    var mobileData = settings['mobileData'] != false;
+    var largeFileMb =
+        ((settings['largeFileBytes'] as num? ?? 10485760) / (1024 * 1024))
+            .round()
+            .clamp(1, 1024);
+    final selected = (settings['locationIds'] as List? ?? const [])
+        .map((entry) => entry.toString())
+        .toSet();
+    if (!mounted) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Offline-Einstellungen'),
+          content: SizedBox(
+            width: 620,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Synchronisation über Mobilfunk'),
+                  subtitle: const Text(
+                      'WLAN und LAN bleiben unabhängig davon erlaubt.'),
+                  value: mobileData,
+                  onChanged: (value) =>
+                      setDialogState(() => mobileData = value),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Grenze für große Dateien'),
+                  subtitle: Text('$largeFileMb MB · danach nur WLAN/LAN'),
+                ),
+                Slider(
+                  min: 1,
+                  max: 100,
+                  divisions: 99,
+                  value: largeFileMb.clamp(1, 100).toDouble(),
+                  label: '$largeFileMb MB',
+                  onChanged: (value) =>
+                      setDialogState(() => largeFileMb = value.round()),
+                ),
+                const Divider(),
+                const ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('Offline-Standorte'),
+                  subtitle: Text(
+                      'Ohne Auswahl werden alle berechtigten Standorte geladen.'),
+                ),
+                ...locations.map((entry) {
+                  final id = entry['id'].toString();
+                  return CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(entry['name']?.toString() ?? id),
+                    value: selected.contains(id),
+                    onChanged: (value) => setDialogState(() {
+                      if (value == true) {
+                        selected.add(id);
+                      } else {
+                        selected.remove(id);
+                      }
+                    }),
+                  );
+                }),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Speichern und aktualisieren'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    await store.saveSettings({
+      'mobileData': mobileData,
+      'largeFileBytes': largeFileMb * 1024 * 1024,
+      'locationIds': selected.toList(),
+    });
+    await OfflineSessionService.prepare(
+      widget.token,
+      locationIds: selected.toList(),
+    );
+  }
+
   String _formatActivityTime(Object? value) {
     final parsed = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
     if (parsed == null) return 'Zeitpunkt unbekannt';
@@ -189,6 +427,32 @@ class _DashboardPageState extends State<DashboardPage> {
       appBar: AppBar(
         title: const Text('Dashboard'),
         actions: [
+          ValueListenableBuilder<OfflineStatus>(
+            valueListenable: OfflineStore.instance.status,
+            builder: (context, status, _) => IconButton(
+              onPressed: _showOfflineStatus,
+              tooltip: status.offline
+                  ? 'Offline · ${status.pending} ausstehend'
+                  : status.syncing
+                      ? 'Synchronisierung läuft'
+                      : 'Online · ${status.pending} ausstehend',
+              icon: Badge(
+                isLabelVisible: status.pending > 0,
+                label: Text('${status.pending}'),
+                child: Icon(status.offline
+                    ? Icons.cloud_off
+                    : status.syncing
+                        ? Icons.sync
+                        : Icons.cloud_done),
+              ),
+            ),
+          ),
+          if (!kIsWeb)
+            IconButton(
+              icon: const Icon(Icons.offline_bolt_outlined),
+              tooltip: 'Offline-Einstellungen',
+              onPressed: _showOfflineSettings,
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Aktualisieren',

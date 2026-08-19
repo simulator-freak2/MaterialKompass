@@ -30,10 +30,91 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 - Vollständige Beschaffung mit Anträgen, allgemeinen Kategorien und Brutto-Preisen
 - Beantragtes Budget auf Vorgangsebene ohne Einzelpreise im Antrag
 - Freigabeworkflow mit einer Freigabe durch Vorsitz oder Schatzmeister
-- Lieferanten mit strukturierter Pflichtadresse und optionaler PLZ-/Straßensuche,
+- Lieferanten mit strukturierter Pflichtadresse und auswählbaren EU-Adressvorschlägen,
   Angebotsvergleich, teilbare Bestellungen und Budgetgrenzen
 - Teil-/Mehrfachlieferungen, Beanstandungen und geprüfte Inventarübernahme
 - Beschaffungsdokumente sowie XLSX-, ODS- und PDF-Ausgabe
+- Administrativ aktivierte Dienstgeräte mit gerätegebundenem Systemzugang,
+  persönlicher Anmeldung, QR-/USB-NFC-Zugängen, optionalem TOTP/NFC-Faktor,
+  IP-Netzregeln und sofortigem Widerruf
+- Verschlüsselter nativer Offlinebetrieb für Materiallager, Kleiderkammer,
+  Mängel und Dashboard mit sicher wiederholbarer Synchronisation
+
+## Dienstgeräte
+
+Admins verwalten Dienstgeräte unter **Nutzerverwaltung → Dienstgeräte**. Ein
+Gerät wird dort mit Standort, Halle/Raum, Geräte-Inventarnummer, dokumentarischer
+MAC-Adresse, verantwortlicher Person, organisatorischen Fachbereichen und einem
+eigenen Gerätepasswort vorbereitet. Anschließend aktiviert ein Admin den
+konkreten nativen Client einmalig über die normale Loginseite. Webbrowser können
+nicht als Dienstgerät aktiviert werden. Die ausgegebene Gerätekennung wird im
+geschützten Schlüsselspeicher des Betriebssystems abgelegt; serverseitig liegt
+nur ihr Hash.
+
+Auf einem aktivierten Gerät sind zwei Sitzungsarten verfügbar:
+
+- Der **Systemzugang** wird mit Gerätepasswort oder einem einzeln widerrufbaren
+  System-QR-Code geöffnet. Er erreicht ausschließlich die redigierte Suche, die
+  Mängelerstellung und den codegeschützten Zugriff auf eine einzelne Meldung.
+- **Persönliche Konten** behalten ihre Rollen und Rechte aus der
+  Nutzerverwaltung. Passwort, bestehender persönlicher QR-Code oder eine am
+  Gerät registrierte USB-NFC-Karte können als erster Faktor dienen.
+
+TOTP oder eine benannte USB-NFC-Karte können je Gerät für beide Sitzungsarten
+als zusätzlicher Faktor verlangt werden. IP-Adressen und IPv4-/IPv6-CIDR-Netze
+lassen sich ebenfalls pro Gerät begrenzen. Eine Sperrung oder ein Schlüsselreset
+macht bestehende Gerätesitzungen unmittelbar ungültig.
+
+Die normale Systemsuche blendet ausgegebene, archivierte und ausgesonderte
+Artikel aus. Für eine Mängelmeldung kann ein ausgegebener Artikel ausschließlich
+über seine exakte Inventarnummer beziehungsweise seinen Barcode gefunden werden;
+Empfänger- und Ausgabedaten verlassen das Backend dabei nicht. Sichtbar und
+temporär zu öffnen sind nur Vorlagen und Gebrauchsanweisungen.
+
+Jede Meldung aus einem Dienstgerät erhält eine Mängelnummer und einen zufälligen
+Code im Format `ABCD-EFGH-JKLM`. Damit kann genau diese Meldung auf einem
+aktivierten Dienstgerät geöffnet und bis zum Beginn der regulären Bearbeitung
+geändert werden. Danach bleibt sie bis zum Ende der Mängelaufbewahrung
+schreibgeschützt erreichbar. Systemzugänge laufen nach fünf Minuten ab; der
+Client warnt 30 Sekunden vorher und entfernt anschließend Kontakte, Bilder,
+Suchergebnisse und temporär geöffnete Dokumente.
+
+## Offlinebetrieb
+
+Die installierten Android-, iOS-, Windows-, Linux- und macOS-Clients halten nach
+einer erfolgreichen Online-Anmeldung einen verschlüsselten, berechtigungs- und
+standortgefilterten Snapshot vor. Material, Kleidung und offene Mängel können
+damit ohne Verbindung gesucht und gescannt werden. Ausgabe, Rücknahme,
+Umbuchung und neue textbasierte Mängelmeldungen werden lokal vorgemerkt und bei
+der nächsten erreichbaren API-Verbindung automatisch übertragen. Bilder und
+sonstige Anhänge werden nicht offline vorgemerkt. Die leere
+Mängelbericht-Vorlage wird für die Offlinenutzung zwischengespeichert.
+
+Jede vorgemerkte Änderung besitzt eine zufällige Befehls-ID. Das Backend merkt
+sich erfolgreiche Ergebnisse pro Benutzer und Gerät, sodass ein Retry nach
+Timeout oder Verbindungsabbruch keine zweite Buchung erzeugt. Fachlich nicht
+mehr zulässige Änderungen bleiben als Konflikt sichtbar. Das Cloud-Symbol im
+Dashboard zeigt ausstehende Änderungen und bietet eine manuelle
+Synchronisation. Eine Abmeldung mit offenen Änderungen wird blockiert, sofern
+der Benutzer deren Verwerfen nicht ausdrücklich bestätigt.
+
+In den Offline-Einstellungen lassen sich die lokal benötigten Standorte, die
+Nutzung von Mobilfunk und die Grenze für große Übertragungen festlegen
+(Standard: 10 MB, darüber nur WLAN/LAN). Im Vordergrund wird regelmäßig sowie
+beim Fortsetzen der App synchronisiert. Nicht erneuerte Snapshots und
+abgelaufene Offline-Anmeldungen werden lokal nach spätestens 30 Tagen bereinigt;
+ausstehende Fachbuchungen bleiben bis zur Synchronisation oder einem
+ausdrücklich bestätigten Verwerfen erhalten.
+
+Admins aktivieren den Offlinebetrieb und die erlaubten Benutzer je Dienstgerät
+unter **Nutzerverwaltung → Dienstgeräte**. Persönliche Offline-QR-Codes werden
+dort einzeln ausgestellt und widerrufen. Eine Offlinefreigabe gilt höchstens
+sieben Tage. Der Client speichert niemals das QR-Geheimnis, sondern nur dessen
+Prüfwert im durch das Betriebssystem geschützten Schlüsselspeicher. Ein
+Gerätewiderruf wird beim nächsten Serverkontakt wirksam. Für normale native
+Installationen wird zusätzlich eine widerrufbare Clientregistrierung angelegt;
+Admins können diese unter **Offline-Installationen** einsehen und sperren.
+Webbrowser erhalten keinen Offline-Schreibbetrieb.
 
 ## Inventuren
 
@@ -240,12 +321,14 @@ IONOS-SMTP- und `DEFECT_IMAP_*`-Werte müssen als Server-Umgebungsvariablen gese
 erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpasswort
 muss direkt nach der ersten Anmeldung geändert werden.
 
-Die Lieferantenverwaltung fragt Orte und Straßen ausschließlich über das Backend beim
-offenen DACH-Adressverzeichnis OpenPLZ ab. Übertragen werden dabei Land, Postleitzahl,
-Ort und die bereits eingegebenen Zeichen der Straße, jedoch keine Lieferanten- oder
-Kontaktdaten. Ohne erreichbaren Dienst bleiben alle Adressfelder manuell ausfüllbar.
-`ADDRESS_LOOKUP_BASE_URL` kann für den Betrieb einer eigenen OpenPLZ-Instanz angepasst
-werden; die Voreinstellung ist `https://openplzapi.org`.
+Physische Adressmasken verwenden eine gemeinsame EU-Adresssuche. Nach mindestens drei
+Zeichen fragt das Backend Geoapify mit 450 ms Verzögerung ab und liefert strukturierte
+Vorschläge für Straße, Postleitzahl, Ort und Land. Eine Auswahl befüllt diese Felder;
+die Hausnummer bleibt bewusst manuell und alle Werte bleiben editierbar. Übertragen
+werden nur die bereits eingegebenen Adressbestandteile, niemals Lieferanten- oder
+Kontaktdaten. `GEOAPIFY_API_KEY` wird ausschließlich im Backend hinterlegt und nicht an
+Clients ausgeliefert. Ohne Schlüssel oder bei einem Ausfall bleiben alle Felder manuell
+ausfüllbar. `GEOAPIFY_BASE_URL` muss normalerweise nicht verändert werden.
 
 In Produktion muss `JWT_SECRET` mindestens 32 zufällige Zeichen enthalten und
 `APP_BASE_URL` HTTPS verwenden. Das Backend akzeptiert außerhalb von `/health` keine

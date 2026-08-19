@@ -1,4 +1,5 @@
 const permissions = [
+  'offline.access',
   'users.read', 'users.write',
   'roles.read',
   'locations.read', 'locations.write',
@@ -177,6 +178,10 @@ const exportLogs = [];
 const scannerEmailAddresses = [];
 const stocktakes = [];
 const stocktakeEmailImports = [];
+const serviceDevices = [];
+const offlineClients = [];
+const offlineCommandResults = [];
+const offlineSyncState = [{ revision: 0, updatedAt: null }];
 
 module.exports = {
   seedData: {
@@ -210,5 +215,9 @@ module.exports = {
     scannerEmailAddresses,
     stocktakes,
     stocktakeEmailImports,
+    serviceDevices,
+    offlineClients,
+    offlineCommandResults,
+    offlineSyncState,
   },
 };

@@ -1,47 +1,87 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { countryCode, createAddressLookupService } = require('../src/address-lookup');
+const { countryCode, countryName, createAddressLookupService } = require('../src/address-lookup');
 
-test('address lookup normalizes supported country names', () => {
+test('address lookup normalizes all supported EU country names', () => {
   assert.equal(countryCode('Deutschland'), 'de');
   assert.equal(countryCode('Österreich'), 'at');
-  assert.equal(countryCode('Schweiz'), 'ch');
-  assert.equal(countryCode('Liechtenstein'), 'li');
-  assert.equal(countryCode('Frankreich'), null);
+  assert.equal(countryCode('Frankreich'), 'fr');
+  assert.equal(countryCode('Niederlande'), 'nl');
+  assert.equal(countryCode('Tschechische Republik'), 'cz');
+  assert.equal(countryCode('Schweiz'), null);
+  assert.equal(countryName('fr'), 'Frankreich');
 });
 
-test('address lookup queries OpenPLZ safely, deduplicates and caches results', async () => {
+test('address lookup queries Geoapify through an EU filter, normalizes and caches results', async () => {
   const urls = [];
   const fetchImpl = async (url) => {
     urls.push(url);
-    const rows = url.pathname.endsWith('/Localities')
-      ? [{ name: 'Neustadt' }, { name: 'Neustadt' }, { name: 'Neustadt am Rübenberge' }]
-      : [{ name: 'Hauptstraße' }, { name: 'Hauptstraße' }, { name: 'Hauptweg' }];
     return {
       ok: true,
-      async text() { return JSON.stringify(rows); },
+      async text() {
+        return JSON.stringify({
+          results: [
+            {
+              place_id: 'one', street: 'Rue de Rivoli', housenumber: '10',
+              postcode: '75001', city: 'Paris', country: 'France', country_code: 'fr',
+            },
+            {
+              place_id: 'duplicate', street: 'Rue de Rivoli', postcode: '75001',
+              city: 'Paris', country: 'France', country_code: 'fr',
+            },
+            {
+              place_id: 'outside-eu', street: 'Bahnhofstrasse', postcode: '8001',
+              city: 'Zürich', country: 'Schweiz', country_code: 'ch',
+            },
+          ],
+        });
+      },
     };
   };
-  const service = createAddressLookupService({ fetchImpl });
-  const first = await service.localities({ country: 'Deutschland', postalCode: '31535' });
-  const cached = await service.localities({ country: 'Deutschland', postalCode: '31535' });
-  assert.deepEqual(first.suggestions, ['Neustadt', 'Neustadt am Rübenberge']);
+  const service = createAddressLookupService({ fetchImpl, apiKey: 'server-secret' });
+  const first = await service.suggestions({ query: 'Rue de Riv', country: 'Frankreich' });
+  const cached = await service.suggestions({ query: 'Rue de Riv', country: 'Frankreich' });
+
+  assert.deepEqual(first, {
+    configured: true,
+    supported: true,
+    suggestions: [{
+      id: 'one',
+      label: 'Rue de Rivoli, 75001 Paris, Frankreich',
+      street: 'Rue de Rivoli',
+      postalCode: '75001',
+      city: 'Paris',
+      country: 'Frankreich',
+      countryCode: 'fr',
+    }],
+  });
   assert.deepEqual(cached, first);
   assert.equal(urls.length, 1);
-  assert.equal(urls[0].pathname, '/de/Localities');
-  assert.equal(urls[0].searchParams.get('postalCode'), '31535');
+  assert.equal(urls[0].pathname, '/v1/geocode/autocomplete');
+  assert.equal(urls[0].searchParams.get('filter'), 'countrycode:fr');
+  assert.equal(urls[0].searchParams.get('apiKey'), 'server-secret');
+  assert.equal(JSON.stringify(first).includes('server-secret'), false);
 
-  const streets = await service.streets({
-    country: 'Deutschland', postalCode: '31535', city: 'Neustadt', query: 'Hau.*',
-  });
-  assert.deepEqual(streets.suggestions, ['Hauptstraße', 'Hauptweg']);
-  assert.equal(urls[1].pathname, '/de/Streets');
-  assert.equal(urls[1].searchParams.get('name'), '^Hau\\.\\*');
-  assert.equal(urls[1].searchParams.get('locality'), 'Neustadt');
+  await Promise.all([
+    service.suggestions({ query: 'Rue de Rivoli Paris', country: 'Frankreich' }),
+    service.suggestions({ query: 'Rue de Rivoli Paris', country: 'Frankreich' }),
+  ]);
+  assert.equal(urls.length, 2, 'parallel identical requests share one provider call');
+});
 
-  const unsupported = await service.localities({
-    country: 'Frankreich', postalCode: '75001',
+test('address lookup degrades safely without configuration or for non-EU countries', async () => {
+  let requests = 0;
+  const service = createAddressLookupService({
+    apiKey: '',
+    fetchImpl: async () => { requests += 1; },
   });
-  assert.deepEqual(unsupported, { supported: false, suggestions: [] });
-  assert.equal(urls.length, 2);
+  assert.deepEqual(
+    await service.suggestions({ query: 'Hauptstraße', country: 'Deutschland' }),
+    { configured: false, supported: true, suggestions: [] },
+  );
+  assert.deepEqual(
+    await service.suggestions({ query: 'Bahnhofstrasse', country: 'Schweiz' }),
+    { configured: false, supported: false, suggestions: [] },
+  );
+  assert.equal(requests, 0);
 });

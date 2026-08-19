@@ -30,6 +30,8 @@ Anfragen im HTTP-Header `Authorization: Bearer …`.
 | Kleiderkammer | `flutter/lib/pages/wardrobe_page.dart`, Routen in `backend/src/app.js` |
 | Mängel | `flutter/lib/pages/defects_page.dart`, `backend/src/defects.js` |
 | Nutzer, Rollen, Anmeldung | `backend/src/user-management.js`, Authentifizierung in `backend/src/app.js` |
+| Dienstgeräte und Gerätesitzungen | `backend/src/service-devices.js`, `flutter/lib/pages/service_device_*.dart` |
+| Offline-Snapshot und Synchronisation | `backend/src/offline-sync.js`, `flutter/lib/services/offline_*.dart` |
 | Datenbanktabellen und Migrationen | `backend/src/db/schema.sql`, `backend/src/db/migrations/` |
 | Daten speichern | `backend/src/persistence-coordinator.js`, `backend/src/db/user-store.js` |
 | HTTP-Transport der App | `flutter/lib/services/app_http_client.dart` |
@@ -70,13 +72,21 @@ Die Netzwerkschicht hat drei bewusst getrennte Ebenen:
 - `api_client.dart`: öffentliche Anmelde- und Bestätigungsabläufe; in Tests
   kann ein eigener HTTP-Client eingesetzt werden.
 - `app_http_client.dart`: gemeinsamer, ressourcenschonender Transport mit
-  Timeout. Nur sichere Lesezugriffe werden bei vorübergehenden Fehlern einmal
-  wiederholt.
+  Timeout und wiederverwendeten Verbindungen. Lesezugriffe verwenden bei
+  Verbindungsfehlern den verschlüsselten Snapshot. Ausdrücklich freigegebene
+  Fachänderungen werden mit eindeutiger Befehls-ID offline vorgemerkt.
 - `authenticated_api_client.dart`: ergänzt JWT, JSON-Konvertierung und
   einheitliche, deutschsprachige Fehler für angemeldete Fachseiten.
 
-Schreibzugriffe werden niemals automatisch wiederholt. Sonst könnte eine
-unsichere Verbindung beispielsweise dieselbe Ausgabe zweimal buchen.
+Schreibzugriffe werden nicht blind automatisch wiederholt. Nur die in
+`offline_http.dart` aufgeführten Vorgänge dürfen in die Warteschlange. Das
+Backend speichert erfolgreiche Antworten pro Benutzer, Gerät und Befehls-ID,
+sodass ein Retry dieselbe Ausgabe nicht zweimal bucht.
+
+Ein Dienstgerät besitzt zusätzlich zu einem persönlichen Benutzer-JWT eine
+widerrufbare Gerätekennung. Der Systemzugang ist kein Datenbankbenutzer und
+erhält ein fünf Minuten gültiges, gerätegebundenes JWT ohne normale Rollen.
+Seine wenigen Routen liegen ausschließlich unter `/api/device/`.
 
 ## Regeln für verständliche Änderungen
 

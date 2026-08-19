@@ -185,6 +185,13 @@ class _DefectsPageState extends State<DefectsPage> {
     final created =
         await _request('/api/defects', method: 'POST', body: payload);
     if (created is Map) {
+      if (created['offlineQueued'] == true) {
+        _message(pendingImages.isEmpty
+            ? 'Mangel wurde offline gespeichert und wird später synchronisiert.'
+            : 'Mangel wurde offline gespeichert. Bilder werden offline nicht übernommen.');
+        await _load();
+        return;
+      }
       var uploadedImages = 0;
       for (final image in pendingImages) {
         final uploaded = await _request('/api/defects/${created['id']}/images',

@@ -1,6 +1,8 @@
 import 'dart:async';
 
-import 'package:http/http.dart' as http;
+import 'package:http/http.dart' as base;
+
+import 'offline_http.dart' as offline;
 
 /// Shared transport for authenticated application pages.
 ///
@@ -10,19 +12,18 @@ import 'package:http/http.dart' as http;
 class AppHttpClient {
   AppHttpClient._();
 
-  static final http.Client _client = http.Client();
   static const requestTimeout = Duration(seconds: 30);
   static const retryDelay = Duration(milliseconds: 300);
   static const transientStatusCodes = {502, 503, 504};
 
-  static Future<http.Response> get(
+  static Future<base.Response> get(
     Uri uri, {
     Map<String, String>? headers,
   }) async {
     for (var attempt = 0; attempt < 2; attempt += 1) {
       try {
         final response =
-            await _client.get(uri, headers: headers).timeout(requestTimeout);
+            await offline.get(uri, headers: headers).timeout(requestTimeout);
         if (attempt == 0 &&
             transientStatusCodes.contains(response.statusCode)) {
           await Future<void>.delayed(retryDelay);
@@ -32,7 +33,7 @@ class AppHttpClient {
       } on TimeoutException {
         if (attempt == 1) rethrow;
         await Future<void>.delayed(retryDelay);
-      } on http.ClientException {
+      } on base.ClientException {
         if (attempt == 1) rethrow;
         await Future<void>.delayed(retryDelay);
       }
@@ -40,31 +41,31 @@ class AppHttpClient {
     throw StateError('HTTP retry loop ended unexpectedly.');
   }
 
-  static Future<http.Response> post(
+  static Future<base.Response> post(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
   }) =>
-      _client.post(uri, headers: headers, body: body).timeout(requestTimeout);
+      offline.post(uri, headers: headers, body: body).timeout(requestTimeout);
 
-  static Future<http.Response> put(
+  static Future<base.Response> put(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
   }) =>
-      _client.put(uri, headers: headers, body: body).timeout(requestTimeout);
+      offline.put(uri, headers: headers, body: body).timeout(requestTimeout);
 
-  static Future<http.Response> patch(
+  static Future<base.Response> patch(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
   }) =>
-      _client.patch(uri, headers: headers, body: body).timeout(requestTimeout);
+      offline.patch(uri, headers: headers, body: body).timeout(requestTimeout);
 
-  static Future<http.Response> delete(
+  static Future<base.Response> delete(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
   }) =>
-      _client.delete(uri, headers: headers, body: body).timeout(requestTimeout);
+      offline.delete(uri, headers: headers, body: body).timeout(requestTimeout);
 }

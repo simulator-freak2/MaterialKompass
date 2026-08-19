@@ -14,7 +14,7 @@ const {
   neutralizeSpreadsheetCell,
   validBase64,
 } = require('./security-utils');
-const { countryCode, createAddressLookupService } = require('./address-lookup');
+const { countryCode } = require('./address-lookup');
 const MAX_REQUEST_ITEMS = 100;
 const MAX_DOCUMENTS_PER_REQUEST = 20;
 const MAX_INVENTORY_ITEMS_PER_TRANSFER = 500;
@@ -33,7 +33,7 @@ function registerProcurementRoutes({
   app, authMiddleware, requirePermission, data, categories, departments = [], locations,
   stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
   nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
-  addMonths, addressLookup = createAddressLookupService(),
+  addMonths,
 }) {
   const requests = data.procurementRequests;
   const offers = data.procurementOffers;
@@ -485,42 +485,6 @@ function registerProcurementRoutes({
     if (request.status === 'Geliefert' && requestReceipts.length && requestReceipts.every((entry) => entry.inventoryTransferred)) request.status = 'Abgeschlossen';
     event(request, 'Wareneingang ins Inventar übernommen', req.user.username, { receiptId: receipt.id, created: created.length }); res.json({ receipt, created });
   });
-
-  app.get('/api/address-suggestions/localities', authMiddleware,
-    requirePermission('procurement.read'), async (req, res) => {
-      const country = String(req.query.country || '').trim();
-      const postalCode = String(req.query.postalCode || '').trim();
-      if (!country || country.length > 128 || !postalCode || postalCode.length > 32) {
-        return res.status(400).json({ error: 'Land und Postleitzahl sind erforderlich.' });
-      }
-      try {
-        return res.json(await addressLookup.localities({ country, postalCode }));
-      } catch (_) {
-        return res.status(503).json({
-          error: 'Die automatische Ortssuche ist momentan nicht verfügbar. Der Ort kann manuell eingegeben werden.',
-        });
-      }
-    });
-  app.get('/api/address-suggestions/streets', authMiddleware,
-    requirePermission('procurement.read'), async (req, res) => {
-      const country = String(req.query.country || '').trim();
-      const postalCode = String(req.query.postalCode || '').trim();
-      const city = String(req.query.city || '').trim();
-      const query = String(req.query.query || '').trim();
-      if (!country || country.length > 128 || !postalCode || postalCode.length > 32
-        || !city || city.length > 255 || query.length < 3 || query.length > 255) {
-        return res.status(400).json({
-          error: 'Land, Postleitzahl, Ort und mindestens drei Zeichen der Straße sind erforderlich.',
-        });
-      }
-      try {
-        return res.json(await addressLookup.streets({ country, postalCode, city, query }));
-      } catch (_) {
-        return res.status(503).json({
-          error: 'Die automatische Straßensuche ist momentan nicht verfügbar. Die Straße kann manuell eingegeben werden.',
-        });
-      }
-    });
 
   app.get('/api/suppliers', authMiddleware, requirePermission('procurement.read'), (req, res) => res.json(suppliers));
   app.post('/api/suppliers', authMiddleware, requirePermission('suppliers.write'), (req, res) => {

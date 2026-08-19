@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,9 +7,11 @@ import 'package:flutter/services.dart';
 import '../constants.dart';
 import '../services/api_client.dart';
 import '../services/browser_download.dart';
+import '../services/offline_session_service.dart';
 import '../widgets/qr_login_dialog.dart';
 import 'dashboard_page.dart';
 import 'legal_page.dart';
+import 'service_device_pages.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -183,6 +187,8 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       if (response.statusCode == 200) {
         TextInput.finishAutofillContext(shouldSave: true);
+        unawaited(
+            OfflineSessionService.prepare(response.object['token'].toString()));
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => DashboardPage(token: response.object['token']),
@@ -211,10 +217,10 @@ class _LoginPageState extends State<LoginPage> {
       );
       if (!mounted) return;
       if (response.statusCode == 200) {
+        final token = response.object['token'].toString();
+        unawaited(OfflineSessionService.prepare(token));
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-              builder: (_) =>
-                  DashboardPage(token: response.object['token'].toString())),
+          MaterialPageRoute(builder: (_) => DashboardPage(token: token)),
         );
       } else {
         _showError(response.object['error']?.toString() ??
@@ -320,6 +326,22 @@ class _LoginPageState extends State<LoginPage> {
                             icon: const Icon(Icons.qr_code_scanner),
                             label: const Text('Mit QR-Code anmelden'),
                           ),
+                          if (!kIsWeb) ...[
+                            const SizedBox(height: 8),
+                            OutlinedButton.icon(
+                              onPressed: loading
+                                  ? null
+                                  : () => Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const ServiceDeviceActivationPage(),
+                                        ),
+                                      ),
+                              icon: const Icon(Icons.devices_other),
+                              label:
+                                  const Text('Dienstliches Gerät aktivieren'),
+                            ),
+                          ],
                           if (kIsWeb) ...[
                             const Divider(height: 32),
                             const Text(
