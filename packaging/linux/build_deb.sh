@@ -36,7 +36,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: MaterialKompass
-Depends: libgtk-3-0, libblkid1, liblzma5, libsecret-1-0, libjsoncpp25 | libjsoncpp1
+Depends: libgtk-3-0, libblkid1, liblzma5, libsecret-1-0
 Description: Lokale Materialverwaltung mit zentralem MaterialKompass-Backend
 EOF
 
