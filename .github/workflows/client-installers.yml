@@ -67,7 +67,7 @@ jobs:
           channel: stable
           cache: true
       - name: Linux-Buildabhängigkeiten installieren
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev
       - name: DEB-Installer bauen
         run: bash packaging/linux/build_deb.sh '${{ inputs.api_base_url }}' '${{ inputs.version }}'
       - uses: actions/upload-artifact@v4
