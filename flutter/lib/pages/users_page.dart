@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../constants.dart';
 import '../widgets/qr_login_dialog.dart';
+import '../widgets/service_devices_admin_panel.dart';
 
 class UsersPage extends StatefulWidget {
   final String token;
@@ -836,7 +837,7 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-        length: isAdmin ? 5 : 3,
+        length: isAdmin ? 6 : 3,
         child: Scaffold(
           appBar: AppBar(
               title: const Text('Nutzerverwaltung'),
@@ -850,7 +851,10 @@ class _UsersPageState extends State<UsersPage> {
                 if (isAdmin)
                   const Tab(
                       text: 'Scanner-E-Mails',
-                      icon: Icon(Icons.document_scanner))
+                      icon: Icon(Icons.document_scanner)),
+                if (isAdmin)
+                  const Tab(
+                      text: 'Dienstgeräte', icon: Icon(Icons.devices_other))
               ])),
           body: loading
               ? const Center(child: CircularProgressIndicator())
@@ -1019,6 +1023,12 @@ class _UsersPageState extends State<UsersPage> {
                   ]),
                   if (isAdmin) mailTab(),
                   if (isAdmin) scannerEmailTab(),
+                  if (isAdmin)
+                    ServiceDevicesAdminPanel(
+                      token: widget.token,
+                      users: users,
+                      departments: departments,
+                    ),
                 ]),
         ),
       );

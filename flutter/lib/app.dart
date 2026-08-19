@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
-import 'pages/login_page.dart';
 import 'pages/auth_link_page.dart';
+import 'pages/service_device_pages.dart';
 
 class MaterialKompassApp extends StatelessWidget {
   const MaterialKompassApp({super.key});
@@ -17,7 +17,7 @@ class MaterialKompassApp extends StatelessWidget {
       return AuthLinkPage(
           action: uri.path, token: uri.queryParameters['token'] ?? '');
     }
-    return const LoginPage();
+    return const ServiceDeviceBootstrap();
   }
 
   @override

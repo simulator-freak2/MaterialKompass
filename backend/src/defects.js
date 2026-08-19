@@ -1,3 +1,5 @@
+const crypto = require('node:crypto');
+
 const DEFECT_STATUSES = Object.freeze([
   'Neu', 'In Prüfung', 'Zugewiesen', 'In Bearbeitung', 'Behoben',
   'Geprüft/Geschlossen',
@@ -329,6 +331,82 @@ function registerDefectManagement({
       defectNumber: report.defectNumber,
     }, user.username);
     return { report };
+  }
+
+  function deviceAccessCode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = crypto.randomBytes(12);
+    const raw = Array.from(bytes, (value) => alphabet[value % alphabet.length]).join('');
+    return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
+  }
+
+  function accessHash(value) {
+    return crypto.createHash('sha256').update(String(value || '').trim().toUpperCase()).digest('hex');
+  }
+
+  function findByDeviceCode(defectNumber, code) {
+    const report = defectReports.find((entry) => entry.defectNumber === String(defectNumber || '').trim());
+    if (!report?.deviceAccessCodeHash) return null;
+    const supplied = Buffer.from(accessHash(code), 'hex');
+    const stored = Buffer.from(report.deviceAccessCodeHash, 'hex');
+    return supplied.length === stored.length && crypto.timingSafeEqual(supplied, stored) ? report : null;
+  }
+
+  function devicePublicDefect(report) {
+    const entity = entityFor(report.entityType, report.entityId);
+    return {
+      id: report.id,
+      defectNumber: report.defectNumber,
+      entityType: report.entityType,
+      entityId: report.entityId,
+      entityName: entity?.name || 'Gelöschter Artikel',
+      inventoryNumber: entity?.inventoryNumber || null,
+      title: report.title,
+      description: report.description,
+      priority: report.priority,
+      status: report.status,
+      riskLevel: report.riskLevel,
+      measuresTaken: report.measuresTaken,
+      contactName: report.contactName,
+      contactEmail: report.contactEmail,
+      contactPhone: report.contactPhone,
+      deviceLocation: report.deviceLocation || '',
+      reportedAt: report.reportedAt,
+      editable: report.status === 'Neu' && !report.archivedAt,
+      images: report.images.map(({ fileBase64, ...metadata }) => metadata),
+    };
+  }
+
+  function appendDeviceImages(report, images, actor) {
+    if (!Array.isArray(images)) return null;
+    const pending = [];
+    for (const input of images) {
+      if (report.images.length + pending.length >= MAX_IMAGES) {
+        return `Maximal ${MAX_IMAGES} Bilder sind erlaubt.`;
+      }
+      const mimeType = text(input.mimeType, 64).toLowerCase();
+      const fileBase64 = String(input.fileBase64 || '').replace(/^data:[^;]+;base64,/, '');
+      if (!IMAGE_MIME_TYPES.has(mimeType) || !fileBase64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(fileBase64)) {
+        return 'Nur gültige JPEG- oder PNG-Bilder sind erlaubt.';
+      }
+      const bytes = Buffer.from(fileBase64, 'base64');
+      if (bytes.length > MAX_IMAGE_BYTES) return 'Ein Bild darf höchstens 8 MB groß sein.';
+      const validSignature = mimeType === 'image/png'
+        ? bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+        : bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+      if (!validSignature) return 'Der Dateiinhalt ist kein gültiges JPEG- oder PNG-Bild.';
+      pending.push({
+        id: nextId('image', [...report.images, ...pending]),
+        fileName: text(input.fileName || 'bild', 255),
+        mimeType,
+        sizeBytes: bytes.length,
+        fileBase64,
+        createdAt: nowIso(),
+        createdBy: actor,
+      });
+    }
+    report.images.push(...pending);
+    return null;
   }
 
   function findVisible(req, includeArchived = false) {
@@ -1005,6 +1083,83 @@ function registerDefectManagement({
         addHistory(result.report, user.username, 'stocktake-link', { stocktakeId });
       }
       return result;
+    },
+    createFromDevice({ body, user, device }) {
+      const contactName = text(body.contactName || user.name || user.username, 255);
+      const contactEmail = text(body.contactEmail || user.email, 255).toLowerCase();
+      const contactPhone = text(body.contactPhone, 80);
+      const measuresTaken = text(body.measuresTaken, 5000);
+      const riskLevel = text(body.riskLevel, 80);
+      const deviceLocation = text(body.location || device.locationName || device.room, 255);
+      if (!contactName || (!contactEmail && !contactPhone)) {
+        return { error: 'Name und mindestens eine Kontaktmöglichkeit sind erforderlich.' };
+      }
+      if (!riskLevel || !measuresTaken || !deviceLocation) {
+        return { error: 'Gefährdung, getroffene Sofortmaßnahmen und Standort sind erforderlich.' };
+      }
+      const stagedImages = { images: [] };
+      const imageError = appendDeviceImages(stagedImages, body.images, user.username);
+      if (imageError) return { error: imageError };
+      const result = createReport({
+        ...body,
+        priority: 'Normal',
+        contactName,
+        contactEmail,
+        contactPhone,
+        measuresTaken,
+        riskLevel,
+      }, user, { reportedBy: user.id, reportedByName: contactName });
+      if (result.error) return result;
+      const code = deviceAccessCode();
+      Object.assign(result.report, {
+        deviceId: device.id,
+        deviceName: device.name,
+        deviceLocation,
+        deviceAccessCodeHash: accessHash(code),
+        deviceAccessCodeIssuedAt: nowIso(),
+      });
+      result.report.images.push(...stagedImages.images);
+      addHistory(result.report, user.username, 'device-report', {
+        deviceId: device.id,
+        deviceName: device.name,
+      });
+      return { report: devicePublicDefect(result.report), accessCode: code };
+    },
+    accessFromDevice({ defectNumber, code }) {
+      const report = findByDeviceCode(defectNumber, code);
+      return report ? devicePublicDefect(report) : null;
+    },
+    updateFromDevice({ defectNumber, code, body, user }) {
+      const report = findByDeviceCode(defectNumber, code);
+      if (!report) {
+        return { error: 'Mängelnummer oder Zugriffscode ist ungültig.', status: 404 };
+      }
+      if (report.status !== 'Neu' || report.archivedAt) {
+        return { report: devicePublicDefect(report), readonly: true };
+      }
+      const next = {
+        title: text(body.title ?? report.title, 160),
+        description: text(body.description ?? report.description, 10_000),
+        riskLevel: text(body.riskLevel ?? report.riskLevel, 80),
+        measuresTaken: text(body.measuresTaken ?? report.measuresTaken, 5000),
+        contactName: text(body.contactName ?? report.contactName, 255),
+        contactEmail: text(body.contactEmail ?? report.contactEmail, 255).toLowerCase(),
+        contactPhone: text(body.contactPhone ?? report.contactPhone, 80),
+        deviceLocation: text(body.location ?? report.deviceLocation, 255),
+      };
+      if (!next.title || !next.description || !next.riskLevel || !next.measuresTaken
+          || !next.deviceLocation || !next.contactName
+          || (!next.contactEmail && !next.contactPhone)) {
+        return {
+          error: 'Alle Pflichtfelder und mindestens eine Kontaktmöglichkeit sind erforderlich.',
+          status: 400,
+        };
+      }
+      Object.assign(report, next);
+      const imageError = appendDeviceImages(report, body.images, user.username);
+      if (imageError) return { error: imageError, status: 400 };
+      addHistory(report, user.username, 'device-update', { fields: Object.keys(next) });
+      return { report: devicePublicDefect(report) };
     },
     applyRetentionPolicy,
   };

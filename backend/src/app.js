@@ -10,6 +10,7 @@ const {
   registerStocktakeEmailRoutes,
 } = require('./stocktake-email-ingestion');
 const { registerProcurementRoutes } = require('./procurement');
+const { registerAddressLookupRoutes } = require('./address-routes');
 const {
   createProcurementEmailService,
   registerProcurementEmailRoutes,
@@ -22,7 +23,12 @@ const {
   registerDefectEmailRoutes,
 } = require('./defect-email-ingestion');
 const { registerQrLoginRoutes } = require('./qr-login');
+const {
+  registerServiceDeviceRoutes, ipAllowed,
+  DEVICE_SESSION, PERSONAL_DEVICE_SESSION,
+} = require('./service-devices');
 const { registerScannerEmailRoutes } = require('./scanner-email-addresses');
+const { registerOfflineSync } = require('./offline-sync');
 const { createMailboxProvisioner } = require('./mailbox-provisioner-client');
 const { createMailboxCredentialVault } = require('./mailbox-credential-vault');
 const { registerMailManagementRoutes } = require('./mail-management');
@@ -63,6 +69,7 @@ const PUBLIC_WINDOW_MS = 60 * 1000;
 const PUBLIC_MAX_REQUESTS = 60;
 const MUTATION_WINDOW_MS = 60 * 1000;
 const MUTATION_MAX_REQUESTS = 120;
+const ADDRESS_LOOKUP_MAX_REQUESTS = 120;
 const MAX_IMPORT_ROWS = 1000;
 const MAX_BULK_ITEMS = 500;
 const MAX_PRIMARY_RECORDS = 100_000;
@@ -87,6 +94,8 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'procurementEmailImports',
   'auditLogs', 'exportLogs',
   'qrLoginCredentials', 'scannerEmailAddresses', 'mailTemplates',
+  'serviceDevices',
+  'offlineClients', 'offlineCommandResults', 'offlineSyncState',
   'stocktakes', 'stocktakeEmailImports',
 ]);
 
@@ -247,6 +256,10 @@ function createApp(options = {}) {
   const auditLogs = appData.auditLogs;
   const exportLogs = appData.exportLogs;
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
+  const serviceDevices = (appData.serviceDevices ||= []);
+  const offlineClients = (appData.offlineClients ||= []);
+  const offlineCommandResults = (appData.offlineCommandResults ||= []);
+  const offlineSyncState = (appData.offlineSyncState ||= [{ revision: 0, updatedAt: null }]);
   const scannerEmailAddresses = (appData.scannerEmailAddresses ||= []);
   const mailTemplates = (appData.mailTemplates ||= []);
   const stocktakes = (appData.stocktakes ||= []);
@@ -396,6 +409,12 @@ function createApp(options = {}) {
     appliesTo: (req) => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method),
     errorMessage: 'Zu viele Änderungen. Bitte später erneut versuchen.',
   });
+  const addressLookupRateLimit = createRateLimiter({
+    windowMs: PUBLIC_WINDOW_MS,
+    maxRequests: ADDRESS_LOOKUP_MAX_REQUESTS,
+    keyFor: (req) => `${req.ip}:${req.user?.id || 'anonymous'}`,
+    errorMessage: 'Zu viele Adresssuchen. Bitte kurz warten.',
+  });
 
   function securityVersion(user) {
     return createHash('sha256').update(JSON.stringify([
@@ -403,11 +422,25 @@ function createApp(options = {}) {
     ])).digest('base64url').slice(0, 22);
   }
 
-  function createToken(user) {
+  function createToken(user, context = {}) {
+    const payload = { sub: user.id, sv: securityVersion(user) };
+    if (context.deviceId) {
+      const device = serviceDevices.find((entry) => entry.id === context.deviceId);
+      Object.assign(payload, {
+        did: context.deviceId,
+        st: context.sessionType,
+        dsv: device?.securityVersion || 0,
+      });
+    }
     return jwt.sign(
-      { sub: user.id, sv: securityVersion(user) },
+      payload,
       jwtSecret,
-      { algorithm: 'HS256', audience: JWT_AUDIENCE, issuer: JWT_ISSUER, expiresIn: '1h' }
+      {
+        algorithm: 'HS256',
+        audience: JWT_AUDIENCE,
+        issuer: JWT_ISSUER,
+        expiresIn: context.expiresIn || '1h',
+      }
     );
   }
 
@@ -422,6 +455,29 @@ function createApp(options = {}) {
       const payload = jwt.verify(token, jwtSecret, {
         algorithms: ['HS256'], audience: JWT_AUDIENCE, issuer: JWT_ISSUER,
       });
+      req.sessionType = payload.st || 'normal';
+      req.device = payload.did
+        ? serviceDevices.find((entry) => entry.id === payload.did) || null
+        : null;
+      if (payload.did) {
+        if (!req.device || !req.device.active || payload.dsv !== req.device.securityVersion
+            || !ipAllowed(String(req.ip || '').replace(/^::ffff:/, ''), req.device.allowedNetworks)) {
+          return res.status(401).json({ error: 'Gerätesitzung ist ungültig.' });
+        }
+      }
+      if (req.sessionType === DEVICE_SESSION) {
+        req.user = {
+          id: `device-system:${req.device.id}`,
+          username: `Gerät ${req.device.name}`,
+          name: 'Systemzugang',
+          email: '',
+          roles: [],
+          permissions: [],
+          active: true,
+          emailVerifiedAt: req.device.activatedAt,
+        };
+        return next();
+      }
       req.user = users.find((u) => u.id === payload.sub) || null;
       if (!req.user) {
         return res.status(401).json({ error: 'Unknown user' });
@@ -429,6 +485,9 @@ function createApp(options = {}) {
       if (!req.user.active) return res.status(403).json({ error: 'Account deaktiviert.' });
       if (!req.user.emailVerifiedAt) return res.status(403).json({ error: 'E-Mail-Adresse noch nicht bestätigt.' });
       if (payload.sv !== securityVersion(req.user)) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+      if (req.sessionType !== 'normal' && req.sessionType !== PERSONAL_DEVICE_SESSION) {
         return res.status(401).json({ error: 'Invalid token' });
       }
       next();
@@ -506,6 +565,20 @@ function createApp(options = {}) {
     });
   });
 
+  if (!permissions.includes('offline.access')) permissions.push('offline.access');
+  const offlineRoles = new Set(['Admin', 'Materialwart', 'Kleiderwart', 'Fachbereichsleiter']);
+  roles.forEach((role) => {
+    if (offlineRoles.has(role.name) && !role.permissions.includes('offline.access')) {
+      role.permissions.push('offline.access');
+    }
+  });
+  users.forEach((user) => {
+    if (user.roles.some((name) => offlineRoles.has(name))
+        && !user.permissions.includes('offline.access')) {
+      user.permissions.push('offline.access');
+    }
+  });
+
   function requirePermission(permission) {
     return (req, res, next) => {
       if (!hasPermission(req.user, permission)) {
@@ -514,6 +587,21 @@ function createApp(options = {}) {
       next();
     };
   }
+
+  registerOfflineSync({
+    app,
+    clients: offlineClients,
+    commandResults: offlineCommandResults,
+    syncState: offlineSyncState,
+    authMiddleware,
+    requirePermission,
+    hasPermission,
+    publicUser,
+    data: appData,
+    deviceSession: DEVICE_SESSION,
+    securityVersion,
+    jwtSecret,
+  });
 
   function logEvent(action, entity, details, actor = 'system') {
     const matchedUser = users.find((user) =>
@@ -1907,11 +1995,42 @@ function createApp(options = {}) {
     res.status(201).json(transactions.length === 1 ? transactions[0] : transactions);
   });
 
+  registerAddressLookupRoutes({
+    app,
+    authMiddleware,
+    addressLookup: options.addressLookup,
+    rateLimit: addressLookupRateLimit,
+  });
+  registerServiceDeviceRoutes({
+    app,
+    devices: serviceDevices,
+    users,
+    departments,
+    locations,
+    stockStructures,
+    categories,
+    materials,
+    clothingItems,
+    materialDocuments,
+    authMiddleware,
+    requirePermission,
+    authRateLimit,
+    createToken,
+    findUser: userManagement.findUser,
+    publicUser,
+    logEvent,
+    defectManagement,
+    jwtSecret,
+    qrLoginCredentials,
+    securityVersion,
+    saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
+  });
+
   registerProcurementRoutes({
     app, authMiddleware, requirePermission, data: appData, categories, departments, locations,
     stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
-    addMonths, addressLookup: options.addressLookup,
+    addMonths,
   });
   const procurementEmailService = createProcurementEmailService({
     procurementEmailImports,

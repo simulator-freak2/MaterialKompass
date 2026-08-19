@@ -7,6 +7,7 @@ import 'package:materialkompass/pages/inventory_page.dart';
 import 'package:materialkompass/pages/procurement_page.dart';
 import 'package:materialkompass/pages/users_page.dart';
 import 'package:materialkompass/pages/wardrobe_page.dart';
+import 'package:materialkompass/widgets/address_input.dart';
 import 'package:materialkompass/widgets/stat_card.dart';
 
 void main() {
@@ -497,6 +498,78 @@ void main() {
     await tester.pump();
     expect(
         find.textContaining('Bitte Name, Straße, Hausnummer'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Address input debounces suggestions and keeps the house number manual',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final street = TextEditingController();
+    final houseNumber = TextEditingController(text: '12');
+    final postalCode = TextEditingController();
+    final city = TextEditingController();
+    final country = TextEditingController(text: 'Frankreich');
+    final calls = <List<String>>[];
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: AddressInput(
+            token: 'demo-token',
+            streetController: street,
+            houseNumberController: houseNumber,
+            postalCodeController: postalCode,
+            cityController: city,
+            countryController: country,
+            suggestionLoader: (query, selectedCountry) async {
+              calls.add([query, selectedCountry]);
+              return const AddressLookupResult(
+                configured: true,
+                supported: true,
+                suggestions: [
+                  AddressSuggestion(
+                    id: 'address-1',
+                    label: 'Rue de Rivoli, 75001 Paris, Frankreich',
+                    street: 'Rue de Rivoli',
+                    postalCode: '75001',
+                    city: 'Paris',
+                    country: 'Frankreich',
+                    countryCode: 'fr',
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    ));
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Straße *'),
+      'Rue',
+    );
+    await tester.pump(const Duration(milliseconds: 449));
+    expect(calls, isEmpty);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+
+    expect(calls, [
+      ['Rue Frankreich', 'Frankreich']
+    ]);
+    expect(find.text('Rue de Rivoli, 75001 Paris, Frankreich'), findsOneWidget);
+
+    await tester.tap(find.text('Rue de Rivoli, 75001 Paris, Frankreich'));
+    await tester.pump();
+
+    expect(street.text, 'Rue de Rivoli');
+    expect(houseNumber.text, '12');
+    expect(postalCode.text, '75001');
+    expect(city.text, 'Paris');
+    expect(country.text, 'Frankreich');
+    expect(find.textContaining('Hausnummer bitte manuell'), findsOneWidget);
   });
 
   testWidgets('Order dialog treats offer price as gross line total',

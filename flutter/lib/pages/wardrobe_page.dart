@@ -170,7 +170,7 @@ class _WardrobePageState extends State<WardrobePage> {
       );
     }
     if (selected == null) return;
-    final response = await http.get(
+    final response = await AppHttpClient.get(
       Uri.parse('$apiBaseUrl/api/defects/${selected['id']}/print'),
       headers: {'Authorization': 'Bearer ${widget.token}'},
     );

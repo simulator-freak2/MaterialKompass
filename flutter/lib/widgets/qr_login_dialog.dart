@@ -227,13 +227,16 @@ Future<void> showQrLoginCode(
   );
 }
 
-Future<String?> scanQrLoginCode(BuildContext context) => showDialog<String>(
+Future<String?> scanQrLoginCode(BuildContext context,
+        {List<String> allowedPrefixes = const ['mkqr:v1:']}) =>
+    showDialog<String>(
       context: context,
-      builder: (_) => const _QrLoginScannerDialog(),
+      builder: (_) => _QrLoginScannerDialog(allowedPrefixes: allowedPrefixes),
     );
 
 class _QrLoginScannerDialog extends StatefulWidget {
-  const _QrLoginScannerDialog();
+  final List<String> allowedPrefixes;
+  const _QrLoginScannerDialog({required this.allowedPrefixes});
 
   @override
   State<_QrLoginScannerDialog> createState() => _QrLoginScannerDialogState();
@@ -245,7 +248,7 @@ class _QrLoginScannerDialogState extends State<_QrLoginScannerDialog> {
 
   void submit(String value) {
     final credential = value.trim();
-    if (completed || !credential.startsWith('mkqr:v1:')) return;
+    if (completed || !widget.allowedPrefixes.any(credential.startsWith)) return;
     completed = true;
     Navigator.pop(context, credential);
   }

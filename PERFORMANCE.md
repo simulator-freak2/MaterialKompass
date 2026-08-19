@@ -1,6 +1,6 @@
 # Performance- und Kompatibilitätsbericht
 
-Stand: 15. August 2026. Die Messungen wurden als Release-Build beziehungsweise
+Stand: 16. August 2026. Die Messungen wurden als Release-Build beziehungsweise
 frischer Node-Prozess auf der lokalen Windows-Entwicklungsumgebung durchgeführt.
 Sie dienen als reproduzierbare Vergleichswerte, nicht als Garantie für jede
 Produktionshardware.
@@ -11,9 +11,9 @@ Produktionshardware.
 | --- | ---: | ---: | ---: |
 | Backend: RSS direkt nach Laden der App | 125,2 MB | 42–46 MB | etwa −65 % |
 | Backend: beobachtete Ladezeit | 1.672 ms | 386–482 ms | etwa −71 bis −77 % |
-| Web: initiales `main.dart.js` | 4.206.258 B | 3.556.129 B | −15,5 % |
+| Web: initiales `main.dart.js` | 4.206.258 B | 3.657.990 B | −13,0 % |
 | Login-Logo | 241.589 B | 73.445 B | −69,6 % |
-| Initiales JavaScript plus Login-Logo | 4.447.847 B | 3.629.574 B | −18,4 % |
+| Initiales JavaScript plus Login-Logo | 4.447.847 B | 3.731.435 B | −16,1 % |
 
 Der vollständige Web-Ausgabeordner ist 44.618.052 Bytes groß. Darin liegen mehrere
 alternative Flutter-Renderer; ein Browser lädt nicht alle Varianten. 876.887 Bytes
@@ -37,7 +37,14 @@ Bereichs benötigt.
   verständliche Fehlermeldung decken langsame oder unterbrochene Downloads ab.
 - Der gemeinsame HTTP-Client verwendet Verbindungen wieder, begrenzt hängende Aufrufe
   auf 30 Sekunden und wiederholt ausschließlich sichere GET-Anfragen einmal bei
-  Netzwerkfehlern oder HTTP 502/503/504. Mutationen werden nie automatisch wiederholt.
+  Netzwerkfehlern oder HTTP 502/503/504. Nur ausdrücklich freigegebene Mutationen
+  gelangen mit einer idempotenten Befehls-ID in die Offline-Warteschlange.
+- Wiederholte Offline-Aktualisierungen verwenden einen Revisionszeiger. Ein vollständiger
+  Snapshot wird nur bei der ersten Anmeldung, geänderter Standortauswahl oder fachlichen
+  Änderungen übertragen; parallele Aktualisierungen derselben Sitzung werden vereinigt.
+- Dienstgeräte und Offline-Clients werden serverseitig indiziert. Die redigierte
+  Gerätesuche beendet den Scan nach 100 Treffern und baut Dokument-/Standortzuordnungen
+  nur einmal pro Anfrage auf.
 - Suchen in Inventar, Beschaffung und Mängeln werden um 180 ms entprellt.
 - Die Mängelliste erzeugt nur sichtbare Karten. Die Inventartabelle zeigt standardmäßig
   10 Zeilen pro Seite statt alle Zeilen samt Aktionsschaltflächen gleichzeitig.
@@ -50,8 +57,8 @@ Bereichs benötigt.
 ## Prüfstatus
 
 - `flutter analyze`: ohne Befund
-- Flutter-Tests: 26 von 26 bestanden
-- Windows-Release-Build: bestanden, Ausgabeordner 34.202.250 Bytes
+- Flutter-Tests: 34 von 34 bestanden
+- Windows-Release-Build: bestanden, Ausgabeordner 34.338.252 Bytes
 - Web-Release-Build: bestanden; eigener Service Worker syntaktisch und in der
   Bootstrap-Datei geprüft
 - Android: Java-/Flutter-/Plugin-Kompilierung erreicht. Ein Release-Build benötigt den
@@ -59,13 +66,13 @@ Bereichs benötigt.
   dieser Maschine beim nativen Merge durch nur 0,62 GB freien Platz auf Laufwerk C:
   verhindert; ein alternativer Gradle-Cache auf E: konnte seine Distribution wegen des
   lokalen Downloadstillstands nicht initialisieren.
-- Backend: alle Tests außer dem PDFJS-Render-Test bestehen lokal. Dieser eine Test
-  verlangt wie `package.json` Node >= 20.19; lokal ist Node 20.11 installiert. Das
-  produktive Docker-Image verwendet Node 22.
+- Backend-Tests: 112 von 112 bestanden
 
 ## Betriebsgrenzen
 
-Der Service Worker macht die Programmoberfläche und bereits besuchte Module robuster,
-aber keine schreibfähige Offline-Datenbank. Fachliche Aktionen benötigen weiterhin die
-REST-API. Für reproduzierbare Android-Release-Builds sind Java 17 oder neuer sowie
+Flutter Web verwendet weiterhin nur den Service-Worker für die Programmoberfläche und
+erhält keinen schreibfähigen Offlinebetrieb. Verschlüsselte Snapshots und vorgemerkte
+Fachaktionen stehen ausschließlich in installierten nativen Apps zur Verfügung. Bilder
+und sonstige Anhänge werden nicht offline vorgemerkt. Für reproduzierbare
+Android-Release-Builds sind Java 17 oder neuer sowie
 `flutter/android/key.properties` mit dem dauerhaften Release-Schlüssel erforderlich.

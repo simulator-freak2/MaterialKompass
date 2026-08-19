@@ -43,6 +43,22 @@ async function createApprovers(baseUrl, admin, login) {
 test('suppliers require structured addresses and expose address suggestions', async () => {
   const calls = [];
   const addressLookup = {
+    async suggestions(input) {
+      calls.push(['suggestions', input]);
+      return {
+        configured: true,
+        supported: true,
+        suggestions: [{
+          id: 'address-1',
+          label: 'Hauptstraße, 31535 Neustadt, Deutschland',
+          street: 'Hauptstraße',
+          postalCode: '31535',
+          city: 'Neustadt',
+          country: 'Deutschland',
+          countryCode: 'de',
+        }],
+      };
+    },
     async localities(input) {
       calls.push(['localities', input]);
       return { supported: true, suggestions: ['Neustadt', 'Neustadt am Rübenberge'] };
@@ -76,6 +92,13 @@ test('suppliers require structured addresses and expose address suggestions', as
     assert.equal(invalidPostalCode.response.status, 400);
     assert.match(invalidPostalCode.data.error, /fünf Ziffern/);
 
+    const suggestions = await jsonRequest(
+      `${baseUrl}/api/address-suggestions?country=Deutschland&query=Hauptstra%C3%9Fe`,
+      admin,
+    );
+    assert.equal(suggestions.response.status, 200);
+    assert.equal(suggestions.data.suggestions[0].postalCode, '31535');
+
     const localities = await jsonRequest(
       `${baseUrl}/api/address-suggestions/localities?country=Deutschland&postalCode=31535`,
       admin,
@@ -89,6 +112,7 @@ test('suppliers require structured addresses and expose address suggestions', as
     assert.equal(streets.response.status, 200);
     assert.deepEqual(streets.data.suggestions, ['Hauptstraße', 'Hauptweg']);
     assert.deepEqual(calls, [
+      ['suggestions', { query: 'Hauptstraße', country: 'Deutschland' }],
       ['localities', { country: 'Deutschland', postalCode: '31535' }],
       ['streets', {
         country: 'Deutschland', postalCode: '31535', city: 'Neustadt', query: 'Hau',

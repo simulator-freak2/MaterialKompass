@@ -46,6 +46,11 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
   sind für die ausdrücklich gewünschte Funktion bestimmt
 - Datenbank ist im Compose-Betrieb nur intern erreichbar; Backend-Port ist an
   Loopback gebunden und für TLS-Betrieb hinter einem Reverse Proxy vorgesehen
+- Native Offline-Snapshots, Befehlswarteschlangen und QR-Prüfwerte werden im
+  geschützten Schlüsselspeicher des Betriebssystems abgelegt; QR-Geheimnisse
+  selbst werden nicht persistiert
+- Offlinefreigaben laufen nach sieben Tagen ab, sind pro Benutzer und Gerät
+  widerrufbar und werden beim nächsten Serverkontakt erneut geprüft
 
 ## Verarbeitungsübersicht
 
@@ -57,12 +62,32 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
 | Beschaffung | Antragstellende, Genehmigende, Lieferkontakte | Beschaffungsprozess und Nachweis | Steuer-/Handels-/Vergabefristen prüfen |
 | Audit/Export | pseudonymisierter Akteur, Aktion, Zeitpunkt | Sicherheit und Nachvollziehbarkeit | Standard 1095 bzw. 365 Tage, konfigurierbar |
 | E-Mail/QR | Postfachdaten, Metadaten, Anmeldecode-Metadaten | Import und Anmeldung | Import-Policy bzw. 30 Tage nach QR-Ablauf |
+| Dienstgeräte | Gerätekennung, Standort, verantwortliche Person, Login- und MFA-Metadaten, meldende Person und Kontakt | abgesicherter Hallenbetrieb, Mängelmeldung und Nachvollziehbarkeit | mit Geräte-, Audit- und Mängelaufbewahrung abstimmen; Geheimnisse bei Widerruf sofort unbrauchbar machen |
+| Offlinebetrieb | lokaler fachlicher Snapshot, Benutzer-/Gerätekennung, ausstehende Buchungen, Konflikte und Synchronisationszeiten | Arbeiten bei fehlender Verbindung und spätere Synchronisation | standardmäßig nach 30 Tagen ohne erneute Anmeldung bereinigen; offene Buchungen nur nach ausdrücklicher Entscheidung verwerfen |
 
-Bei der optionalen Lieferanten-Adresssuche übermittelt das Backend nur Land,
-Postleitzahl, Ort und ein Straßennamen-Präfix an den konfigurierten OpenPLZ-Dienst.
-Lieferantenname und Kontaktdaten werden nicht übertragen. Vor Produktivbetrieb sind
-der konkrete Dienst, dessen Datenschutzhinweise und gegebenenfalls der Betrieb einer
-eigenen Instanz in das Verzeichnis der Verarbeitungstätigkeiten aufzunehmen.
+Dienstgeräte verarbeiten zusätzlich Anmelde- und Nutzungsereignisse gemeinsam
+genutzter Terminals. Organisatorische Regeln müssen festlegen, wer NFC-Karten,
+TOTP-Berechtigungen und System-QR-Codes erhalten darf. Vollständige Suchbegriffe
+werden nicht protokolliert. Empfänger ausgegebener Artikel werden über die
+Geräte-API nicht übermittelt. Temporär geöffnete Vorlagen und
+Gebrauchsanweisungen werden bei Sitzungsende vom Client entfernt.
+
+Für Geräteverlust muss der Betreiber den betroffenen Client und gegebenenfalls
+den Benutzer unverzüglich sperren. Da ein vollständig getrenntes Gerät einen
+Widerruf erst beim nächsten Kontakt empfangen kann, begrenzt die siebentägige
+Offlinefreigabe das verbleibende Risiko. Organisatorisch ist zu dokumentieren,
+wer persönliche Offline-QR-Codes erhält und wie Verlustmeldungen bearbeitet
+werden. Lokale Vorschauen dürfen nicht als bereits serverseitig bestätigte
+Buchungen behandelt werden.
+
+Bei der optionalen EU-Adresssuche übermittelt ausschließlich das Backend die bereits
+eingegebenen Adressbestandteile an Geoapify. Namen, Kontaktdaten und der serverseitige
+API-Schlüssel werden nicht an Flutter-Clients beziehungsweise nicht zusammen mit der
+Adressanfrage als Fachdaten übermittelt. Vollständige Suchanfragen werden nicht in den
+Anwendungsprotokollen gespeichert; identische Anfragen werden kurzzeitig im Speicher
+zwischengespeichert. Vor Produktivbetrieb sind Geoapify, dessen Datenschutzhinweise
+und die erforderliche Auftragsverarbeitung in das Verzeichnis der
+Verarbeitungstätigkeiten aufzunehmen.
 
 ## Betroffenenanfragen
 
