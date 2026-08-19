@@ -207,7 +207,7 @@ Future<Response> _write(
     if (_transientStatusCodes.contains(response.statusCode) &&
         _queueable(method, url, body)) {
       OfflineStore.instance.markOffline();
-      return _enqueueWrite(method, url, headers, encoded);
+      return await _enqueueWrite(method, url, headers, encoded);
     }
     return response;
   } catch (_) {
