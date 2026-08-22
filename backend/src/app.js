@@ -15,7 +15,9 @@ const {
   createProcurementEmailService,
   registerProcurementEmailRoutes,
 } = require('./procurement-email-ingestion');
-const { nextInventoryNumber } = require('./inventory-number');
+const {
+  inventoryNumberInUse, nextInventoryNumber, reservesInventoryNumber,
+} = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { registerDefectManagement } = require('./defects');
 const {
@@ -32,6 +34,8 @@ const { registerOfflineSync } = require('./offline-sync');
 const { createMailboxProvisioner } = require('./mailbox-provisioner-client');
 const { createMailboxCredentialVault } = require('./mailbox-credential-vault');
 const { registerMailManagementRoutes } = require('./mail-management');
+const { sendAccountMail } = require('./mailer');
+const { createUserMfa } = require('./user-mfa');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -40,6 +44,15 @@ const { legalInformation } = require('./legal-config');
 const { inspectZipArchive, neutralizeSpreadsheetCell } = require('./security-utils');
 const { configurePersistence } = require('./persistence-coordinator');
 const { createRateLimiter } = require('./request-rate-limiter');
+const {
+  StorageValidationError,
+  buildingInput,
+  hierarchyNodeInput,
+  duplicateInScope,
+  ensureStorageHierarchy,
+  refreshStoragePaths,
+  bulkInput,
+} = require('./storage-hierarchy');
 const { version } = require('../package.json');
 
 // Spreadsheet support is sizeable and only needed for explicit import/export
@@ -85,7 +98,8 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/defects\/[^/]+\/images$/,
 ];
 const PERSISTED_COLLECTIONS = Object.freeze([
-  'permissions', 'departments', 'locations', 'stockStructures', 'categories', 'materials',
+  'permissions', 'departments', 'locations', 'shelves', 'storageLevels',
+  'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
@@ -235,8 +249,9 @@ function createApp(options = {}) {
   const permissions = appData.permissions;
   const users = appData.users;
   const departments = (appData.departments ||= []);
-  const locations = appData.locations;
-  const stockStructures = appData.stockStructures;
+  const {
+    locations, shelves, storageLevels, positions: stockStructures,
+  } = ensureStorageHierarchy(appData);
   const categories = appData.categories;
   const materials = appData.materials;
   const deletedMaterials = (appData.deletedMaterials ||= []);
@@ -419,11 +434,13 @@ function createApp(options = {}) {
   function securityVersion(user) {
     return createHash('sha256').update(JSON.stringify([
       user.passwordHash, user.active, user.emailVerifiedAt, user.roles, user.permissions,
+      user.mfaVersion || 0, user.mfaRequired === true, Boolean(user.mfaEnabledAt),
     ])).digest('base64url').slice(0, 22);
   }
 
   function createToken(user, context = {}) {
     const payload = { sub: user.id, sv: securityVersion(user) };
+    if (context.mfaSetupRequired) payload.ms = true;
     if (context.deviceId) {
       const device = serviceDevices.find((entry) => entry.id === context.deviceId);
       Object.assign(payload, {
@@ -456,6 +473,7 @@ function createApp(options = {}) {
         algorithms: ['HS256'], audience: JWT_AUDIENCE, issuer: JWT_ISSUER,
       });
       req.sessionType = payload.st || 'normal';
+      req.mfaSetupRequired = payload.ms === true;
       req.device = payload.did
         ? serviceDevices.find((entry) => entry.id === payload.did) || null
         : null;
@@ -489,6 +507,14 @@ function createApp(options = {}) {
       }
       if (req.sessionType !== 'normal' && req.sessionType !== PERSONAL_DEVICE_SESSION) {
         return res.status(401).json({ error: 'Invalid token' });
+      }
+      if (req.mfaSetupRequired
+          && !['/api/auth/me', '/api/users/me/mfa', '/api/users/me/mfa/setup',
+            '/api/users/me/mfa/confirm'].includes(req.path)) {
+        return res.status(428).json({
+          error: 'Richten Sie zuerst die verpflichtende Zwei-Faktor-Authentifizierung ein.',
+          mfaSetupRequired: true,
+        });
       }
       next();
     } catch (error) {
@@ -588,6 +614,7 @@ function createApp(options = {}) {
     };
   }
 
+  let userMfa;
   registerOfflineSync({
     app,
     clients: offlineClients,
@@ -601,6 +628,7 @@ function createApp(options = {}) {
     deviceSession: DEVICE_SESSION,
     securityVersion,
     jwtSecret,
+    offlineMfaEligible: (user) => userMfa?.offlineMfaEligible(user) === true,
   });
 
   function logEvent(action, entity, details, actor = 'system') {
@@ -626,6 +654,9 @@ function createApp(options = {}) {
 
   const activityAreas = Object.freeze({
     Location: { permission: 'locations.read', label: 'Lagerorte' },
+    Shelf: { permission: 'locations.read', label: 'Lagerorte' },
+    StorageLevel: { permission: 'locations.read', label: 'Lagerorte' },
+    StorageHierarchy: { permission: 'locations.read', label: 'Lagerorte' },
     StockStructure: { permission: 'locations.read', label: 'Lagerorte' },
     Category: { permission: 'categories.read', label: 'Kategorien' },
     MaterialItem: { permission: 'inventory.read', label: 'Inventar' },
@@ -669,7 +700,8 @@ function createApp(options = {}) {
       'bulk-category-update': 'Kategorie geändert',
     };
     const entityLabels = {
-      MaterialItem: 'Artikel', ClothingItem: 'Kleidungsartikel', Location: 'Lagerort',
+      MaterialItem: 'Artikel', ClothingItem: 'Kleidungsartikel', Location: 'Gebäude',
+      Shelf: 'Regal', StorageLevel: 'Ebene', StorageHierarchy: 'Lagerstruktur',
       StockStructure: 'Lagerplatz', Category: 'Kategorie', MaterialMovement: 'Material',
       IssueTransaction: 'Kleidungsausgabe', DefectReport: 'Mangel',
       ProcurementRequest: 'Beschaffung', Stocktake: 'Inventur', ExportLog: 'Export',
@@ -701,7 +733,7 @@ function createApp(options = {}) {
     const mainCategoryId = category?.parentId || category?.id || '00';
     const subcategoryId = category?.parentId ? category.id : '00';
     return nextInventoryNumber(
-      [...materials, ...clothingItems, ...deletedClothingItems],
+      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems],
       mainCategoryId,
       subcategoryId,
     );
@@ -870,7 +902,7 @@ function createApp(options = {}) {
   }
 
   function buildClothingWorkbook() {
-    const headers = ['Inventarnummer', 'Name', 'Kategorie-ID', 'Kategorie', 'Größe', 'Hersteller', 'Baujahr', 'Anschaffungsdatum', 'Standort', 'Regal/Fach', 'Status', 'Zugewiesen an'];
+    const headers = ['Inventarnummer', 'Name', 'Kategorie-ID', 'Kategorie', 'Größe', 'Hersteller', 'Baujahr', 'Anschaffungsdatum', 'Standort', 'Lagerplatz', 'Status', 'Zugewiesen an'];
     const rows = clothingItems.map((item) => ({
       Inventarnummer: item.inventoryNumber || '',
       Name: item.name || '',
@@ -881,7 +913,7 @@ function createApp(options = {}) {
       Baujahr: item.manufacturingYear || '',
       Anschaffungsdatum: item.purchaseDate || '',
       Standort: item.locationId || '',
-      'Regal/Fach': item.stockStructureId || '',
+      Lagerplatz: item.stockStructureId || '',
       Status: item.status || 'Lagernd',
       'Zugewiesen an': item.assignedPerson || '',
     }));
@@ -899,7 +931,7 @@ function createApp(options = {}) {
     const helpSheet = xlsx().utils.aoa_to_sheet([
       ['Importhinweise'],
       ['Pflichtfeld', 'Name'],
-      ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Hersteller, Baujahr, Anschaffungsdatum, Standort, Regal/Fach, Status, Zugewiesen an'],
+      ['Optionale Felder', 'Inventarnummer, Kategorie-ID, Kategorie, Größe, Hersteller, Baujahr, Anschaffungsdatum, Standort, Lagerplatz, Status, Zugewiesen an'],
       ['Statuswerte', 'Lagernd oder Ausgegeben'],
       ['Duplikate', 'Bereits vorhandene Inventarnummern werden übersprungen.'],
     ]);
@@ -1011,6 +1043,23 @@ function createApp(options = {}) {
     onBeforeUserDelete: anonymizeDataSubject,
     now: options.now,
     defaultMailMessageFor: mailManagement.defaultMessageFor,
+    verifyMfaCode: (user, code) => userMfa?.verifyUserCode(user, code),
+  });
+
+  userMfa = createUserMfa({
+    app,
+    users,
+    authMiddleware,
+    requirePermission,
+    authRateLimit,
+    createToken,
+    saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
+    logEvent,
+    accountMailSender: options.accountMailSender || sendAccountMail,
+    encryptionKey: process.env.MFA_ENCRYPTION_KEY
+      || (process.env.NODE_ENV === 'production' ? '' : '0'.repeat(64)),
+    securityVersion,
+    now: options.now || Date.now,
   });
 
   registerScannerEmailRoutes({
@@ -1157,14 +1206,34 @@ function createApp(options = {}) {
     if (!user.active) return res.status(403).json({ error: 'Account deaktiviert.' });
     if (!user.emailVerifiedAt) return res.status(403).json({ error: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.' });
 
-    user.failedLoginAttempts = 0;
-    user.lockedUntil = null;
-    user.lastLoginAt = new Date().toISOString();
-    await options.userStore?.saveUser(user);
-    req.persistenceRequired = true;
-    const token = createToken(user);
-    logEvent('login', 'User', { id: user.id }, user.username);
-    res.json({ token, expiresIn: 3600, user: publicUser(user) });
+    const finishLogin = async (verifiedUser, response) => {
+      verifiedUser.failedLoginAttempts = 0;
+      verifiedUser.lockedUntil = null;
+      verifiedUser.lastLoginAt = new Date().toISOString();
+      await options.userStore?.saveUser(verifiedUser);
+      req.persistenceRequired = true;
+      logEvent('login', 'User', { id: verifiedUser.id }, verifiedUser.username);
+      return response.json({
+        token: createToken(verifiedUser),
+        expiresIn: 3600,
+        user: publicUser(verifiedUser),
+      });
+    };
+    if (userMfa.mfaEnabled(user)) {
+      return res.status(202).json(userMfa.issueChallenge(
+        user,
+        (verifiedUser, response) => finishLogin(verifiedUser, response),
+      ));
+    }
+    if (userMfa.enrollmentRequired(user)) {
+      return res.json({
+        token: createToken(user, { mfaSetupRequired: true }),
+        expiresIn: 3600,
+        user: publicUser(user),
+        mfaSetupRequired: true,
+      });
+    }
+    return finishLogin(user, res);
   });
 
   registerQrLoginRoutes({
@@ -1179,14 +1248,11 @@ function createApp(options = {}) {
     publicUser,
     logEvent,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
+    userMfa,
   });
 
   app.get('/api/auth/me', authMiddleware, (req, res) => {
     res.json({ user: publicUser(req.user) });
-  });
-
-  app.get('/api/locations', authMiddleware, requirePermission('locations.read'), (req, res) => {
-    res.json(locations);
   });
 
   const stocktakeReferences = (field, id) => stocktakes.some((stocktake) => {
@@ -1201,36 +1267,87 @@ function createApp(options = {}) {
     });
   });
 
+  const parseStorageInput = (res, parser) => {
+    try {
+      return parser();
+    } catch (error) {
+      if (error instanceof StorageValidationError) {
+        res.status(400).json({ error: error.message });
+        return null;
+      }
+      throw error;
+    }
+  };
+
+  const positionIsReferenced = (id) => (
+    [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
+      .some((entry) => entry.stockStructureId === id || entry.storagePositionId === id)
+    || stocktakeReferences('stockStructureId', id)
+  );
+
+  const syncAssignedLocation = (positionIds) => {
+    const ids = new Set(positionIds);
+    const locationByPosition = new Map(stockStructures
+      .filter((entry) => ids.has(entry.id))
+      .map((entry) => [entry.id, entry.locationId]));
+    for (const entry of [
+      ...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems,
+    ]) {
+      const positionId = entry.stockStructureId || entry.storagePositionId;
+      if (locationByPosition.has(positionId)) {
+        entry.locationId = locationByPosition.get(positionId);
+      }
+    }
+  };
+
+  const removeWhere = (entries, predicate) => {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      if (predicate(entries[index])) entries.splice(index, 1);
+    }
+  };
+
+  app.get('/api/storage-hierarchy', authMiddleware, requirePermission('locations.read'), (req, res) => {
+    refreshStoragePaths(appData);
+    res.json({ locations, shelves, storageLevels, stockStructures });
+  });
+
+  app.get('/api/locations', authMiddleware, requirePermission('locations.read'), (req, res) => {
+    res.json(locations);
+  });
+
   app.post('/api/locations', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const name = String(req.body.name || '').trim();
-    const code = String(req.body.code || '').trim().toUpperCase();
-    const type = String(req.body.type || '').trim();
-    if (!name || !code || !type) return res.status(400).json({ error: 'Name, Kürzel und Typ sind Pflichtfelder.' });
-    if (!/^[A-Z0-9_-]{1,16}$/.test(code)) return res.status(400).json({ error: 'Das Kürzel darf nur Buchstaben, Zahlen, _ und - enthalten.' });
-    if (locations.some((entry) => entry.name.toLowerCase() === name.toLowerCase() || entry.code.toLowerCase() === code.toLowerCase())) return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
-    const location = { id: nextId('loc', locations), name, code, type };
+    const input = parseStorageInput(res, () => buildingInput(req.body));
+    if (!input) return;
+    if (locations.some((entry) => entry.name.toLowerCase() === input.name.toLowerCase()
+      || entry.code.toLowerCase() === input.code.toLowerCase())) {
+      return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
+    }
+    const location = { id: nextId('loc', locations), ...input };
     locations.push(location);
+    refreshStoragePaths(appData);
     logEvent('create', 'Location', { id: location.id }, req.user.username);
-    res.status(201).json(location);
+    return res.status(201).json(location);
   });
 
   app.put('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const location = locations.find((entry) => entry.id === req.params.id);
-    if (!location) return res.status(404).json({ error: 'Lagerort nicht gefunden.' });
-    const name = String(req.body.name ?? location.name).trim();
-    const code = String(req.body.code ?? location.code).trim().toUpperCase();
-    const type = String(req.body.type ?? location.type).trim();
-    if (!name || !code || !type) return res.status(400).json({ error: 'Name, Kürzel und Typ sind Pflichtfelder.' });
-    if (!/^[A-Z0-9_-]{1,16}$/.test(code)) return res.status(400).json({ error: 'Das Kürzel ist ungültig.' });
-    if (locations.some((entry) => entry.id !== location.id && (entry.name.toLowerCase() === name.toLowerCase() || entry.code.toLowerCase() === code.toLowerCase()))) return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
-    Object.assign(location, { name, code, type, updatedAt: new Date().toISOString() });
+    if (!location) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
+    const input = parseStorageInput(res, () => buildingInput(req.body, location));
+    if (!input) return;
+    if (locations.some((entry) => entry.id !== location.id
+      && (entry.name.toLowerCase() === input.name.toLowerCase()
+        || entry.code.toLowerCase() === input.code.toLowerCase()))) {
+      return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
+    }
+    Object.assign(location, input, { updatedAt: new Date().toISOString() });
+    refreshStoragePaths(appData);
     logEvent('update', 'Location', { id: location.id }, req.user.username);
-    res.json(location);
+    return res.json(location);
   });
 
   app.delete('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = locations.findIndex((entry) => entry.id === req.params.id);
-    if (index < 0) return res.status(404).json({ error: 'Lagerort nicht gefunden.' });
+    if (index < 0) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
     const nestedStockIds = new Set(stockStructures
       .filter((entry) => entry.locationId === req.params.id)
       .map((entry) => entry.id));
@@ -1241,52 +1358,275 @@ function createApp(options = {}) {
     if (inventoryReferences || stocktakeUsesLocation) {
       return res.status(409).json({ error: 'Der Lagerort wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
     }
-    for (let i = stockStructures.length - 1; i >= 0; i -= 1) if (stockStructures[i].locationId === req.params.id) stockStructures.splice(i, 1);
+    removeWhere(stockStructures, (entry) => entry.locationId === req.params.id);
+    const nestedShelfIds = new Set(shelves
+      .filter((entry) => entry.locationId === req.params.id)
+      .map((entry) => entry.id));
+    removeWhere(storageLevels, (entry) => nestedShelfIds.has(entry.shelfId));
+    removeWhere(shelves, (entry) => entry.locationId === req.params.id);
     const [removed] = locations.splice(index, 1);
     logEvent('delete', 'Location', { id: removed.id }, req.user.username);
     res.status(204).end();
   });
 
+  app.get('/api/shelves', authMiddleware, requirePermission('locations.read'), (req, res) => {
+    res.json(shelves);
+  });
+
+  app.post('/api/shelves', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const locationId = String(req.body.locationId || '').trim();
+    if (!locations.some((entry) => entry.id === locationId)) {
+      return res.status(400).json({ error: 'Ein gültiges Gebäude ist erforderlich.' });
+    }
+    const input = parseStorageInput(res, () => hierarchyNodeInput(req.body));
+    if (!input) return;
+    if (duplicateInScope(shelves, input, { parentKey: 'locationId', parentId: locationId })) {
+      return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Gebäude bereits vorhanden.' });
+    }
+    const shelf = { id: nextId('shelf', shelves), locationId, ...input };
+    shelves.push(shelf);
+    refreshStoragePaths(appData);
+    logEvent('create', 'Shelf', { id: shelf.id, locationId }, req.user.username);
+    return res.status(201).json(shelf);
+  });
+
+  app.put('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const shelf = shelves.find((entry) => entry.id === req.params.id);
+    if (!shelf) return res.status(404).json({ error: 'Regal nicht gefunden.' });
+    const locationId = String(req.body.locationId ?? shelf.locationId).trim();
+    if (!locations.some((entry) => entry.id === locationId)) {
+      return res.status(400).json({ error: 'Ein gültiges Gebäude ist erforderlich.' });
+    }
+    const input = parseStorageInput(res, () => hierarchyNodeInput(req.body, shelf));
+    if (!input) return;
+    if (duplicateInScope(shelves, input, {
+      parentKey: 'locationId', parentId: locationId, excludingId: shelf.id,
+    })) {
+      return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Gebäude bereits vorhanden.' });
+    }
+    Object.assign(shelf, input, { locationId, updatedAt: new Date().toISOString() });
+    refreshStoragePaths(appData);
+    const positionIds = stockStructures
+      .filter((entry) => entry.shelfId === shelf.id).map((entry) => entry.id);
+    syncAssignedLocation(positionIds);
+    logEvent('update', 'Shelf', { id: shelf.id, locationId }, req.user.username);
+    return res.json(shelf);
+  });
+
+  app.delete('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const index = shelves.findIndex((entry) => entry.id === req.params.id);
+    if (index < 0) return res.status(404).json({ error: 'Regal nicht gefunden.' });
+    const positionIds = stockStructures
+      .filter((entry) => entry.shelfId === req.params.id).map((entry) => entry.id);
+    if (positionIds.some(positionIsReferenced)) {
+      return res.status(409).json({ error: 'Das Regal enthält noch verwendete Lagerplätze.' });
+    }
+    const levelIds = new Set(storageLevels
+      .filter((entry) => entry.shelfId === req.params.id).map((entry) => entry.id));
+    removeWhere(stockStructures, (entry) => positionIds.includes(entry.id));
+    removeWhere(storageLevels, (entry) => levelIds.has(entry.id));
+    const [removed] = shelves.splice(index, 1);
+    logEvent('delete', 'Shelf', { id: removed.id }, req.user.username);
+    return res.status(204).end();
+  });
+
+  app.get('/api/storage-levels', authMiddleware, requirePermission('locations.read'), (req, res) => {
+    res.json(storageLevels);
+  });
+
+  app.post('/api/storage-levels', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const shelfId = String(req.body.shelfId || '').trim();
+    const shelf = shelves.find((entry) => entry.id === shelfId);
+    if (!shelf) return res.status(400).json({ error: 'Ein gültiges Regal ist erforderlich.' });
+    const input = parseStorageInput(res, () => hierarchyNodeInput(req.body));
+    if (!input) return;
+    if (duplicateInScope(storageLevels, input, { parentKey: 'shelfId', parentId: shelfId })) {
+      return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Regal bereits vorhanden.' });
+    }
+    const level = {
+      id: nextId('level', storageLevels), shelfId, locationId: shelf.locationId, ...input,
+    };
+    storageLevels.push(level);
+    refreshStoragePaths(appData);
+    logEvent('create', 'StorageLevel', { id: level.id, shelfId }, req.user.username);
+    return res.status(201).json(level);
+  });
+
+  app.put('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const level = storageLevels.find((entry) => entry.id === req.params.id);
+    if (!level) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
+    const shelfId = String(req.body.shelfId ?? level.shelfId).trim();
+    const shelf = shelves.find((entry) => entry.id === shelfId);
+    if (!shelf) return res.status(400).json({ error: 'Ein gültiges Regal ist erforderlich.' });
+    const input = parseStorageInput(res, () => hierarchyNodeInput(req.body, level));
+    if (!input) return;
+    if (duplicateInScope(storageLevels, input, {
+      parentKey: 'shelfId', parentId: shelfId, excludingId: level.id,
+    })) {
+      return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Regal bereits vorhanden.' });
+    }
+    Object.assign(level, input, {
+      shelfId, locationId: shelf.locationId, updatedAt: new Date().toISOString(),
+    });
+    refreshStoragePaths(appData);
+    const positionIds = stockStructures
+      .filter((entry) => entry.levelId === level.id).map((entry) => entry.id);
+    syncAssignedLocation(positionIds);
+    logEvent('update', 'StorageLevel', { id: level.id, shelfId }, req.user.username);
+    return res.json(level);
+  });
+
+  app.delete('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const index = storageLevels.findIndex((entry) => entry.id === req.params.id);
+    if (index < 0) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
+    const positionIds = stockStructures
+      .filter((entry) => entry.levelId === req.params.id).map((entry) => entry.id);
+    if (positionIds.some(positionIsReferenced)) {
+      return res.status(409).json({ error: 'Die Ebene enthält noch verwendete Lagerplätze.' });
+    }
+    removeWhere(stockStructures, (entry) => positionIds.includes(entry.id));
+    const [removed] = storageLevels.splice(index, 1);
+    logEvent('delete', 'StorageLevel', { id: removed.id }, req.user.username);
+    return res.status(204).end();
+  });
+
   app.get('/api/stock-structures', authMiddleware, requirePermission('locations.read'), (req, res) => {
+    refreshStoragePaths(appData);
     res.json(stockStructures);
   });
 
   app.post('/api/stock-structures', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const name = String(req.body.name || '').trim();
-    const section = String(req.body.section || '').trim();
-    const locationId = String(req.body.locationId || '').trim();
-    if (!name || !section || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, Fach/Abschnitt und ein gültiger Lagerort sind erforderlich.' });
-    if (stockStructures.some((entry) => entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.section.toLowerCase() === section.toLowerCase()))) return res.status(409).json({ error: 'Name oder Fach/Abschnitt existiert an diesem Lagerort bereits.' });
-    const stock = { id: nextId('stock', stockStructures), name, section, locationId };
+    const levelId = String(req.body.levelId || '').trim();
+    const level = storageLevels.find((entry) => entry.id === levelId);
+    if (!level) return res.status(400).json({ error: 'Eine gültige Ebene ist erforderlich.' });
+    const input = parseStorageInput(res, () => hierarchyNodeInput(req.body));
+    if (!input) return;
+    if (duplicateInScope(stockStructures, input, { parentKey: 'levelId', parentId: levelId })) {
+      return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist auf dieser Ebene bereits vorhanden.' });
+    }
+    const stock = {
+      id: nextId('stock', stockStructures),
+      levelId,
+      shelfId: level.shelfId,
+      locationId: level.locationId,
+      section: input.code,
+      ...input,
+    };
     stockStructures.push(stock);
-    logEvent('create', 'StockStructure', { id: stock.id, locationId }, req.user.username);
-    res.status(201).json(stock);
+    refreshStoragePaths(appData);
+    logEvent('create', 'StockStructure', { id: stock.id, locationId: stock.locationId }, req.user.username);
+    return res.status(201).json(stock);
   });
 
   app.put('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const stock = stockStructures.find((entry) => entry.id === req.params.id);
-    if (!stock) return res.status(404).json({ error: 'Regal/Fach nicht gefunden.' });
-    const name = String(req.body.name ?? stock.name).trim();
-    const section = String(req.body.section ?? stock.section).trim();
-    const locationId = String(req.body.locationId ?? stock.locationId).trim();
-    if (!name || !section || !locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Name, Fach/Abschnitt und ein gültiger Lagerort sind erforderlich.' });
-    if (stockStructures.some((entry) => entry.id !== stock.id && entry.locationId === locationId && (entry.name.toLowerCase() === name.toLowerCase() || entry.section.toLowerCase() === section.toLowerCase()))) return res.status(409).json({ error: 'Name oder Fach/Abschnitt existiert an diesem Lagerort bereits.' });
-    Object.assign(stock, { name, section, locationId, updatedAt: new Date().toISOString() });
-    logEvent('update', 'StockStructure', { id: stock.id, locationId }, req.user.username);
-    res.json(stock);
+    if (!stock) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
+    const levelId = String(req.body.levelId ?? stock.levelId).trim();
+    const level = storageLevels.find((entry) => entry.id === levelId);
+    if (!level) return res.status(400).json({ error: 'Eine gültige Ebene ist erforderlich.' });
+    const input = parseStorageInput(res, () => hierarchyNodeInput(req.body, stock));
+    if (!input) return;
+    if (duplicateInScope(stockStructures, input, {
+      parentKey: 'levelId', parentId: levelId, excludingId: stock.id,
+    })) {
+      return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist auf dieser Ebene bereits vorhanden.' });
+    }
+    Object.assign(stock, input, {
+      levelId,
+      shelfId: level.shelfId,
+      locationId: level.locationId,
+      section: input.code,
+      updatedAt: new Date().toISOString(),
+    });
+    refreshStoragePaths(appData);
+    syncAssignedLocation([stock.id]);
+    logEvent('update', 'StockStructure', { id: stock.id, locationId: stock.locationId }, req.user.username);
+    return res.json(stock);
   });
 
   app.delete('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = stockStructures.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
-    const inventoryReferences = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
-      .some((entry) => entry.stockStructureId === req.params.id);
-    if (inventoryReferences || stocktakeReferences('stockStructureId', req.params.id)) {
+    if (positionIsReferenced(req.params.id)) {
       return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
     }
     const [removed] = stockStructures.splice(index, 1);
     logEvent('delete', 'StockStructure', { id: removed.id }, req.user.username);
     res.status(204).end();
+  });
+
+  app.post('/api/storage-hierarchy/bulk', authMiddleware, requirePermission('locations.write'), (req, res) => {
+    const locationId = String(req.body.locationId || '').trim();
+    if (!locations.some((entry) => entry.id === locationId)) {
+      return res.status(400).json({ error: 'Ein gültiges Gebäude ist erforderlich.' });
+    }
+    const input = parseStorageInput(res, () => bulkInput(req.body));
+    if (!input) return;
+    const plannedShelfCodes = Array.from({ length: input.shelfCount }, (_, index) => (
+      `${input.shelfPrefix}${input.startNumber + index}`
+    ));
+    const existingShelfCodes = new Set(shelves
+      .filter((entry) => entry.locationId === locationId)
+      .map((entry) => String(entry.code).toUpperCase()));
+    if (plannedShelfCodes.some((code) => existingShelfCodes.has(code))) {
+      return res.status(409).json({ error: 'Mindestens ein erzeugtes Regalkürzel ist bereits vorhanden.' });
+    }
+
+    const created = { shelves: [], storageLevels: [], stockStructures: [] };
+    const numericIdFactory = (prefix, entries) => {
+      let number = Number(nextId(prefix, entries).slice(prefix.length + 1));
+      return () => `${prefix}-${number++}`;
+    };
+    const nextShelfId = numericIdFactory('shelf', shelves);
+    const nextLevelId = numericIdFactory('level', storageLevels);
+    const nextPositionId = numericIdFactory('stock', stockStructures);
+    for (let shelfIndex = 0; shelfIndex < input.shelfCount; shelfIndex += 1) {
+      const shelfNumber = input.startNumber + shelfIndex;
+      const shelf = {
+        id: nextShelfId(),
+        locationId,
+        name: `Regal ${shelfNumber}`,
+        code: `${input.shelfPrefix}${shelfNumber}`,
+      };
+      shelves.push(shelf);
+      created.shelves.push(shelf);
+      for (let levelIndex = 0; levelIndex < input.levelsPerShelf; levelIndex += 1) {
+        const levelNumber = input.startNumber + levelIndex;
+        const level = {
+          id: nextLevelId(),
+          locationId,
+          shelfId: shelf.id,
+          name: `Ebene ${levelNumber}`,
+          code: `${input.levelPrefix}${levelNumber}`,
+        };
+        storageLevels.push(level);
+        created.storageLevels.push(level);
+        for (let positionIndex = 0; positionIndex < input.positionsPerLevel; positionIndex += 1) {
+          const positionNumber = input.startNumber + positionIndex;
+          const paddedNumber = String(positionNumber).padStart(2, '0');
+          const code = `${input.positionPrefix}${paddedNumber}`;
+          const position = {
+            id: nextPositionId(),
+            locationId,
+            shelfId: shelf.id,
+            levelId: level.id,
+            name: `Lagerplatz ${paddedNumber}`,
+            code,
+            section: code,
+          };
+          stockStructures.push(position);
+          created.stockStructures.push(position);
+        }
+      }
+    }
+    refreshStoragePaths(appData);
+    logEvent('create', 'StorageHierarchy', {
+      locationId,
+      shelfCount: created.shelves.length,
+      levelCount: created.storageLevels.length,
+      positionCount: created.stockStructures.length,
+    }, req.user.username);
+    return res.status(201).json(created);
   });
 
   app.get('/api/categories', authMiddleware, requirePermission('categories.read'), (req, res) => {
@@ -1444,7 +1784,8 @@ function createApp(options = {}) {
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
-    stockStructures, logEvent, nextId, XLSX, defectManagement,
+    stockStructures, clothingItems, deletedClothingItems, logEvent, nextId, XLSX,
+    defectManagement,
   });
 
   registerStocktakeRoutes({
@@ -1467,7 +1808,8 @@ function createApp(options = {}) {
   app.get('/api/clothing', authMiddleware, requirePermission('clothing.read'), (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
-    res.json(clothingItems.slice(offset, offset + limit).map(responseClothing));
+    res.json(clothingItems.filter((item) => !item.archived)
+      .slice(offset, offset + limit).map(responseClothing));
   });
 
   app.post('/api/clothing', authMiddleware, requirePermission('clothing.write'), (req, res) => {
@@ -1491,7 +1833,7 @@ function createApp(options = {}) {
     const locationId = String(req.body.locationId || 'loc-2').trim() || 'loc-2';
     const stockStructureId = String(req.body.stockStructureId || '').trim();
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
-    if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
+    if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum gewählten Gebäude.' });
     const requestedInventoryNumber = String(req.body.inventoryNumber || '').trim();
     const inventoryNumber = requestedInventoryNumber || nextClothingInventoryNumber(categoryId);
     if (inventoryNumber.length > 64 || size.length > 32
@@ -1499,7 +1841,10 @@ function createApp(options = {}) {
       || String(req.body.manufacturingYear || '').length > 32) {
       return res.status(400).json({ error: 'Mindestens ein Textfeld überschreitet die zulässige Länge.' });
     }
-    if ([...materials, ...clothingItems, ...deletedClothingItems].some((item) => item.inventoryNumber === inventoryNumber)) {
+    if (inventoryNumberInUse(
+      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems],
+      inventoryNumber,
+    )) {
       return res.status(409).json({ error: 'inventoryNumber already exists' });
     }
 
@@ -1540,6 +1885,9 @@ function createApp(options = {}) {
     if (!item) {
       return res.status(404).json({ error: 'Clothing item not found' });
     }
+    if (item.archived) {
+      return res.status(409).json({ error: 'Ausgesonderte Kleidung kann nicht bearbeitet werden.' });
+    }
 
     const name = String(req.body.name ?? item.name).trim();
     if (!name || name.length > 255) {
@@ -1550,8 +1898,10 @@ function createApp(options = {}) {
     if (!inventoryNumber) {
       return res.status(400).json({ error: 'inventoryNumber is required' });
     }
-    if ([...clothingItems, ...deletedClothingItems].some(
-      (entry) => entry.id !== item.id && entry.inventoryNumber === inventoryNumber
+    if (inventoryNumberInUse(
+      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems],
+      inventoryNumber,
+      item,
     )) {
       return res.status(409).json({ error: 'inventoryNumber already exists' });
     }
@@ -1573,7 +1923,7 @@ function createApp(options = {}) {
     const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
     const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
-    if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Regal/Fach gehört nicht zum gewählten Lagerort.' });
+    if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum gewählten Gebäude.' });
 
     const updatedItem = {
       ...item,
@@ -1699,6 +2049,7 @@ function createApp(options = {}) {
   app.post('/api/clothing/:id/inspections', authMiddleware, requirePermission('clothing.inspect'), (req, res) => {
     const item = clothingItems.find((entry) => entry.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Kleidungsstück nicht gefunden.' });
+    if (item.archived) return res.status(409).json({ error: 'Ausgesonderte Kleidung kann nicht geprüft werden.' });
     const category = categories.find((entry) => entry.id === item.categoryId);
     if (category?.requiresPsageInspection === true &&
         !req.user.roles?.includes('Sachkundiger PSAgE') &&
@@ -1765,7 +2116,9 @@ function createApp(options = {}) {
   });
 
   app.get('/api/clothing/history', authMiddleware, requirePermission('clothing.read'), (req, res) => {
-    res.json(deletedClothingItems.slice().reverse());
+    res.json([...deletedClothingItems, ...clothingItems.filter((item) => item.archived)]
+      .sort((left, right) => String(right.deletedAt || right.archivedAt || '')
+        .localeCompare(String(left.deletedAt || left.archivedAt || ''))));
   });
 
   app.post('/api/clothing/import', authMiddleware, requirePermission('clothing.write'), (req, res) => {
@@ -1797,8 +2150,9 @@ function createApp(options = {}) {
     }
 
     const usedInventoryNumbers = new Set(
-      [...materials, ...clothingItems, ...deletedClothingItems]
-        .map((item) => item.inventoryNumber)
+      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
+        .filter(reservesInventoryNumber)
+        .map((item) => String(item.inventoryNumber).toLowerCase())
     );
     const importedItems = [];
     const skippedRows = [];
@@ -1811,7 +2165,7 @@ function createApp(options = {}) {
         skippedRows.push({ row: rowNumber, reason: 'Name fehlt' });
         return;
       }
-      if (inventoryNumber && usedInventoryNumbers.has(inventoryNumber)) {
+      if (inventoryNumber && usedInventoryNumbers.has(inventoryNumber.toLowerCase())) {
         skippedRows.push({ row: rowNumber, reason: `Inventarnummer ${inventoryNumber} existiert bereits` });
         return;
       }
@@ -1855,7 +2209,7 @@ function createApp(options = {}) {
       const locationId = String(row.locationId || '').trim() || 'loc-2';
       const stockStructureId = String(row.stockStructureId || '').trim();
       if (!locations.some((entry) => entry.id === locationId) || (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId))) {
-        skippedRows.push({ row: rowNumber, reason: 'Lagerort oder Regal/Fach ist ungültig' });
+        skippedRows.push({ row: rowNumber, reason: 'Gebäude oder Lagerplatz ist ungültig' });
         return;
       }
       if (!inventoryNumber) {
@@ -1883,7 +2237,7 @@ function createApp(options = {}) {
         createdAt: new Date().toISOString(),
       };
       clothingItems.push(item);
-      usedInventoryNumbers.add(inventoryNumber);
+      usedInventoryNumbers.add(inventoryNumber.toLowerCase());
       importedItems.push(item);
     });
 
@@ -2024,11 +2378,13 @@ function createApp(options = {}) {
     qrLoginCredentials,
     securityVersion,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
+    userMfa,
   });
 
   registerProcurementRoutes({
     app, authMiddleware, requirePermission, data: appData, categories, departments, locations,
-    stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
+    stockStructures, materials, deletedMaterials, clothingItems, deletedClothingItems,
+    logEvent, nextId, XLSX,
     nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
     addMonths,
   });

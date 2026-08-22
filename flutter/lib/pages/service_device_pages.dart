@@ -15,6 +15,7 @@ import '../services/offline_session_service.dart';
 import '../services/service_device_storage.dart';
 import '../services/temporary_device_file.dart';
 import '../widgets/qr_login_dialog.dart';
+import '../widgets/mfa_dialogs.dart';
 import 'dashboard_page.dart';
 import 'login_page.dart';
 

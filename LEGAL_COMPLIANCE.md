@@ -50,13 +50,14 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
   geschützten Schlüsselspeicher des Betriebssystems abgelegt; QR-Geheimnisse
   selbst werden nicht persistiert
 - Offlinefreigaben laufen nach sieben Tagen ab, sind pro Benutzer und Gerät
-  widerrufbar und werden beim nächsten Serverkontakt erneut geprüft
+  widerrufbar und werden beim nächsten Serverkontakt erneut geprüft; persönliche
+  Offlinekonten benötigen zusätzlich mindestens jährlich eine vollständige 2-FA-Anmeldung
 
 ## Verarbeitungsübersicht
 
 | Bereich | typische personenbezogene Daten | Zweck | Löschentscheidung |
 |---|---|---|---|
-| Konten | Name, Nutzername, E-Mail, Rollen, Anmeldezeiten | Zugang und Berechtigungen | 24/36-Monats-Automatik oder berechtigtes Löschersuchen |
+| Konten | Name, Nutzername, E-Mail, Rollen, Anmeldezeiten, 2-FA-Status und verschlüsseltes TOTP-Geheimnis | Zugang und Berechtigungen | 24/36-Monats-Automatik oder berechtigtes Löschersuchen; Faktorwerte beim Reset sofort unbrauchbar machen |
 | Inventar/Kleidung | Empfänger, zugewiesene Person, Prüfer | Ausgabe, Rückgabe, Prüfung | nach organisationsspezifischem Fach- und Haftungskonzept |
 | Mängel | Meldende, Kontakte, Kommunikationsinhalte | Mangelbearbeitung und Nachweis | vorhandene Mängel-Aufbewahrungsregel, fachlich freizugeben |
 | Beschaffung | Antragstellende, Genehmigende, Lieferkontakte | Beschaffungsprozess und Nachweis | Steuer-/Handels-/Vergabefristen prüfen |

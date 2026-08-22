@@ -16,6 +16,15 @@ CREATE TABLE users (
   verification_expires_at DATETIME NULL,
   password_reset_token_hash CHAR(64) NULL,
   password_reset_expires_at DATETIME NULL,
+  mfa_required TINYINT(1) NOT NULL DEFAULT 0,
+  mfa_secret_encrypted TEXT NULL,
+  mfa_pending_secret_encrypted TEXT NULL,
+  mfa_pending_secret_expires_at DATETIME NULL,
+  mfa_recovery_code_hashes JSON NOT NULL,
+  mfa_enabled_at DATETIME NULL,
+  mfa_last_verified_at DATETIME NULL,
+  mfa_grace_ends_at DATETIME NULL,
+  mfa_version INT UNSIGNED NOT NULL DEFAULT 0,
   deactivated_at DATETIME NULL,
   deactivation_reason VARCHAR(64) NULL,
   scheduled_deletion_at DATETIME NULL,
@@ -39,15 +48,45 @@ CREATE TABLE locations (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   code VARCHAR(32) NOT NULL,
-  type VARCHAR(64) NOT NULL
+  type VARCHAR(64) NULL,
+  street VARCHAR(255) NULL,
+  house_number VARCHAR(64) NULL,
+  postal_code VARCHAR(32) NULL,
+  city VARCHAR(255) NULL,
+  country VARCHAR(128) NULL,
+  UNIQUE KEY uq_locations_code (code)
+);
+
+CREATE TABLE shelves (
+  id VARCHAR(64) PRIMARY KEY,
+  location_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  code VARCHAR(32) NOT NULL,
+  UNIQUE KEY uq_shelves_location_code (location_id, code),
+  FOREIGN KEY (location_id) REFERENCES locations(id)
+);
+
+CREATE TABLE storage_levels (
+  id VARCHAR(64) PRIMARY KEY,
+  shelf_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  code VARCHAR(32) NOT NULL,
+  UNIQUE KEY uq_storage_levels_shelf_code (shelf_id, code),
+  FOREIGN KEY (shelf_id) REFERENCES shelves(id)
 );
 
 CREATE TABLE stock_structures (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   location_id VARCHAR(64) NOT NULL,
+  shelf_id VARCHAR(64) NULL,
+  level_id VARCHAR(64) NULL,
+  code VARCHAR(32) NULL,
   section VARCHAR(64) NOT NULL,
-  FOREIGN KEY (location_id) REFERENCES locations(id)
+  UNIQUE KEY uq_stock_structures_level_code (level_id, code),
+  FOREIGN KEY (location_id) REFERENCES locations(id),
+  FOREIGN KEY (shelf_id) REFERENCES shelves(id),
+  FOREIGN KEY (level_id) REFERENCES storage_levels(id)
 );
 
 CREATE TABLE categories (
@@ -191,6 +230,7 @@ CREATE TABLE defect_reports (
   risk_level VARCHAR(80) NULL,
   operational_safety VARCHAR(80) NULL,
   assignee VARCHAR(255) NULL,
+  assignee_user_id VARCHAR(64) NULL,
   responsible_department VARCHAR(255) NULL,
   contact_name VARCHAR(255) NULL,
   contact_email VARCHAR(255) NULL,
@@ -204,7 +244,8 @@ CREATE TABLE defect_reports (
   details_json LONGTEXT NULL CHECK (details_json IS NULL OR JSON_VALID(details_json)),
   archived_at DATETIME NULL,
   archived_by VARCHAR(255) NULL,
-  created_at DATETIME NOT NULL
+  created_at DATETIME NOT NULL,
+  INDEX idx_defect_reports_assignee_user (assignee_user_id)
 );
 
 CREATE TABLE procurement_requests (

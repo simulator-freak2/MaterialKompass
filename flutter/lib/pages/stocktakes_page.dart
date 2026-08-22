@@ -415,7 +415,9 @@ class _CreateStocktakeDialogState extends State<_CreateStocktakeDialog> {
           children: values.map((entry) {
             final value = entry[idKey]?.toString() ?? entry['name'].toString();
             return FilterChip(
-              label: Text(entry['name']?.toString() ?? value),
+              label: Text(entry['path']?.toString() ??
+                  entry['name']?.toString() ??
+                  value),
               selected: selected.contains(value),
               onSelected: (checked) => setState(
                   () => checked ? selected.add(value) : selected.remove(value)),
@@ -951,7 +953,8 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                                 value: null, child: Text('Kein Lagerplatz')),
                             ...locationStocks.map((stock) => DropdownMenuItem(
                                 value: stock['id'].toString(),
-                                child: Text(stock['name'].toString())))
+                                child: Text(stock['path']?.toString() ??
+                                    stock['name'].toString())))
                           ],
                           onChanged: (value) =>
                               setDialogState(() => stockId = value)),
@@ -1033,18 +1036,13 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
   }
 
   Future<void> _import() async {
-    final picked = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['xlsx', 'ods'],
-        withData: true);
-    final file = picked?.files.single;
-    if (file?.bytes == null) return;
+    final file = await FilePicker.pickFile(
+        type: FileType.custom, allowedExtensions: const ['xlsx', 'ods']);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
     final data = await request('/api/stocktakes/${widget.stocktakeId}/import',
         method: 'POST',
-        body: {
-          'fileName': file!.name,
-          'fileBase64': base64Encode(file.bytes!)
-        });
+        body: {'fileName': file.name, 'fileBase64': base64Encode(bytes)});
     if (data != null) {
       message(
           '${data['imported']} Positionen importiert, ${data['skipped']} übersprungen.');

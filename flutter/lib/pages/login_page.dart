@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../widgets/qr_login_dialog.dart';
+import '../widgets/mfa_dialogs.dart';
 import 'dashboard_page.dart';
 import 'legal_page.dart';
 import 'service_device_pages.dart';
@@ -185,18 +186,72 @@ class _LoginPageState extends State<LoginPage> {
         },
       );
       if (!mounted) return;
-      if (response.statusCode == 200) {
+      var data = response.object;
+      if (response.statusCode == 202 && data['mfaRequired'] == true) {
+        final verified = await verifyMfaChallenge(context, data);
+        if (verified == null || !mounted) return;
+        data = verified;
+      }
+      if (response.statusCode == 200 || data['token'] != null) {
+        if (data['mfaSetupRequired'] == true) {
+          final setup = await setupMfa(
+            context,
+            token: data['token'].toString(),
+            currentPassword: passwordController.text,
+          );
+          if (setup == null || !mounted) {
+            _showError(
+                'Die verpflichtende 2-FA-Einrichtung wurde nicht abgeschlossen.');
+            return;
+          }
+          data = {...data, ...setup};
+        } else {
+          final mfa =
+              data['user'] is Map ? (data['user'] as Map)['mfa'] as Map? : null;
+          if (mfa?['required'] == true && mfa?['enabled'] != true) {
+            final configureNow = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('2-FA-Einrichtung erforderlich'),
+                content: Text(
+                  'Ein Administrator hat 2-FA für dieses Konto verpflichtend '
+                  'gemacht. Bitte richten Sie den zweiten Faktor innerhalb '
+                  'der Einrichtungsfrist ein. Frist: '
+                  '${mfa?['graceEndsAt'] ?? '14 Tage'}.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Später'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Jetzt einrichten'),
+                  ),
+                ],
+              ),
+            );
+            if (configureNow == true && mounted) {
+              final setup = await setupMfa(
+                context,
+                token: data['token'].toString(),
+                currentPassword: passwordController.text,
+              );
+              if (setup != null) data = {...data, ...setup};
+            }
+          }
+        }
+        if (!mounted) return;
         TextInput.finishAutofillContext(shouldSave: true);
-        unawaited(
-            OfflineSessionService.prepare(response.object['token'].toString()));
+        unawaited(OfflineSessionService.prepare(data['token'].toString()));
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => DashboardPage(token: response.object['token']),
+            builder: (_) => DashboardPage(token: data['token'].toString()),
           ),
         );
       } else {
         _showError(
-          response.object['error']?.toString() ?? 'Login fehlgeschlagen',
+          data['error']?.toString() ?? 'Login fehlgeschlagen',
         );
       }
     } on ApiException catch (error) {
@@ -216,15 +271,26 @@ class _LoginPageState extends State<LoginPage> {
         body: {'credential': credential},
       );
       if (!mounted) return;
-      if (response.statusCode == 200) {
-        final token = response.object['token'].toString();
+      var data = response.object;
+      if (response.statusCode == 202 && data['mfaRequired'] == true) {
+        final verified = await verifyMfaChallenge(context, data);
+        if (verified == null || !mounted) return;
+        data = verified;
+      }
+      if (response.statusCode == 200 || data['token'] != null) {
+        if (data['mfaSetupRequired'] == true) {
+          _showError(
+            'Melden Sie sich einmal mit Ihrem Passwort an, um 2-FA einzurichten.',
+          );
+          return;
+        }
+        final token = data['token'].toString();
         unawaited(OfflineSessionService.prepare(token));
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => DashboardPage(token: token)),
         );
       } else {
-        _showError(response.object['error']?.toString() ??
-            'QR-Anmeldung fehlgeschlagen.');
+        _showError(data['error']?.toString() ?? 'QR-Anmeldung fehlgeschlagen.');
       }
     } on ApiException catch (error) {
       if (mounted) _showError(error.message);

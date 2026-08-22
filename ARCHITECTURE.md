@@ -30,6 +30,7 @@ Anfragen im HTTP-Header `Authorization: Bearer …`.
 | Kleiderkammer | `flutter/lib/pages/wardrobe_page.dart`, Routen in `backend/src/app.js` |
 | Mängel | `flutter/lib/pages/defects_page.dart`, `backend/src/defects.js` |
 | Nutzer, Rollen, Anmeldung | `backend/src/user-management.js`, Authentifizierung in `backend/src/app.js` |
+| Konto-2-FA und Login-Challenges | `backend/src/user-mfa.js`, `backend/src/mfa-security.js`, `backend/src/totp.js` |
 | Dienstgeräte und Gerätesitzungen | `backend/src/service-devices.js`, `flutter/lib/pages/service_device_*.dart` |
 | Offline-Snapshot und Synchronisation | `backend/src/offline-sync.js`, `flutter/lib/services/offline_*.dart` |
 | Datenbanktabellen und Migrationen | `backend/src/db/schema.sql`, `backend/src/db/migrations/` |
@@ -77,6 +78,12 @@ Die Netzwerkschicht hat drei bewusst getrennte Ebenen:
   Fachänderungen werden mit eindeutiger Befehls-ID offline vorgemerkt.
 - `authenticated_api_client.dart`: ergänzt JWT, JSON-Konvertierung und
   einheitliche, deutschsprachige Fehler für angemeldete Fachseiten.
+
+Bei aktivierter Konto-2-FA liefert der erste Faktor kein Anwendungs-JWT, sondern eine
+fünf Minuten gültige, serverseitig einmal verwendbare Challenge. Erst TOTP oder ein
+noch unbenutzter Wiederherstellungscode schließt die Anmeldung ab. TOTP-Geheimnisse
+liegen AES-256-GCM-verschlüsselt, Wiederherstellungscodes nur als Prüfsummen vor.
+Änderungen an Faktor oder Richtlinie fließen in die JWT-Sicherheitsversion ein.
 
 Schreibzugriffe werden nicht blind automatisch wiederholt. Nur die in
 `offline_http.dart` aufgeführten Vorgänge dürfen in die Warteschlange. Das

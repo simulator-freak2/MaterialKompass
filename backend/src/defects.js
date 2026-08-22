@@ -147,6 +147,7 @@ function registerDefectManagement({
     report.riskLevel ||= 'Keine Angabe';
     report.operationalSafety ||= 'Nicht einsatzfähig';
     report.assignee ||= '';
+    report.assigneeUserId ||= null;
     report.responsibleDepartment ||= '';
     report.measuresTaken ||= '';
     report.contactName ||= report.reportedByName || '';
@@ -191,8 +192,9 @@ function registerDefectManagement({
     const entity = entityFor(report.entityType, report.entityId);
     return {
       ...report,
-      entityName: entity?.name || 'Gelöschter Artikel',
-      inventoryNumber: entity?.inventoryNumber || null,
+      entityName: entity?.name || report.entityNameSnapshot || 'Gelöschter Artikel',
+      inventoryNumber: entity?.inventoryNumber || report.inventoryNumberSnapshot
+        || report.disposal?.inventoryNumber || null,
       images: report.images.map((image) => includeImageData ? image : ({
         id: image.id, fileName: image.fileName, mimeType: image.mimeType,
         sizeBytes: image.sizeBytes, createdAt: image.createdAt, createdBy: image.createdBy,
@@ -250,6 +252,28 @@ function registerDefectManagement({
     }
   }
 
+  function userMayReceiveDefect(user, entityType) {
+    return user?.active === true && hasPermission(user, 'defects.read')
+      && scopeFor(user, entityType);
+  }
+
+  function createAssignmentNotification(report, assignee, actorId) {
+    if (!assignee || assignee.id === actorId) return;
+    notifications.push({
+      id: nextId('notification', notifications),
+      userId: assignee.id,
+      type: 'defect-assigned',
+      title: `Mangel ${report.defectNumber} zugewiesen`,
+      message: `${report.title} · ${report.priority}`,
+      defectId: report.id,
+      readAt: null,
+      createdAt: nowIso(),
+    });
+    if (notifications.length > MAX_NOTIFICATION_RECORDS) {
+      notifications.splice(0, notifications.length - MAX_NOTIFICATION_RECORDS);
+    }
+  }
+
   function validateCreate(body) {
     const entityType = text(body.entityType, 32);
     const entityId = text(body.entityId, 64);
@@ -296,7 +320,8 @@ function registerDefectManagement({
       measuresTaken: text(body.measuresTaken, 5000),
       riskLevel: text(body.riskLevel || 'Keine Angabe', 80),
       operationalSafety: text(body.operationalSafety || 'Nicht einsatzfähig', 80),
-      assignee: text(body.assignee, 255), responsibleDepartment: text(body.responsibleDepartment, 255),
+      assignee: text(body.assignee, 255), assigneeUserId: null,
+      responsibleDepartment: text(body.responsibleDepartment, 255),
       contactName: text(body.contactName || user.name || user.username, 255),
       contactEmail: text(body.contactEmail || user.email, 255).toLowerCase(),
       contactPhone: text(body.contactPhone, 80),
@@ -437,6 +462,24 @@ function registerDefectManagement({
       open: visible.filter((entry) => !CLOSED_STATUSES.has(entry.status)).length,
       inProgress: visible.filter((entry) => entry.status === 'In Bearbeitung').length,
     });
+  });
+
+  app.get('/api/defects/assignees', authMiddleware, requirePermission('defects.assign'), (req, res) => {
+    const entityType = text(req.query.entityType, 32);
+    if (!ENTITY_TYPES.includes(entityType)) {
+      return res.status(400).json({ error: 'Der Mängelbereich ist ungültig.' });
+    }
+    if (!scopeFor(req.user, entityType)) {
+      return res.status(403).json({ error: 'Für diesen Mängelbereich ist keine Zuweisung erlaubt.' });
+    }
+    const assignees = users.filter((user) => userMayReceiveDefect(user, entityType))
+      .map((user) => ({
+        id: user.id,
+        name: text(user.name || user.username, 255),
+        username: text(user.username, 100),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'de'));
+    return res.json(assignees);
   });
 
   app.get('/api/defects/export', authMiddleware, requirePermission('defects.export'), (req, res) => {
@@ -633,20 +676,51 @@ function registerDefectManagement({
     const report = findDefect(req, res); if (!report) return;
     if (!can(req.user, 'defects.assign', report) || report.archivedAt) return res.status(403).json({ error: 'Zuweisung nicht erlaubt.' });
     const oldAssignment = {
-      assignee: report.assignee, responsibleDepartment: report.responsibleDepartment,
-      dueDate: report.dueDate,
+      assignee: report.assignee, assigneeUserId: report.assigneeUserId || null,
+      responsibleDepartment: report.responsibleDepartment, dueDate: report.dueDate,
+      status: report.status,
     };
-    report.assignee = text(req.body.assignee, 255);
-    report.responsibleDepartment = text(req.body.responsibleDepartment, 255);
-    report.dueDate = req.body.dueDate || report.dueDate || null;
-    if (!report.assignee) return res.status(400).json({ error: 'Eine verantwortliche Person ist erforderlich.' });
-    addHistory(report, req.user.username, 'assign', {
+    const clearAssignment = req.body.clearAssignment === true;
+    const assigneeUserId = text(req.body.assigneeUserId, 64);
+    let assignedUser = null;
+    let assignee = '';
+    if (!clearAssignment && assigneeUserId) {
+      assignedUser = users.find((user) => user.id === assigneeUserId);
+      if (!userMayReceiveDefect(assignedUser, report.entityType)) {
+        return res.status(400).json({ error: 'Der ausgewählte Nutzer kann diesen Mangel nicht übernehmen.' });
+      }
+      assignee = text(assignedUser.name || assignedUser.username, 255);
+    } else if (!clearAssignment) {
+      assignee = text(req.body.assignee, 255);
+      if (!assignee) {
+        return res.status(400).json({ error: 'Ein Nutzer oder eine externe verantwortliche Person ist erforderlich.' });
+      }
+    }
+    report.assignee = assignee;
+    report.assigneeUserId = assignedUser?.id || null;
+    if (req.body.responsibleDepartment !== undefined) {
+      report.responsibleDepartment = text(req.body.responsibleDepartment, 255);
+    }
+    if (req.body.dueDate !== undefined) report.dueDate = req.body.dueDate || null;
+    if (clearAssignment && ['Zugewiesen', 'In Bearbeitung'].includes(report.status)) {
+      report.status = 'In Prüfung';
+    }
+    addHistory(report, req.user.username, clearAssignment ? 'unassign' : 'assign', {
       changes: {
         assignee: { from: oldAssignment.assignee, to: report.assignee },
+        assigneeUserId: { from: oldAssignment.assigneeUserId, to: report.assigneeUserId },
         responsibleDepartment: { from: oldAssignment.responsibleDepartment, to: report.responsibleDepartment },
         dueDate: { from: oldAssignment.dueDate, to: report.dueDate },
+        status: { from: oldAssignment.status, to: report.status },
       },
     });
+    if (assignedUser && oldAssignment.assigneeUserId !== assignedUser.id) {
+      createAssignmentNotification(report, assignedUser, req.user.id);
+    }
+    logEvent(clearAssignment ? 'unassign' : 'assign', 'DefectReport', {
+      id: report.id, defectNumber: report.defectNumber,
+      assigneeUserId: report.assigneeUserId,
+    }, req.user.username);
     return res.json(publicDefect(report));
   });
 
@@ -715,34 +789,40 @@ function registerDefectManagement({
     return res.status(201).json(action);
   });
 
-  app.post('/api/defects/:id/dispose-and-procure', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+  function prepareDisposal(req, res, report) {
     if (!can(req.user, 'defects.edit', report) || report.archivedAt) {
-      return res.status(403).json({ error: 'Der Mangel darf nicht bearbeitet werden.' });
+      res.status(403).json({ error: 'Der Mangel darf nicht bearbeitet werden.' });
+      return null;
     }
-    if (!hasPermission(req.user, 'procurement.request')) {
-      return res.status(403).json({ error: 'Zum Erstellen des Beschaffungsantrags fehlt die Berechtigung.' });
-    }
-    const inventoryPermission = report.entityType === 'MaterialItem' ? 'inventory.write' : 'clothing.write';
+    const inventoryPermission = report.entityType === 'MaterialItem'
+      ? 'inventory.write' : 'clothing.write';
     if (!hasPermission(req.user, inventoryPermission)) {
-      return res.status(403).json({ error: 'Zum Aussondern des Artikels fehlt die Berechtigung.' });
+      res.status(403).json({ error: 'Zum Aussondern des Artikels fehlt die Berechtigung.' });
+      return null;
     }
-    if (report.disposal) return res.status(409).json({ error: 'Der Artikel wurde für diesen Mangel bereits ausgesondert.' });
+    if (report.disposal) {
+      res.status(409).json({ error: 'Der Artikel wurde für diesen Mangel bereits ausgesondert.' });
+      return null;
+    }
 
     const entity = entityFor(report.entityType, report.entityId);
-    if (!entity) return res.status(404).json({ error: 'Der betroffene Artikel wurde nicht gefunden.' });
-    if (entity.status === 'Ausgesondert') return res.status(409).json({ error: 'Der Artikel ist bereits ausgesondert.' });
+    if (!entity) {
+      res.status(404).json({ error: 'Der betroffene Artikel wurde nicht gefunden.' });
+      return null;
+    }
+    if (entity.status === 'Ausgesondert') {
+      res.status(409).json({ error: 'Der Artikel ist bereits ausgesondert.' });
+      return null;
+    }
     const disposalQuantity = Number(req.body.disposalQuantity ?? report.affectedQuantity ?? 1);
-    const replacementQuantity = Number(req.body.replacementQuantity ?? disposalQuantity);
-    const requestedBudgetGross = numberOrNull(req.body.requestedBudgetGross);
     const reason = text(req.body.reason, 5000);
-    if (!Number.isFinite(disposalQuantity) || disposalQuantity <= 0 ||
-        !Number.isFinite(replacementQuantity) || replacementQuantity <= 0 ||
-        requestedBudgetGross === null || requestedBudgetGross <= 0 || !reason) {
-      return res.status(400).json({ error: 'Aussonderungsmenge, Ersatzmenge, Begründung und Bruttobudget sind erforderlich.' });
+    if (!Number.isFinite(disposalQuantity) || disposalQuantity <= 0 || !reason) {
+      res.status(400).json({ error: 'Aussonderungsmenge und Begründung sind erforderlich.' });
+      return null;
     }
     if (disposalQuantity > Number(report.affectedQuantity || 1)) {
-      return res.status(409).json({ error: 'Es kann höchstens die im Mangel betroffene Menge ausgesondert werden.' });
+      res.status(409).json({ error: 'Es kann höchstens die im Mangel betroffene Menge ausgesondert werden.' });
+      return null;
     }
 
     let categoryId; let subcategoryId = null; let size = '';
@@ -750,21 +830,126 @@ function registerDefectManagement({
       const total = Number(entity.quantity || 1);
       const issued = Number(entity.issuedQuantity || 0);
       if (entity.itemType === 'individual' && disposalQuantity !== 1) {
-        return res.status(409).json({ error: 'Ein einzeln geführter Artikel kann nur vollständig ausgesondert werden.' });
+        res.status(409).json({ error: 'Ein einzeln geführter Artikel kann nur vollständig ausgesondert werden.' });
+        return null;
       }
       if (disposalQuantity > total - issued) {
-        return res.status(409).json({ error: 'Nur nicht ausgegebene Artikel können ausgesondert werden.' });
+        res.status(409).json({ error: 'Nur nicht ausgegebene Artikel können ausgesondert werden.' });
+        return null;
       }
       categoryId = entity.categoryCode;
       subcategoryId = entity.subcategoryCode || null;
     } else {
       if (disposalQuantity !== 1 || entity.assignedPerson || entity.status === 'Ausgegeben') {
-        return res.status(409).json({ error: 'Ausgegebene Kleidung muss vor der Aussonderung zurückgenommen werden.' });
+        res.status(409).json({ error: 'Ausgegebene Kleidung muss vor der Aussonderung zurückgenommen werden.' });
+        return null;
       }
       const category = categories.find((entry) => entry.id === entity.categoryId);
       categoryId = category?.parentId || category?.id;
       subcategoryId = category?.parentId ? category.id : null;
       size = text(entity.size, 80);
+    }
+    return { entity, disposalQuantity, reason, categoryId, subcategoryId, size };
+  }
+
+  function recordDisposal(req, report, context, procurementRequest = null, at = nowIso()) {
+    const { entity, disposalQuantity, reason } = context;
+    const inventoryNumber = entity.inventoryNumber || null;
+    const fullyDisposed = report.entityType !== 'MaterialItem'
+      || disposalQuantity >= Number(entity.quantity || 1);
+
+    if (report.entityType === 'MaterialItem' && !fullyDisposed) {
+      entity.quantity = Number(entity.quantity || 1) - disposalQuantity;
+    } else {
+      entity.status = 'Ausgesondert';
+      entity.archived = true;
+      entity.archivedAt = at;
+      entity.archivedBy = req.user.username;
+      entity.inventoryNumberReleasedAt = at;
+      entity.inventoryNumberReleasedBy = req.user.username;
+      entity.inventoryNumberReleasedForDefectId = report.id;
+    }
+
+    report.entityNameSnapshot ||= entity.name;
+    report.inventoryNumberSnapshot ||= inventoryNumber;
+    report.disposal = {
+      quantity: disposalQuantity,
+      reason,
+      mode: procurementRequest ? 'with-replacement' : 'without-replacement',
+      at,
+      by: req.user.username,
+      inventoryNumber,
+      inventoryNumberReleased: fullyDisposed,
+      inventoryNumberReleasedAt: fullyDisposed ? at : null,
+      ...(procurementRequest ? {
+        procurementRequestId: procurementRequest.id,
+        procurementRequestNumber: procurementRequest.number,
+      } : {}),
+    };
+    report.doesNotAffectEntityStatus = true;
+    if (!fullyDisposed) restoreEntityIfResolved(report);
+
+    report.relatedActions.push({
+      id: nextId('related', report.relatedActions),
+      type: 'Aussonderung',
+      label: `${disposalQuantity} ${entity.unit || 'Stück'} ${entity.name} ausgesondert${fullyDisposed && inventoryNumber ? `; Inventarnummer ${inventoryNumber} freigegeben` : ''}`,
+      referenceId: inventoryNumber || entity.id,
+      createdAt: at,
+      createdBy: req.user.username,
+    });
+    if (procurementRequest) {
+      report.relatedActions.push({
+        id: nextId('related', report.relatedActions),
+        type: 'Beschaffung',
+        label: `Beschaffungsentwurf ${procurementRequest.number}`,
+        referenceId: procurementRequest.id,
+        createdAt: at,
+        createdBy: req.user.username,
+      });
+    }
+    const historyAction = procurementRequest
+      ? 'dispose-and-procure' : 'dispose-without-replacement';
+    addHistory(report, req.user.username, historyAction, {
+      disposalQuantity,
+      reason,
+      inventoryNumber,
+      inventoryNumberReleased: fullyDisposed,
+      ...(procurementRequest ? {
+        procurementRequestId: procurementRequest.id,
+        procurementRequestNumber: procurementRequest.number,
+      } : {}),
+    });
+    logEvent('dispose', report.entityType, {
+      id: entity.id,
+      itemName: entity.name,
+      inventoryNumber,
+      inventoryNumberReleased: fullyDisposed,
+      quantity: disposalQuantity,
+      defectNumber: report.defectNumber,
+      replacementProcured: Boolean(procurementRequest),
+      reason,
+    }, req.user.username);
+  }
+
+  app.post('/api/defects/:id/dispose-without-replacement', authMiddleware, requirePermission('defects.edit'), (req, res) => {
+    const report = findDefect(req, res); if (!report) return;
+    const context = prepareDisposal(req, res, report); if (!context) return;
+    recordDisposal(req, report, context);
+    return res.status(201).json({ defect: publicDefect(report) });
+  });
+
+  app.post('/api/defects/:id/dispose-and-procure', authMiddleware, requirePermission('defects.edit'), (req, res) => {
+    const report = findDefect(req, res); if (!report) return;
+    if (!hasPermission(req.user, 'procurement.request')) {
+      return res.status(403).json({ error: 'Zum Erstellen des Beschaffungsantrags fehlt die Berechtigung.' });
+    }
+    const context = prepareDisposal(req, res, report); if (!context) return;
+    const { entity, disposalQuantity, reason, categoryId, subcategoryId, size } = context;
+    const replacementQuantity = Number(req.body.replacementQuantity ?? disposalQuantity);
+    const requestedBudgetGross = numberOrNull(req.body.requestedBudgetGross);
+    if (!Number.isFinite(replacementQuantity) || replacementQuantity <= 0 ||
+        requestedBudgetGross === null || requestedBudgetGross <= 0) {
+      return res.status(400).json({ error: 'Aussonderungsmenge, Ersatzmenge, Begründung und Bruttobudget sind erforderlich.' });
     }
     const mainCategory = categories.find((entry) => entry.id === categoryId && !entry.parentId);
     const subcategory = subcategoryId
@@ -816,49 +1001,7 @@ function registerDefectManagement({
 
     // Alle Prüfungen sind abgeschlossen; ab hier werden Aussonderung und Antrag gemeinsam verbucht.
     procurementRequests.push(procurementRequest);
-    if (report.entityType === 'MaterialItem') {
-      const total = Number(entity.quantity || 1);
-      if (disposalQuantity < total) {
-        entity.quantity = total - disposalQuantity;
-      } else {
-        entity.status = 'Ausgesondert';
-        entity.archived = true;
-        entity.archivedAt = now;
-        entity.archivedBy = req.user.username;
-      }
-    } else {
-      entity.status = 'Ausgesondert';
-      entity.archived = true;
-      entity.archivedAt = now;
-      entity.archivedBy = req.user.username;
-    }
-    report.disposal = {
-      quantity: disposalQuantity, at: now, by: req.user.username,
-      procurementRequestId: procurementRequest.id,
-      procurementRequestNumber: procurementRequest.number,
-    };
-    report.doesNotAffectEntityStatus = true;
-    if (entity.status !== 'Ausgesondert') restoreEntityIfResolved(report);
-    const disposalAction = {
-      id: nextId('related', report.relatedActions), type: 'Aussonderung',
-      label: `${disposalQuantity} ${entity.unit || 'Stück'} ${entity.name} ausgesondert`,
-      referenceId: entity.inventoryNumber || entity.id, createdAt: now, createdBy: req.user.username,
-    };
-    report.relatedActions.push(disposalAction);
-    const procurementAction = {
-      id: nextId('related', report.relatedActions), type: 'Beschaffung',
-      label: `Beschaffungsentwurf ${procurementRequest.number}`,
-      referenceId: procurementRequest.id, createdAt: now, createdBy: req.user.username,
-    };
-    report.relatedActions.push(procurementAction);
-    addHistory(report, req.user.username, 'dispose-and-procure', {
-      disposalQuantity, procurementRequestId: procurementRequest.id,
-      procurementRequestNumber: procurementRequest.number,
-    });
-    logEvent('dispose', report.entityType, {
-      id: entity.id, itemName: entity.name, inventoryNumber: entity.inventoryNumber,
-      quantity: disposalQuantity, defectNumber: report.defectNumber,
-    }, req.user.username);
+    recordDisposal(req, report, context, procurementRequest, now);
     logEvent('Entwurf angelegt', 'ProcurementRequest', {
       id: procurementRequest.id, defectNumber: report.defectNumber, requestedBudgetGross,
     }, req.user.username);

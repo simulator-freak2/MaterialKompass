@@ -479,19 +479,16 @@ class _DeviceDefectDialogState extends State<_DeviceDefectDialog> {
   }
 
   Future<void> addImages() async {
-    final picked = await FilePicker.pickFiles(
-        type: FileType.image, allowMultiple: true, withData: true);
-    if (picked == null) return;
-    for (final file in picked.files) {
-      if (file.bytes != null) {
-        images.add({
-          'fileName': file.name,
-          'mimeType': file.extension?.toLowerCase() == 'png'
-              ? 'image/png'
-              : 'image/jpeg',
-          'fileBase64': base64Encode(file.bytes!)
-        });
-      }
+    final picked = await FilePicker.pickFiles(type: FileType.image);
+    for (final file in picked) {
+      final bytes = await file.readAsBytes();
+      images.add({
+        'fileName': file.name,
+        'mimeType': file.name.split('.').last.toLowerCase() == 'png'
+            ? 'image/png'
+            : 'image/jpeg',
+        'fileBase64': base64Encode(bytes)
+      });
     }
     if (mounted) setState(() {});
   }

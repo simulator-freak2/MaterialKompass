@@ -47,6 +47,7 @@ function registerServiceDeviceRoutes({
   authRateLimit, createToken, findUser, publicUser, logEvent, defectManagement,
   jwtSecret, qrLoginCredentials = [], securityVersion,
   saveUser = async () => {},
+  userMfa,
 }) {
   const encryptionKey = crypto.createHash('sha256').update(jwtSecret).digest();
   const nextId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
@@ -215,6 +216,7 @@ function registerServiceDeviceRoutes({
     if (sessionType !== DEVICE_SESSION
         && !user.permissions?.includes('offline.access')
         && !user.roles?.includes('Admin')) return null;
+    if (sessionType !== DEVICE_SESSION && !userMfa?.offlineMfaEligible(user)) return null;
     return {
       expiresAt: new Date(Date.now() + OFFLINE_LEASE_MS).toISOString(),
       verifierHash: hash(qrCredential),
@@ -477,16 +479,51 @@ function registerServiceDeviceRoutes({
       // a known personal account globally from a shared service device.
       return res.status(401).json({ error: 'Persönliche Anmeldung fehlgeschlagen.' });
     }
-    successfulLogin(device, user.username, method); updateClientInfo(device, req);
     if (qrIndexToConsume >= 0) qrLoginCredentials.splice(qrIndexToConsume, 1);
-    user.failedLoginAttempts = 0; user.lockedUntil = null; user.lastLoginAt = nowIso(); await saveUser(user);
-    const token = createToken(user, { deviceId: device.id, sessionType: PERSONAL_DEVICE_SESSION });
-    logEvent('login', 'ServiceDevice', { id: device.id, userId: user.id, method }, user.username);
-    return res.json({
-      token, expiresIn: 3600, user: publicUser(user), device: publicDevice(device), sessionType: PERSONAL_DEVICE_SESSION,
-      offlineLease: method === 'personal-offline-qr'
-        ? offlineLease(device, user, qrValue, PERSONAL_DEVICE_SESSION) : null,
-    });
+    const challengeDeviceSecurityVersion = device.securityVersion;
+    const finishLogin = async (verifiedUser, response, verifyRequest = req) => {
+      if (!device.active || device.securityVersion !== challengeDeviceSecurityVersion
+          || !ipAllowed(clientIp(verifyRequest), device.allowedNetworks)) {
+        return response.status(401).json({ error: 'Gerät oder Anmeldung ist ungültig.' });
+      }
+      successfulLogin(device, verifiedUser.username, method);
+      updateClientInfo(device, verifyRequest);
+      verifiedUser.failedLoginAttempts = 0;
+      verifiedUser.lockedUntil = null;
+      verifiedUser.lastLoginAt = nowIso();
+      await saveUser(verifiedUser);
+      const token = createToken(verifiedUser, {
+        deviceId: device.id,
+        sessionType: PERSONAL_DEVICE_SESSION,
+      });
+      logEvent('login', 'ServiceDevice', {
+        id: device.id, userId: verifiedUser.id, method,
+      }, verifiedUser.username);
+      return response.json({
+        token,
+        expiresIn: 3600,
+        user: publicUser(verifiedUser),
+        device: publicDevice(device),
+        sessionType: PERSONAL_DEVICE_SESSION,
+        offlineLease: method === 'personal-offline-qr'
+          ? offlineLease(device, verifiedUser, qrValue, PERSONAL_DEVICE_SESSION) : null,
+      });
+    };
+    if (userMfa?.mfaEnabled(user)) {
+      return res.status(202).json(userMfa.issueChallenge(
+        user,
+        (verifiedUser, response, _verification, verifyRequest) => finishLogin(
+          verifiedUser, response, verifyRequest,
+        ),
+      ));
+    }
+    if (userMfa?.enrollmentRequired(user)) {
+      return res.status(428).json({
+        error: '2-FA muss zunächst über die normale Anmeldung eingerichtet werden.',
+        mfaSetupRequired: true,
+      });
+    }
+    return finishLogin(user, res);
   });
 
   function allowedDocument(entry) {

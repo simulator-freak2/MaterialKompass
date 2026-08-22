@@ -74,7 +74,7 @@ test('desktop downloads report availability and stream configured release files'
     const updateResponse = await fetch(`${baseUrl}/api/client-updates/windows?currentVersion=0.9.0`);
     assert.equal(updateResponse.status, 200);
     const update = await updateResponse.json();
-    assert.equal(update.version, '1.3.0');
+    assert.equal(update.version, '1.4.0');
     assert.equal(update.updateAvailable, true);
     assert.equal(update.required, false);
     assert.equal(update.downloadUrl, '/api/downloads/windows');
@@ -130,6 +130,7 @@ test('runtime configuration validates network settings', () => {
     PROCUREMENT_IMAP_PASSWORD: 'secret',
     MAILBOX_PROVISIONER_TOKEN: 'b'.repeat(64),
     MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
+    MFA_ENCRYPTION_KEY: 'd'.repeat(64),
     MAILBOX_PROVISIONER_SOCKET: '/run/materialkompass/provisioner.sock',
     LEGAL_CONTROLLER_NAME: 'Example Organisation',
     LEGAL_LEGAL_FORM: 'e. V.',
@@ -202,6 +203,7 @@ test('production API rejects cleartext requests outside the health endpoint', as
     TRUST_PROXY: process.env.TRUST_PROXY,
     CORS_ORIGIN: process.env.CORS_ORIGIN,
     MAILBOX_PASSWORD_ENCRYPTION_KEY: process.env.MAILBOX_PASSWORD_ENCRYPTION_KEY,
+    MFA_ENCRYPTION_KEY: process.env.MFA_ENCRYPTION_KEY,
   };
   Object.assign(process.env, {
     NODE_ENV: 'production',
@@ -209,6 +211,7 @@ test('production API rejects cleartext requests outside the health endpoint', as
     TRUST_PROXY: 'loopback',
     CORS_ORIGIN: 'https://app.example.org',
     MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
+    MFA_ENCRYPTION_KEY: 'd'.repeat(64),
   });
   try {
     await withServer(async (baseUrl) => {

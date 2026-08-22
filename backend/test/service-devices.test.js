@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('node:crypto');
 const { createApp } = require('../src/app');
 const { ipAllowed } = require('../src/service-devices');
+const { totp } = require('../src/totp');
 
 test('device network rules support exact IPv4 and IPv6 CIDR ranges', () => {
   assert.equal(ipAllowed('192.168.10.25', ['192.168.10.0/24']), true);
@@ -189,12 +190,21 @@ test('system MFA is enforced and administrative changes invalidate active sessio
 
 test('offline QR login returns only a verifier and queued commands are idempotent', async () => {
   const snapshots = [];
-  const { server, request, adminToken } = await setup({
+  const { server, request, adminToken: initialAdminToken } = await setup({
     dataStore: {
       async saveCollections(snapshot) { snapshots.push(snapshot); },
     },
   });
   try {
+    const setupResponse = await request('/api/users/me/mfa/setup', {
+      method: 'POST', token: initialAdminToken,
+      body: { currentPassword: 'MaterialKompass2026!' },
+    });
+    const confirmed = await request('/api/users/me/mfa/confirm', {
+      method: 'POST', token: initialAdminToken,
+      body: { code: totp(setupResponse.data.secret) },
+    });
+    const adminToken = confirmed.data.token;
     const created = await request('/api/service-devices', {
       method: 'POST', token: adminToken, body: {
         name: 'Offline Halle', locationId: 'loc-1', inventoryNumber: 'DEVICE-OFFLINE-1',
@@ -217,10 +227,17 @@ test('offline QR login returns only a verifier and queued commands are idempoten
     assert.equal(issued.response.status, 201);
     assert.match(issued.data.credential, /^mkoffline:v1:/);
 
-    const personal = await request('/api/service-devices/login/personal', {
+    const personalChallenge = await request('/api/service-devices/login/personal', {
       method: 'POST', body: {
         deviceCredential: activation.data.deviceCredential,
         qrCredential: issued.data.credential,
+      },
+    });
+    assert.equal(personalChallenge.response.status, 202);
+    const personal = await request('/api/auth/mfa/verify', {
+      method: 'POST', body: {
+        challenge: personalChallenge.data.challenge,
+        code: totp(setupResponse.data.secret),
       },
     });
     assert.equal(personal.response.status, 200);
@@ -301,10 +318,16 @@ test('offline QR login returns only a verifier and queued commands are idempoten
     );
     assert.equal(unauthenticatedReplay.status, 401);
 
-    const refreshedLogin = await request('/api/service-devices/login/personal', {
+    const refreshedChallenge = await request('/api/service-devices/login/personal', {
       method: 'POST', body: {
         deviceCredential: activation.data.deviceCredential,
         qrCredential: issued.data.credential,
+      },
+    });
+    const refreshedLogin = await request('/api/auth/mfa/verify', {
+      method: 'POST', body: {
+        challenge: refreshedChallenge.data.challenge,
+        code: totp(setupResponse.data.secret),
       },
     });
     const refreshedReplay = await fetch(

@@ -104,6 +104,12 @@ class OfflineSessionService {
         cache('/api/categories', data['categories']),
         cache('/api/locations', data['locations']),
         cache('/api/stock-structures', data['stockStructures']),
+        cache('/api/storage-hierarchy', {
+          'locations': data['locations'] ?? const [],
+          'shelves': data['shelves'] ?? const [],
+          'storageLevels': data['storageLevels'] ?? const [],
+          'stockStructures': data['stockStructures'] ?? const [],
+        }),
         cache('/api/clothing', data['clothingItems']),
         cache('/api/clothing/history', const []),
         cache('/api/transactions', data['issueTransactions']),

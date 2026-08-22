@@ -21,6 +21,7 @@ bool _cacheableRead(Uri uri) {
       path == '/api/material' ||
       path == '/api/categories' ||
       path == '/api/locations' ||
+      path == '/api/storage-hierarchy' ||
       path == '/api/stock-structures' ||
       path == '/api/clothing' ||
       path == '/api/clothing/history' ||

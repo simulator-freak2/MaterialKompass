@@ -22,6 +22,7 @@ function registerOfflineSync({
   deviceSession,
   securityVersion,
   jwtSecret,
+  offlineMfaEligible = () => true,
 }) {
   const state = () => (syncState[0] ||= { revision: 0, updatedAt: null });
   const nowIso = () => new Date().toISOString();
@@ -132,6 +133,10 @@ function registerOfflineSync({
 
   function offlineAllowed(req) {
     if (req.sessionType === deviceSession) return req.device?.offlineEnabled === true;
+    // The rolling seven-day lease limits revocation latency. The independent
+    // annual MFA timestamp proves that the user still controls the second
+    // factor without storing a TOTP secret on the offline client.
+    if (!offlineMfaEligible(req.user)) return false;
     if (!hasPermission(req.user, 'offline.access')) return false;
     if (!req.device) return true;
     return req.device.offlineEnabled === true
@@ -169,7 +174,7 @@ function registerOfflineSync({
         availableQuantity: Number(entry.quantity || 0) - Number(entry.issuedQuantity || 0),
       })) : [];
     const clothingItems = hasPermission(req.user, 'clothing.read') || req.sessionType === deviceSession
-      ? (data.clothingItems || []).filter(include) : [];
+      ? (data.clothingItems || []).filter((entry) => !entry.archived && include(entry)) : [];
     const entityIds = new Set([...materials, ...clothingItems].map((entry) => entry.id));
     const defectReports = hasPermission(req.user, 'defects.read') || req.sessionType === deviceSession
       ? (data.defectReports || []).filter((entry) => !entry.archivedAt && entityIds.has(entry.entityId)).map(safeDefect)
@@ -197,8 +202,8 @@ function registerOfflineSync({
       stockStructures,
       shelves,
       storageLevels,
-      storagePositions: selected.size === 0
-        ? (data.storagePositions || []) : (data.storagePositions || []).filter((entry) => levelIds.has(entry.levelId)),
+      // Kept as an alias for clients that already understand the new name.
+      storagePositions: stockStructures.filter((entry) => levelIds.has(entry.levelId)),
     };
   }
 
@@ -254,6 +259,9 @@ function registerOfflineSync({
     const client = activeClient(req);
     if (!client) return res.status(403).json({ error: 'Die Offlinefreigabe ist ungültig oder abgelaufen.' });
     client.lastSeenAt = nowIso();
+    client.leaseExpiresAt = new Date(
+      Date.now() + OFFLINE_LEASE_DAYS * 86_400_000,
+    ).toISOString();
     return res.json({
       revision: Number(state().revision || 0),
       generatedAt: nowIso(),
@@ -268,6 +276,9 @@ function registerOfflineSync({
     const revision = Number(state().revision || 0);
     const changed = Number(req.query.cursor || 0) !== revision;
     client.lastSeenAt = nowIso();
+    client.leaseExpiresAt = new Date(
+      Date.now() + OFFLINE_LEASE_DAYS * 86_400_000,
+    ).toISOString();
     return res.json({
       revision,
       changed,

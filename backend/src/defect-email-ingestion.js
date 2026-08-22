@@ -290,25 +290,28 @@ async function renderPdfPages(bytes) {
     useSystemFonts: true,
     isEvalSupported: false,
   });
-  const document = await task.promise;
-  const pages = [];
-  for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 5); pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: 2 });
-    if (viewport.width > MAX_IMAGE_DIMENSION || viewport.height > MAX_IMAGE_DIMENSION
-      || viewport.width * viewport.height > MAX_PDF_CANVAS_PIXELS) {
-      throw new Error('Eine PDF-Seite überschreitet die zulässigen Bildabmessungen.');
+  try {
+    const document = await task.promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 5); pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 2 });
+      if (viewport.width > MAX_IMAGE_DIMENSION || viewport.height > MAX_IMAGE_DIMENSION
+        || viewport.width * viewport.height > MAX_PDF_CANVAS_PIXELS) {
+        throw new Error('Eine PDF-Seite überschreitet die zulässigen Bildabmessungen.');
+      }
+      const canvas = canvasApi().createCanvas(
+        Math.ceil(viewport.width),
+        Math.ceil(viewport.height),
+      );
+      const context = canvas.getContext('2d');
+      await page.render({ canvasContext: context, viewport }).promise;
+      pages.push(canvas.toBuffer('image/png'));
     }
-    const canvas = canvasApi().createCanvas(
-      Math.ceil(viewport.width),
-      Math.ceil(viewport.height),
-    );
-    const context = canvas.getContext('2d');
-    await page.render({ canvasContext: context, viewport }).promise;
-    pages.push(canvas.toBuffer('image/png'));
+    return pages;
+  } finally {
+    await task.destroy();
   }
-  await document.destroy();
-  return pages;
 }
 
 async function extractPdfText(bytes) {
@@ -318,15 +321,18 @@ async function extractPdfText(bytes) {
     useSystemFonts: true,
     isEvalSupported: false,
   });
-  const document = await task.promise;
-  const pages = [];
-  for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 20); pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
-    pages.push(content.items.map((item) => item.str || '').join(' '));
+  try {
+    const document = await task.promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 20); pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(content.items.map((item) => item.str || '').join(' '));
+    }
+    return pages.join('\n');
+  } finally {
+    await task.destroy();
   }
-  await document.destroy();
-  return pages.join('\n');
 }
 
 async function extractPdfFields(bytes) {

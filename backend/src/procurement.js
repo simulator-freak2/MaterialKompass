@@ -31,7 +31,8 @@ const MAX_DOCUMENT_STORAGE_BYTES = 256 * 1024 * 1024;
 
 function registerProcurementRoutes({
   app, authMiddleware, requirePermission, data, categories, departments = [], locations,
-  stockStructures, materials, deletedMaterials, clothingItems, logEvent, nextId, XLSX,
+  stockStructures, materials, deletedMaterials, clothingItems, deletedClothingItems = [],
+  logEvent, nextId, XLSX,
   nextClothingInventoryNumber, categorySizes, categoryInspectionInterval,
   addMonths,
 }) {
@@ -415,7 +416,11 @@ function registerProcurementRoutes({
   });
 
   function nextMaterialNumber(categoryId, subcategoryId) {
-    return nextInventoryNumber([...materials, ...deletedMaterials, ...clothingItems], categoryId, subcategoryId);
+    return nextInventoryNumber(
+      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems],
+      categoryId,
+      subcategoryId,
+    );
   }
 
   app.post('/api/procurement/:id/receipts/:receiptId/transfer', authMiddleware, requirePermission('procurement.receive'), (req, res) => {

@@ -238,6 +238,74 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<void> toggleMfaPolicy(Map<String, dynamic> user) async {
+    final mfa = Map<String, dynamic>.from(user['mfa'] as Map? ?? const {});
+    final required = mfa['required'] != true;
+    if (await _send('PUT', '/api/users/${user['id']}/mfa-policy', {
+      'required': required,
+    })) {
+      _message(required
+          ? '2-FA ist für dieses Konto verpflichtend. Es gilt eine Einrichtungsfrist von 14 Tagen.'
+          : '2-FA ist für dieses Konto freiwillig.');
+      await load();
+    }
+  }
+
+  Future<void> resetMfa(Map<String, dynamic> user) async {
+    final password = TextEditingController();
+    final code = TextEditingController();
+    Map<String, String>? confirmation;
+    try {
+      confirmation = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('2-FA zurücksetzen?'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(
+              'Der Faktor von ${user['name'] ?? user['username']} wird entfernt. '
+              'Bestehende Sitzungen werden ungültig.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: password,
+              obscureText: true,
+              decoration:
+                  const InputDecoration(labelText: 'Eigenes Admin-Passwort'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: code,
+              decoration: const InputDecoration(
+                labelText: 'Eigener 2-FA-Code (falls aktiviert)',
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, {
+                'currentPassword': password.text,
+                'code': code.text.trim(),
+              }),
+              child: const Text('Zurücksetzen'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      password.dispose();
+      code.dispose();
+    }
+    if (confirmation == null) return;
+    if (await _send('DELETE', '/api/users/${user['id']}/mfa', confirmation)) {
+      _message('2-FA wurde zurückgesetzt.');
+      await load();
+    }
+  }
+
   Future<void> confirmEmailManually(Map<String, dynamic> user) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -888,6 +956,8 @@ class _UsersPageState extends State<UsersPage> {
                             itemBuilder: (_, index) {
                               final user = users[index];
                               final active = user['active'] == true;
+                              final mfa = Map<String, dynamic>.from(
+                                  user['mfa'] as Map? ?? const {});
                               return Card(
                                   child: ListTile(
                                 leading: CircleAvatar(
@@ -901,9 +971,26 @@ class _UsersPageState extends State<UsersPage> {
                                     ? user['username'].toString()
                                     : '${user['name']} (${user['username']})'),
                                 subtitle: Text(
-                                    '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}'),
+                                    '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · 2-FA: ${mfa['enabled'] == true ? 'aktiv' : 'nicht eingerichtet'}${mfa['required'] == true ? ' (Pflicht)' : ' (freiwillig)'} · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}'),
                                 isThreeLine: true,
                                 trailing: Wrap(children: [
+                                  IconButton(
+                                    tooltip: mfa['required'] == true
+                                        ? '2-FA freiwillig machen'
+                                        : '2-FA verpflichtend machen',
+                                    onPressed: () => toggleMfaPolicy(user),
+                                    icon: Icon(mfa['required'] == true
+                                        ? Icons.gpp_good
+                                        : Icons.gpp_maybe),
+                                  ),
+                                  IconButton(
+                                    tooltip: '2-FA zurücksetzen',
+                                    onPressed: mfa['enabled'] == true
+                                        ? () => resetMfa(user)
+                                        : null,
+                                    icon: const Icon(
+                                        Icons.settings_backup_restore),
+                                  ),
                                   IconButton(
                                       tooltip: 'Anmeldecodes verwalten',
                                       onPressed: active
@@ -1678,6 +1765,7 @@ class _UserDialogState extends State<UserDialog> {
   String mailPlacement = 'before-action';
   String? selectedTemplateId;
   late bool active = widget.user?['active'] != false;
+  late bool mfaRequired = ((widget.user?['mfa'] as Map?)?['required'] == true);
   late Set<String> selectedRoles =
       ((widget.user?['roles'] as List?)?.map((e) => e.toString()).toSet()) ??
           {'Nutzer'};
@@ -1869,6 +1957,14 @@ class _UserDialogState extends State<UserDialog> {
                   value: active,
                   title: const Text('Account aktiv'),
                   onChanged: (value) => setState(() => active = value)),
+              SwitchListTile(
+                value: mfaRequired,
+                title:
+                    const Text('Zwei-Faktor-Authentifizierung verpflichtend'),
+                subtitle: const Text(
+                    'Nicht eingerichtete Konten erhalten 14 Tage Einrichtungsfrist.'),
+                onChanged: (value) => setState(() => mfaRequired = value),
+              ),
             ]))),
         actions: [
           TextButton(
@@ -1882,7 +1978,8 @@ class _UserDialogState extends State<UserDialog> {
                   'email': email.text,
                   'roles': selectedRoles.toList(),
                   'departmentIds': selectedDepartmentIds.toList(),
-                  'active': active
+                  'active': active,
+                  'mfaRequired': mfaRequired
                 };
                 if (password.text.isNotEmpty) {
                   result['password'] = password.text;

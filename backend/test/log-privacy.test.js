@@ -40,7 +40,11 @@ test('dashboard only returns activity from permitted areas', async () => {
     const locationResponse = await fetch(`${baseUrl}/api/locations`, {
       method: 'POST',
       headers: headers(admin),
-      body: JSON.stringify({ name: 'Geheimes Lager', code: 'GL', type: 'Lager' }),
+      body: JSON.stringify({
+        name: 'Geheimes Lager', code: 'GL', street: 'Geheimweg',
+        houseNumber: '1', postalCode: '12345', city: 'Musterstadt',
+        country: 'Deutschland',
+      }),
     });
     assert.equal(locationResponse.status, 201);
 

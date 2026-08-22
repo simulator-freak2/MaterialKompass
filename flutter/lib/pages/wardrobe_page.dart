@@ -308,25 +308,12 @@ class _WardrobePageState extends State<WardrobePage> {
   }
 
   Future<void> _importClothingTable() async {
-    final result = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['xlsx', 'ods'],
-      allowMultiple: false,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.single;
-    final bytes = file.bytes;
-    if (bytes == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('Die ausgewählte Datei konnte nicht gelesen werden.')),
-      );
-      return;
-    }
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
 
     setState(() => _isTransferringTable = true);
     try {
@@ -675,7 +662,8 @@ class _WardrobePageState extends State<WardrobePage> {
         );
     final locationName = location?['name']?.toString() ?? locationId ?? '-';
     if (stock == null) return locationName;
-    return '$locationName · ${stock['name']} (${stock['section']})';
+    return stock['path']?.toString() ??
+        '$locationName · ${stock['name']} (${stock['section']})';
   }
 
   String _categoryPath(Map<String, dynamic> category) {
@@ -731,13 +719,14 @@ class _WardrobePageState extends State<WardrobePage> {
       const SizedBox(height: 12),
       DropdownButtonFormField<String>(
         initialValue: selectedStock,
-        decoration: const InputDecoration(labelText: 'Regal / Fach'),
+        decoration: const InputDecoration(labelText: 'Lagerplatz'),
         items: [
           const DropdownMenuItem<String>(
-              value: null, child: Text('Kein Regal/Fach')),
+              value: null, child: Text('Kein Lagerplatz')),
           ...availableStocks.map((entry) => DropdownMenuItem(
                 value: entry['id'].toString(),
-                child: Text('${entry['name']} · ${entry['section']}'),
+                child: Text(entry['path']?.toString() ??
+                    '${entry['name']} · ${entry['section']}'),
               )),
         ],
         onChanged: (value) => stockController.text = value ?? '',
@@ -2402,10 +2391,14 @@ class _WardrobePageState extends State<WardrobePage> {
                       Text(
                           'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}'),
                       Text('Kategorie: ${_categoryName(item['categoryId'])}'),
-                      Text(
-                          'Gelöscht am: ${item['deletedAt']?.toString() ?? '-'}'),
-                      Text(
-                          'Gelöscht von: ${item['deletedBy']?.toString() ?? '-'}'),
+                      Text(item['archivedAt'] == null
+                          ? 'Gelöscht am: ${item['deletedAt']?.toString() ?? '-'}'
+                          : 'Ausgesondert am: ${item['archivedAt']}'),
+                      Text(item['archivedBy'] == null
+                          ? 'Gelöscht von: ${item['deletedBy']?.toString() ?? '-'}'
+                          : 'Ausgesondert von: ${item['archivedBy']}'),
+                      if (item['inventoryNumberReleasedAt'] != null)
+                        const Text('Inventarnummer freigegeben'),
                     ],
                   ),
                 ),

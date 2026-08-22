@@ -28,7 +28,7 @@ function safeEqual(left, right) {
 
 function registerQrLoginRoutes({
   app, users, credentials, authMiddleware, requirePermission, authRateLimit,
-  createToken, securityVersion, publicUser, logEvent, saveUser = async () => {},
+  createToken, securityVersion, publicUser, logEvent, saveUser = async () => {}, userMfa,
 }) {
   function removeExpired() {
     const now = Date.now();
@@ -236,11 +236,30 @@ function registerQrLoginRoutes({
       if (!oneTime) credentials.splice(index, 1);
       return res.status(401).json({ error: 'QR-Code ist ungültig oder abgelaufen.' });
     }
-    user.lastLoginAt = new Date().toISOString();
-    await saveUser(user);
-    logEvent('qr_login', 'User', { id: user.id }, user.username);
-    req.persistenceRequired = true;
-    return res.json({ token: createToken(user), expiresIn: 3600, user: publicUser(user) });
+    const finishLogin = async (verifiedUser, response) => {
+      verifiedUser.lastLoginAt = new Date().toISOString();
+      await saveUser(verifiedUser);
+      logEvent('qr_login', 'User', { id: verifiedUser.id }, verifiedUser.username);
+      req.persistenceRequired = true;
+      return response.json({
+        token: createToken(verifiedUser), expiresIn: 3600, user: publicUser(verifiedUser),
+      });
+    };
+    if (userMfa?.mfaEnabled(user)) {
+      return res.status(202).json(userMfa.issueChallenge(
+        user,
+        (verifiedUser, response) => finishLogin(verifiedUser, response),
+      ));
+    }
+    if (userMfa?.enrollmentRequired(user)) {
+      return res.json({
+        token: createToken(user, { mfaSetupRequired: true }),
+        expiresIn: 3600,
+        user: publicUser(user),
+        mfaSetupRequired: true,
+      });
+    }
+    return finishLogin(user, res);
   });
 }
 

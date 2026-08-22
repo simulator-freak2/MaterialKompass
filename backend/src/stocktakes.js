@@ -75,7 +75,8 @@ function registerStocktakeRoutes({
   }
 
   function stockName(id) {
-    return stockStructures.find((entry) => entry.id === id)?.name || id || '';
+    const position = stockStructures.find((entry) => entry.id === id);
+    return position?.path || position?.name || id || '';
   }
 
   function matchesScope(item, scope) {

@@ -9,6 +9,7 @@ const MAX_USERNAME_LENGTH = 100;
 const MAX_EMAIL_LENGTH = 255;
 const MAX_PASSWORD_BYTES = 72;
 const MAX_USER_RECORDS = 10_000;
+const MFA_ENROLLMENT_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function normalize(value) {
@@ -26,10 +27,29 @@ function publicUser(user) {
     verificationExpiresAt,
     passwordResetTokenHash,
     passwordResetExpiresAt,
+    mfaSecretEncrypted,
+    mfaPendingSecretEncrypted,
+    mfaPendingSecretExpiresAt,
+    mfaRecoveryCodeHashes,
+    mfaRequired,
+    mfaGraceEndsAt,
+    mfaEnabledAt,
+    mfaLastVerifiedAt,
+    mfaVersion,
     ...safe
   } = user;
   return {
     ...safe,
+    mfa: {
+      enabled: Boolean(mfaSecretEncrypted && user.mfaEnabledAt),
+      required: mfaRequired === true,
+      graceEndsAt: mfaGraceEndsAt || null,
+      enabledAt: mfaEnabledAt || null,
+      lastVerifiedAt: mfaLastVerifiedAt || null,
+      recoveryCodesRemaining: mfaSecretEncrypted
+        ? (mfaRecoveryCodeHashes || []).length
+        : 0,
+    },
     verificationResendAvailableAt:
       user.emailVerifiedAt ? null : verificationExpiresAt || null,
   };
@@ -54,7 +74,7 @@ function permissionsForRoles(roleNames, roles) {
   return [...new Set(roleNames.flatMap((name) => roles.find((role) => role.name === name)?.permissions || []))];
 }
 
-function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete, now = Date.now, defaultMailMessageFor = () => null }) {
+function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete, now = Date.now, defaultMailMessageFor = () => null, verifyMfaCode = async () => ({ valid: true }) }) {
   const appBaseUrl = process.env.APP_BASE_URL || 'https://materialkompass.org';
   const saveUser = (user) => userStore?.saveUser(user) || Promise.resolve();
   const deleteStoredUser = (id) => userStore?.deleteUser(id) || Promise.resolve();
@@ -304,6 +324,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       return res.status(507).json({ error: 'Die maximale Anzahl an Nutzerkonten ist erreicht.' });
     }
     const { name, username, email, password, roles: roleNames = ['Nutzer'], departmentIds = [] } = req.body;
+    const mfaRequired = req.body.mfaRequired === true;
     if (!accountFieldsAreValid({ name, username, email })) {
       return res.status(400).json({ error: 'Nutzername und gültige E-Mail-Adresse sind erforderlich.' });
     }
@@ -322,6 +343,11 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       permissions: permissionsForRoles(roleNames, roles), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
       createdAt: new Date().toISOString(), lastLoginAt: null,
+      mfaRequired,
+      mfaGraceEndsAt: mfaRequired
+        ? new Date(now() + MFA_ENROLLMENT_GRACE_MS).toISOString()
+        : null,
+      mfaRecoveryCodeHashes: [], mfaVersion: 0,
     };
     users.push(user);
     if (!skipEmailVerification) await issueVerification(user, mailMessage.value);
@@ -351,12 +377,30 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if ((!nextActive || !roleNames.includes('Admin')) && isLastAdmin(user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht deaktiviert oder herabgestuft werden.' });
     if (req.body.password && !passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
     const emailChanged = email !== normalize(user.email);
+    const mfaPolicyChanged = typeof req.body.mfaRequired === 'boolean'
+      && req.body.mfaRequired !== user.mfaRequired;
     Object.assign(user, { name: String(req.body.name ?? user.name ?? '').trim(), username, email, roles: roleNames, departmentIds: [...new Set(departmentIds)], active: nextActive });
     user.permissions = permissionsForRoles(roleNames, roles);
     if (req.body.password) {
       user.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
     if (emailChanged) { user.emailVerifiedAt = null; await issueVerification(user); }
+    if (mfaPolicyChanged) {
+      user.mfaRequired = req.body.mfaRequired;
+      user.mfaGraceEndsAt = user.mfaRequired && !user.mfaEnabledAt
+        ? new Date(now() + MFA_ENROLLMENT_GRACE_MS).toISOString()
+        : null;
+      user.mfaVersion = Number(user.mfaVersion || 0) + 1;
+      await accountMailSender({
+        to: user.email,
+        subject: user.mfaRequired
+          ? 'Zwei-Faktor-Authentifizierung wird verpflichtend'
+          : '2-FA-Richtlinie geändert',
+        text: user.mfaRequired
+          ? `Ein Administrator hat 2-FA für Ihr MaterialKompass-Konto verpflichtend gemacht. Richten Sie 2-FA bis ${user.mfaGraceEndsAt} ein.`
+          : 'Ein Administrator hat die Zwei-Faktor-Authentifizierung für Ihr MaterialKompass-Konto auf freiwillig gesetzt.',
+      }).catch((error) => console.error('2-FA-Sicherheitsbenachrichtigung fehlgeschlagen:', error.message));
+    }
     if (nextActive) { user.deactivatedAt = null; user.deactivationReason = null; user.scheduledDeletionAt = null; }
     await saveUser(user);
     logEvent('update', 'User', { id: user.id }, req.user.username);
@@ -421,6 +465,14 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     const user = req.user;
     const valid = await bcrypt.compare(req.body.currentPassword || '', user.passwordHash);
     if (!valid) return res.status(403).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
+    const changesSensitiveData = Boolean(req.body.password)
+      || (req.body.email && normalize(req.body.email) !== normalize(user.email));
+    if (changesSensitiveData && user.mfaEnabledAt) {
+      const mfaVerification = await verifyMfaCode(user, req.body.mfaCode);
+      if (!mfaVerification?.valid) {
+        return res.status(403).json({ error: 'Der 2-FA-Code ist ungültig.' });
+      }
+    }
     if (req.body.email) {
       const email = normalize(req.body.email);
       if (email.length > MAX_EMAIL_LENGTH || !EMAIL_PATTERN.test(email)
@@ -449,6 +501,10 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
 
   app.delete('/api/users/me', authMiddleware, async (req, res) => {
     if (!await bcrypt.compare(req.body.password || '', req.user.passwordHash)) return res.status(403).json({ error: 'Das Passwort ist nicht korrekt.' });
+    if (req.user.mfaEnabledAt) {
+      const mfaVerification = await verifyMfaCode(req.user, req.body.mfaCode);
+      if (!mfaVerification?.valid) return res.status(403).json({ error: 'Der 2-FA-Code ist ungültig.' });
+    }
     if (isLastAdmin(req.user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
     await onBeforeUserDelete?.(req.user);
     users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);

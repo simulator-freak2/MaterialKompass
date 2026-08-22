@@ -180,7 +180,8 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                   value: entry['id'].toString(),
                   child: Text(
                     stock
-                        ? '${entry['name']} · ${entry['section']}'
+                        ? entry['path']?.toString() ??
+                            '${entry['name']} · ${entry['section']}'
                         : entry['name'].toString(),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -236,7 +237,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                   stockId = null;
                 });
               }),
-              _entityDropdown('Regal/Fach', stockId, availableStocks,
+              _entityDropdown('Lagerplatz', stockId, availableStocks,
                   (value) => setState(() => stockId = value),
                   stock: true),
               SizedBox(
@@ -462,7 +463,9 @@ class _InventoryPageState extends State<InventoryPage> {
 
   String _name(List<Map<String, dynamic>> source, dynamic id) {
     for (final entry in source) {
-      if (entry['id'] == id) return entry['name'].toString();
+      if (entry['id'] == id) {
+        return entry['path']?.toString() ?? entry['name'].toString();
+      }
     }
     return '-';
   }
@@ -654,16 +657,16 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Future<void> _addDocument(Map<String, dynamic> item) async {
-    final picked = await FilePicker.pickFiles(withData: true);
-    final file = picked?.files.single;
-    if (file?.bytes == null) return;
+    final file = await FilePicker.pickFile();
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
     final saved = await _request('/api/material/${item['id']}/documents',
         method: 'POST',
         body: {
-          'title': file!.name,
+          'title': file.name,
           'documentType': 'Anleitung',
           'fileName': file.name,
-          'fileBase64': base64Encode(file.bytes!),
+          'fileBase64': base64Encode(bytes),
         });
     if (saved != null) _message('Dokument wurde hochgeladen.');
   }
@@ -695,6 +698,12 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Future<void> _archive(Map<String, dynamic> item) async {
+    if (archived && item['inventoryNumberReleasedAt'] != null) {
+      _message(
+          'Ausgesondertes Material mit freigegebener Inventarnummer kann nicht wiederhergestellt werden.',
+          error: true);
+      return;
+    }
     final action = archived ? 'restore' : 'archive';
     if (await _request('/api/material/${item['id']}/$action', method: 'POST') !=
         null) {
@@ -998,11 +1007,11 @@ class _InventoryPageState extends State<InventoryPage> {
                     child: DropdownButtonFormField<String>(
                       initialValue: stockId,
                       decoration:
-                          const InputDecoration(labelText: 'Regal/Fach'),
+                          const InputDecoration(labelText: 'Lagerplatz'),
                       items: availableStocks
                           .map((entry) => DropdownMenuItem(
                               value: entry['id'].toString(),
-                              child: Text(
+                              child: Text(entry['path']?.toString() ??
                                   '${entry['name']} · ${entry['section']}')))
                           .toList(),
                       onChanged: (value) => update(() => stockId = value),
@@ -1133,17 +1142,16 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   Future<void> _import() async {
-    final picked = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['xlsx', 'ods'],
-      withData: true,
     );
-    final file = picked?.files.single;
-    if (file?.bytes == null) return;
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
     final result =
         await _request('/api/material/import', method: 'POST', body: {
-      'fileName': file!.name,
-      'fileBase64': base64Encode(file.bytes!),
+      'fileName': file.name,
+      'fileBase64': base64Encode(bytes),
     });
     if (result != null) {
       _message(
@@ -1568,7 +1576,9 @@ class _InventoryPageState extends State<InventoryPage> {
                           title: Text('Bearbeiten'),
                         ),
                       ),
-                    if (can('inventory.archive'))
+                    if (can('inventory.archive') &&
+                        (!archived ||
+                            item['inventoryNumberReleasedAt'] == null))
                       PopupMenuItem(
                         value: 'archive',
                         child: ListTile(
@@ -1691,7 +1701,8 @@ class _InventoryTableSource extends DataTableSource {
               tooltip: 'Bearbeiten',
               icon: const Icon(Icons.edit_outlined),
             ),
-          if (canArchive)
+          if (canArchive &&
+              (!archived || item['inventoryNumberReleasedAt'] == null))
             IconButton(
               onPressed: () => onArchive(item),
               tooltip: archived ? 'Wiederherstellen' : 'Archivieren',
@@ -1742,7 +1753,9 @@ class InventoryDetailDialog extends StatelessWidget {
 
   String _name(List<Map<String, dynamic>> source, dynamic id) {
     for (final entry in source) {
-      if (entry['id'] == id) return entry['name'].toString();
+      if (entry['id'] == id) {
+        return entry['path']?.toString() ?? entry['name'].toString();
+      }
     }
     return '-';
   }

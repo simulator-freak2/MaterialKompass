@@ -144,6 +144,11 @@ function loadRuntimeConfig(env = process.env) {
         'MAILBOX_PASSWORD_ENCRYPTION_KEY muss ein zufälliger 64-stelliger Hex-Wert sein.',
       );
     }
+    if (!/^[a-f0-9]{64}$/i.test(env.MFA_ENCRYPTION_KEY || '')) {
+      throw new Error(
+        'MFA_ENCRYPTION_KEY muss ein zufälliger 64-stelliger Hex-Wert sein.',
+      );
+    }
     if (!env.MAILBOX_PROVISIONER_SOCKET) {
       let provisionerUrl;
       try { provisionerUrl = new URL(env.MAILBOX_PROVISIONER_URL || ''); } catch (_) {
