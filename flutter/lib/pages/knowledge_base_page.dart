@@ -1065,20 +1065,21 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',
-    title: 'Lagerort und Lagerplatz anlegen',
+    title: 'Gebäude und Lagerstruktur anlegen',
     summary: 'Die physische Lagerstruktur eindeutig und auffindbar abbilden.',
     icon: Icons.warehouse_outlined,
     readingMinutes: 3,
     prerequisite: 'Sie benötigen Verwaltungsrechte für Lagerorte.',
     steps: [
-      'Öffnen Sie „Lagerorte“ und legen Sie zunächst den übergeordneten Standort an.',
-      'Ergänzen Sie darunter eindeutig benannte Lagerplätze wie Raum, Regal und Fach.',
-      'Verwenden Sie kurze Codes, die auch vor Ort auf Beschriftungen passen.',
-      'Speichern Sie die Struktur und ordnen Sie anschließend vorhandenes Material zu.',
+      'Öffnen Sie „Lagerorte“ und legen Sie zunächst das Gebäude mit seiner vollständigen Adresse an.',
+      'Ergänzen Sie darunter Regale, Ebenen und abschließend die konkreten Lagerplätze.',
+      'Verwenden Sie auf jeder Ebene kurze, innerhalb des Elternobjekts eindeutige Kürzel.',
+      'Nutzen Sie für gleichförmige Lager die automatische Massenerstellung mit Vorschau.',
+      'Ordnen Sie anschließend vorhandenes Material dem Gebäude und bei Bedarf einem Lagerplatz zu.',
     ],
     tip:
-        'Ein einheitliches Schema wie „Raum – Regal – Fach“ erleichtert Suche, Inventur und Übergabe.',
-    keywords: ['standort', 'raum', 'regal', 'fach', 'lager'],
+        'Der automatisch erzeugte Pfad „Gebäude / Regal / Ebene / Lagerplatz“ bleibt auch nach dem Verschieben eines Elements eindeutig nachvollziehbar.',
+    keywords: ['gebäude', 'adresse', 'regal', 'ebene', 'lagerplatz'],
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',

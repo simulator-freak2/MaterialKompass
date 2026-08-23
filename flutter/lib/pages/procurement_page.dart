@@ -500,7 +500,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
   }
 
   Future<void> _upload(Map<String, dynamic> request) async {
-    final picked = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const [
           'pdf',
@@ -510,13 +510,11 @@ class _ProcurementPageState extends State<ProcurementPage> {
           'docx',
           'xlsx',
           'ods'
-        ],
-        withData: true);
-    final file = picked?.files.single;
-    if (file?.bytes == null || file!.bytes!.length > 5 * 1024 * 1024) {
-      if (file != null) {
-        _message('Die Datei darf maximal 5 MB groß sein.', error: true);
-      }
+        ]);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      _message('Die Datei darf maximal 5 MB groß sein.', error: true);
       return;
     }
     if (!mounted) return;
@@ -557,7 +555,7 @@ class _ProcurementPageState extends State<ProcurementPage> {
         method: 'POST',
         body: {
           'fileName': file.name,
-          'fileBase64': base64Encode(file.bytes!),
+          'fileBase64': base64Encode(bytes),
           'documentType': type
         });
     if (result != null) {
@@ -2034,7 +2032,8 @@ class _TransferDialogState extends State<TransferDialog> {
                       items: availableStocks
                           .map((v) => DropdownMenuItem(
                               value: v['id'].toString(),
-                              child: Text('${v['name']} · ${v['section']}')))
+                              child: Text(v['path']?.toString() ??
+                                  '${v['name']} · ${v['section']}')))
                           .toList(),
                       onChanged: (v) => setState(() => stock = v))),
               SizedBox(

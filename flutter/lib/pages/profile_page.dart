@@ -4,6 +4,7 @@ import 'package:file_saver/file_saver.dart';
 import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../widgets/qr_login_dialog.dart';
+import '../widgets/mfa_dialogs.dart';
 import '../services/file_save_mime_type.dart';
 import 'legal_page.dart';
 
@@ -20,6 +21,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final email = TextEditingController();
   final currentPassword = TextEditingController();
   final newPassword = TextEditingController();
+  final mfaCode = TextEditingController();
   Map<String, dynamic>? user;
   List<Map<String, dynamic>> qrCredentials = [];
   Map<String, String> get headers => {
@@ -31,6 +33,15 @@ class _ProfilePageState extends State<ProfilePage> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void dispose() {
+    email.dispose();
+    currentPassword.dispose();
+    newPassword.dispose();
+    mfaCode.dispose();
+    super.dispose();
   }
 
   Future<void> load() async {
@@ -67,6 +78,7 @@ class _ProfilePageState extends State<ProfilePage> {
       'currentPassword': currentPassword.text
     };
     if (newPassword.text.isNotEmpty) body['password'] = newPassword.text;
+    if (mfaCode.text.trim().isNotEmpty) body['mfaCode'] = mfaCode.text.trim();
     final response = await http.put(Uri.parse('$apiBaseUrl/api/users/me'),
         headers: headers, body: jsonEncode(body));
     final data = response.body.isEmpty ? {} : jsonDecode(response.body);
@@ -75,6 +87,7 @@ class _ProfilePageState extends State<ProfilePage> {
           'Kontodaten gespeichert. Nach einer E-Mail-Änderung ist eine erneute Bestätigung erforderlich.');
       currentPassword.clear();
       newPassword.clear();
+      mfaCode.clear();
       await load();
     } else {
       message(data['error']?.toString() ?? 'Änderung fehlgeschlagen.');
@@ -83,6 +96,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> deleteAccount() async {
     final password = TextEditingController();
+    final code = TextEditingController();
     final confirmed = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(
@@ -94,7 +108,16 @@ class _ProfilePageState extends State<ProfilePage> {
                       controller: password,
                       obscureText: true,
                       decoration: const InputDecoration(
-                          labelText: 'Passwort zur Bestätigung'))
+                          labelText: 'Passwort zur Bestätigung')),
+                  if ((user?['mfa'] as Map?)?['enabled'] == true) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: code,
+                      decoration: const InputDecoration(
+                        labelText: '2-FA- oder Wiederherstellungscode',
+                      ),
+                    ),
+                  ]
                 ]),
                 actions: [
                   TextButton(
@@ -104,15 +127,126 @@ class _ProfilePageState extends State<ProfilePage> {
                       onPressed: () => Navigator.pop(context, true),
                       child: const Text('Endgültig löschen'))
                 ]));
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      password.dispose();
+      code.dispose();
+      return;
+    }
     final response = await http.delete(Uri.parse('$apiBaseUrl/api/users/me'),
-        headers: headers, body: jsonEncode({'password': password.text}));
+        headers: headers,
+        body: jsonEncode(
+            {'password': password.text, 'mfaCode': code.text.trim()}));
+    password.dispose();
+    code.dispose();
     if (response.statusCode == 204) {
       widget.onAccountDeleted();
     } else {
       final data = jsonDecode(response.body);
       message(data['error']?.toString() ?? 'Löschung fehlgeschlagen.');
     }
+  }
+
+  Future<void> enableMfa() async {
+    if (currentPassword.text.isEmpty) {
+      message('Geben Sie zuerst oben Ihr aktuelles Passwort ein.');
+      return;
+    }
+    final result = await setupMfa(
+      context,
+      token: widget.token,
+      currentPassword: currentPassword.text,
+    );
+    if (result == null || !mounted) return;
+    message('2-FA wurde aktiviert. Bitte melden Sie sich erneut an.');
+    widget.onAccountDeleted();
+  }
+
+  Future<Map<String, String>?> mfaConfirmation(String title) async {
+    final password = TextEditingController();
+    final code = TextEditingController();
+    try {
+      return await showDialog<Map<String, String>>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(title),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: password,
+              obscureText: true,
+              decoration:
+                  const InputDecoration(labelText: 'Aktuelles Passwort'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: code,
+              decoration: const InputDecoration(
+                labelText: '2-FA- oder Wiederherstellungscode',
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, {
+                'currentPassword': password.text,
+                'code': code.text.trim(),
+              }),
+              child: const Text('Bestätigen'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      password.dispose();
+      code.dispose();
+    }
+  }
+
+  Future<void> regenerateRecoveryCodes() async {
+    final confirmation = await mfaConfirmation('Neue Wiederherstellungscodes');
+    if (confirmation == null) return;
+    final response = await http.post(
+      Uri.parse('$apiBaseUrl/api/users/me/mfa/recovery-codes'),
+      headers: headers,
+      body: jsonEncode(confirmation),
+    );
+    final data = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    if (!mounted) return;
+    if (response.statusCode != 200) {
+      message(
+          data['error']?.toString() ?? 'Codes konnten nicht erneuert werden.');
+      return;
+    }
+    await showRecoveryCodes(
+      context,
+      (data['recoveryCodes'] as List).map((entry) => entry.toString()).toList(),
+    );
+    if (mounted) widget.onAccountDeleted();
+  }
+
+  Future<void> disableMfa() async {
+    final confirmation = await mfaConfirmation('2-FA deaktivieren');
+    if (confirmation == null) return;
+    final response = await http.post(
+      Uri.parse('$apiBaseUrl/api/users/me/mfa/disable'),
+      headers: headers,
+      body: jsonEncode(confirmation),
+    );
+    final data = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    if (!mounted) return;
+    if (response.statusCode != 200) {
+      message(
+          data['error']?.toString() ?? '2-FA konnte nicht deaktiviert werden.');
+      return;
+    }
+    widget.onAccountDeleted();
   }
 
   Future<void> exportPersonalData() async {
@@ -229,6 +363,16 @@ class _ProfilePageState extends State<ProfilePage> {
                       helperText:
                           'Mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl und Sonderzeichen',
                       border: OutlineInputBorder())),
+              if ((user!['mfa'] as Map?)?['enabled'] == true) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: mfaCode,
+                  decoration: const InputDecoration(
+                    labelText: '2-FA-Code bei E-Mail-/Passwortänderung',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Align(
                   alignment: Alignment.centerLeft,
@@ -236,6 +380,46 @@ class _ProfilePageState extends State<ProfilePage> {
                       onPressed: save,
                       icon: const Icon(Icons.save),
                       label: const Text('Änderungen speichern'))),
+              const Divider(height: 48),
+              Text('Zwei-Faktor-Authentifizierung',
+                  style: Theme.of(context).textTheme.titleLarge),
+              Builder(builder: (context) {
+                final mfa =
+                    Map<String, dynamic>.from(user!['mfa'] as Map? ?? const {});
+                final enabled = mfa['enabled'] == true;
+                final required = mfa['required'] == true;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(enabled
+                        ? 'Aktiv · ${mfa['recoveryCodesRemaining'] ?? 0} Wiederherstellungscodes verfügbar${required ? ' · verpflichtend' : ''}'
+                        : required
+                            ? 'Noch nicht eingerichtet · für dieses Konto verpflichtend'
+                            : 'Nicht eingerichtet · freiwillig'),
+                    const SizedBox(height: 12),
+                    Wrap(spacing: 12, runSpacing: 8, children: [
+                      if (!enabled)
+                        FilledButton.icon(
+                          onPressed: enableMfa,
+                          icon: const Icon(Icons.security),
+                          label: const Text('2-FA einrichten'),
+                        ),
+                      if (enabled)
+                        OutlinedButton.icon(
+                          onPressed: regenerateRecoveryCodes,
+                          icon: const Icon(Icons.key),
+                          label: const Text('Recovery-Codes erneuern'),
+                        ),
+                      if (enabled && !required)
+                        TextButton.icon(
+                          onPressed: disableMfa,
+                          icon: const Icon(Icons.no_encryption),
+                          label: const Text('2-FA deaktivieren'),
+                        ),
+                    ]),
+                  ],
+                );
+              }),
               const Divider(height: 48),
               Text('QR-Anmeldung',
                   style: Theme.of(context).textTheme.titleLarge),

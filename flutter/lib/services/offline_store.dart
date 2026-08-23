@@ -91,7 +91,7 @@ class OfflineStore {
 
   static final OfflineStore instance = OfflineStore._();
   static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(),
   );
   static const _queueKey = 'materialkompass_offline_queue_v1';
   static const _leaseKey = 'materialkompass_offline_qr_lease_v1';

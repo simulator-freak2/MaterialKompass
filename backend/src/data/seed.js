@@ -74,9 +74,21 @@ const departments = [
 ];
 
 const locations = [
-  { id: 'loc-1', name: 'Hauptlager', code: 'HL', type: 'Lager' },
-  { id: 'loc-2', name: 'Kleiderkammer', code: 'KK', type: 'Kleidung' },
-  { id: 'loc-3', name: 'Nebenlager', code: 'NL', type: 'Lager' },
+  {
+    id: 'loc-1', name: 'Hauptlager', code: 'HL', type: 'Lager',
+    street: 'Musterstraße', houseNumber: '1', postalCode: '12345',
+    city: 'Musterstadt', country: 'Deutschland',
+  },
+  {
+    id: 'loc-2', name: 'Kleiderkammer', code: 'KK', type: 'Kleidung',
+    street: 'Musterstraße', houseNumber: '1', postalCode: '12345',
+    city: 'Musterstadt', country: 'Deutschland',
+  },
+  {
+    id: 'loc-3', name: 'Nebenlager', code: 'NL', type: 'Lager',
+    street: 'Nebenweg', houseNumber: '2', postalCode: '12345',
+    city: 'Musterstadt', country: 'Deutschland',
+  },
 ];
 
 const stockStructures = [

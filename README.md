@@ -13,6 +13,8 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 
 - Backend-API mit Express und JWT-Login
 - Nutzer- und Rollenverwaltung mit E-Mail-Verifizierung und Passwort-Reset
+- Kontobezogene TOTP-Zwei-Faktor-Authentifizierung mit administrativer Pflicht,
+  Einrichtungsfrist und einmal verwendbaren Wiederherstellungscodes
 - Administratives Anlegen, Suchen, Bearbeiten, Deaktivieren und Löschen von Accounts
 - Selbstverwaltung von E-Mail, Passwort und Account-Löschung
 - Automatische Sperre nach fünf Fehlversuchen und Sitzungsablauf nach 60 Minuten
@@ -65,6 +67,25 @@ als zusätzlicher Faktor verlangt werden. IP-Adressen und IPv4-/IPv6-CIDR-Netze
 lassen sich ebenfalls pro Gerät begrenzen. Eine Sperrung oder ein Schlüsselreset
 macht bestehende Gerätesitzungen unmittelbar ungültig.
 
+## Zwei-Faktor-Authentifizierung für Konten
+
+Persönliche Konten richten TOTP unter **Mein Account → Zwei-Faktor-Authentifizierung**
+mit einer üblichen Authenticator-App ein. Nach der Bestätigung werden zehn einmal
+verwendbare Wiederherstellungscodes angezeigt. Diese Codes werden nur bei der
+Erstellung ausgegeben und serverseitig ausschließlich gehasht gespeichert.
+
+Admins entscheiden in der Nutzerverwaltung pro Konto, ob 2-FA freiwillig oder
+verpflichtend ist. Wird die Pflicht für ein noch nicht eingerichtetes Konto aktiviert,
+gilt eine Einrichtungsfrist von 14 Tagen. Nach deren Ablauf erlaubt ein eingeschränktes
+Login nur noch die Einrichtung des zweiten Faktors. Passwort-, persönliche QR- und
+persönliche Dienstgeräteanmeldungen durchlaufen anschließend dieselbe kurzlebige,
+einmal verwendbare 2-FA-Challenge. Eine gerätebezogene MFA bleibt davon unabhängig.
+
+2-FA-Geheimnisse werden mit AES-256-GCM und einem eigenen, zufälligen
+`MFA_ENCRYPTION_KEY` verschlüsselt. Aktivierung, Deaktivierung, Richtlinienänderungen,
+neue Wiederherstellungscodes und administrative Resets werden protokolliert und per
+Sicherheits-E-Mail angekündigt. Ein Reset macht bestehende Sitzungen ungültig.
+
 Die normale Systemsuche blendet ausgegebene, archivierte und ausgesonderte
 Artikel aus. Für eine Mängelmeldung kann ein ausgegebener Artikel ausschließlich
 über seine exakte Inventarnummer beziehungsweise seinen Barcode gefunden werden;
@@ -116,6 +137,12 @@ Installationen wird zusätzlich eine widerrufbare Clientregistrierung angelegt;
 Admins können diese unter **Offline-Installationen** einsehen und sperren.
 Webbrowser erhalten keinen Offline-Schreibbetrieb.
 
+Ein persönliches Konto ist nur offlineberechtigt, wenn es 2-FA eingerichtet und sich
+innerhalb der letzten 365 Tage vollständig mit dem zweiten Faktor angemeldet hat. Die
+weiterhin höchstens sieben Tage gültige gerätegebundene Offlinefreigabe wird bei
+Serverkontakt automatisch verlängert. Nach Ablauf der Jahresfrist ist vor einer
+weiteren Verlängerung wieder eine interaktive 2-FA-Anmeldung erforderlich.
+
 ## Inventuren
 
 Der eigene Bereich „Inventuren“ bildet Bestandsaufnahmen für das Materialinventar
@@ -154,6 +181,9 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
 - Statusfolge `Neu → In Prüfung → Zugewiesen → In Bearbeitung → Behoben → Geprüft/Geschlossen`
 - Automatische Mangelnummern im Format `M-JJJJ-NNNN`, Prioritäten, Teilmengen,
   Schadensart, Ursache, Gefährdung, Einsatzsicherheit, Verantwortliche, Fristen und Kosten
+- Zuweisung an aktive, für den jeweiligen Bereich berechtigte Nutzerkonten oder
+  wahlweise an externe Personen; Konto-Zuweisungen erzeugen eine In-App-Benachrichtigung
+  und können über „Mir zugewiesen“ gefiltert werden
 - Kommentare, Checklisten, Folgeaufgaben, JPEG-/PNG-Nachweise und ein vollständiger Änderungsverlauf
 - Bilder können bereits beim Erfassen ausgewählt werden; Gefährdungsstufe,
   Einsatzbereitschaft, bereits getroffene Maßnahmen sowie Kontaktname, E-Mail und
@@ -166,12 +196,15 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
   einer Prüfwarteschlange für berechtigte Nutzer
 - Verknüpfungen zu Prüfungen, Reparaturen, Beschaffungen und Aussonderungen sowie
   Kennzeichnung von Wiederholungen und Duplikaten
-- Betroffene Artikel können direkt in der Mängelbearbeitung ausgesondert werden;
-  dabei wird ein vorbefüllter Beschaffungsentwurf für den Ersatz angelegt
+- Betroffene Artikel können direkt in der Mängelbearbeitung mit oder ohne
+  Ersatzbeschaffung ausgesondert werden. Bei vollständiger Aussonderung wird die
+  Inventarnummer revisionssicher freigegeben und bei der nächsten automatischen
+  Nummernvergabe bevorzugt wiederverwendet; bei einer Teilmenge bleibt sie belegt.
+  Die Variante mit Ersatz legt zusätzlich einen vorbefüllten Beschaffungsentwurf an
 - Fehlgeschlagene Inventar- und Kleidungsprüfungen erzeugen automatisch einen Mangel
 - Betroffene Artikel werden auf `Defekt` gesetzt; Rücknahmen bleiben möglich, neue
   Ausgaben werden bis zum geprüften Abschluss gesperrt
-- In-App-Benachrichtigungen für neue Mängel und Eskalationen an den Vorsitz
+- In-App-Benachrichtigungen für neue und zugewiesene Mängel sowie Eskalationen an den Vorsitz
 - Listenansicht mit Suche und Filtern sowie XLSX-, ODS-, CSV-, PDF- und Druckausgabe
 - Geschlossene Mängel werden archiviert und zwei Kalenderjahre nach der Archivierung
   automatisch gelöscht
@@ -316,7 +349,7 @@ Ausfallsicherheit muss `BACKUP_DIR` zusätzlich verschlüsselt auf ein getrennte
 repliziert werden.
 
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
-`JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`, die MariaDB-,
+`JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`, die MariaDB-,
 IONOS-SMTP- und `DEFECT_IMAP_*`-Werte müssen als Server-Umgebungsvariablen gesetzt werden. Der
 erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpasswort
 muss direkt nach der ersten Anmeldung geändert werden.
@@ -338,6 +371,11 @@ Der Postfach-Provisioner erhält keine allgemeine `.env`-Datei und keinen Netzwe
 Backend und Hilfsdienst tauschen Zugangsdaten ausschließlich über das private
 `materialkompass_mailbox_socket`-Volume aus.
 
+`MFA_ENCRYPTION_KEY` muss unabhängig vom JWT- und Postfachschlüssel als 64-stelliger
+zufälliger Hex-Wert erzeugt und gesichert werden. Ein Verlust macht bestehende
+TOTP-Einrichtungen unlesbar; ein unkoordiniertes Austauschen des Schlüssels ist daher
+nicht zulässig.
+
 Das MariaDB-Volume enthält fachliche Daten im Datenbankformat. Der Serverdatenträger
 einschließlich Backups muss deshalb betriebssystemseitig verschlüsselt und nur für die
 zuständigen Administratoren zugänglich sein. Datenbank- und Root-Kennwörter müssen
@@ -350,6 +388,8 @@ Neuinstallation enthält `backend/src/db/schema.sql` bereits das vollständige S
 Solange die Fachsammlungen noch als transaktionale Snapshots gespeichert werden,
 erzwingt das Backend über eine MariaDB-Sperre genau eine aktive Backend-Instanz. Eine
 zweite Instanz beendet sich beim Start, statt konkurrierende Snapshots zu überschreiben.
+Für die Konto-2-FA muss bei Bestandsinstallationen vor dem neuen Backendstart
+`backend/src/db/migrations/20260821_user_mfa.sql` ausgeführt werden.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
@@ -474,7 +514,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.3.0
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.4.0
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -482,7 +522,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.3.0
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.4.0
 ```
 
 macOS wird auf einem Mac als DMG gebaut:

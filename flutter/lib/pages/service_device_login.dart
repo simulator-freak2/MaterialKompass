@@ -139,8 +139,13 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
         }),
       );
       if (!mounted) return;
-      final data = _object(response);
-      if (response.statusCode != 200) {
+      var data = _object(response);
+      if (response.statusCode == 202 && data['mfaRequired'] == true) {
+        final verified = await verifyMfaChallenge(context, data);
+        if (verified == null || !mounted) return;
+        data = verified;
+      }
+      if (response.statusCode != 200 && data['token'] == null) {
         return message(data['error']?.toString() ??
             'Persönliche Anmeldung fehlgeschlagen.');
       }
