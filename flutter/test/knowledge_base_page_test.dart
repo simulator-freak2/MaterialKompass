@@ -14,7 +14,7 @@ void main() {
       const MaterialApp(home: KnowledgeBasePage()),
     );
 
-    expect(find.text('Wie können wir helfen?'), findsOneWidget);
+    expect(find.text('Wie können wir dir helfen?'), findsOneWidget);
     expect(find.text('Seitenhierarchie'), findsOneWidget);
     expect(find.text('Alle Anleitungen'), findsWidgets);
 
@@ -33,6 +33,32 @@ void main() {
     expect(find.text('Schritt für Schritt'), findsOneWidget);
     expect(find.text('Zurück zur Übersicht'), findsOneWidget);
     expect(find.text('War diese Anleitung hilfreich?'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('knowledge base contains 1.4 security and offline guides',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: KnowledgeBasePage()),
+    );
+
+    await tester.enterText(find.byType(SearchBar), '2-FA');
+    await tester.pump();
+
+    expect(
+        find.text('Zwei-Faktor-Authentifizierung einrichten'), findsOneWidget);
+    await tester.tap(find.text('Zwei-Faktor-Authentifizierung einrichten'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stand 1.4.1'), findsOneWidget);
+    expect(find.text('Für alle persönlichen Konten'), findsOneWidget);
+    expect(find.text('Bevor du beginnst'), findsOneWidget);
+    expect(find.byType(Image), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

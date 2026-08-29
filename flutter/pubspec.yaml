@@ -1,5 +1,5 @@
 name: materialkompass
-version: 1.4.0+5
+version: 1.4.1+6
 publish_to: 'none'
 description: MaterialKompass for DLRG material management.
 environment:
@@ -30,3 +30,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/materialkompass_logo_mit_schriftzug.png
+    - assets/handbook/
