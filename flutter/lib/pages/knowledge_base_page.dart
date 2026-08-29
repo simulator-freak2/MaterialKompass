@@ -246,7 +246,7 @@ class _GuideHero extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'Wie können wir helfen?',
+                'Wie können wir dir helfen?',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                       color: colors.onSecondary,
@@ -255,7 +255,7 @@ class _GuideHero extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Finden Sie Antworten, Schritt-für-Schritt-Anleitungen und Tipps '
+                'Finde Antworten, Schritt-für-Schritt-Anleitungen und Tipps '
                 'für MaterialKompass.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -356,7 +356,7 @@ class _GuideSidebar extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Wenden Sie sich an Ihre Material- oder '
+                    'Wende dich an deine Material- oder '
                     'Systemadministration.',
                   ),
                 ],
@@ -613,13 +613,17 @@ class _ArticleView extends StatelessWidget {
                         const SizedBox(width: 18),
                         const Icon(Icons.verified_outlined, size: 17),
                         const SizedBox(width: 6),
-                        const Text('MaterialKompass Handbuch'),
+                        const Text('Stand 1.4.1'),
+                        const SizedBox(width: 18),
+                        const Icon(Icons.groups_outlined, size: 17),
+                        const SizedBox(width: 6),
+                        Flexible(child: Text(article.audience)),
                       ],
                     ),
                     const SizedBox(height: 28),
                     _InfoCallout(
                       icon: Icons.info_outline,
-                      title: 'Bevor Sie beginnen',
+                      title: 'Bevor du beginnst',
                       text: article.prerequisite,
                     ),
                     const SizedBox(height: 30),
@@ -628,12 +632,22 @@ class _ArticleView extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 16),
-                    for (var index = 0; index < article.steps.length; index++)
+                    for (var index = 0;
+                        index < article.steps.length;
+                        index++) ...[
                       _GuideStep(
                         number: index + 1,
                         text: article.steps[index],
                         isLast: index == article.steps.length - 1,
                       ),
+                      for (final illustration in article.illustrations.where(
+                        (entry) => entry.afterStep == index + 1,
+                      )) ...[
+                        const SizedBox(height: 8),
+                        _GuideIllustrationView(illustration: illustration),
+                        const SizedBox(height: 24),
+                      ],
+                    ],
                     if (article.tip != null) ...[
                       const SizedBox(height: 22),
                       _InfoCallout(
@@ -657,7 +671,7 @@ class _ArticleView extends StatelessWidget {
                         OutlinedButton.icon(
                           onPressed: () => ScaffoldMessenger.of(context)
                               .showSnackBar(const SnackBar(
-                            content: Text('Danke für Ihre Rückmeldung.'),
+                            content: Text('Danke für deine Rückmeldung.'),
                           )),
                           icon: const Icon(Icons.thumb_up_outlined),
                           label: const Text('Ja'),
@@ -666,8 +680,8 @@ class _ArticleView extends StatelessWidget {
                           onPressed: () => ScaffoldMessenger.of(context)
                               .showSnackBar(const SnackBar(
                             content: Text(
-                              'Hinweis notiert. Bitte wenden Sie sich bei '
-                              'offenen Fragen an Ihre Administration.',
+                              'Hinweis notiert. Wende dich bei offenen Fragen '
+                              'an deine Administration.',
                             ),
                           )),
                           icon: const Icon(Icons.thumb_down_outlined),
@@ -797,6 +811,118 @@ class _InfoCallout extends StatelessWidget {
   }
 }
 
+class _GuideIllustrationView extends StatelessWidget {
+  final _GuideIllustration illustration;
+
+  const _GuideIllustrationView({required this.illustration});
+
+  void _showLarge(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(20),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1200, maxHeight: 820),
+          child: Stack(
+            children: [
+              InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 4,
+                child: Image.asset(
+                  illustration.assetPath,
+                  fit: BoxFit.contain,
+                  semanticLabel: illustration.altText,
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: IconButton.filledTonal(
+                  tooltip: 'Großansicht schließen',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      image: true,
+      label: illustration.altText,
+      child: Card(
+        margin: EdgeInsets.zero,
+        elevation: 0,
+        clipBehavior: Clip.antiAlias,
+        color: colors.surfaceContainerLowest,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: colors.outlineVariant),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: () => _showLarge(context),
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Image.asset(
+                  illustration.assetPath,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  semanticLabel: illustration.altText,
+                  errorBuilder: (context, error, stackTrace) => ColoredBox(
+                    color: colors.surfaceContainerHighest,
+                    child: Center(
+                      child: Icon(
+                        Icons.broken_image_outlined,
+                        size: 44,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.image_outlined,
+                    size: 18,
+                    color: colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      illustration.caption,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                            height: 1.4,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.zoom_in, size: 18),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EmptySearchResult extends StatelessWidget {
   const _EmptySearchResult();
 
@@ -820,8 +946,8 @@ class _EmptySearchResult extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Versuchen Sie einen allgemeineren Suchbegriff oder wählen Sie '
-              'ein anderes Thema.',
+              'Versuche einen allgemeineren Suchbegriff oder wähle ein '
+              'anderes Thema.',
               textAlign: TextAlign.center,
             ),
           ],
@@ -844,10 +970,12 @@ class _GuideArticle {
   final String summary;
   final IconData icon;
   final int readingMinutes;
+  final String audience;
   final String prerequisite;
   final List<String> steps;
   final String? tip;
   final List<String> keywords;
+  final List<_GuideIllustration> illustrations;
 
   const _GuideArticle({
     required this.category,
@@ -855,20 +983,38 @@ class _GuideArticle {
     required this.summary,
     required this.icon,
     required this.readingMinutes,
+    required this.audience,
     required this.prerequisite,
     required this.steps,
     this.tip,
     this.keywords = const [],
+    this.illustrations = const [],
   });
 
   String get searchText => [
         category,
         title,
         summary,
+        audience,
         prerequisite,
         ...steps,
         ...keywords,
+        ...illustrations.map((entry) => '${entry.caption} ${entry.altText}'),
       ].join(' ').toLowerCase();
+}
+
+class _GuideIllustration {
+  final String assetPath;
+  final String caption;
+  final String altText;
+  final int afterStep;
+
+  const _GuideIllustration({
+    required this.assetPath,
+    required this.caption,
+    required this.altText,
+    required this.afterStep,
+  });
 }
 
 const _categories = [
@@ -878,7 +1024,8 @@ const _categories = [
   _GuideCategory('Beschaffung', Icons.shopping_cart_outlined),
   _GuideCategory('Mängel & Prüfungen', Icons.report_problem_outlined),
   _GuideCategory('Struktur & Lagerorte', Icons.warehouse_outlined),
-  _GuideCategory('Konten & Rechte', Icons.manage_accounts_outlined),
+  _GuideCategory('Dienstgeräte & Offline', Icons.devices_outlined),
+  _GuideCategory('Konten & Sicherheit', Icons.admin_panel_settings_outlined),
 ];
 
 const _articles = [
@@ -886,37 +1033,70 @@ const _articles = [
     category: 'Erste Schritte',
     title: 'Im MaterialKompass orientieren',
     summary:
-        'Dashboard, Schnellzugriffe und persönliche Aufgaben auf einen Blick.',
+        'Dashboard, Schnellzugriffe, Aufgaben und deinen Account sicher finden.',
     icon: Icons.explore_outlined,
-    readingMinutes: 2,
-    prerequisite: 'Sie benötigen ein aktives MaterialKompass-Konto.',
+    readingMinutes: 3,
+    audience: 'Für alle Rollen',
+    prerequisite: 'Du benötigst ein aktives MaterialKompass-Konto.',
     steps: [
-      'Melden Sie sich an. Das Dashboard zeigt nur Bereiche, für die Ihr Konto berechtigt ist.',
-      'Öffnen Sie einen Bereich über die Kacheln unter „Schnellzugriff“.',
-      'Prüfen Sie „Aufgaben & Hinweise“ auf fällige Prüfungen, offene Mängel oder Freigaben.',
-      'Über das Kontosymbol oben rechts erreichen Sie Ihr Profil und Ihre Kontoeinstellungen.',
+      'Melde dich an. Auf dem Dashboard erscheinen nur die Bereiche, für die dein Konto berechtigt ist.',
+      'Öffne häufig verwendete Bereiche über die Kacheln unter „Schnellzugriff“.',
+      'Prüfe „Aufgaben & Hinweise“ auf fällige Prüfungen, offene Mängel, Zuweisungen oder Freigaben.',
+      'Über das Kontosymbol oben rechts erreichst du „Mein Account“, deine Sicherheitsfunktionen und Datenschutzoptionen.',
+      'Nutze das Wolken-Symbol für den Offline-Status und die Synchronisation, wenn du eine installierte App verwendest.',
     ],
     tip:
-        'Ziehen Sie die Seite auf einem Mobilgerät nach unten, um die Dashboard-Daten zu aktualisieren.',
-    keywords: ['dashboard', 'navigation', 'anmelden', 'start'],
+        'Auf einem Mobilgerät kannst du die Seite nach unten ziehen, um die Dashboard-Daten zu aktualisieren.',
+    keywords: ['dashboard', 'navigation', 'anmelden', 'start', 'aufgaben'],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/dashboard_overview.png',
+        caption:
+            'Das Dashboard bündelt die freigeschalteten Bereiche und zeigt oben den Offline-Status sowie deinen Account.',
+        altText:
+            'Echtes MaterialKompass-Dashboard mit Schnellzugriffen auf Handbuch, Inventar, Kleiderkammer, Inventuren, Mängel, Beschaffung, Kategorien, Lagerorte und Nutzerverwaltung.',
+        afterStep: 2,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Erste Schritte',
-    title: 'QR-Code verwenden',
+    title: 'QR-Codes richtig verwenden',
     summary:
-        'Material per Kamera finden und unterstützte Anmeldevorgänge abschließen.',
+        'Material scannen und persönliche, System- oder Offline-Codes unterscheiden.',
     icon: Icons.qr_code_scanner,
-    readingMinutes: 2,
+    readingMinutes: 4,
+    audience: 'Für alle Rollen',
     prerequisite:
-        'Erlauben Sie den Kamerazugriff nur auf einem vertrauenswürdigen Gerät.',
+        'Erlaube den Kamerazugriff nur auf einem vertrauenswürdigen Gerät.',
     steps: [
-      'Öffnen Sie im betreffenden Bereich die Aktion „Scannen“.',
-      'Richten Sie die Kamera ruhig auf den vollständigen QR-Code.',
-      'Prüfen Sie den gefundenen Datensatz, bevor Sie eine Ausgabe, Rückgabe oder Änderung bestätigen.',
+      'Nutze „Scannen“ im Inventar oder in der Kleiderkammer, um einen Artikel über Inventarnummer oder Barcode zu finden.',
+      'Ein persönlicher Anmelde-QR-Code gehört zu deinem Konto und ersetzt nur den ersten Anmeldefaktor.',
+      'Ein System-QR-Code öffnet ausschließlich den eingeschränkten Systemzugang eines aktivierten Dienstgeräts.',
+      'Ein persönlicher Offline-QR-Code gilt nur für das dafür freigegebene Dienstgerät und höchstens sieben Tage.',
+      'Prüfe nach jedem Scan den gefundenen Datensatz oder die angezeigte Anmeldeart, bevor du fortfährst.',
     ],
     tip:
-        'Bei schlechten Lichtverhältnissen funktioniert die Eingabe der Inventarnummer meist zuverlässiger.',
-    keywords: ['scanner', 'kamera', 'inventarnummer', 'qr login'],
+        'Wenn die Kamera den Code nicht erkennt, gib die Inventarnummer manuell ein. Teile Anmelde-QR-Codes niemals als Foto.',
+    keywords: [
+      'scanner',
+      'kamera',
+      'inventarnummer',
+      'barcode',
+      'qr login',
+      'system qr',
+      'offline qr'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/qr_login.png',
+        caption:
+            'Die Loginseite bietet die QR-Anmeldung zusätzlich zu Nutzername und Passwort an.',
+        altText:
+            'Loginansicht mit den Eingabefeldern für Nutzername und Passwort sowie der Schaltfläche Mit QR-Code anmelden.',
+        afterStep: 2,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Inventar',
@@ -925,18 +1105,20 @@ const _articles = [
         'Einzelartikel oder Mengenartikel vollständig im Bestand erfassen.',
     icon: Icons.add_box_outlined,
     readingMinutes: 4,
+    audience: 'Für Materialverwaltung',
     prerequisite:
-        'Sie benötigen Schreibrechte für das Inventar sowie eine passende Kategorie und einen Lagerplatz.',
+        'Du brauchst Schreibrechte für das Inventar sowie eine passende Kategorie und einen Lagerplatz.',
     steps: [
-      'Öffnen Sie „Inventar“ und wählen Sie „Material anlegen“.',
-      'Tragen Sie Bezeichnung, Kategorie und Lagerort ein.',
-      'Wählen Sie, ob es sich um einen einzeln verfolgten Artikel oder einen Mengenbestand handelt.',
-      'Ergänzen Sie bei prüfpflichtigem Material das Prüfintervall und den nächsten Prüftermin.',
-      'Kontrollieren Sie die Angaben und speichern Sie den Datensatz.',
+      'Öffne „Inventar“ und wähle „Material anlegen“.',
+      'Trage eine eindeutige Bezeichnung ein und ordne Kategorie, Gebäude und bei Bedarf einen konkreten Lagerplatz zu.',
+      'Lege fest, ob der Datensatz einen einzeln verfolgten Artikel oder einen Mengenbestand beschreibt.',
+      'Ergänze Seriennummer, Anschaffungsdaten und Dokumente, wenn sie für Nachweis oder Wartung benötigt werden.',
+      'Hinterlege bei prüfpflichtigem Material Prüfintervall und nächsten Prüftermin.',
+      'Kontrolliere die Angaben und speichere den Datensatz.',
     ],
     tip:
-        'Verwenden Sie eindeutige Bezeichnungen und erfassen Sie Seriennummern bei sicherheitsrelevantem Material.',
-    keywords: ['bestand', 'artikel', 'menge', 'seriennummer'],
+        'Erfasse Seriennummern besonders bei sicherheitsrelevantem Material und vermeide austauschbare Bezeichnungen.',
+    keywords: ['bestand', 'artikel', 'menge', 'seriennummer', 'prüfintervall'],
   ),
   _GuideArticle(
     category: 'Inventar',
@@ -945,17 +1127,19 @@ const _articles = [
         'Bestandsbewegungen nachvollziehbar einer Person oder Einheit zuordnen.',
     icon: Icons.swap_horiz,
     readingMinutes: 3,
+    audience: 'Für Materialverwaltung',
     prerequisite:
-        'Der Materialdatensatz muss vorhanden und als verfügbar geführt sein.',
+        'Der Materialdatensatz muss vorhanden und für die gewünschte Buchung verfügbar sein.',
     steps: [
-      'Suchen oder scannen Sie den gewünschten Artikel.',
-      'Öffnen Sie die Aktion zur Ausgabe beziehungsweise Rücknahme.',
-      'Wählen Sie Empfänger, Menge und bei Bedarf einen Rückgabetermin.',
-      'Prüfen Sie den Zustand und bestätigen Sie die Buchung.',
+      'Suche oder scanne den gewünschten Artikel.',
+      'Öffne die Aktion zur Ausgabe beziehungsweise Rücknahme.',
+      'Wähle Empfänger, Menge und bei Bedarf einen Rückgabetermin.',
+      'Kontrolliere Zustand und Zuordnung und bestätige anschließend die Buchung.',
+      'Melde einen erkannten Schaden direkt als Mangel. Defektes Material bleibt für neue Ausgaben gesperrt.',
     ],
     tip:
-        'Dokumentieren Sie Schäden direkt als Mangel, statt sie nur in einer Freitextnotiz zu erwähnen.',
-    keywords: ['ausleihe', 'rückgabe', 'empfänger', 'buchung'],
+        'Offline erfasste Buchungen sind zunächst vorgemerkt. Prüfe nach der Synchronisation, ob ein Konflikt gemeldet wurde.',
+    keywords: ['ausleihe', 'rückgabe', 'empfänger', 'buchung', 'offline'],
   ),
   _GuideArticle(
     category: 'Kleiderkammer',
@@ -964,14 +1148,17 @@ const _articles = [
         'Größen, Kategorien und Lagerbestand in der Kleiderkammer pflegen.',
     icon: Icons.checkroom,
     readingMinutes: 3,
-    prerequisite: 'Die Kategorie muss für die Kleiderkammer aktiviert sein.',
+    audience: 'Für Kleiderkammer',
+    prerequisite:
+        'Die Kategorie muss für die Kleiderkammer aktiviert sein und passende Größen enthalten.',
     steps: [
-      'Öffnen Sie „Kleiderkammer“ und wählen Sie „Neue Kleidung anlegen“.',
-      'Wählen Sie Kategorie, Größe und Lagerplatz.',
-      'Erfassen Sie die vorhandene Menge oder die Inventarnummer des Einzelstücks.',
-      'Speichern Sie den Eintrag und prüfen Sie ihn anschließend in der Übersicht.',
+      'Öffne „Kleiderkammer“ und wähle „Neue Kleidung anlegen“.',
+      'Wähle Kategorie, Größe, Gebäude und Lagerplatz.',
+      'Erfasse die vorhandene Menge oder die Inventarnummer eines Einzelstücks.',
+      'Ergänze bei Bedarf Beschaffungs- und Zustandsangaben.',
+      'Speichere den Eintrag und kontrolliere ihn anschließend in der Übersicht.',
     ],
-    keywords: ['größe', 'uniform', 'bekleidung', 'bestand'],
+    keywords: ['größe', 'uniform', 'bekleidung', 'bestand', 'kleiderkammer'],
   ),
   _GuideArticle(
     category: 'Kleiderkammer',
@@ -979,71 +1166,179 @@ const _articles = [
     summary: 'Bekleidung einer Person zuordnen und Rückgaben dokumentieren.',
     icon: Icons.assignment_ind_outlined,
     readingMinutes: 3,
+    audience: 'Für Kleiderkammer',
     prerequisite: 'Person und Kleidungsstück müssen im System auffindbar sein.',
     steps: [
-      'Wählen Sie „Ausgeben/Zurücknehmen“ in der Kleiderkammer.',
-      'Suchen Sie nach Name, Inventarnummer, Größe oder Kategorie.',
-      'Wählen Sie das Kleidungsstück und die betreffende Person.',
-      'Bestätigen Sie Ausgabe oder Rücknahme und kontrollieren Sie den neuen Bestand.',
+      'Öffne in der Kleiderkammer „Ausgeben/Zurücknehmen“.',
+      'Suche nach Name, Inventarnummer, Größe oder Kategorie.',
+      'Wähle das Kleidungsstück und die betreffende Person.',
+      'Prüfe Menge und Zustand und bestätige Ausgabe oder Rücknahme.',
+      'Kontrolliere den neuen Bestand. Offline vorgemerkte Änderungen werden beim nächsten Serverkontakt synchronisiert.',
     ],
-    keywords: ['person', 'uniform', 'ausgabe', 'rückgabe'],
+    tip:
+        'Lege bei beschädigter Kleidung direkt einen Mangel an, damit Ausgabe und weitere Bearbeitung nachvollziehbar bleiben.',
+    keywords: ['person', 'uniform', 'ausgabe', 'rückgabe', 'offline'],
   ),
   _GuideArticle(
     category: 'Beschaffung',
     title: 'Beschaffungsantrag erstellen',
     summary:
-        'Bedarf mit Positionen, Budget und Begründung zur Freigabe einreichen.',
+        'Bedarf mit Positionen, Bruttobudget und Begründung zur Freigabe einreichen.',
     icon: Icons.post_add_outlined,
     readingMinutes: 5,
+    audience: 'Für Beschaffung',
     prerequisite:
-        'Sie benötigen Schreibrechte im Bereich Beschaffung und möglichst bereits Vergleichspreise.',
+        'Du brauchst Schreibrechte im Bereich Beschaffung und möglichst bereits Vergleichspreise.',
     steps: [
-      'Öffnen Sie „Beschaffung“, wechseln Sie zu „Vorgänge“ und legen Sie einen neuen Antrag an.',
-      'Formulieren Sie einen eindeutigen Titel und eine nachvollziehbare Begründung.',
-      'Fügen Sie alle Positionen mit Menge, Kategorie und geschätztem Preis hinzu.',
-      'Tragen Sie das beantragte Bruttobudget und gegebenenfalls einen bevorzugten Lieferanten ein.',
-      'Speichern Sie zunächst als Entwurf oder reichen Sie den vollständigen Antrag zur Freigabe ein.',
+      'Öffne „Beschaffung“, wechsle zu „Vorgänge“ und lege einen neuen Antrag an.',
+      'Formuliere einen eindeutigen Titel und eine nachvollziehbare Begründung.',
+      'Füge alle Positionen mit Menge und allgemeiner Kategorie hinzu. Einzelpreise gehören nicht in den Antrag.',
+      'Trage das beantragte Bruttobudget und gegebenenfalls einen bevorzugten Lieferanten ein.',
+      'Speichere zunächst als Entwurf oder reiche den vollständigen Antrag zur Freigabe durch Vorsitz beziehungsweise Schatzmeister ein.',
     ],
     tip:
-        'Fassen Sie zusammengehörige Positionen in einem Antrag zusammen, damit Freigabe und Wareneingang übersichtlich bleiben.',
+        'Fasse zusammengehörige Positionen in einem Antrag zusammen, damit Freigabe, Bestellung und Wareneingang übersichtlich bleiben.',
     keywords: ['antrag', 'budget', 'lieferant', 'freigabe', 'bestellung'],
   ),
   _GuideArticle(
     category: 'Beschaffung',
+    title: 'Lieferant und EU-Adresse erfassen',
+    summary:
+        'Strukturierte Adressen mit Vorschlägen erfassen und vollständig prüfen.',
+    icon: Icons.local_shipping_outlined,
+    readingMinutes: 3,
+    audience: 'Für Beschaffung und Lagerverwaltung',
+    prerequisite:
+        'Du brauchst Schreibrechte für den betreffenden Lieferanten oder das Gebäude.',
+    steps: [
+      'Öffne die Eingabemaske für einen Lieferanten oder ein Gebäude und wähle das Land.',
+      'Gib mindestens drei Zeichen einer Adresse ein. Nach kurzer Verzögerung erscheinen passende EU-Adressvorschläge.',
+      'Wähle den passenden Vorschlag, um Straße, Postleitzahl, Ort und Land zu übernehmen.',
+      'Trage die Hausnummer bewusst selbst ein und korrigiere übernommene Felder bei Bedarf.',
+      'Ohne Vorschläge oder bei einer unterbrochenen Verbindung füllst du alle Adressfelder manuell aus.',
+    ],
+    tip:
+        'Die Suche überträgt nur eingegebene Adressbestandteile, keine Lieferanten- oder Kontaktdaten.',
+    keywords: [
+      'adresse',
+      'geoapify',
+      'straße',
+      'postleitzahl',
+      'lieferant',
+      'gebäude'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Beschaffung',
     title: 'Wareneingang buchen',
-    summary: 'Gelieferte Positionen prüfen, erfassen und dem Bestand zuführen.',
+    summary:
+        'Lieferungen prüfen, Abweichungen erfassen und Bestand übernehmen.',
     icon: Icons.move_to_inbox_outlined,
     readingMinutes: 4,
+    audience: 'Für Beschaffung und Materialverwaltung',
     prerequisite:
-        'Die Bestellung muss ausgelöst sein und Sie benötigen Rechte für Wareneingänge.',
+        'Die Bestellung muss ausgelöst sein und du brauchst Rechte für Wareneingänge.',
     steps: [
-      'Öffnen Sie den bestellten Beschaffungsvorgang.',
-      'Vergleichen Sie Lieferung, Lieferschein und bestellte Mengen.',
-      'Erfassen Sie die tatsächlich eingegangenen Mengen sowie Abweichungen oder Schäden.',
-      'Ordnen Sie inventarisierungspflichtige Artikel Kategorie und Lagerort zu.',
-      'Schließen Sie den Wareneingang erst ab, wenn alle Angaben geprüft sind.',
+      'Öffne den bestellten Beschaffungsvorgang.',
+      'Vergleiche Lieferung, Lieferschein und bestellte Mengen.',
+      'Erfasse tatsächlich eingegangene Mengen sowie Abweichungen oder Schäden. Teil- und Mehrfachlieferungen bleiben im Vorgang sichtbar.',
+      'Ordne inventarisierungspflichtige Artikel einer Kategorie, einem Gebäude und bei Bedarf einem Lagerplatz zu.',
+      'Übernimm geprüfte Positionen in den Bestand und schließe den Wareneingang erst nach vollständiger Kontrolle ab.',
     ],
-    keywords: ['lieferung', 'eingang', 'bestellung', 'lager'],
+    keywords: ['lieferung', 'eingang', 'bestellung', 'lager', 'beanstandung'],
   ),
   _GuideArticle(
     category: 'Mängel & Prüfungen',
     title: 'Mangel melden und bearbeiten',
     summary:
-        'Schäden dokumentieren, Maßnahmen festlegen und den Status nachhalten.',
+        'Schäden mit Bildern dokumentieren, bewerten und bis zum Abschluss nachhalten.',
     icon: Icons.report_problem_outlined,
-    readingMinutes: 4,
+    readingMinutes: 5,
+    audience: 'Für alle berechtigten Rollen',
     prerequisite:
-        'Halten Sie Inventarnummer, Schadensbild und möglichst aussagekräftige Fotos bereit.',
+        'Halte Inventarnummer, Schadensbild und möglichst aussagekräftige JPEG- oder PNG-Bilder bereit.',
     steps: [
-      'Öffnen Sie „Mängel“ und legen Sie eine neue Meldung an.',
-      'Ordnen Sie betroffenes Material zu und beschreiben Sie den Schaden sachlich.',
-      'Bewerten Sie die weitere Nutzbarkeit und sperren Sie unsicheres Material.',
-      'Weisen Sie eine Maßnahme und eine zuständige Stelle zu.',
-      'Dokumentieren Sie die Erledigung und schließen Sie den Mangel erst nach Kontrolle.',
+      'Öffne „Mängel“ und wähle „Mangel melden“ oder starte die Meldung direkt am betroffenen Artikel.',
+      'Ordne Material oder Kleidung zu und beschreibe Schaden, Ursache und bereits getroffene Maßnahmen sachlich.',
+      'Bewerte Gefährdung und Einsatzbereitschaft. Unsicheres Material wird für neue Ausgaben gesperrt.',
+      'Ergänze bei Bedarf bis zu zehn Bilder, eine zuständige Person, einen Fachbereich und eine Frist.',
+      'Führe die Meldung über die Statusfolge „Neu“, „In Prüfung“, „Zugewiesen“, „In Bearbeitung“, „Behoben“ bis „Geprüft/Geschlossen“.',
+      'Dokumentiere Entscheidungen in Kommentaren, Checklisten, Folgeaufgaben und dem Änderungsverlauf.',
     ],
     tip:
-        'Sicherheitsrelevantes Material darf bis zur fachlichen Freigabe nicht weiter ausgegeben werden.',
-    keywords: ['defekt', 'schaden', 'reparatur', 'sperren', 'maßnahme'],
+        'Sicherheitsrelevantes Material darf bis zur fachlichen Prüfung und Freigabe nicht erneut ausgegeben werden.',
+    keywords: [
+      'defekt',
+      'schaden',
+      'reparatur',
+      'sperren',
+      'maßnahme',
+      'bilder'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/defect_workflow.png',
+        caption:
+            'Die echte Erfassungsmaske bündelt Artikelbezug, Beschreibung, Einstufung, Zuständigkeit und Kontaktangaben.',
+        altText:
+            'Geöffnete MaterialKompass-Maske Mangel melden mit beispielhaft ausgefülltem Titel, Beschreibung und Schadensart sowie Feldern für Priorität, Gefährdung und Zuständigkeit.',
+        afterStep: 5,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Mängel & Prüfungen',
+    title: 'Mangel zuweisen und Frist verfolgen',
+    summary:
+        'Meldungen einem Konto oder einer externen Person verbindlich zuordnen.',
+    icon: Icons.assignment_ind_outlined,
+    readingMinutes: 3,
+    audience: 'Für Mängelbearbeitung',
+    prerequisite:
+        'Du brauchst Bearbeitungsrechte für den betroffenen Fachbereich.',
+    steps: [
+      'Öffne die Mängelmeldung und wähle „Mir zuweisen“ oder „Zuweisung & Frist“.',
+      'Wähle „Nutzerkonto“, wenn die verantwortliche Person ein aktives und berechtigtes Konto besitzt.',
+      'Wähle andernfalls „Externe Person“ und trage den Namen eindeutig ein.',
+      'Setze eine realistische Frist und speichere die Zuweisung.',
+      'Konto-Zuweisungen erzeugen eine In-App-Benachrichtigung und lassen sich über „Mir zugewiesen“ filtern.',
+    ],
+    tip:
+        'Hebe eine Zuweisung auf oder ändere sie, sobald sich die Verantwortung ändert; der Verlauf bleibt nachvollziehbar.',
+    keywords: [
+      'zuweisung',
+      'verantwortlich',
+      'frist',
+      'mir zugewiesen',
+      'benachrichtigung'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Mängel & Prüfungen',
+    title: 'Material aussondern und Ersatz anstoßen',
+    summary:
+        'Defektes Material revisionssicher entfernen – mit oder ohne Ersatzbeschaffung.',
+    icon: Icons.delete_sweep_outlined,
+    readingMinutes: 4,
+    audience: 'Für Mängelbearbeitung und Beschaffung',
+    prerequisite:
+        'Die Aussonderungsentscheidung muss fachlich geklärt und dokumentiert sein.',
+    steps: [
+      'Öffne die betroffene Mängelmeldung und das Menü „Weitere Aktionen“.',
+      'Wähle „Aussondern ohne Ersatz“, wenn keine Nachbeschaffung nötig ist.',
+      'Wähle „Aussondern & Ersatz beschaffen“, um zusätzlich einen vorbefüllten Beschaffungsentwurf anzulegen.',
+      'Prüfe Menge, Begründung und Verknüpfungen, bevor du die Aktion bestätigst.',
+      'Bei vollständiger Aussonderung wird die Inventarnummer revisionssicher freigegeben und später bevorzugt wiederverwendet; bei einer Teilmenge bleibt sie belegt.',
+    ],
+    tip:
+        'Bearbeite den erzeugten Beschaffungsentwurf vollständig, bevor du ihn zur Freigabe einreichst.',
+    keywords: [
+      'aussondern',
+      'ersatz',
+      'beschaffungsentwurf',
+      'inventarnummer',
+      'teilmenge'
+    ],
   ),
   _GuideArticle(
     category: 'Mängel & Prüfungen',
@@ -1052,34 +1347,53 @@ const _articles = [
         'Prüfergebnis erfassen und den nächsten Termin korrekt fortschreiben.',
     icon: Icons.fact_check_outlined,
     readingMinutes: 3,
+    audience: 'Für qualifizierte Prüfende',
     prerequisite:
-        'Die Prüfung muss durch eine dafür qualifizierte Person erfolgen.',
+        'Die fachliche Prüfung muss durch eine dafür qualifizierte Person erfolgen.',
     steps: [
-      'Öffnen Sie den fälligen Materialdatensatz aus „Aufgaben & Hinweise“.',
-      'Führen Sie die vorgeschriebene Prüfung außerhalb des Systems vollständig durch.',
-      'Erfassen Sie Datum, Ergebnis und die prüfende Person.',
-      'Legen Sie bei Beanstandungen einen Mangel an.',
-      'Kontrollieren Sie den automatisch oder manuell gesetzten nächsten Prüftermin.',
+      'Öffne den fälligen Datensatz über „Aufgaben & Hinweise“ oder den betreffenden Bestandsbereich.',
+      'Führe die vorgeschriebene Prüfung außerhalb des Systems vollständig durch.',
+      'Erfasse Datum, Ergebnis und prüfende Person.',
+      'Bei einer fehlgeschlagenen Prüfung wird automatisch ein Mangel erzeugt.',
+      'Kontrolliere den automatisch oder manuell gesetzten nächsten Prüftermin.',
     ],
-    keywords: ['prüftermin', 'wartung', 'prüfung', 'frist'],
+    keywords: ['prüftermin', 'wartung', 'prüfung', 'frist', 'mangel'],
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',
     title: 'Gebäude und Lagerstruktur anlegen',
-    summary: 'Die physische Lagerstruktur eindeutig und auffindbar abbilden.',
+    summary: 'Gebäude, Regale, Ebenen und Lagerplätze eindeutig strukturieren.',
     icon: Icons.warehouse_outlined,
-    readingMinutes: 3,
-    prerequisite: 'Sie benötigen Verwaltungsrechte für Lagerorte.',
+    readingMinutes: 4,
+    audience: 'Für Lagerverwaltung',
+    prerequisite: 'Du brauchst Verwaltungsrechte für Lagerorte.',
     steps: [
-      'Öffnen Sie „Lagerorte“ und legen Sie zunächst das Gebäude mit seiner vollständigen Adresse an.',
-      'Ergänzen Sie darunter Regale, Ebenen und abschließend die konkreten Lagerplätze.',
-      'Verwenden Sie auf jeder Ebene kurze, innerhalb des Elternobjekts eindeutige Kürzel.',
-      'Nutzen Sie für gleichförmige Lager die automatische Massenerstellung mit Vorschau.',
-      'Ordnen Sie anschließend vorhandenes Material dem Gebäude und bei Bedarf einem Lagerplatz zu.',
+      'Öffne „Lagerorte“ und lege zunächst das Gebäude mit vollständiger Adresse an.',
+      'Ergänze darunter Regale, anschließend Ebenen und zuletzt die konkreten Lagerplätze.',
+      'Verwende auf jeder Ebene kurze Kürzel, die innerhalb des übergeordneten Elements eindeutig sind.',
+      'Nutze für gleichförmige Lager „Lagerstruktur automatisch anlegen“ und prüfe die Vorschau vor dem Speichern.',
+      'Ordne vorhandenes Material dem Gebäude und bei Bedarf einem konkreten Lagerplatz zu.',
     ],
     tip:
-        'Der automatisch erzeugte Pfad „Gebäude / Regal / Ebene / Lagerplatz“ bleibt auch nach dem Verschieben eines Elements eindeutig nachvollziehbar.',
-    keywords: ['gebäude', 'adresse', 'regal', 'ebene', 'lagerplatz'],
+        'Der erzeugte Pfad „Gebäude / Regal / Ebene / Lagerplatz“ bleibt auch nach dem Verschieben eines Elements nachvollziehbar.',
+    keywords: [
+      'gebäude',
+      'adresse',
+      'regal',
+      'ebene',
+      'lagerplatz',
+      'massenerstellung'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/storage_structure.png',
+        caption:
+            'Die Hierarchie führt vom Gebäude über Regal und Ebene bis zum Lagerplatz.',
+        altText:
+            'Lagerorte-Ansicht mit einem Beispielgebäude und einer aufgeklappten Hierarchie aus Regal, Ebene und Lagerplatz.',
+        afterStep: 2,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',
@@ -1088,35 +1402,259 @@ const _articles = [
         'Haupt- und Unterkategorien für konsistente Bestände und Berichte pflegen.',
     icon: Icons.account_tree_outlined,
     readingMinutes: 4,
+    audience: 'Für Material- und Lagerverwaltung',
     prerequisite:
-        'Planen Sie die gewünschte Struktur, bevor Sie bestehende Kategorien verändern.',
+        'Plane die gewünschte Struktur, bevor du bestehende Kategorien veränderst.',
     steps: [
-      'Öffnen Sie „Kategorien“ und prüfen Sie vorhandene Hauptkategorien.',
-      'Legen Sie neue Unterkategorien nur an, wenn sie dauerhaft zur Suche oder Auswertung benötigt werden.',
-      'Aktivieren Sie bei Bekleidung die Nutzung in der Kleiderkammer und hinterlegen Sie passende Größen.',
-      'Definieren Sie bei prüfpflichtigen Gruppen ein sinnvolles Prüfintervall.',
-      'Prüfen Sie nach Änderungen stichprobenartig zugeordnete Datensätze.',
+      'Öffne „Kategorien“ und prüfe die vorhandenen Hauptkategorien.',
+      'Lege Unterkategorien nur an, wenn du sie dauerhaft für Suche, Rechte oder Auswertungen brauchst.',
+      'Aktiviere bei Bekleidung die Nutzung in der Kleiderkammer und hinterlege die zulässigen Größen.',
+      'Definiere bei prüfpflichtigen Gruppen ein fachlich sinnvolles Prüfintervall.',
+      'Prüfe nach Änderungen stichprobenartig die zugeordneten Datensätze.',
     ],
-    keywords: ['kategorie', 'hauptkategorie', 'unterkategorie', 'größe'],
+    keywords: [
+      'kategorie',
+      'hauptkategorie',
+      'unterkategorie',
+      'größe',
+      'prüfintervall'
+    ],
   ),
   _GuideArticle(
-    category: 'Konten & Rechte',
-    title: 'Nutzerkonto und Rollen verwalten',
+    category: 'Dienstgeräte & Offline',
+    title: 'Dienstgerät anlegen und aktivieren',
+    summary:
+        'Ein verwaltetes Gerät vorbereiten, absichern und einmalig aktivieren.',
+    icon: Icons.add_to_home_screen_outlined,
+    readingMinutes: 6,
+    audience: 'Für Admins',
+    prerequisite:
+        'Du brauchst Adminrechte und einen nativen Windows-, Linux-, macOS-, Android- oder iOS-Client. Webbrowser lassen sich nicht als Dienstgerät aktivieren.',
+    steps: [
+      'Öffne „Nutzerverwaltung“ und den Bereich „Dienstgeräte“.',
+      'Wähle „Gerät anlegen“ und erfasse Standort, Halle oder Raum, Geräte-Inventarnummer, verantwortliche Person und Fachbereiche.',
+      'Lege ein eigenes Gerätepasswort fest. Eine MAC-Adresse dient nur der Dokumentation und ist kein Sicherheitsmerkmal.',
+      'Konfiguriere bei Bedarf erlaubte IP-Adressen beziehungsweise IPv4-/IPv6-Netze sowie einen zusätzlichen TOTP- oder NFC-Faktor.',
+      'Öffne am Zielgerät die normale Loginseite und führe die einmalige Aktivierung als Admin durch.',
+      'Kontrolliere anschließend den Status in der Geräteverwaltung. Sperren oder ein Schlüsselreset beenden bestehende Gerätesitzungen sofort.',
+    ],
+    tip:
+        'Bewahre das Gerätepasswort getrennt vom Gerät auf und erlaube nur die tatsächlich benötigten Fachbereiche.',
+    keywords: [
+      'dienstgerät',
+      'aktivierung',
+      'gerätepasswort',
+      'mac adresse',
+      'ip netz',
+      'admin'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/service_devices.png',
+        caption:
+            'Im echten Register „Dienstgeräte“ siehst du Aktivierungs- und Freigabestatus und erreichst Offline-Installationen sowie die Geräteanlage.',
+        altText:
+            'MaterialKompass-Nutzerverwaltung im Register Dienstgeräte mit einem aktivierten Beispielgerät und den Schaltflächen Offline-Installationen und Gerät anlegen.',
+        afterStep: 4,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Dienstgeräte & Offline',
+    title: 'Am Dienstgerät anmelden',
+    summary:
+        'Systemzugang und persönliche Sitzung sicher voneinander unterscheiden.',
+    icon: Icons.login_outlined,
+    readingMinutes: 5,
+    audience: 'Für Dienstgeräte-Nutzer',
+    prerequisite: 'Das Gerät muss aktiviert und darf nicht gesperrt sein.',
+    steps: [
+      'Wähle den Systemzugang für eine redigierte Materialsuche und das Erstellen oder Öffnen einer einzelnen Mängelmeldung.',
+      'Melde dich am Systemzugang mit Gerätepasswort oder einem aktiven System-QR-Code an und bestätige einen verlangten Gerätefaktor.',
+      'Wähle eine persönliche Anmeldung, wenn du deine normalen Rollen und Fachrechte brauchst.',
+      'Nutze dafür Passwort, persönlichen QR-Code oder eine am Gerät registrierte USB-NFC-Karte und bestätige anschließend gegebenenfalls deine Konto-2-FA.',
+      'Beende die Sitzung nach der Arbeit. Der Systemzugang läuft nach fünf Minuten ab und löscht anschließend Kontakte, Bilder, Suchergebnisse und temporäre Dokumente.',
+    ],
+    tip:
+        'Der Code einer Dienstgeräte-Mängelmeldung öffnet nur genau diese Meldung und ersetzt keine persönliche Anmeldung.',
+    keywords: [
+      'systemzugang',
+      'persönliche anmeldung',
+      'gerätepasswort',
+      'nfc',
+      'totp',
+      'mängelcode'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/service_device_login.png',
+        caption:
+            'Die aufgeklappte Geräteverwaltung zeigt die verfügbaren Anmeldewege und Faktoren wie System-QR-Code, NFC, Offline-QR-Code und TOTP.',
+        altText:
+            'Aufgeklapptes Beispielgerät in der MaterialKompass-Dienstgeräteverwaltung mit Aktionen für System-QR-Code, NFC-Karten, Offline-QR-Code, TOTP, Aktivierungsreset und Sperrung.',
+        afterStep: 1,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Dienstgeräte & Offline',
+    title: 'Offlinebetrieb vorbereiten',
+    summary:
+        'Gerät, Konto und Standorte für verschlüsseltes Arbeiten ohne Verbindung freigeben.',
+    icon: Icons.cloud_off_outlined,
+    readingMinutes: 5,
+    audience: 'Für Admins und mobile Nutzer',
+    prerequisite:
+        'Offline-Schreibbetrieb ist nur in installierten Apps möglich. Dein Konto benötigt eingerichtete 2-FA und innerhalb der letzten 365 Tage eine vollständige 2-FA-Anmeldung.',
+    steps: [
+      'Ein Admin aktiviert den Offlinebetrieb am Dienstgerät und erlaubt die benötigten Nutzerkonten.',
+      'Falls erforderlich, stellt der Admin einen persönlichen Offline-QR-Code aus. Er gilt nur für dieses Gerät und höchstens sieben Tage.',
+      'Melde dich einmal online vollständig an, damit die App eine verschlüsselte Offlinefreigabe und einen berechtigungsabhängigen Snapshot anlegen kann.',
+      'Öffne die Offline-Einstellungen am Dashboard und wähle nur die lokal benötigten Standorte.',
+      'Lege fest, ob Mobilfunk verwendet werden darf und ab welcher Dateigröße nur über WLAN oder LAN synchronisiert wird.',
+    ],
+    tip:
+        'Normale native Installationen werden als widerrufbare Offline-Installation registriert. Ein Gerätewiderruf wird beim nächsten Serverkontakt wirksam.',
+    keywords: [
+      'offlinefreigabe',
+      'snapshot',
+      'standorte',
+      'mobilfunk',
+      'offline qr',
+      '365 tage'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Dienstgeräte & Offline',
+    title: 'Offline arbeiten und synchronisieren',
+    summary:
+        'Buchungen vormerken, Übertragung prüfen und Konflikte sicher behandeln.',
+    icon: Icons.sync_outlined,
+    readingMinutes: 6,
+    audience: 'Für mobile Material- und Kleiderkammerrollen',
+    prerequisite:
+        'Ein aktueller Offline-Snapshot und eine gültige Offlinefreigabe müssen auf dem Gerät vorhanden sein.',
+    steps: [
+      'Ohne Verbindung kannst du Material, Kleidung und offene Mängel suchen oder scannen.',
+      'Ausgaben, Rücknahmen, Umbuchungen und neue textbasierte Mängelmeldungen werden lokal vorgemerkt. Bilder und sonstige Anhänge lassen sich nicht offline vormerken.',
+      'Das Wolken-Symbol im Dashboard zeigt die Anzahl ausstehender Änderungen. Öffne es für Details oder eine manuelle Synchronisation.',
+      'Sobald die API erreichbar ist, überträgt die App jede Änderung sicher wiederholbar. Ein erneuter Versuch erzeugt keine Doppelbuchung.',
+      'Prüfe abgelehnte Änderungen einzeln. Fachliche Konflikte bleiben sichtbar, bis du sie geklärt oder ausdrücklich verworfen hast.',
+      'Eine Abmeldung mit offenen Änderungen wird blockiert. Verwirf Änderungen nur, wenn sie wirklich nicht mehr übertragen werden sollen.',
+    ],
+    tip:
+        'Nicht erneuerte Snapshots und abgelaufene Offline-Anmeldungen werden nach spätestens 30 Tagen bereinigt; offene Fachbuchungen bleiben bis zur Synchronisation oder zum bestätigten Verwerfen erhalten.',
+    keywords: [
+      'offline',
+      'synchronisation',
+      'konflikt',
+      'warteschlange',
+      'doppelbuchung',
+      'wolke'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/offline_sync.png',
+        caption:
+            'Der echte Synchronisationsdialog zeigt den aktuellen Übertragungsstand und bietet eine manuelle Synchronisation an.',
+        altText:
+            'MaterialKompass-Dashboard mit geöffnetem Dialog Offline-Synchronisation, dem Hinweis dass alle Änderungen synchronisiert wurden und der Schaltfläche Jetzt synchronisieren.',
+        afterStep: 3,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: 'Zwei-Faktor-Authentifizierung einrichten',
+    summary:
+        'Dein Konto mit einer Authenticator-App und Wiederherstellungscodes absichern.',
+    icon: Icons.phonelink_lock_outlined,
+    readingMinutes: 5,
+    audience: 'Für alle persönlichen Konten',
+    prerequisite:
+        'Installiere eine vertrauenswürdige Authenticator-App und halte einen sicheren Ort für die Wiederherstellungscodes bereit.',
+    steps: [
+      'Öffne auf dem Dashboard „Mein Account“ und den Abschnitt „Zwei-Faktor-Authentifizierung“.',
+      'Wähle „2-FA einrichten“ und übernimm den angezeigten Schlüssel in deine Authenticator-App.',
+      'Gib den aktuellen sechsstelligen Code ein und aktiviere 2-FA.',
+      'Sichere die zehn einmal verwendbaren Wiederherstellungscodes. Diese Codes werden nur bei der Erstellung vollständig angezeigt.',
+      'Bei späteren Anmeldungen bestätigst du nach Passwort, QR-Code oder Dienstgeräte-Anmeldung zusätzlich den kurzlebigen 2-FA-Code.',
+      'Erzeuge bei Bedarf neue Recovery-Codes; alle alten Codes werden dadurch ungültig.',
+    ],
+    tip:
+        'Speichere Authenticator-Schlüssel und Wiederherstellungscodes nicht gemeinsam auf demselben Gerät.',
+    keywords: [
+      '2fa',
+      'mfa',
+      'totp',
+      'authenticator',
+      'recovery codes',
+      'wiederherstellungscodes'
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/two_factor_authentication.png',
+        caption:
+            'Unter „Mein Account“ startest du die 2-FA-Einrichtung und verwaltest außerdem deine persönlichen Anmelde-QR-Codes.',
+        altText:
+            'Echter MaterialKompass-Accountbereich mit dem Abschnitt Zwei-Faktor-Authentifizierung, der Schaltfläche 2-FA einrichten und dem Abschnitt QR-Anmeldung.',
+        afterStep: 1,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: '2-FA-Pflicht und Wiederherstellung verwalten',
+    summary:
+        '2-FA pro Konto verpflichten, Einrichtungsfristen verstehen und Zugänge zurücksetzen.',
+    icon: Icons.security_outlined,
+    readingMinutes: 5,
+    audience: 'Für Admins',
+    prerequisite: 'Du brauchst Verwaltungsrechte für Nutzerkonten.',
+    steps: [
+      'Öffne die Nutzerverwaltung und bearbeite das gewünschte Konto.',
+      'Aktiviere „Zwei-Faktor-Authentifizierung verpflichtend“, wenn das Konto künftig 2-FA verwenden muss.',
+      'Hat die Person noch keine 2-FA eingerichtet, beginnt eine Einrichtungsfrist von 14 Tagen. Danach ist nur noch eine eingeschränkte Anmeldung zur Einrichtung möglich.',
+      'Nutze „2-FA zurücksetzen“ nur nach sicherer Identitätsprüfung. Der Reset entfernt die Einrichtung und beendet bestehende Sitzungen.',
+      'Informiere die betroffene Person, damit sie 2-FA neu einrichtet und neue Wiederherstellungscodes sicher ablegt.',
+    ],
+    tip:
+        'Ein administrativer Reset ersetzt keine Identitätsprüfung und wird zusammen mit Richtlinienänderungen im System protokolliert.',
+    keywords: [
+      '2fa pflicht',
+      '14 tage',
+      'reset',
+      'admin',
+      'eingeschränktes login'
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: 'Nutzerkonto, Rollen und Fachbereiche verwalten',
     summary:
         'Konten anlegen und Zugriffe nach dem Prinzip der geringsten Rechte vergeben.',
     icon: Icons.manage_accounts_outlined,
-    readingMinutes: 4,
+    readingMinutes: 5,
+    audience: 'Für Admins',
     prerequisite:
-        'Diese Funktion steht nur Konten mit Verwaltungsrechten zur Verfügung.',
+        'Diese Funktionen stehen nur Konten mit Verwaltungsrechten zur Verfügung.',
     steps: [
-      'Öffnen Sie die Nutzerverwaltung und legen Sie das Konto mit Name und eindeutiger E-Mail-Adresse an.',
-      'Wählen Sie nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden.',
-      'Prüfen Sie die daraus resultierenden Bereichs- und Schreibrechte.',
-      'Aktivieren Sie das Konto und informieren Sie die Person über den vorgesehenen Anmeldeweg.',
-      'Deaktivieren Sie nicht mehr benötigte Konten zeitnah.',
+      'Öffne die Nutzerverwaltung und lege das Konto mit Name, Nutzername und eindeutiger E-Mail-Adresse an.',
+      'Wähle nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden.',
+      'Ordne bei Bedarf geleitete Fachbereiche zu und prüfe die daraus entstehenden Bereichs- und Schreibrechte.',
+      'Lege fest, ob 2-FA verpflichtend ist, und aktiviere das Konto.',
+      'Informiere die Person über den vorgesehenen Anmeldeweg. Persönliche QR-Codes verwaltet sie unter „Mein Account“ oder ein Admin in der Nutzerverwaltung.',
+      'Deaktiviere nicht mehr benötigte Konten zeitnah und lösche sie nur unter Beachtung der Aufbewahrungsregeln.',
     ],
     tip:
-        'Vergeben Sie administrative Rechte nicht für die tägliche Arbeit, sondern nur für konkrete Verwaltungsaufgaben.',
-    keywords: ['benutzer', 'rolle', 'berechtigung', 'admin', 'konto'],
+        'Vergib administrative Rechte nur für konkrete Verwaltungsaufgaben und nutze sie nicht als Standardrolle für die tägliche Arbeit.',
+    keywords: [
+      'benutzer',
+      'rolle',
+      'berechtigung',
+      'admin',
+      'konto',
+      'fachbereich'
+    ],
   ),
 ];
