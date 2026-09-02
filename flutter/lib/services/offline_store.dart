@@ -26,14 +26,13 @@ class OfflineStatus {
     int? pending,
     int? conflicts,
     DateTime? lastSyncAt,
-  }) =>
-      OfflineStatus(
-        offline: offline ?? this.offline,
-        syncing: syncing ?? this.syncing,
-        pending: pending ?? this.pending,
-        conflicts: conflicts ?? this.conflicts,
-        lastSyncAt: lastSyncAt ?? this.lastSyncAt,
-      );
+  }) => OfflineStatus(
+    offline: offline ?? this.offline,
+    syncing: syncing ?? this.syncing,
+    pending: pending ?? this.pending,
+    conflicts: conflicts ?? this.conflicts,
+    lastSyncAt: lastSyncAt ?? this.lastSyncAt,
+  );
 }
 
 class OfflineCommand {
@@ -56,43 +55,41 @@ class OfflineCommand {
   final String? failure;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'subject': subject,
-        'method': method,
-        'uri': uri,
-        'body': body,
-        'createdAt': createdAt.toUtc().toIso8601String(),
-        'failure': failure,
-      };
+    'id': id,
+    'subject': subject,
+    'method': method,
+    'uri': uri,
+    'body': body,
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'failure': failure,
+  };
 
   factory OfflineCommand.fromJson(Map<String, dynamic> json) => OfflineCommand(
-        id: json['id'].toString(),
-        subject: json['subject'].toString(),
-        method: json['method'].toString(),
-        uri: json['uri'].toString(),
-        body: json['body']?.toString(),
-        createdAt: DateTime.parse(json['createdAt'].toString()),
-        failure: json['failure']?.toString(),
-      );
+    id: json['id'].toString(),
+    subject: json['subject'].toString(),
+    method: json['method'].toString(),
+    uri: json['uri'].toString(),
+    body: json['body']?.toString(),
+    createdAt: DateTime.parse(json['createdAt'].toString()),
+    failure: json['failure']?.toString(),
+  );
 
   OfflineCommand failed(String message) => OfflineCommand(
-        id: id,
-        subject: subject,
-        method: method,
-        uri: uri,
-        body: body,
-        createdAt: createdAt,
-        failure: message,
-      );
+    id: id,
+    subject: subject,
+    method: method,
+    uri: uri,
+    body: body,
+    createdAt: createdAt,
+    failure: message,
+  );
 }
 
 class OfflineStore {
   OfflineStore._();
 
   static final OfflineStore instance = OfflineStore._();
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(),
-  );
+  static const _storage = FlutterSecureStorage(aOptions: AndroidOptions());
   static const _queueKey = 'materialkompass_offline_queue_v1';
   static const _leaseKey = 'materialkompass_offline_qr_lease_v1';
   static const _settingsKey = 'materialkompass_offline_settings_v1';
@@ -128,7 +125,8 @@ class OfflineStore {
       final parts = token.split('.');
       if (parts.length == 3) {
         final payload = jsonDecode(
-            utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+        );
         if (payload is Map) {
           return '${payload['sub'] ?? 'unknown'}:${payload['did'] ?? 'personal'}';
         }
@@ -159,26 +157,27 @@ class OfflineStore {
     String subject, {
     required int revision,
     required List<String> locationIds,
-  }) =>
-      _storage.write(
-        key: _checkpointKey(subject),
-        value: jsonEncode({
-          'revision': revision,
-          'locationIds': locationIds,
-          'updatedAt': DateTime.now().toUtc().toIso8601String(),
-        }),
-      );
+  }) => _storage.write(
+    key: _checkpointKey(subject),
+    value: jsonEncode({
+      'revision': revision,
+      'locationIds': locationIds,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    }),
+  );
 
-  Future<void> pruneExpiredData(
-      {Duration maximumAge = const Duration(days: 30)}) async {
+  Future<void> pruneExpiredData({
+    Duration maximumAge = const Duration(days: 30),
+  }) async {
     final cutoff = DateTime.now().toUtc().subtract(maximumAge);
     await _queueManifestUpdate(() async {
       final entries = await _cacheManifest();
       final retained = <Map<String, dynamic>>[];
       for (final entry in entries) {
         final key = entry['key']?.toString() ?? '';
-        final storedAt =
-            DateTime.tryParse(entry['storedAt']?.toString() ?? '')?.toUtc();
+        final storedAt = DateTime.tryParse(
+          entry['storedAt']?.toString() ?? '',
+        )?.toUtc();
         if (key.isEmpty || storedAt == null || storedAt.isBefore(cutoff)) {
           if (key.isNotEmpty) await _storage.delete(key: key);
         } else {
@@ -194,11 +193,13 @@ class OfflineStore {
       final leases = (decoded is List ? decoded : [decoded])
           .map((entry) => Map<String, dynamic>.from(entry as Map))
           .where((entry) {
-        final expiresAt =
-            DateTime.tryParse(entry['expiresAt']?.toString() ?? '');
-        return expiresAt != null &&
-            expiresAt.toUtc().isAfter(DateTime.now().toUtc());
-      }).toList();
+            final expiresAt = DateTime.tryParse(
+              entry['expiresAt']?.toString() ?? '',
+            );
+            return expiresAt != null &&
+                expiresAt.toUtc().isAfter(DateTime.now().toUtc());
+          })
+          .toList();
       await _storage.write(key: _leaseKey, value: jsonEncode(leases));
     } catch (_) {
       await _storage.delete(key: _leaseKey);
@@ -206,7 +207,11 @@ class OfflineStore {
   }
 
   Future<void> cacheResponse(
-      String subject, Uri uri, int statusCode, String body) async {
+    String subject,
+    Uri uri,
+    int statusCode,
+    String body,
+  ) async {
     final key = _cacheKey(subject, uri);
     final storedAt = DateTime.now().toUtc().toIso8601String();
     await _storage.write(
@@ -275,8 +280,11 @@ class OfflineStore {
     if (value == null) return [];
     try {
       return (jsonDecode(value) as List)
-          .map((entry) =>
-              OfflineCommand.fromJson(Map<String, dynamic>.from(entry as Map)))
+          .map(
+            (entry) => OfflineCommand.fromJson(
+              Map<String, dynamic>.from(entry as Map),
+            ),
+          )
           .toList();
     } catch (_) {
       return [];
@@ -297,14 +305,17 @@ class OfflineStore {
   Future<void> discardCommands(String subject) async {
     final queued = await commands();
     await saveCommands(
-        queued.where((entry) => entry.subject != subject).toList());
+      queued.where((entry) => entry.subject != subject).toList(),
+    );
   }
 
   Future<void> discardCommand(String subject, String commandId) async {
     final queued = await commands();
-    await saveCommands(queued
-        .where((entry) => entry.subject != subject || entry.id != commandId)
-        .toList());
+    await saveCommands(
+      queued
+          .where((entry) => entry.subject != subject || entry.id != commandId)
+          .toList(),
+    );
   }
 
   Future<OfflineCommand> enqueue({
@@ -330,7 +341,10 @@ class OfflineStore {
   }
 
   Future<List<dynamic>> _cachedList(
-      String subject, Uri origin, String path) async {
+    String subject,
+    Uri origin,
+    String path,
+  ) async {
     final cached = await cachedResponse(subject, origin.resolve(path));
     if (cached == null) return [];
     try {
@@ -341,8 +355,11 @@ class OfflineStore {
   }
 
   Future<void> _saveList(
-          String subject, Uri origin, String path, List<dynamic> values) =>
-      cacheResponse(subject, origin.resolve(path), 200, jsonEncode(values));
+    String subject,
+    Uri origin,
+    String path,
+    List<dynamic> values,
+  ) => cacheResponse(subject, origin.resolve(path), 200, jsonEncode(values));
 
   Future<void> _applyOptimistic(OfflineCommand command) async {
     if (command.body == null) return;
@@ -355,7 +372,10 @@ class OfflineStore {
     final uri = Uri.parse(command.uri);
     if (uri.path == '/api/material/transactions/bulk') {
       final materials = await _cachedList(
-          command.subject, uri, '/api/material?archived=false');
+        command.subject,
+        uri,
+        '/api/material?archived=false',
+      );
       final action = body['action'];
       for (final requested in body['items'] as List? ?? const []) {
         final values = requested as Map;
@@ -371,15 +391,22 @@ class OfflineStore {
             issued + (action == 'issue' ? quantity : -quantity);
         item['availableQuantity'] =
             (num.tryParse(item['quantity']?.toString() ?? '0') ?? 0) -
-                item['issuedQuantity'];
+            item['issuedQuantity'];
         item['status'] = item['issuedQuantity'] > 0 ? 'Ausgegeben' : 'Lagernd';
         item['_offlinePending'] = true;
       }
       await _saveList(
-          command.subject, uri, '/api/material?archived=false', materials);
+        command.subject,
+        uri,
+        '/api/material?archived=false',
+        materials,
+      );
     } else if (uri.path == '/api/material/relocate/bulk') {
       final materials = await _cachedList(
-          command.subject, uri, '/api/material?archived=false');
+        command.subject,
+        uri,
+        '/api/material?archived=false',
+      );
       final ids = (body['materialIds'] as List? ?? const [])
           .map((entry) => entry.toString())
           .toSet();
@@ -392,7 +419,11 @@ class OfflineStore {
         item['_offlinePending'] = true;
       }
       await _saveList(
-          command.subject, uri, '/api/material?archived=false', materials);
+        command.subject,
+        uri,
+        '/api/material?archived=false',
+        materials,
+      );
     } else if (uri.path == '/api/transactions') {
       final clothing = await _cachedList(command.subject, uri, '/api/clothing');
       final ids = (body['clothingIds'] as List? ?? [body['clothingId']])
@@ -420,7 +451,10 @@ class OfflineStore {
     } else if (uri.path == '/api/defects' ||
         uri.path == '/api/device/defects') {
       final defects = await _cachedList(
-          command.subject, uri, '/api/defects?archived=false');
+        command.subject,
+        uri,
+        '/api/defects?archived=false',
+      );
       defects.insert(0, {
         ...body,
         'id': 'local-${command.id}',
@@ -431,16 +465,26 @@ class OfflineStore {
         '_offlinePending': true,
       });
       await _saveList(
-          command.subject, uri, '/api/defects?archived=false', defects);
+        command.subject,
+        uri,
+        '/api/defects?archived=false',
+        defects,
+      );
       await _saveList(
-          command.subject, uri, '/api/defects?archived=all', defects);
+        command.subject,
+        uri,
+        '/api/defects?archived=all',
+        defects,
+      );
     }
   }
 
   Future<void> markOnline() async {
     final now = DateTime.now();
     await _storage.write(
-        key: _lastSyncKey, value: now.toUtc().toIso8601String());
+      key: _lastSyncKey,
+      value: now.toUtc().toIso8601String(),
+    );
     status.value = status.value.copyWith(offline: false, lastSyncAt: now);
   }
 
@@ -452,8 +496,10 @@ class OfflineStore {
     status.value = status.value.copyWith(syncing: value);
   }
 
-  Future<void> saveQrLease(Map<String, dynamic> lease,
-      {required String sessionToken}) async {
+  Future<void> saveQrLease(
+    Map<String, dynamic> lease, {
+    required String sessionToken,
+  }) async {
     // FlutterSecureStorage encrypts this verifier with the platform keystore.
     // The QR credential itself is deliberately never persisted.
     final allowed = <String, dynamic>{
@@ -474,14 +520,16 @@ class OfflineStore {
         final decoded = jsonDecode(existingRaw);
         if (decoded is List) {
           leases.addAll(
-              decoded.map((entry) => Map<String, dynamic>.from(entry as Map)));
+            decoded.map((entry) => Map<String, dynamic>.from(entry as Map)),
+          );
         } else if (decoded is Map) {
           leases.add(Map<String, dynamic>.from(decoded));
         }
       } catch (_) {}
     }
     leases.removeWhere(
-        (entry) => entry['verifierHash'] == allowed['verifierHash']);
+      (entry) => entry['verifierHash'] == allowed['verifierHash'],
+    );
     leases.add(allowed);
     if (leases.length > 50) leases.removeRange(0, leases.length - 50);
     await _storage.write(key: _leaseKey, value: jsonEncode(leases));
@@ -494,8 +542,8 @@ class OfflineStore {
       final decoded = jsonDecode(raw);
       final leases = decoded is List
           ? decoded
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
+                .map((entry) => Map<String, dynamic>.from(entry as Map))
+                .toList()
           : [Map<String, dynamic>.from(decoded as Map)];
       final supplied = sha256.convert(utf8.encode(qrCredential)).toString();
       for (final lease in leases) {

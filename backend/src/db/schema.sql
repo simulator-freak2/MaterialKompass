@@ -33,6 +33,29 @@ CREATE TABLE users (
   INDEX idx_users_scheduled_deletion (scheduled_deletion_at)
 );
 
+CREATE TABLE user_passkeys (
+  id CHAR(36) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  user_handle VARCHAR(86) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  credential_id TEXT CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  credential_id_hash BINARY(32) NOT NULL,
+  public_key BLOB NOT NULL,
+  signature_counter BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  transports JSON NOT NULL,
+  device_type VARCHAR(32) NOT NULL,
+  backed_up TINYINT(1) NOT NULL DEFAULT 0,
+  name VARCHAR(100) NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  last_used_at DATETIME(3) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_user_passkeys_credential_hash (credential_id_hash),
+  INDEX idx_user_passkeys_user_id (user_id),
+  CONSTRAINT fk_user_passkeys_user FOREIGN KEY (user_id)
+    REFERENCES users(id) ON DELETE CASCADE,
+  CHECK (JSON_VALID(transports))
+);
+
 CREATE TABLE roles (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(100) UNIQUE NOT NULL,
@@ -327,12 +350,39 @@ CREATE TABLE procurement_offers (
   offer_date DATE NULL,
   valid_until DATE NULL,
   delivery_days INT NULL,
+  positions_gross_total DECIMAL(12,2) NULL,
+  components_gross_total DECIMAL(12,2) NULL,
+  calculated_gross_total DECIMAL(12,2) NULL,
+  document_gross_total DECIMAL(12,2) NULL,
   gross_total DECIMAL(12,2) NOT NULL,
   shipping_gross DECIMAL(12,2) NOT NULL DEFAULT 0,
+  discount_gross DECIMAL(12,2) NOT NULL DEFAULT 0,
   notes TEXT NULL,
   created_at DATETIME NOT NULL,
+  updated_at DATETIME NULL,
   FOREIGN KEY (request_id) REFERENCES procurement_requests(id),
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE TABLE procurement_offer_items (
+  id VARCHAR(64) PRIMARY KEY,
+  offer_id VARCHAR(64) NOT NULL,
+  request_item_id VARCHAR(64) NOT NULL,
+  offered TINYINT(1) NOT NULL DEFAULT 1,
+  gross_total DECIMAL(12,2) NOT NULL,
+  UNIQUE KEY uq_procurement_offer_item (offer_id, request_item_id),
+  FOREIGN KEY (offer_id) REFERENCES procurement_offers(id) ON DELETE CASCADE,
+  FOREIGN KEY (request_item_id) REFERENCES procurement_request_items(id)
+);
+
+CREATE TABLE procurement_offer_components (
+  id VARCHAR(64) PRIMARY KEY,
+  offer_id VARCHAR(64) NOT NULL,
+  kind VARCHAR(32) NOT NULL,
+  label VARCHAR(100) NOT NULL,
+  operation VARCHAR(16) NOT NULL,
+  gross_amount DECIMAL(12,2) NOT NULL,
+  FOREIGN KEY (offer_id) REFERENCES procurement_offers(id) ON DELETE CASCADE
 );
 
 CREATE TABLE procurement_orders (
@@ -340,6 +390,7 @@ CREATE TABLE procurement_orders (
   order_number VARCHAR(32) UNIQUE NOT NULL,
   request_id VARCHAR(64) NOT NULL,
   supplier_id VARCHAR(64) NOT NULL,
+  offer_id VARCHAR(64) NULL,
   order_date DATE NOT NULL,
   expected_delivery_date DATE NULL,
   shipping_gross DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -349,7 +400,8 @@ CREATE TABLE procurement_orders (
   created_by VARCHAR(255) NOT NULL,
   created_at DATETIME NOT NULL,
   FOREIGN KEY (request_id) REFERENCES procurement_requests(id),
-  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (offer_id) REFERENCES procurement_offers(id)
 );
 
 CREATE TABLE procurement_order_items (

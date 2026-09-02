@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
 
 import '../widgets/address_input.dart';
+import '../widgets/keyboard_dropdown_button_form_field.dart';
 
 typedef StorageSubmit = Future<String?> Function(Map<String, dynamic> values);
 
@@ -35,7 +36,8 @@ class _BuildingDialogState extends State<BuildingDialog> {
 
   TextEditingController _controller(String key, {String fallback = ''}) =>
       TextEditingController(
-          text: widget.building?[key]?.toString() ?? fallback);
+        text: widget.building?[key]?.toString() ?? fallback,
+      );
 
   @override
   void dispose() {
@@ -61,7 +63,8 @@ class _BuildingDialogState extends State<BuildingDialog> {
     final addressValues = [_street, _houseNumber, _postalCode, _city, _country];
     if (addressValues.any((controller) => controller.text.trim().isEmpty)) {
       setState(
-          () => _error = 'Bitte die Gebäudeadresse vollständig ausfüllen.');
+        () => _error = 'Bitte die Gebäudeadresse vollständig ausfüllen.',
+      );
       return;
     }
     setState(() {
@@ -90,91 +93,94 @@ class _BuildingDialogState extends State<BuildingDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(
-            widget.building == null ? 'Neues Gebäude' : 'Gebäude bearbeiten'),
-        content: SizedBox(
-          width: 720,
-          child: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+    title: Text(
+      widget.building == null ? 'Neues Gebäude' : 'Gebäude bearbeiten',
+    ),
+    content: SizedBox(
+      width: 720,
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
                 children: [
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      SizedBox(
-                        width: 440,
-                        child: TextFormField(
-                          controller: _name,
-                          autofocus: true,
-                          validator: _required,
-                          decoration: const InputDecoration(
-                            labelText: 'Name *',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
+                  SizedBox(
+                    width: 440,
+                    child: TextFormField(
+                      controller: _name,
+                      autofocus: true,
+                      validator: _required,
+                      decoration: const InputDecoration(
+                        labelText: 'Name *',
+                        border: OutlineInputBorder(),
                       ),
-                      SizedBox(
-                        width: 200,
-                        child: TextFormField(
-                          controller: _code,
-                          validator: _required,
-                          inputFormatters: [
-                            _UpperCaseTextFormatter(),
-                            FilteringTextInputFormatter.allow(
-                                RegExp(r'[A-Z0-9_-]')),
-                            LengthLimitingTextInputFormatter(32),
-                          ],
-                          decoration: const InputDecoration(
-                            labelText: 'Kürzel / Nummer *',
-                            border: OutlineInputBorder(),
-                          ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 200,
+                    child: TextFormField(
+                      controller: _code,
+                      validator: _required,
+                      inputFormatters: [
+                        _UpperCaseTextFormatter(),
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'[A-Z0-9_-]'),
                         ),
+                        LengthLimitingTextInputFormatter(32),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Kürzel / Nummer *',
+                        border: OutlineInputBorder(),
                       ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  Text('Adresse',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 12),
-                  AddressInput(
-                    token: widget.token,
-                    streetController: _street,
-                    houseNumberController: _houseNumber,
-                    postalCodeController: _postalCode,
-                    cityController: _city,
-                    countryController: _country,
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Text(_error!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
-                  ],
                 ],
               ),
-            ),
+              const SizedBox(height: 20),
+              Text('Adresse', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              AddressInput(
+                token: widget.token,
+                streetController: _street,
+                houseNumberController: _houseNumber,
+                postalCodeController: _postalCode,
+                cityController: _city,
+                countryController: _country,
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: _saving ? null : () => Navigator.pop(context, false),
-            child: const Text('Abbrechen'),
-          ),
-          FilledButton.icon(
-            onPressed: _saving ? null : _submit,
-            icon: _saving
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.save_outlined),
-            label: const Text('Speichern'),
-          ),
-        ],
-      );
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _saving ? null : () => Navigator.pop(context, false),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton.icon(
+        onPressed: _saving ? null : _submit,
+        icon: _saving
+            ? const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.save_outlined),
+        label: const Text('Speichern'),
+      ),
+    ],
+  );
 }
 
 class StorageNodeDialog extends StatefulWidget {
@@ -203,12 +209,15 @@ class StorageNodeDialog extends StatefulWidget {
 
 class _StorageNodeDialogState extends State<StorageNodeDialog> {
   final _formKey = GlobalKey<FormState>();
-  late final _name =
-      TextEditingController(text: widget.node?['name']?.toString() ?? '');
+  late final _name = TextEditingController(
+    text: widget.node?['name']?.toString() ?? '',
+  );
   late final _code = TextEditingController(
-      text: widget.node?['code']?.toString() ??
-          widget.node?['section']?.toString() ??
-          '');
+    text:
+        widget.node?['code']?.toString() ??
+        widget.node?['section']?.toString() ??
+        '',
+  );
   late String _parentId = widget.initialParentId;
   bool _saving = false;
   String? _error;
@@ -247,91 +256,94 @@ class _StorageNodeDialogState extends State<StorageNodeDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.title),
-        content: SizedBox(
-          width: 480,
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: _parentId,
-                  isExpanded: true,
-                  decoration: InputDecoration(
-                    labelText: '${widget.parentLabel} *',
-                    border: const OutlineInputBorder(),
-                  ),
-                  items: widget.parents
-                      .map((parent) => DropdownMenuItem(
-                            value: parent['id']?.toString(),
-                            child: Text(
-                              parent['path']?.toString() ??
-                                  parent['name']?.toString() ??
-                                  '',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ))
-                      .toList(),
-                  onChanged: _saving
-                      ? null
-                      : (value) => setState(() => _parentId = value ?? ''),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _name,
-                  autofocus: true,
-                  validator: _required,
-                  decoration: const InputDecoration(
-                    labelText: 'Bezeichnung *',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _code,
-                  validator: _required,
-                  inputFormatters: [
-                    _UpperCaseTextFormatter(),
-                    FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9_-]')),
-                    LengthLimitingTextInputFormatter(32),
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Kürzel / Nummer *',
-                    helperText:
-                        'Innerhalb des übergeordneten Elements eindeutig',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(_error!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
-                  ),
-                ],
-              ],
+    title: Text(widget.title),
+    content: SizedBox(
+      width: 480,
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _parentId,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: '${widget.parentLabel} *',
+                border: const OutlineInputBorder(),
+              ),
+              items: widget.parents
+                  .map(
+                    (parent) => DropdownMenuItem(
+                      value: parent['id']?.toString(),
+                      child: Text(
+                        parent['path']?.toString() ??
+                            parent['name']?.toString() ??
+                            '',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _parentId = value ?? ''),
             ),
-          ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _name,
+              autofocus: true,
+              validator: _required,
+              decoration: const InputDecoration(
+                labelText: 'Bezeichnung *',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _code,
+              validator: _required,
+              inputFormatters: [
+                _UpperCaseTextFormatter(),
+                FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9_-]')),
+                LengthLimitingTextInputFormatter(32),
+              ],
+              decoration: const InputDecoration(
+                labelText: 'Kürzel / Nummer *',
+                helperText: 'Innerhalb des übergeordneten Elements eindeutig',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: _saving ? null : () => Navigator.pop(context, false),
-            child: const Text('Abbrechen'),
-          ),
-          FilledButton.icon(
-            onPressed: _saving ? null : _submit,
-            icon: _saving
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.save_outlined),
-            label: const Text('Speichern'),
-          ),
-        ],
-      );
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _saving ? null : () => Navigator.pop(context, false),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton.icon(
+        onPressed: _saving ? null : _submit,
+        icon: _saving
+            ? const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.save_outlined),
+        label: const Text('Speichern'),
+      ),
+    ],
+  );
 }
 
 class BulkStorageDialog extends StatefulWidget {
@@ -390,8 +402,9 @@ class _BulkStorageDialogState extends State<BulkStorageDialog> {
     if (_formKey.currentState?.validate() != true) return;
     final total = _number(_shelves) * _number(_levels) * _number(_positions);
     if (total > 1000) {
-      setState(() =>
-          _error = 'Pro Vorgang sind höchstens 1.000 Lagerplätze erlaubt.');
+      setState(
+        () => _error = 'Pro Vorgang sind höchstens 1.000 Lagerplätze erlaubt.',
+      );
       return;
     }
     setState(() {
@@ -458,7 +471,8 @@ class _BulkStorageDialogState extends State<BulkStorageDialog> {
   Widget build(BuildContext context) {
     final start = _number(_start).clamp(1, 999999);
     final position = start.toString().padLeft(2, '0');
-    final preview = '${_shelfPrefix.text}$start / '
+    final preview =
+        '${_shelfPrefix.text}$start / '
         '${_levelPrefix.text}$start / ${_positionPrefix.text}$position';
     final total = _number(_shelves) * _number(_levels) * _number(_positions);
     return AlertDialog(
@@ -474,18 +488,26 @@ class _BulkStorageDialogState extends State<BulkStorageDialog> {
               children: [
                 Text('Gebäude: ${widget.buildingName}'),
                 const SizedBox(height: 16),
-                Wrap(spacing: 12, runSpacing: 12, children: [
-                  _numberField(_shelves, 'Regale'),
-                  _numberField(_levels, 'Ebenen je Regal'),
-                  _numberField(_positions, 'Plätze je Ebene'),
-                  _numberField(_start, 'Startnummer'),
-                ]),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _numberField(_shelves, 'Regale'),
+                    _numberField(_levels, 'Ebenen je Regal'),
+                    _numberField(_positions, 'Plätze je Ebene'),
+                    _numberField(_start, 'Startnummer'),
+                  ],
+                ),
                 const SizedBox(height: 16),
-                Wrap(spacing: 12, runSpacing: 12, children: [
-                  _prefixField(_shelfPrefix, 'Regalpräfix'),
-                  _prefixField(_levelPrefix, 'Ebenenpräfix'),
-                  _prefixField(_positionPrefix, 'Lagerplatzpräfix'),
-                ]),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _prefixField(_shelfPrefix, 'Regalpräfix'),
+                    _prefixField(_levelPrefix, 'Ebenenpräfix'),
+                    _prefixField(_positionPrefix, 'Lagerplatzpräfix'),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 Card(
                   child: ListTile(
@@ -496,9 +518,12 @@ class _BulkStorageDialogState extends State<BulkStorageDialog> {
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 8),
-                  Text(_error!,
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error)),
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -515,7 +540,8 @@ class _BulkStorageDialogState extends State<BulkStorageDialog> {
           icon: _saving
               ? const SizedBox.square(
                   dimension: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Icon(Icons.auto_awesome_outlined),
           label: const Text('Struktur anlegen'),
         ),
@@ -527,7 +553,9 @@ class _BulkStorageDialogState extends State<BulkStorageDialog> {
 class _UpperCaseTextFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
-      TextEditingValue oldValue, TextEditingValue newValue) {
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
     return newValue.copyWith(
       text: newValue.text.toUpperCase(),
       selection: newValue.selection,

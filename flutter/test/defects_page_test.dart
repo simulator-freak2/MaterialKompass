@@ -68,7 +68,7 @@ void main() {
           'entityType': 'MaterialItem',
           'name': 'Pressluftatmer',
           'inventoryNumber': 'PA-001',
-        }
+        },
       ];
     }
     return <String, dynamic>{};
@@ -85,9 +85,11 @@ void main() {
 
   testWidgets('uses a desktop master-detail workspace', (tester) async {
     setViewport(tester, const Size(1440, 960));
-    await tester.pumpWidget(MaterialApp(
-      home: DefectsPage(token: 'test', request: request),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefectsPage(token: 'test', request: request),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Mängelmanagement'), findsOneWidget);
@@ -106,12 +108,15 @@ void main() {
     expect(find.widgetWithText(TextFormField, 'Titel *'), findsOneWidget);
   });
 
-  testWidgets('opens a screen-filling detail on a narrow viewport',
-      (tester) async {
+  testWidgets('opens a screen-filling detail on a narrow viewport', (
+    tester,
+  ) async {
     setViewport(tester, const Size(650, 900));
-    await tester.pumpWidget(MaterialApp(
-      home: DefectsPage(token: 'test', request: request),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefectsPage(token: 'test', request: request),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('M-2026-0001'), findsOneWidget);

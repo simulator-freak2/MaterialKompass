@@ -36,7 +36,7 @@ class ClientUpdate {
 /// Android and managed desktops must verify and authorize app installers.
 class ClientUpdateService {
   ClientUpdateService({http.Client? client})
-      : _client = client ?? http.Client();
+    : _client = client ?? http.Client();
 
   final http.Client _client;
 
@@ -56,14 +56,17 @@ class ClientUpdateService {
     if (platform == null) return null;
 
     final package = await PackageInfo.fromPlatform();
-    final endpoint = Uri.parse('$apiBaseUrl/api/client-updates/$platform')
-        .replace(queryParameters: {'currentVersion': package.version});
-    final response =
-        await _client.get(endpoint).timeout(const Duration(seconds: 10));
+    final endpoint = Uri.parse(
+      '$apiBaseUrl/api/client-updates/$platform',
+    ).replace(queryParameters: {'currentVersion': package.version});
+    final response = await _client
+        .get(endpoint)
+        .timeout(const Duration(seconds: 10));
     if (response.statusCode == 204 || response.statusCode == 404) return null;
     if (response.statusCode != 200) {
       throw StateError(
-          'Update-Prüfung fehlgeschlagen (${response.statusCode}).');
+        'Update-Prüfung fehlgeschlagen (${response.statusCode}).',
+      );
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -76,8 +79,9 @@ class ClientUpdateService {
         !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(data['sha256'] as String)) {
       return null;
     }
-    final downloadUri =
-        Uri.parse(apiBaseUrl).resolve(data['downloadUrl'] as String);
+    final downloadUri = Uri.parse(
+      apiBaseUrl,
+    ).resolve(data['downloadUrl'] as String);
     return ClientUpdate(
       version: data['version'] as String,
       minimumVersion: data['minimumVersion'] as String? ?? '0.0.0',
@@ -93,12 +97,7 @@ class ClientUpdateService {
   Future<bool> install(
     ClientUpdate update, {
     void Function(double progress)? onProgress,
-  }) =>
-      downloadAndInstallClientUpdate(
-        _client,
-        update,
-        onProgress: onProgress,
-      );
+  }) => downloadAndInstallClientUpdate(_client, update, onProgress: onProgress);
 
   void dispose() => _client.close();
 }

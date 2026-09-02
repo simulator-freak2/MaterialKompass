@@ -74,7 +74,7 @@ test('desktop downloads report availability and stream configured release files'
     const updateResponse = await fetch(`${baseUrl}/api/client-updates/windows?currentVersion=0.9.0`);
     assert.equal(updateResponse.status, 200);
     const update = await updateResponse.json();
-    assert.equal(update.version, '1.4.1');
+    assert.equal(update.version, '1.4.2');
     assert.equal(update.updateAvailable, true);
     assert.equal(update.required, false);
     assert.equal(update.downloadUrl, '/api/downloads/windows');
@@ -167,6 +167,35 @@ test('runtime configuration validates network settings', () => {
     JWT_SECRET: 'a-secure-random-secret-with-32-characters',
     CORS_ORIGIN: '*',
   }), /CORS_ORIGIN/);
+  assert.throws(() => loadRuntimeConfig({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    CORS_ORIGIN: 'https://app.example.org',
+    APP_BASE_URL: 'https://app.example.org',
+    PASSKEY_RP_ID: 'attacker.example',
+  }), /PASSKEY_RP_ID/);
+  assert.throws(() => loadRuntimeConfig({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    CORS_ORIGIN: 'https://app.example.org',
+    APP_BASE_URL: 'https://app.example.org',
+    PASSKEY_RP_ID: 'example.org',
+    PASSKEY_ORIGINS: 'https://attacker.example.org',
+  }), /PASSKEY_ORIGIN/);
+  assert.throws(() => loadRuntimeConfig({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    CORS_ORIGIN: 'https://app.example.org',
+    APP_BASE_URL: 'https://app.example.org',
+    PASSKEY_ANDROID_SHA256_FINGERPRINTS: 'not-a-fingerprint',
+  }), /PASSKEY_ANDROID_SHA256_FINGERPRINTS/);
+  assert.throws(() => loadRuntimeConfig({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a-secure-random-secret-with-32-characters',
+    CORS_ORIGIN: 'https://app.example.org',
+    APP_BASE_URL: 'https://app.example.org',
+    PASSKEY_APPLE_TEAM_ID: 'invalid',
+  }), /PASSKEY_APPLE_TEAM_ID/);
   assert.throws(() => loadRuntimeConfig({
     NODE_ENV: 'production',
     JWT_SECRET: 'a-secure-random-secret-with-32-characters',

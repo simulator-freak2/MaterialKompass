@@ -3,8 +3,11 @@ part of 'service_device_pages.dart';
 class ServiceDeviceLoginPage extends StatefulWidget {
   final String deviceCredential;
   final Map<String, dynamic>? initialDevice;
-  const ServiceDeviceLoginPage(
-      {required this.deviceCredential, this.initialDevice, super.key});
+  const ServiceDeviceLoginPage({
+    required this.deviceCredential,
+    this.initialDevice,
+    super.key,
+  });
 
   @override
   State<ServiceDeviceLoginPage> createState() => _ServiceDeviceLoginPageState();
@@ -36,25 +39,32 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
     super.dispose();
   }
 
-  void message(String value) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(value)));
+  void message(String value) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(value)));
 
   Future<void> refresh() async {
     try {
       final response = await http.post(
-          Uri.parse('$apiBaseUrl/api/service-devices/status'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'deviceCredential': widget.deviceCredential,
-            ...await _clientInfo()
-          }));
+        Uri.parse('$apiBaseUrl/api/service-devices/status'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'deviceCredential': widget.deviceCredential,
+          ...await _clientInfo(),
+        }),
+      );
       if (response.statusCode == 200 && mounted) {
-        setState(() => device =
-            Map<String, dynamic>.from(_object(response)['device'] as Map));
+        setState(
+          () => device = Map<String, dynamic>.from(
+            _object(response)['device'] as Map,
+          ),
+        );
       }
       if (response.statusCode != 200 && mounted) {
-        message(_object(response)['error']?.toString() ??
-            'Gerät konnte nicht geprüft werden.');
+        message(
+          _object(response)['error']?.toString() ??
+              'Gerät konnte nicht geprüft werden.',
+        );
       }
     } catch (_) {
       if (mounted) message('Keine Verbindung zum Server.');
@@ -62,9 +72,9 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
   }
 
   Map<String, dynamic> factorBody(String mode) => {
-        if (mode == 'totp') 'totp': totp.text.trim(),
-        if (mode == 'nfc') 'nfcCredential': nfc.text.trim(),
-      };
+    if (mode == 'totp') 'totp': totp.text.trim(),
+    if (mode == 'nfc') 'nfcCredential': nfc.text.trim(),
+  };
 
   Future<void> systemLogin({String? qrCredential}) async {
     setState(() => loading = true);
@@ -76,7 +86,7 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
           'deviceCredential': widget.deviceCredential,
           ...await _clientInfo(),
           if (qrCredential == null) 'password': systemPassword.text,
-          if (qrCredential != null) 'qrCredential': qrCredential,
+          'qrCredential': ?qrCredential,
           ...factorBody(device?['systemMfa']?.toString() ?? 'off'),
         }),
       );
@@ -84,7 +94,8 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
       final data = _object(response);
       if (response.statusCode != 200) {
         return message(
-            data['error']?.toString() ?? 'Systemlogin fehlgeschlagen.');
+          data['error']?.toString() ?? 'Systemlogin fehlgeschlagen.',
+        );
       }
       if (data['offlineLease'] is Map) {
         await OfflineStore.instance.saveQrLease(
@@ -94,12 +105,15 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
       }
       if (!mounted) return;
       unawaited(OfflineSessionService.prepare(data['token'].toString()));
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
           builder: (_) => ServiceDeviceHomePage(
-                token: data['token'].toString(),
-                device: device ?? {},
-                deviceCredential: widget.deviceCredential,
-              )));
+            token: data['token'].toString(),
+            device: device ?? {},
+            deviceCredential: widget.deviceCredential,
+          ),
+        ),
+      );
     } catch (_) {
       final lease = qrCredential == null
           ? null
@@ -108,19 +122,24 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
       if (lease == null || lease['sessionType'] != 'service_device_system') {
         return message('Keine Verbindung und keine gültige Offlinefreigabe.');
       }
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
           builder: (_) => ServiceDeviceHomePage(
-                token: lease['sessionToken'].toString(),
-                device: device ?? {},
-                deviceCredential: widget.deviceCredential,
-              )));
+            token: lease['sessionToken'].toString(),
+            device: device ?? {},
+            deviceCredential: widget.deviceCredential,
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
 
-  Future<void> personalLogin(
-      {String? qrCredential, String? nfcCredential}) async {
+  Future<void> personalLogin({
+    String? qrCredential,
+    String? nfcCredential,
+  }) async {
     setState(() => loading = true);
     try {
       final response = await http.post(
@@ -131,10 +150,10 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
           ...await _clientInfo(),
           if (qrCredential == null && nfcCredential == null) ...{
             'identifier': identifier.text,
-            'password': personalPassword.text
+            'password': personalPassword.text,
           },
-          if (qrCredential != null) 'qrCredential': qrCredential,
-          if (nfcCredential != null) 'nfcLoginCredential': nfcCredential,
+          'qrCredential': ?qrCredential,
+          'nfcLoginCredential': ?nfcCredential,
           ...factorBody(device?['personalMfa']?.toString() ?? 'off'),
         }),
       );
@@ -146,8 +165,9 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
         data = verified;
       }
       if (response.statusCode != 200 && data['token'] == null) {
-        return message(data['error']?.toString() ??
-            'Persönliche Anmeldung fehlgeschlagen.');
+        return message(
+          data['error']?.toString() ?? 'Persönliche Anmeldung fehlgeschlagen.',
+        );
       }
       if (data['offlineLease'] is Map) {
         await OfflineStore.instance.saveQrLease(
@@ -157,14 +177,17 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
       }
       if (!mounted) return;
       unawaited(OfflineSessionService.prepare(data['token'].toString()));
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
           builder: (_) => DashboardPage(
-                token: data['token'].toString(),
-                logoutPageBuilder: (_) => ServiceDeviceLoginPage(
-                  deviceCredential: widget.deviceCredential,
-                  initialDevice: device,
-                ),
-              )));
+            token: data['token'].toString(),
+            logoutPageBuilder: (_) => ServiceDeviceLoginPage(
+              deviceCredential: widget.deviceCredential,
+              initialDevice: device,
+            ),
+          ),
+        ),
+      );
     } catch (_) {
       final lease = qrCredential == null
           ? null
@@ -172,16 +195,20 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
       if (!mounted) return;
       if (lease == null || lease['sessionType'] != 'service_device_personal') {
         return message(
-            'Keine Verbindung und keine gültige persönliche Offlinefreigabe.');
+          'Keine Verbindung und keine gültige persönliche Offlinefreigabe.',
+        );
       }
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
           builder: (_) => DashboardPage(
-                token: lease['sessionToken'].toString(),
-                logoutPageBuilder: (_) => ServiceDeviceLoginPage(
-                  deviceCredential: widget.deviceCredential,
-                  initialDevice: device,
-                ),
-              )));
+            token: lease['sessionToken'].toString(),
+            logoutPageBuilder: (_) => ServiceDeviceLoginPage(
+              deviceCredential: widget.deviceCredential,
+              initialDevice: device,
+            ),
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -190,45 +217,57 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
   Widget factorField(String mode) {
     if (mode == 'totp') {
       return TextField(
-          controller: totp,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-              labelText: 'TOTP-Code', border: OutlineInputBorder()));
+        controller: totp,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(
+          labelText: 'TOTP-Code',
+          border: OutlineInputBorder(),
+        ),
+      );
     }
     if (mode == 'nfc') {
       return TextField(
-          controller: nfc,
-          autofocus: true,
-          onSubmitted: (_) => setState(() {}),
-          decoration: const InputDecoration(
-              labelText: 'NFC-/Dienstausweis am USB-Leser',
-              prefixIcon: Icon(Icons.badge),
-              border: OutlineInputBorder()));
+        controller: nfc,
+        autofocus: true,
+        onSubmitted: (_) => setState(() {}),
+        decoration: const InputDecoration(
+          labelText: 'NFC-/Dienstausweis am USB-Leser',
+          prefixIcon: Icon(Icons.badge),
+          border: OutlineInputBorder(),
+        ),
+      );
     }
     return const SizedBox.shrink();
   }
 
   Future<void> removeActivation() async {
     final admin = await showDialog<List<String>>(
-        context: context, builder: (_) => const _AdminCredentialDialog());
+      context: context,
+      builder: (_) => const _AdminCredentialDialog(),
+    );
     if (admin == null) return;
     final response = await http.post(
-        Uri.parse('$apiBaseUrl/api/service-devices/deactivate-client'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'deviceCredential': widget.deviceCredential,
-          'identifier': admin[0],
-          'password': admin[1]
-        }));
+      Uri.parse('$apiBaseUrl/api/service-devices/deactivate-client'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'deviceCredential': widget.deviceCredential,
+        'identifier': admin[0],
+        'password': admin[1],
+      }),
+    );
     if (!mounted) return;
     if (response.statusCode != 200) {
-      return message(_object(response)['error']?.toString() ??
-          'Admin-Prüfung fehlgeschlagen.');
+      return message(
+        _object(response)['error']?.toString() ??
+            'Admin-Prüfung fehlgeschlagen.',
+      );
     }
     await ServiceDeviceStorage.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (_) => false,
+    );
   }
 
   @override
@@ -236,119 +275,146 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
     final systemMfa = device?['systemMfa']?.toString() ?? 'off';
     final personalMfa = device?['personalMfa']?.toString() ?? 'off';
     return DefaultTabController(
-        length: 2,
-        child: Scaffold(
-          appBar: AppBar(
-            title: Text(device?['name']?.toString() ?? 'Dienstgerät'),
-            bottom: const TabBar(tabs: [
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(device?['name']?.toString() ?? 'Dienstgerät'),
+          bottom: const TabBar(
+            tabs: [
               Tab(icon: Icon(Icons.devices), text: 'Systemzugang'),
-              Tab(icon: Icon(Icons.person), text: 'Persönliches Konto')
-            ]),
-            actions: [
-              IconButton(
-                  onPressed: removeActivation,
-                  tooltip: 'Geräteaktivierung entfernen',
-                  icon: const Icon(Icons.phonelink_erase))
+              Tab(icon: Icon(Icons.person), text: 'Persönliches Konto'),
             ],
           ),
-          body: device == null
-              ? const Center(child: CircularProgressIndicator())
-              : TabBarView(children: [
-                  _LoginCard(children: [
-                    const Text(
-                        'Eingeschränkter Zugang für Suche und Mängelmeldung.'),
-                    const SizedBox(height: 16),
-                    TextField(
+          actions: [
+            IconButton(
+              onPressed: removeActivation,
+              tooltip: 'Geräteaktivierung entfernen',
+              icon: const Icon(Icons.phonelink_erase),
+            ),
+          ],
+        ),
+        body: device == null
+            ? const Center(child: CircularProgressIndicator())
+            : TabBarView(
+                children: [
+                  _LoginCard(
+                    children: [
+                      const Text(
+                        'Eingeschränkter Zugang für Suche und Mängelmeldung.',
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
                         controller: systemPassword,
                         obscureText: true,
                         onSubmitted: (_) => systemLogin(),
                         decoration: const InputDecoration(
-                            labelText: 'Gerätepasswort',
-                            border: OutlineInputBorder())),
-                    if (systemMfa != 'off') ...[
-                      const SizedBox(height: 12),
-                      factorField(systemMfa)
-                    ],
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
+                          labelText: 'Gerätepasswort',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (systemMfa != 'off') ...[
+                        const SizedBox(height: 12),
+                        factorField(systemMfa),
+                      ],
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
                         onPressed: loading ? null : () => systemLogin(),
                         icon: const Icon(Icons.login),
-                        label: const Text('Systemzugang öffnen')),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
+                        label: const Text('Systemzugang öffnen'),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
                         onPressed: loading
                             ? null
                             : () async {
-                                final value = await scanQrLoginCode(context,
-                                    allowedPrefixes: const ['mkdevice:v1:']);
+                                final value = await scanQrLoginCode(
+                                  context,
+                                  allowedPrefixes: const ['mkdevice:v1:'],
+                                );
                                 if (value != null) {
                                   await systemLogin(qrCredential: value);
                                 }
                               },
                         icon: const Icon(Icons.qr_code_scanner),
-                        label: const Text('System-QR-Code scannen')),
-                  ]),
-                  _LoginCard(children: [
-                    const Text(
-                        'Der Zugriff richtet sich vollständig nach den Rechten des persönlichen Kontos.'),
-                    const SizedBox(height: 16),
-                    TextField(
+                        label: const Text('System-QR-Code scannen'),
+                      ),
+                    ],
+                  ),
+                  _LoginCard(
+                    children: [
+                      const Text(
+                        'Der Zugriff richtet sich vollständig nach den Rechten des persönlichen Kontos.',
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
                         controller: identifier,
                         decoration: const InputDecoration(
-                            labelText: 'Benutzername oder E-Mail',
-                            border: OutlineInputBorder())),
-                    const SizedBox(height: 12),
-                    TextField(
+                          labelText: 'Benutzername oder E-Mail',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
                         controller: personalPassword,
                         obscureText: true,
                         onSubmitted: (_) => personalLogin(),
                         decoration: const InputDecoration(
-                            labelText: 'Passwort',
-                            border: OutlineInputBorder())),
-                    if (personalMfa != 'off') ...[
-                      const SizedBox(height: 12),
-                      factorField(personalMfa)
-                    ],
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
+                          labelText: 'Passwort',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (personalMfa != 'off') ...[
+                        const SizedBox(height: 12),
+                        factorField(personalMfa),
+                      ],
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
                         onPressed: loading ? null : () => personalLogin(),
                         icon: const Icon(Icons.login),
-                        label: const Text('Persönlich anmelden')),
-                    const SizedBox(height: 8),
-                    Wrap(
+                        label: const Text('Persönlich anmelden'),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
                         spacing: 8,
                         alignment: WrapAlignment.center,
                         children: [
                           OutlinedButton.icon(
-                              onPressed: () async {
-                                final value = await scanQrLoginCode(
-                                  context,
-                                  allowedPrefixes: const [
-                                    'mkqr:v1:',
-                                    'mkoffline:v1:',
-                                  ],
-                                );
-                                if (value != null) {
-                                  await personalLogin(qrCredential: value);
-                                }
-                              },
-                              icon: const Icon(Icons.qr_code_scanner),
-                              label: const Text('QR-Code')),
+                            onPressed: () async {
+                              final value = await scanQrLoginCode(
+                                context,
+                                allowedPrefixes: const [
+                                  'mkqr:v1:',
+                                  'mkoffline:v1:',
+                                ],
+                              );
+                              if (value != null) {
+                                await personalLogin(qrCredential: value);
+                              }
+                            },
+                            icon: const Icon(Icons.qr_code_scanner),
+                            label: const Text('QR-Code'),
+                          ),
                           OutlinedButton.icon(
-                              onPressed: () async {
-                                final value = await showDialog<String>(
-                                    context: context,
-                                    builder: (_) => const _NfcReadDialog());
-                                if (value != null) {
-                                  await personalLogin(nfcCredential: value);
-                                }
-                              },
-                              icon: const Icon(Icons.badge),
-                              label: const Text('NFC/Dienstausweis')),
-                        ]),
-                  ]),
-                ]),
-        ));
+                            onPressed: () async {
+                              final value = await showDialog<String>(
+                                context: context,
+                                builder: (_) => const _NfcReadDialog(),
+                              );
+                              if (value != null) {
+                                await personalLogin(nfcCredential: value);
+                              }
+                            },
+                            icon: const Icon(Icons.badge),
+                            label: const Text('NFC/Dienstausweis'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+      ),
+    );
   }
 }
 
@@ -357,16 +423,19 @@ class _LoginCard extends StatelessWidget {
   const _LoginCard({required this.children});
   @override
   Widget build(BuildContext context) => Center(
-      child: SingleChildScrollView(
-          child: Card(
-              margin: const EdgeInsets.all(24),
-              child: SizedBox(
-                  width: 460,
-                  child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: children))))));
+    child: SingleChildScrollView(
+      child: Card(
+        margin: const EdgeInsets.all(24),
+        child: SizedBox(
+          width: 460,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(mainAxisSize: MainAxisSize.min, children: children),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _AdminCredentialDialog extends StatefulWidget {
@@ -387,25 +456,32 @@ class _AdminCredentialDialogState extends State<_AdminCredentialDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-          title: const Text('Admin-Bestätigung'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-                controller: user,
-                decoration: const InputDecoration(labelText: 'Admin-Konto')),
-            TextField(
-                controller: password,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Passwort'))
-          ]),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Abbrechen')),
-            FilledButton(
-                onPressed: () =>
-                    Navigator.pop(context, [user.text, password.text]),
-                child: const Text('Aktivierung entfernen'))
-          ]);
+    title: const Text('Admin-Bestätigung'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: user,
+          decoration: const InputDecoration(labelText: 'Admin-Konto'),
+        ),
+        TextField(
+          controller: password,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Passwort'),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, [user.text, password.text]),
+        child: const Text('Aktivierung entfernen'),
+      ),
+    ],
+  );
 }
 
 class _NfcReadDialog extends StatefulWidget {
@@ -424,24 +500,28 @@ class _NfcReadDialogState extends State<_NfcReadDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-          title: const Text('NFC-/Dienstausweis lesen'),
-          content: TextField(
-              controller: value,
-              autofocus: true,
-              obscureText: true,
-              onSubmitted: (text) {
-                if (text.trim().isNotEmpty) Navigator.pop(context, text.trim());
-              },
-              decoration: const InputDecoration(
-                  labelText: 'USB-Kartenleser',
-                  helperText:
-                      'Karte auflegen; die Eingabe wird automatisch übernommen.')),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Abbrechen')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, value.text.trim()),
-                child: const Text('Übernehmen'))
-          ]);
+    title: const Text('NFC-/Dienstausweis lesen'),
+    content: TextField(
+      controller: value,
+      autofocus: true,
+      obscureText: true,
+      onSubmitted: (text) {
+        if (text.trim().isNotEmpty) Navigator.pop(context, text.trim());
+      },
+      decoration: const InputDecoration(
+        labelText: 'USB-Kartenleser',
+        helperText: 'Karte auflegen; die Eingabe wird automatisch übernommen.',
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, value.text.trim()),
+        child: const Text('Übernehmen'),
+      ),
+    ],
+  );
 }

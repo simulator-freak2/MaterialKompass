@@ -102,24 +102,28 @@ void main() {
       }
       if (request.url.path == '/api/auth/me') {
         return http.Response(
-            jsonEncode({
-              'user': {
-                'permissions': canWrite
-                    ? ['locations.read', 'locations.write']
-                    : ['locations.read'],
-              },
-            }),
-            200);
+          jsonEncode({
+            'user': {
+              'permissions': canWrite
+                  ? ['locations.read', 'locations.write']
+                  : ['locations.read'],
+            },
+          }),
+          200,
+        );
       }
       return http.Response('{}', 404);
     });
   }
 
-  testWidgets('shows hierarchy and filters by a nested storage place',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: LocationsPage(token: 'test', client: client()),
-    ));
+  testWidgets('shows hierarchy and filters by a nested storage place', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocationsPage(token: 'test', client: client()),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Gebäude und Lagerstruktur'), findsOneWidget);
@@ -139,17 +143,19 @@ void main() {
 
   testWidgets('validates and normalizes a new building', (tester) async {
     Map<String, dynamic>? submitted;
-    await tester.pumpWidget(MaterialApp(
-      home: LocationsPage(
-        token: 'test',
-        client: client(
-          canWrite: true,
-          onPost: (request) {
-            submitted = jsonDecode(request.body) as Map<String, dynamic>;
-          },
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocationsPage(
+          token: 'test',
+          client: client(
+            canWrite: true,
+            onPost: (request) {
+              submitted = jsonDecode(request.body) as Map<String, dynamic>;
+            },
+          ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Neues Gebäude'));
@@ -199,13 +205,17 @@ void main() {
 
   testWidgets('shows a retry action when loading fails', (tester) async {
     final failingClient = MockClient((_) async => http.Response('{}', 500));
-    await tester.pumpWidget(MaterialApp(
-      home: LocationsPage(token: 'test', client: failingClient),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocationsPage(token: 'test', client: failingClient),
+      ),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.text('Die Lagerstruktur konnte nicht geladen werden.'),
-        findsOneWidget);
+    expect(
+      find.text('Die Lagerstruktur konnte nicht geladen werden.'),
+      findsOneWidget,
+    );
     expect(find.text('Erneut versuchen'), findsOneWidget);
   });
 }

@@ -1,9 +1,10 @@
 import 'package:barcode_widget/barcode_widget.dart' as bw;
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
+import 'keyboard_dropdown_button_form_field.dart';
 
 class QrLoginValidity {
   final String value;
@@ -13,10 +14,10 @@ class QrLoginValidity {
   const QrLoginValidity(this.value, {required this.title, this.customDays});
 
   Map<String, dynamic> toJson() => {
-        'title': title,
-        'validity': value,
-        if (customDays != null) 'customDays': customDays,
-      };
+    'title': title,
+    'validity': value,
+    if (customDays != null) 'customDays': customDays,
+  };
 }
 
 const qrLoginValidityOptions = <String, String>{
@@ -81,10 +82,12 @@ Future<QrLoginValidity?> chooseQrLoginValidity(BuildContext context) async {
                   border: OutlineInputBorder(),
                 ),
                 items: qrLoginValidityOptions.entries
-                    .map((entry) => DropdownMenuItem(
-                          value: entry.key,
-                          child: Text(entry.value),
-                        ))
+                    .map(
+                      (entry) => DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                    )
                     .toList(),
                 onChanged: (value) {
                   if (value != null) {
@@ -176,9 +179,11 @@ Future<void> showQrLoginCode(
     context: context,
     barrierDismissible: false,
     builder: (context) => AlertDialog(
-      title: Text(accountLabel == null
-          ? 'Einmaliger Anmelde-QR-Code'
-          : 'QR-Code für $accountLabel'),
+      title: Text(
+        accountLabel == null
+            ? 'Einmaliger Anmelde-QR-Code'
+            : 'QR-Code für $accountLabel',
+      ),
       content: SizedBox(
         width: 360,
         child: Column(
@@ -227,12 +232,13 @@ Future<void> showQrLoginCode(
   );
 }
 
-Future<String?> scanQrLoginCode(BuildContext context,
-        {List<String> allowedPrefixes = const ['mkqr:v1:']}) =>
-    showDialog<String>(
-      context: context,
-      builder: (_) => _QrLoginScannerDialog(allowedPrefixes: allowedPrefixes),
-    );
+Future<String?> scanQrLoginCode(
+  BuildContext context, {
+  List<String> allowedPrefixes = const ['mkqr:v1:'],
+}) => showDialog<String>(
+  context: context,
+  builder: (_) => _QrLoginScannerDialog(allowedPrefixes: allowedPrefixes),
+);
 
 class _QrLoginScannerDialog extends StatefulWidget {
   final List<String> allowedPrefixes;
@@ -261,59 +267,59 @@ class _QrLoginScannerDialogState extends State<_QrLoginScannerDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('QR-Code scannen'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (isCameraScanningSupported)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(
-                    height: 300,
-                    child: MobileScanner(
-                      onDetect: (capture) {
-                        String? value;
-                        for (final barcode in capture.barcodes) {
-                          if (barcode.rawValue != null) {
-                            value = barcode.rawValue;
-                            break;
-                          }
-                        }
-                        if (value != null) submit(value);
-                      },
-                    ),
-                  ),
-                )
-              else
-                const Text(
-                  'Auf diesem Gerät kann der Anmeldecode eingefügt werden.',
-                ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                autocorrect: false,
-                enableSuggestions: false,
-                onSubmitted: submit,
-                decoration: const InputDecoration(
-                  labelText: 'Anmeldecode',
-                  prefixIcon: Icon(Icons.key),
-                  border: OutlineInputBorder(),
+    title: const Text('QR-Code scannen'),
+    content: SizedBox(
+      width: 420,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isCameraScanningSupported)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 300,
+                child: MobileScanner(
+                  onDetect: (capture) {
+                    String? value;
+                    for (final barcode in capture.barcodes) {
+                      if (barcode.rawValue != null) {
+                        value = barcode.rawValue;
+                        break;
+                      }
+                    }
+                    if (value != null) submit(value);
+                  },
                 ),
               ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen'),
-          ),
-          FilledButton(
-            onPressed: () => submit(controller.text),
-            child: const Text('Anmelden'),
+            )
+          else
+            const Text(
+              'Auf diesem Gerät kann der Anmeldecode eingefügt werden.',
+            ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            autocorrect: false,
+            enableSuggestions: false,
+            onSubmitted: submit,
+            decoration: const InputDecoration(
+              labelText: 'Anmeldecode',
+              prefixIcon: Icon(Icons.key),
+              border: OutlineInputBorder(),
+            ),
           ),
         ],
-      );
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton(
+        onPressed: () => submit(controller.text),
+        child: const Text('Anmelden'),
+      ),
+    ],
+  );
 }

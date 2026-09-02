@@ -1,4 +1,5 @@
 const mariadb = require('mariadb');
+const crypto = require('node:crypto');
 
 function parseJson(value, fallback = []) {
   if (Array.isArray(value)) return value;
@@ -76,12 +77,35 @@ function createUserStore(database = mariadb) {
         initialized_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL
       )`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS user_passkeys (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        user_handle VARCHAR(86) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        credential_id TEXT CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        credential_id_hash BINARY(32) NOT NULL,
+        public_key BLOB NOT NULL,
+        signature_counter BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        transports JSON NOT NULL,
+        device_type VARCHAR(32) NOT NULL,
+        backed_up TINYINT(1) NOT NULL DEFAULT 0,
+        name VARCHAR(100) NOT NULL,
+        created_at DATETIME(3) NOT NULL,
+        last_used_at DATETIME(3) NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+          ON UPDATE CURRENT_TIMESTAMP(3),
+        UNIQUE KEY uq_user_passkeys_credential_hash (credential_id_hash),
+        INDEX idx_user_passkeys_user_id (user_id),
+        CONSTRAINT fk_user_passkeys_user FOREIGN KEY (user_id)
+          REFERENCES users(id) ON DELETE CASCADE,
+        CHECK (JSON_VALID(transports))
+      )`);
     },
 
     async load() {
-      const [userRows, roleRows] = await Promise.all([
+      const [userRows, roleRows, passkeyRows] = await Promise.all([
         pool.query('SELECT * FROM users'),
         pool.query('SELECT * FROM roles'),
+        pool.query('SELECT * FROM user_passkeys'),
       ]);
       return {
         users: userRows.map((row) => ({
@@ -103,6 +127,20 @@ function createUserStore(database = mariadb) {
           scheduledDeletionAt: iso(row.scheduled_deletion_at), createdAt: iso(row.created_at),
         })),
         roles: roleRows.map((row) => ({ id: row.id, name: row.name, permissions: parseJson(row.permissions) })),
+        passkeys: passkeyRows.map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          userHandle: row.user_handle,
+          credentialId: row.credential_id,
+          publicKey: Buffer.from(row.public_key).toString('base64url'),
+          counter: Number(row.signature_counter || 0),
+          transports: parseJson(row.transports),
+          deviceType: row.device_type,
+          backedUp: Boolean(row.backed_up),
+          name: row.name,
+          createdAt: iso(row.created_at),
+          lastUsedAt: iso(row.last_used_at),
+        })),
       };
     },
 
@@ -149,6 +187,38 @@ function createUserStore(database = mariadb) {
     },
 
     async deleteUser(id) { await pool.query('DELETE FROM users WHERE id = ?', [id]); },
+    async savePasskey(passkey) {
+      const credentialHash = crypto.createHash('sha256')
+        .update(passkey.credentialId).digest();
+      await pool.query(`INSERT INTO user_passkeys (
+        id, user_id, user_handle, credential_id, credential_id_hash, public_key,
+        signature_counter, transports, device_type, backed_up, name, created_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE signature_counter=VALUES(signature_counter),
+        transports=VALUES(transports), device_type=VALUES(device_type),
+        backed_up=VALUES(backed_up), name=VALUES(name),
+        last_used_at=VALUES(last_used_at)`, [
+        passkey.id,
+        passkey.userId,
+        passkey.userHandle,
+        passkey.credentialId,
+        credentialHash,
+        Buffer.from(passkey.publicKey, 'base64url'),
+        Number(passkey.counter || 0),
+        JSON.stringify(passkey.transports || []),
+        passkey.deviceType,
+        passkey.backedUp ? 1 : 0,
+        passkey.name,
+        sqlDateTime(passkey.createdAt),
+        sqlDateTime(passkey.lastUsedAt),
+      ]);
+    },
+    async deletePasskey(id) {
+      await pool.query('DELETE FROM user_passkeys WHERE id = ?', [id]);
+    },
+    async deleteUserPasskeys(userId) {
+      await pool.query('DELETE FROM user_passkeys WHERE user_id = ?', [userId]);
+    },
     async getMailboxProcessingState(mailbox) {
       const rows = await pool.query(
         'SELECT * FROM mailbox_processing_state WHERE mailbox = ?',

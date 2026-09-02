@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -15,6 +15,7 @@ import '../services/debouncer.dart';
 import '../services/file_save_mime_type.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
+import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/label_print_dialogs.dart';
 import 'defects_page.dart';
 
@@ -73,6 +74,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
   late final Map<String, TextEditingController> fields;
   String itemType = 'individual', status = 'Lagernd', unit = 'Stück';
   String? categoryCode, subcategoryCode, locationId, stockId;
+  bool reservationApprovalRequired = false;
 
   @override
   void initState() {
@@ -95,25 +97,32 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         'department',
         'inspectionIntervalMonths',
         'nextInspectionDate',
+        'maintenanceIntervalMonths',
+        'nextMaintenanceDate',
       ])
         name: TextEditingController(
           text: name == 'quantity' && value(name).isEmpty
               ? '1'
-              : (name == 'purchaseDate' || name == 'nextInspectionDate') &&
-                      value(name).isNotEmpty
-                  ? _formatDate(value(name))
-                  : value(name),
+              : (name == 'purchaseDate' ||
+                        name == 'nextInspectionDate' ||
+                        name == 'nextMaintenanceDate') &&
+                    value(name).isNotEmpty
+              ? _formatDate(value(name))
+              : value(name),
         ),
     };
     itemType = value('itemType').isEmpty ? 'individual' : value('itemType');
     status = value('status').isEmpty ? 'Lagernd' : value('status');
     unit = value('unit').isEmpty ? 'Stück' : value('unit');
     categoryCode = value('categoryCode').isEmpty ? null : value('categoryCode');
-    subcategoryCode =
-        value('subcategoryCode').isEmpty ? null : value('subcategoryCode');
+    subcategoryCode = value('subcategoryCode').isEmpty
+        ? null
+        : value('subcategoryCode');
     locationId = value('locationId').isEmpty ? null : value('locationId');
-    stockId =
-        value('stockStructureId').isEmpty ? null : value('stockStructureId');
+    stockId = value('stockStructureId').isEmpty
+        ? null
+        : value('stockStructureId');
+    reservationApprovalRequired = item['reservationApprovalRequired'] == true;
   }
 
   @override
@@ -176,16 +185,18 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         initialValue: value,
         decoration: InputDecoration(labelText: label),
         items: entries
-            .map((entry) => DropdownMenuItem(
-                  value: entry['id'].toString(),
-                  child: Text(
-                    stock
-                        ? entry['path']?.toString() ??
+            .map(
+              (entry) => DropdownMenuItem(
+                value: entry['id'].toString(),
+                child: Text(
+                  stock
+                      ? entry['path']?.toString() ??
                             '${entry['name']} · ${entry['section']}'
-                        : entry['name'].toString(),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ))
+                      : entry['name'].toString(),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            )
             .toList(),
         onChanged: changed,
         validator: label.endsWith('*')
@@ -197,8 +208,9 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final mains =
-        widget.categories.where((entry) => entry['parentId'] == null).toList();
+    final mains = widget.categories
+        .where((entry) => entry['parentId'] == null)
+        .toList();
     final subs = widget.categories
         .where((entry) => entry['parentId'] == categoryCode)
         .toList();
@@ -207,107 +219,166 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         .toList();
     return AlertDialog(
       title: Text(
-          widget.item == null ? 'Material anlegen' : 'Material bearbeiten'),
+        widget.item == null ? 'Material anlegen' : 'Material bearbeiten',
+      ),
       content: SizedBox(
         width: 760,
         child: Form(
           key: formKey,
           child: SingleChildScrollView(
-            child: Wrap(spacing: 12, runSpacing: 12, children: [
-              _text('name', 'Bezeichnung *', required: true),
-              _text(
-                'inventoryNumber',
-                widget.item == null
-                    ? 'Inventarnummer (optional)'
-                    : 'Inventarnummer',
-                enabled: widget.item == null,
-              ),
-              _entityDropdown('Hauptkategorie *', categoryCode, mains, (value) {
-                setState(() {
-                  categoryCode = value;
-                  subcategoryCode = null;
-                });
-              }),
-              _entityDropdown('Unterkategorie', subcategoryCode, subs,
-                  (value) => setState(() => subcategoryCode = value)),
-              _entityDropdown('Standort *', locationId, widget.locations,
-                  (value) {
-                setState(() {
-                  locationId = value;
-                  stockId = null;
-                });
-              }),
-              _entityDropdown('Lagerplatz', stockId, availableStocks,
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _text('name', 'Bezeichnung *', required: true),
+                _text(
+                  'inventoryNumber',
+                  widget.item == null
+                      ? 'Inventarnummer (optional)'
+                      : 'Inventarnummer',
+                  enabled: widget.item == null,
+                ),
+                _entityDropdown('Hauptkategorie *', categoryCode, mains, (
+                  value,
+                ) {
+                  setState(() {
+                    categoryCode = value;
+                    subcategoryCode = null;
+                  });
+                }),
+                _entityDropdown(
+                  'Unterkategorie',
+                  subcategoryCode,
+                  subs,
+                  (value) => setState(() => subcategoryCode = value),
+                ),
+                _entityDropdown('Standort *', locationId, widget.locations, (
+                  value,
+                ) {
+                  setState(() {
+                    locationId = value;
+                    stockId = null;
+                  });
+                }),
+                _entityDropdown(
+                  'Lagerplatz',
+                  stockId,
+                  availableStocks,
                   (value) => setState(() => stockId = value),
-                  stock: true),
-              SizedBox(
-                width: 230,
-                child: DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  initialValue: itemType,
-                  decoration: const InputDecoration(labelText: 'Artikelart'),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'individual', child: Text('Einzelartikel')),
-                    DropdownMenuItem(
-                        value: 'bulk', child: Text('Mengenartikel')),
-                  ],
-                  onChanged: (value) => setState(() {
-                    itemType = value!;
-                    if (itemType == 'individual') {
-                      fields['quantity']!.text = '1';
-                    }
-                  }),
+                  stock: true,
                 ),
-              ),
-              _text('quantity', 'Anzahl *',
-                  enabled: itemType == 'bulk', numeric: true),
-              SizedBox(
-                width: 230,
-                child: DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  initialValue: units.contains(unit) ? unit : 'Stück',
-                  decoration: const InputDecoration(labelText: 'Einheit'),
-                  items: units
-                      .map((value) =>
-                          DropdownMenuItem(value: value, child: Text(value)))
-                      .toList(),
-                  onChanged: (value) => unit = value!,
+                SizedBox(
+                  width: 230,
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: itemType,
+                    decoration: const InputDecoration(labelText: 'Artikelart'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'individual',
+                        child: Text('Einzelartikel'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'bulk',
+                        child: Text('Mengenartikel'),
+                      ),
+                    ],
+                    onChanged: (value) => setState(() {
+                      itemType = value!;
+                      if (itemType == 'individual') {
+                        fields['quantity']!.text = '1';
+                      }
+                    }),
+                  ),
                 ),
-              ),
-              SizedBox(
-                width: 230,
-                child: DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  initialValue: status,
-                  decoration: const InputDecoration(labelText: 'Status *'),
-                  items: _InventoryPageState.statuses
-                      .map((value) =>
-                          DropdownMenuItem(value: value, child: Text(value)))
-                      .toList(),
-                  onChanged: (value) => status = value!,
+                _text(
+                  'quantity',
+                  'Anzahl *',
+                  enabled: itemType == 'bulk',
+                  numeric: true,
                 ),
-              ),
-              _text('manufacturer', 'Hersteller'),
-              _text('model', 'Modell'),
-              _text('serialNumber', 'Seriennummer'),
-              _text('manufacturingYear', 'Baujahr', numeric: true),
-              _text('purchaseDate', 'Anschaffungsdatum', date: true),
-              _text('purchasePrice', 'Kaufpreis', numeric: true),
-              _text('department', 'Verantwortlicher Fachbereich'),
-              _text('inspectionIntervalMonths', 'Prüfintervall (Monate)',
-                  numeric: true),
-              _text('nextInspectionDate', 'Nächster Prüftermin', date: true),
-              _text('description', 'Beschreibung', wide: true, lines: 3),
-              _text('notes', 'Notizen', wide: true, lines: 3),
-            ]),
+                SizedBox(
+                  width: 230,
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: units.contains(unit) ? unit : 'Stück',
+                    decoration: const InputDecoration(labelText: 'Einheit'),
+                    items: units
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => unit = value!,
+                  ),
+                ),
+                SizedBox(
+                  width: 230,
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: status,
+                    decoration: const InputDecoration(labelText: 'Status *'),
+                    items: _InventoryPageState.statuses
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => status = value!,
+                  ),
+                ),
+                _text('manufacturer', 'Hersteller'),
+                _text('model', 'Modell'),
+                _text('serialNumber', 'Seriennummer'),
+                _text('manufacturingYear', 'Baujahr', numeric: true),
+                _text('purchaseDate', 'Anschaffungsdatum', date: true),
+                _text('purchasePrice', 'Kaufpreis', numeric: true),
+                _text('department', 'Verantwortlicher Fachbereich'),
+                _text(
+                  'inspectionIntervalMonths',
+                  'Prüfintervall (Monate)',
+                  numeric: true,
+                ),
+                _text('nextInspectionDate', 'Nächster Prüftermin', date: true),
+                _text(
+                  'maintenanceIntervalMonths',
+                  'Wartungsintervall (Monate)',
+                  numeric: true,
+                ),
+                _text(
+                  'nextMaintenanceDate',
+                  'Nächster Wartungstermin',
+                  date: true,
+                ),
+                SizedBox(
+                  width: 704,
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Reservierung erfordert Freigabe'),
+                    subtitle: const Text(
+                      'Ein Materialwart muss Reservierungen dieses Artikels bestätigen.',
+                    ),
+                    value: reservationApprovalRequired,
+                    onChanged: (value) =>
+                        setState(() => reservationApprovalRequired = value),
+                  ),
+                ),
+                _text('description', 'Beschreibung', wide: true, lines: 3),
+                _text('notes', 'Notizen', wide: true, lines: 3),
+              ],
+            ),
           ),
         ),
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton(onPressed: _save, child: const Text('Speichern')),
       ],
     );
@@ -342,6 +413,11 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       'department': fields['department']!.text.trim(),
       'inspectionIntervalMonths': decimal('inspectionIntervalMonths'),
       'nextInspectionDate': dateInputToIso(fields['nextInspectionDate']!.text),
+      'maintenanceIntervalMonths': decimal('maintenanceIntervalMonths'),
+      'nextMaintenanceDate': dateInputToIso(
+        fields['nextMaintenanceDate']!.text,
+      ),
+      'reservationApprovalRequired': reservationApprovalRequired,
     });
   }
 }
@@ -373,9 +449,9 @@ class _InventoryPageState extends State<InventoryPage> {
   String dueFilter = 'Alle';
 
   Map<String, String> get headers => {
-        'Authorization': 'Bearer ${widget.token}',
-        'Content-Type': 'application/json',
-      };
+    'Authorization': 'Bearer ${widget.token}',
+    'Content-Type': 'application/json',
+  };
   AuthenticatedApiClient get api => AuthenticatedApiClient(widget.token);
   bool can(String value) => permissions.contains(value);
   bool get canPrintLabels =>
@@ -402,16 +478,25 @@ class _InventoryPageState extends State<InventoryPage> {
     try {
       final responses = await Future.wait([
         AppHttpClient.get(
-            Uri.parse('$apiBaseUrl/api/material?archived=$archived'),
-            headers: headers),
-        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/categories'),
-            headers: headers),
-        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/locations'),
-            headers: headers),
-        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
-            headers: headers),
-        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/auth/me'),
-            headers: headers),
+          Uri.parse('$apiBaseUrl/api/material?archived=$archived'),
+          headers: headers,
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/categories'),
+          headers: headers,
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/locations'),
+          headers: headers,
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/stock-structures'),
+          headers: headers,
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/auth/me'),
+          headers: headers,
+        ),
       ]);
       if (responses.any((response) => response.statusCode == 401)) {
         widget.onLogout?.call();
@@ -444,14 +529,19 @@ class _InventoryPageState extends State<InventoryPage> {
   }
 
   void _message(String text, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(text),
-      backgroundColor: error ? Colors.red.shade700 : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: error ? Colors.red.shade700 : null,
+      ),
+    );
   }
 
-  Future<dynamic> _request(String path,
-      {String method = 'GET', Object? body}) async {
+  Future<dynamic> _request(
+    String path, {
+    String method = 'GET',
+    Object? body,
+  }) async {
     try {
       return await api.request(path, method: method, body: body);
     } on AuthenticatedApiException catch (error) {
@@ -485,9 +575,11 @@ class _InventoryPageState extends State<InventoryPage> {
         item['notes'],
         item['department'],
       ].join(' ').toLowerCase();
-      final due =
-          DateTime.tryParse(item['nextInspectionDate']?.toString() ?? '');
-      final dueMatches = dueFilter == 'Alle' ||
+      final due = DateTime.tryParse(
+        item['nextInspectionDate']?.toString() ?? '',
+      );
+      final dueMatches =
+          dueFilter == 'Alle' ||
           (dueFilter == 'Überfällig' && due != null && due.isBefore(now)) ||
           (dueFilter == 'Bald fällig' &&
               due != null &&
@@ -524,9 +616,11 @@ class _InventoryPageState extends State<InventoryPage> {
       body: result,
     );
     if (saved != null) {
-      _message(item == null
-          ? 'Material wurde angelegt.'
-          : 'Material wurde gespeichert.');
+      _message(
+        item == null
+            ? 'Material wurde angelegt.'
+            : 'Material wurde gespeichert.',
+      );
       await _load();
       if (item == null && canPrintLabels && mounted) {
         await _printItems([Map<String, dynamic>.from(saved as Map)]);
@@ -587,72 +681,89 @@ class _InventoryPageState extends State<InventoryPage> {
   Future<void> _addInspection(Map<String, dynamic> item) async {
     final inspector = TextEditingController();
     final date = TextEditingController(
-        text: _formatDate(DateTime.now().toIso8601String()));
+      text: _formatDate(DateTime.now().toIso8601String()),
+    );
     final next = TextEditingController(
-        text: item['nextInspectionDate'] == null
-            ? ''
-            : _formatDate(item['nextInspectionDate']));
+      text: item['nextInspectionDate'] == null
+          ? ''
+          : _formatDate(item['nextInspectionDate']),
+    );
     final notes = TextEditingController();
     var result = 'Bestanden';
     final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-              builder: (context, update) => AlertDialog(
-                title: const Text('Prüfung erfassen'),
-                content: SizedBox(
-                    width: 440,
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      DateInputField(
-                          controller: date, label: 'Prüfdatum', required: true),
-                      TextField(
-                          controller: inspector,
-                          decoration:
-                              const InputDecoration(labelText: 'Prüfer *')),
-                      DropdownButtonFormField<String>(
-                          initialValue: result,
-                          decoration:
-                              const InputDecoration(labelText: 'Ergebnis'),
-                          items: ['Bestanden', 'Mangel', 'Nicht bestanden']
-                              .map((value) => DropdownMenuItem(
-                                  value: value, child: Text(value)))
-                              .toList(),
-                          onChanged: (value) => update(() => result = value!)),
-                      DateInputField(
-                          controller: next, label: 'Nächster Prüftermin'),
-                      TextField(
-                          controller: notes,
-                          decoration:
-                              const InputDecoration(labelText: 'Notizen'),
-                          maxLines: 3),
-                    ])),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Abbrechen')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Speichern'))
-                ],
-              ),
-            ));
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Prüfung erfassen'),
+          content: SizedBox(
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DateInputField(
+                  controller: date,
+                  label: 'Prüfdatum',
+                  required: true,
+                ),
+                TextField(
+                  controller: inspector,
+                  decoration: const InputDecoration(labelText: 'Prüfer *'),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: result,
+                  decoration: const InputDecoration(labelText: 'Ergebnis'),
+                  items: ['Bestanden', 'Mangel', 'Nicht bestanden']
+                      .map(
+                        (value) =>
+                            DropdownMenuItem(value: value, child: Text(value)),
+                      )
+                      .toList(),
+                  onChanged: (value) => update(() => result = value!),
+                ),
+                DateInputField(controller: next, label: 'Nächster Prüftermin'),
+                TextField(
+                  controller: notes,
+                  decoration: const InputDecoration(labelText: 'Notizen'),
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
     if (confirmed != true) return;
     final inspectionDate = dateInputToIso(date.text);
     final nextInspectionDate = dateInputToIso(next.text);
     if (inspectionDate == null ||
         (next.text.trim().isNotEmpty && nextInspectionDate == null)) {
-      _message('Bitte ein gültiges Datum im Format TT.MM.JJJJ eingeben.',
-          error: true);
+      _message(
+        'Bitte ein gültiges Datum im Format TT.MM.JJJJ eingeben.',
+        error: true,
+      );
       return;
     }
-    final saved = await _request('/api/material/${item['id']}/inspections',
-        method: 'POST',
-        body: {
-          'inspectionDate': inspectionDate,
-          'inspector': inspector.text.trim(),
-          'result': result,
-          'nextInspectionDate': nextInspectionDate,
-          'notes': notes.text.trim()
-        });
+    final saved = await _request(
+      '/api/material/${item['id']}/inspections',
+      method: 'POST',
+      body: {
+        'inspectionDate': inspectionDate,
+        'inspector': inspector.text.trim(),
+        'result': result,
+        'nextInspectionDate': nextInspectionDate,
+        'notes': notes.text.trim(),
+      },
+    );
     if (saved != null) _message('Prüfung wurde gespeichert.');
   }
 
@@ -660,25 +771,29 @@ class _InventoryPageState extends State<InventoryPage> {
     final file = await FilePicker.pickFile();
     if (file == null) return;
     final bytes = await file.readAsBytes();
-    final saved = await _request('/api/material/${item['id']}/documents',
-        method: 'POST',
-        body: {
-          'title': file.name,
-          'documentType': 'Anleitung',
-          'fileName': file.name,
-          'fileBase64': base64Encode(bytes),
-        });
+    final saved = await _request(
+      '/api/material/${item['id']}/documents',
+      method: 'POST',
+      body: {
+        'title': file.name,
+        'documentType': 'Anleitung',
+        'fileName': file.name,
+        'fileBase64': base64Encode(bytes),
+      },
+    );
     if (saved != null) _message('Dokument wurde hochgeladen.');
   }
 
   Future<void> _addDefect(Map<String, dynamic> item) async {
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => DefectsPage(
-        token: widget.token,
-        initialEntityType: 'MaterialItem',
-        initialEntityId: item['id']?.toString(),
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DefectsPage(
+          token: widget.token,
+          initialEntityType: 'MaterialItem',
+          initialEntityId: item['id']?.toString(),
+        ),
       ),
-    ));
+    );
     await _load();
   }
 
@@ -700,8 +815,9 @@ class _InventoryPageState extends State<InventoryPage> {
   Future<void> _archive(Map<String, dynamic> item) async {
     if (archived && item['inventoryNumberReleasedAt'] != null) {
       _message(
-          'Ausgesondertes Material mit freigegebener Inventarnummer kann nicht wiederhergestellt werden.',
-          error: true);
+        'Ausgesondertes Material mit freigegebener Inventarnummer kann nicht wiederhergestellt werden.',
+        error: true,
+      );
       return;
     }
     final action = archived ? 'restore' : 'archive';
@@ -758,9 +874,13 @@ class _InventoryPageState extends State<InventoryPage> {
           final availableItems = items.where((item) {
             final eligible = action == 'issue'
                 ? (num.tryParse(item['availableQuantity'].toString()) ?? 0) >
-                        0 &&
-                    !['Defekt', 'In Reparatur', 'Ausgesondert', 'Verloren']
-                        .contains(item['status'])
+                          0 &&
+                      ![
+                        'Defekt',
+                        'In Reparatur',
+                        'Ausgesondert',
+                        'Verloren',
+                      ].contains(item['status'])
                 : (num.tryParse(item['issuedQuantity'].toString()) ?? 0) > 0;
             if (!eligible) return false;
             if (query.isEmpty) return true;
@@ -771,22 +891,25 @@ class _InventoryPageState extends State<InventoryPage> {
               _name(categories, item['categoryCode']),
             ].any((value) => value.toString().toLowerCase().contains(query));
           }).toList();
-          final eligibleIds =
-              availableItems.map((item) => item['id'].toString()).toSet();
+          final eligibleIds = availableItems
+              .map((item) => item['id'].toString())
+              .toSet();
           dialogSelection.removeWhere((id) => !eligibleIds.contains(id));
           void selectUniqueMaterial(String value) {
             final normalized = value.trim().toLowerCase();
             if (normalized.isEmpty) return;
             final exactMatches = availableItems
-                .where((item) =>
-                    item['inventoryNumber'].toString().trim().toLowerCase() ==
-                    normalized)
+                .where(
+                  (item) =>
+                      item['inventoryNumber'].toString().trim().toLowerCase() ==
+                      normalized,
+                )
                 .toList();
             final match = exactMatches.length == 1
                 ? exactMatches.single
                 : availableItems.length == 1
-                    ? availableItems.single
-                    : null;
+                ? availableItems.single
+                : null;
             if (match == null) return;
             update(() {
               dialogSelection.add(match['id'].toString());
@@ -795,11 +918,12 @@ class _InventoryPageState extends State<InventoryPage> {
           }
 
           return AlertDialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Text(action == 'issue'
-                ? 'Material ausgeben'
-                : 'Material zurücknehmen'),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Text(
+              action == 'issue' ? 'Material ausgeben' : 'Material zurücknehmen',
+            ),
             content: SizedBox(
               width: 680,
               height: 560,
@@ -807,33 +931,40 @@ class _InventoryPageState extends State<InventoryPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (action == 'issue') ...[
-                    Row(children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: recipientType,
-                          decoration:
-                              const InputDecoration(labelText: 'Empfängertyp'),
-                          items: const [
-                            DropdownMenuItem(
-                                value: 'person', child: Text('Person')),
-                            DropdownMenuItem(
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: recipientType,
+                            decoration: const InputDecoration(
+                              labelText: 'Empfängertyp',
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'person',
+                                child: Text('Person'),
+                              ),
+                              DropdownMenuItem(
                                 value: 'purpose',
-                                child: Text('Verwendungsziel')),
-                          ],
-                          onChanged: (value) =>
-                              update(() => recipientType = value!),
+                                child: Text('Verwendungsziel'),
+                              ),
+                            ],
+                            onChanged: (value) =>
+                                update(() => recipientType = value!),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: recipient,
-                          onChanged: (_) => update(() {}),
-                          decoration: const InputDecoration(
-                              labelText: 'Empfänger/Verwendungsziel *'),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: recipient,
+                            onChanged: (_) => update(() {}),
+                            decoration: const InputDecoration(
+                              labelText: 'Empfänger/Verwendungsziel *',
+                            ),
+                          ),
                         ),
-                      ),
-                    ]),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                   ],
                   TextField(
@@ -860,15 +991,17 @@ class _InventoryPageState extends State<InventoryPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                      '${dialogSelection.length} Materialpositionen ausgewählt'),
+                    '${dialogSelection.length} Materialpositionen ausgewählt',
+                  ),
                   const SizedBox(height: 4),
                   Expanded(
                     child: availableItems.isEmpty
                         ? const Center(
-                            child: Text('Kein passendes Material gefunden.'))
+                            child: Text('Kein passendes Material gefunden.'),
+                          )
                         : ListView.separated(
                             itemCount: availableItems.length,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (_, _) =>
                                 const Divider(height: 1),
                             itemBuilder: (_, index) {
                               final item = availableItems[index];
@@ -878,14 +1011,17 @@ class _InventoryPageState extends State<InventoryPage> {
                                   : item['issuedQuantity'];
                               return CheckboxListTile(
                                 value: dialogSelection.contains(id),
-                                onChanged: (checked) => update(() =>
-                                    checked == true
-                                        ? dialogSelection.add(id)
-                                        : dialogSelection.remove(id)),
+                                onChanged: (checked) => update(
+                                  () => checked == true
+                                      ? dialogSelection.add(id)
+                                      : dialogSelection.remove(id),
+                                ),
                                 title: Text(
-                                    '${item['inventoryNumber']} • ${item['name']}'),
+                                  '${item['inventoryNumber']} • ${item['name']}',
+                                ),
                                 subtitle: Text(
-                                    '${action == 'issue' ? 'Verfügbar' : 'Ausgegeben'}: $amount ${item['unit']} • ${_name(locations, item['locationId'])}'),
+                                  '${action == 'issue' ? 'Verfügbar' : 'Ausgegeben'}: $amount ${item['unit']} • ${_name(locations, item['locationId'])}',
+                                ),
                                 controlAffinity:
                                     ListTileControlAffinity.leading,
                               );
@@ -895,24 +1031,29 @@ class _InventoryPageState extends State<InventoryPage> {
                   const SizedBox(height: 8),
                   TextField(
                     controller: quantity,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
-                        labelText: 'Menge je ausgewähltem Eintrag'),
+                      labelText: 'Menge je ausgewähltem Eintrag',
+                    ),
                   ),
                 ],
               ),
             ),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Abbrechen')),
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Abbrechen'),
+              ),
               FilledButton(
-                  onPressed: dialogSelection.isEmpty ||
-                          (action == 'issue' && recipient.text.trim().isEmpty)
-                      ? null
-                      : () => Navigator.pop(context, true),
-                  child: Text(action == 'issue' ? 'Ausgeben' : 'Zurücknehmen')),
+                onPressed:
+                    dialogSelection.isEmpty ||
+                        (action == 'issue' && recipient.text.trim().isEmpty)
+                    ? null
+                    : () => Navigator.pop(context, true),
+                child: Text(action == 'issue' ? 'Ausgeben' : 'Zurücknehmen'),
+              ),
             ],
           );
         },
@@ -920,16 +1061,18 @@ class _InventoryPageState extends State<InventoryPage> {
     );
     if (confirmed != true) return;
     final amount = double.tryParse(quantity.text.replaceAll(',', '.')) ?? 0;
-    final result = await _request('/api/material/transactions/bulk',
-        method: 'POST',
-        body: {
-          'action': action,
-          'recipientType': recipientType,
-          'recipient': recipient.text.trim(),
-          'items': dialogSelection
-              .map((id) => {'materialId': id, 'quantity': amount})
-              .toList(),
-        });
+    final result = await _request(
+      '/api/material/transactions/bulk',
+      method: 'POST',
+      body: {
+        'action': action,
+        'recipientType': recipientType,
+        'recipient': recipient.text.trim(),
+        'items': dialogSelection
+            .map((id) => {'materialId': id, 'quantity': amount})
+            .toList(),
+      },
+    );
     if (result != null) {
       _message('Sammelbuchung wurde durchgeführt.');
       await _load();
@@ -943,147 +1086,184 @@ class _InventoryPageState extends State<InventoryPage> {
     String? stockId;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => StatefulBuilder(builder: (context, update) {
-        final availableStocks =
-            stocks.where((entry) => entry['locationId'] == locationId).toList();
-        final query = materialSearch.text.trim().toLowerCase();
-        final movableItems = items.where((item) {
-          if ((num.tryParse(item['issuedQuantity'].toString()) ?? 0) > 0) {
-            return false;
-          }
-          if (query.isEmpty) return true;
-          return [item['inventoryNumber'], item['name'], item['department']]
-              .any((value) => value.toString().toLowerCase().contains(query));
-        }).toList();
-        final movableIds =
-            movableItems.map((item) => item['id'].toString()).toSet();
-        dialogSelection.removeWhere((id) => !movableIds.contains(id));
-        void selectUniqueMaterial(String value) {
-          final normalized = value.trim().toLowerCase();
-          if (normalized.isEmpty) return;
-          final exactMatches = movableItems
-              .where((item) =>
-                  item['inventoryNumber'].toString().trim().toLowerCase() ==
-                  normalized)
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) {
+          final availableStocks = stocks
+              .where((entry) => entry['locationId'] == locationId)
               .toList();
-          final match = exactMatches.length == 1
-              ? exactMatches.single
-              : movableItems.length == 1
-                  ? movableItems.single
-                  : null;
-          if (match == null) return;
-          update(() {
-            dialogSelection.add(match['id'].toString());
-            materialSearch.clear();
-          });
-        }
+          final query = materialSearch.text.trim().toLowerCase();
+          final movableItems = items.where((item) {
+            if ((num.tryParse(item['issuedQuantity'].toString()) ?? 0) > 0) {
+              return false;
+            }
+            if (query.isEmpty) return true;
+            return [
+              item['inventoryNumber'],
+              item['name'],
+              item['department'],
+            ].any((value) => value.toString().toLowerCase().contains(query));
+          }).toList();
+          final movableIds = movableItems
+              .map((item) => item['id'].toString())
+              .toSet();
+          dialogSelection.removeWhere((id) => !movableIds.contains(id));
+          void selectUniqueMaterial(String value) {
+            final normalized = value.trim().toLowerCase();
+            if (normalized.isEmpty) return;
+            final exactMatches = movableItems
+                .where(
+                  (item) =>
+                      item['inventoryNumber'].toString().trim().toLowerCase() ==
+                      normalized,
+                )
+                .toList();
+            final match = exactMatches.length == 1
+                ? exactMatches.single
+                : movableItems.length == 1
+                ? movableItems.single
+                : null;
+            if (match == null) return;
+            update(() {
+              dialogSelection.add(match['id'].toString());
+              materialSearch.clear();
+            });
+          }
 
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Material umbuchen'),
-          content: SizedBox(
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text('Material umbuchen'),
+            content: SizedBox(
               width: 680,
               height: 540,
-              child: Column(children: [
-                Row(children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      decoration:
-                          const InputDecoration(labelText: 'Neuer Standort'),
-                      items: locations
-                          .map((entry) => DropdownMenuItem(
-                              value: entry['id'].toString(),
-                              child: Text(entry['name'].toString())))
-                          .toList(),
-                      onChanged: (value) => update(() {
-                        locationId = value;
-                        stockId = null;
-                      }),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: stockId,
-                      decoration:
-                          const InputDecoration(labelText: 'Lagerplatz'),
-                      items: availableStocks
-                          .map((entry) => DropdownMenuItem(
-                              value: entry['id'].toString(),
-                              child: Text(entry['path']?.toString() ??
-                                  '${entry['name']} · ${entry['section']}')))
-                          .toList(),
-                      onChanged: (value) => update(() => stockId = value),
-                    ),
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: materialSearch,
-                  autofocus: true,
-                  onChanged: (_) => update(() {}),
-                  onSubmitted: selectUniqueMaterial,
-                  textInputAction: TextInputAction.done,
-                  decoration: const InputDecoration(
-                    labelText: 'Material suchen oder scannen',
-                    hintText: 'Name oder Inventarnummer',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.search),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                      '${dialogSelection.length} Materialpositionen ausgewählt'),
-                ),
-                Expanded(
-                  child: movableItems.isEmpty
-                      ? const Center(
-                          child: Text('Kein passendes Material gefunden.'))
-                      : ListView.separated(
-                          itemCount: movableItems.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (_, index) {
-                            final item = movableItems[index];
-                            final id = item['id'].toString();
-                            return CheckboxListTile(
-                              value: dialogSelection.contains(id),
-                              onChanged: (checked) => update(() =>
-                                  checked == true
-                                      ? dialogSelection.add(id)
-                                      : dialogSelection.remove(id)),
-                              title: Text(
-                                  '${item['inventoryNumber']} • ${item['name']}'),
-                              subtitle: Text(
-                                  '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}'),
-                              controlAffinity: ListTileControlAffinity.leading,
-                            );
-                          },
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          decoration: const InputDecoration(
+                            labelText: 'Neuer Standort',
+                          ),
+                          items: locations
+                              .map(
+                                (entry) => DropdownMenuItem(
+                                  value: entry['id'].toString(),
+                                  child: Text(entry['name'].toString()),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) => update(() {
+                            locationId = value;
+                            stockId = null;
+                          }),
                         ),
-                ),
-              ])),
-          actions: [
-            TextButton(
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: stockId,
+                          decoration: const InputDecoration(
+                            labelText: 'Lagerplatz',
+                          ),
+                          items: availableStocks
+                              .map(
+                                (entry) => DropdownMenuItem(
+                                  value: entry['id'].toString(),
+                                  child: Text(
+                                    entry['path']?.toString() ??
+                                        '${entry['name']} · ${entry['section']}',
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) => update(() => stockId = value),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: materialSearch,
+                    autofocus: true,
+                    onChanged: (_) => update(() {}),
+                    onSubmitted: selectUniqueMaterial,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(
+                      labelText: 'Material suchen oder scannen',
+                      hintText: 'Name oder Inventarnummer',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${dialogSelection.length} Materialpositionen ausgewählt',
+                    ),
+                  ),
+                  Expanded(
+                    child: movableItems.isEmpty
+                        ? const Center(
+                            child: Text('Kein passendes Material gefunden.'),
+                          )
+                        : ListView.separated(
+                            itemCount: movableItems.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 1),
+                            itemBuilder: (_, index) {
+                              final item = movableItems[index];
+                              final id = item['id'].toString();
+                              return CheckboxListTile(
+                                value: dialogSelection.contains(id),
+                                onChanged: (checked) => update(
+                                  () => checked == true
+                                      ? dialogSelection.add(id)
+                                      : dialogSelection.remove(id),
+                                ),
+                                title: Text(
+                                  '${item['inventoryNumber']} • ${item['name']}',
+                                ),
+                                subtitle: Text(
+                                  '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}',
+                                ),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('Abbrechen')),
-            FilledButton(
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
                 onPressed: locationId == null || dialogSelection.isEmpty
                     ? null
                     : () => Navigator.pop(context, true),
-                child: const Text('Umbuchen')),
-          ],
-        );
-      }),
+                child: const Text('Umbuchen'),
+              ),
+            ],
+          );
+        },
+      ),
     );
     if (confirmed != true) return;
-    final result =
-        await _request('/api/material/relocate/bulk', method: 'POST', body: {
-      'materialIds': dialogSelection.toList(),
-      'locationId': locationId,
-      'stockStructureId': stockId,
-    });
+    final result = await _request(
+      '/api/material/relocate/bulk',
+      method: 'POST',
+      body: {
+        'materialIds': dialogSelection.toList(),
+        'locationId': locationId,
+        'stockStructureId': stockId,
+      },
+    );
     if (result != null) {
       _message('Material wurde umgebucht.');
       await _load();
@@ -1099,20 +1279,24 @@ class _InventoryPageState extends State<InventoryPage> {
       builder: (context) => AlertDialog(
         title: const Text('Barcode oder QR-Code scannen'),
         content: SizedBox(
-            width: 520,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               TextField(
                 controller: manual,
                 autofocus: true,
                 decoration: const InputDecoration(
-                    labelText: 'Handscanner / Inventarnummer'),
+                  labelText: 'Handscanner / Inventarnummer',
+                ),
                 onSubmitted: (value) => Navigator.pop(context, value.trim()),
               ),
               if (cameraSupported) ...[
                 const SizedBox(height: 16),
                 SizedBox(
-                    height: 260,
-                    child: MobileScanner(onDetect: (capture) {
+                  height: 260,
+                  child: MobileScanner(
+                    onDetect: (capture) {
                       final code = capture.barcodes.isEmpty
                           ? null
                           : capture.barcodes.first.rawValue;
@@ -1120,21 +1304,28 @@ class _InventoryPageState extends State<InventoryPage> {
                         completed = true;
                         Navigator.pop(context, code);
                       }
-                    })),
+                    },
+                  ),
+                ),
               ] else
                 const Padding(
                   padding: EdgeInsets.only(top: 16),
                   child: Text(
-                      'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.'),
+                    'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.',
+                  ),
                 ),
-            ])),
+            ],
+          ),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Abbrechen')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, manual.text.trim()),
-              child: const Text('Suchen')),
+            onPressed: () => Navigator.pop(context, manual.text.trim()),
+            child: const Text('Suchen'),
+          ),
         ],
       ),
     );
@@ -1148,21 +1339,23 @@ class _InventoryPageState extends State<InventoryPage> {
     );
     if (file == null) return;
     final bytes = await file.readAsBytes();
-    final result =
-        await _request('/api/material/import', method: 'POST', body: {
-      'fileName': file.name,
-      'fileBase64': base64Encode(bytes),
-    });
+    final result = await _request(
+      '/api/material/import',
+      method: 'POST',
+      body: {'fileName': file.name, 'fileBase64': base64Encode(bytes)},
+    );
     if (result != null) {
       _message(
-          '${result['imported']} importiert, ${result['skipped']} übersprungen.');
+        '${result['imported']} importiert, ${result['skipped']} übersprungen.',
+      );
       await _load();
     }
   }
 
   Future<void> _export(String format) async {
     final data = await _request(
-        '/api/material/export/table?format=$format&archived=$archived');
+      '/api/material/export/table?format=$format&archived=$archived',
+    );
     if (data == null) return;
     final fileName = data['fileName'].toString();
     await FileSaver.instance.saveFile(
@@ -1193,10 +1386,12 @@ class _InventoryPageState extends State<InventoryPage> {
         ),
         items: [
           const DropdownMenuItem(value: null, child: Text('Alle')),
-          ...values.map((entry) => DropdownMenuItem(
-                value: entry.key,
-                child: Text(entry.value, overflow: TextOverflow.ellipsis),
-              )),
+          ...values.map(
+            (entry) => DropdownMenuItem(
+              value: entry.key,
+              child: Text(entry.value, overflow: TextOverflow.ellipsis),
+            ),
+          ),
         ],
         onChanged: changed,
       ),
@@ -1205,12 +1400,13 @@ class _InventoryPageState extends State<InventoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final departments = items
-        .map((entry) => entry['department']?.toString() ?? '')
-        .where((value) => value.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    final departments =
+        items
+            .map((entry) => entry['department']?.toString() ?? '')
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
     return DefaultTabController(
       length: 2,
       initialIndex: archived ? 1 : 0,
@@ -1219,14 +1415,16 @@ class _InventoryPageState extends State<InventoryPage> {
           title: const Text('Inventarverwaltung'),
           actions: [
             IconButton(
-                onPressed: _load,
-                tooltip: 'Aktualisieren',
-                icon: const Icon(Icons.refresh)),
+              onPressed: _load,
+              tooltip: 'Aktualisieren',
+              icon: const Icon(Icons.refresh),
+            ),
             if (widget.onLogout != null)
               IconButton(
-                  onPressed: widget.onLogout,
-                  tooltip: 'Abmelden',
-                  icon: const Icon(Icons.logout)),
+                onPressed: widget.onLogout,
+                tooltip: 'Abmelden',
+                icon: const Icon(Icons.logout),
+              ),
           ],
           bottom: TabBar(
             onTap: (index) {
@@ -1259,175 +1457,205 @@ class _InventoryPageState extends State<InventoryPage> {
                       margin: EdgeInsets.zero,
                       child: Padding(
                         padding: const EdgeInsets.all(12),
-                        child: Wrap(spacing: 8, runSpacing: 8, children: [
-                          SizedBox(
-                            width: 340,
-                            child: TextField(
-                              controller: search,
-                              onChanged: (_) => searchDebouncer.run(() {
-                                if (mounted) setState(() {});
-                              }),
-                              decoration: InputDecoration(
-                                border: const OutlineInputBorder(),
-                                prefixIcon: const Icon(Icons.search),
-                                labelText: 'Inventarnummer oder Volltextsuche',
-                                suffixIcon: IconButton(
-                                  onPressed: _scan,
-                                  tooltip: 'Scannen',
-                                  icon: const Icon(Icons.qr_code_scanner),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            SizedBox(
+                              width: 340,
+                              child: TextField(
+                                controller: search,
+                                onChanged: (_) => searchDebouncer.run(() {
+                                  if (mounted) setState(() {});
+                                }),
+                                decoration: InputDecoration(
+                                  border: const OutlineInputBorder(),
+                                  prefixIcon: const Icon(Icons.search),
+                                  labelText:
+                                      'Inventarnummer oder Volltextsuche',
+                                  suffixIcon: IconButton(
+                                    onPressed: _scan,
+                                    tooltip: 'Scannen',
+                                    icon: const Icon(Icons.qr_code_scanner),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          _filter(
-                            'Kategorie',
-                            categoryFilter,
-                            categories
-                                .map((entry) => MapEntry(entry['id'].toString(),
-                                    entry['name'].toString()))
-                                .toList(),
-                            (value) => setState(() => categoryFilter = value),
-                          ),
-                          _filter(
-                            'Standort',
-                            locationFilter,
-                            locations
-                                .map((entry) => MapEntry(entry['id'].toString(),
-                                    entry['name'].toString()))
-                                .toList(),
-                            (value) => setState(() => locationFilter = value),
-                          ),
-                          _filter(
+                            _filter(
+                              'Kategorie',
+                              categoryFilter,
+                              categories
+                                  .map(
+                                    (entry) => MapEntry(
+                                      entry['id'].toString(),
+                                      entry['name'].toString(),
+                                    ),
+                                  )
+                                  .toList(),
+                              (value) => setState(() => categoryFilter = value),
+                            ),
+                            _filter(
+                              'Standort',
+                              locationFilter,
+                              locations
+                                  .map(
+                                    (entry) => MapEntry(
+                                      entry['id'].toString(),
+                                      entry['name'].toString(),
+                                    ),
+                                  )
+                                  .toList(),
+                              (value) => setState(() => locationFilter = value),
+                            ),
+                            _filter(
                               'Status',
                               statusFilter,
                               statuses
                                   .map((value) => MapEntry(value, value))
                                   .toList(),
-                              (value) => setState(() => statusFilter = value)),
-                          _filter(
+                              (value) => setState(() => statusFilter = value),
+                            ),
+                            _filter(
                               'Fachbereich',
                               departmentFilter,
                               departments
                                   .map((value) => MapEntry(value, value))
                                   .toList(),
                               (value) =>
-                                  setState(() => departmentFilter = value)),
-                          _filter(
-                            'Prüfung',
-                            dueFilter == 'Alle' ? null : dueFilter,
-                            ['Überfällig', 'Bald fällig', 'Ohne Termin']
-                                .map((value) => MapEntry(value, value))
-                                .toList(),
-                            (value) =>
-                                setState(() => dueFilter = value ?? 'Alle'),
-                          ),
-                        ]),
+                                  setState(() => departmentFilter = value),
+                            ),
+                            _filter(
+                              'Prüfung',
+                              dueFilter == 'Alle' ? null : dueFilter,
+                              [
+                                'Überfällig',
+                                'Bald fällig',
+                                'Ohne Termin',
+                              ].map((value) => MapEntry(value, value)).toList(),
+                              (value) =>
+                                  setState(() => dueFilter = value ?? 'Alle'),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Wrap(spacing: 6, runSpacing: 6, children: [
-                      if (can('inventory.write') && !archived)
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        if (can('inventory.write') && !archived)
+                          _actionButton(
+                            label: 'Neues Material anlegen',
+                            icon: Icons.add_circle_outline,
+                            color: Colors.green.shade700,
+                            onPressed: () => _edit(),
+                          ),
                         _actionButton(
-                          label: 'Neues Material anlegen',
-                          icon: Icons.add_circle_outline,
-                          color: Colors.green.shade700,
-                          onPressed: () => _edit(),
+                          label: 'Scannen',
+                          icon: Icons.qr_code_scanner,
+                          color: Colors.blue.shade700,
+                          onPressed: _scan,
                         ),
-                      _actionButton(
-                        label: 'Scannen',
-                        icon: Icons.qr_code_scanner,
-                        color: Colors.blue.shade700,
-                        onPressed: _scan,
-                      ),
-                      if (can('inventory.transactions') && !archived)
-                        _actionButton(
-                          label: 'Ausgeben',
-                          icon: Icons.logout,
-                          color: Colors.orange.shade700,
-                          onPressed: () => _transaction('issue'),
-                        ),
-                      if (can('inventory.transactions') && !archived)
-                        _actionButton(
-                          label: 'Zurücknehmen',
-                          icon: Icons.login,
-                          color: Colors.orange.shade700,
-                          onPressed: () => _transaction('return'),
-                        ),
-                      if (can('inventory.relocate') && !archived)
-                        _actionButton(
-                          label: 'Umbuchen',
-                          icon: Icons.move_down,
-                          color: Colors.deepOrange.shade700,
-                          onPressed: _relocate,
-                        ),
-                      if (can('inventory.import') && !archived)
-                        _actionButton(
-                          label: 'Tabelle importieren',
-                          icon: Icons.upload_file,
-                          color: Colors.teal.shade700,
-                          onPressed: _import,
-                        ),
-                      if (can('inventory.export'))
-                        PopupMenuButton<String>(
-                          onSelected: _export,
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
-                                value: 'xlsx', child: Text('Excel (.xlsx)')),
-                            PopupMenuItem(
+                        if (can('inventory.transactions') && !archived)
+                          _actionButton(
+                            label: 'Ausgeben',
+                            icon: Icons.logout,
+                            color: Colors.orange.shade700,
+                            onPressed: () => _transaction('issue'),
+                          ),
+                        if (can('inventory.transactions') && !archived)
+                          _actionButton(
+                            label: 'Zurücknehmen',
+                            icon: Icons.login,
+                            color: Colors.orange.shade700,
+                            onPressed: () => _transaction('return'),
+                          ),
+                        if (can('inventory.relocate') && !archived)
+                          _actionButton(
+                            label: 'Umbuchen',
+                            icon: Icons.move_down,
+                            color: Colors.deepOrange.shade700,
+                            onPressed: _relocate,
+                          ),
+                        if (can('inventory.import') && !archived)
+                          _actionButton(
+                            label: 'Tabelle importieren',
+                            icon: Icons.upload_file,
+                            color: Colors.teal.shade700,
+                            onPressed: _import,
+                          ),
+                        if (can('inventory.export'))
+                          PopupMenuButton<String>(
+                            onSelected: _export,
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'xlsx',
+                                child: Text('Excel (.xlsx)'),
+                              ),
+                              PopupMenuItem(
                                 value: 'ods',
-                                child: Text('OpenDocument (.ods)')),
-                          ],
-                          child: IgnorePointer(
-                            child: _actionButton(
-                              label: 'Tabelle exportieren',
-                              icon: Icons.download,
-                              color: Colors.indigo.shade700,
-                              onPressed: () {},
+                                child: Text('OpenDocument (.ods)'),
+                              ),
+                            ],
+                            child: IgnorePointer(
+                              child: _actionButton(
+                                label: 'Tabelle exportieren',
+                                icon: Icons.download,
+                                color: Colors.indigo.shade700,
+                                onPressed: () {},
+                              ),
                             ),
                           ),
-                        ),
-                      if (canPrintLabels && selected.isNotEmpty)
-                        _actionButton(
-                          label: 'Etiketten drucken',
-                          icon: Icons.print,
-                          color: Colors.blueGrey.shade700,
-                          onPressed: _printSelected,
-                        ),
-                      if (canPrintLabels)
+                        if (canPrintLabels && selected.isNotEmpty)
+                          _actionButton(
+                            label: 'Etiketten drucken',
+                            icon: Icons.print,
+                            color: Colors.blueGrey.shade700,
+                            onPressed: _printSelected,
+                          ),
+                        if (canPrintLabels)
+                          IconButton(
+                            onPressed: () => showPrinterSettingsDialog(context),
+                            tooltip: 'Etikettendrucker einrichten',
+                            icon: const Icon(Icons.settings_outlined),
+                          ),
+                        if (canPrintLabels)
+                          IconButton(
+                            onPressed: () => showPrintQueueDialog(context),
+                            tooltip: 'Zwischengespeicherte Druckaufträge',
+                            icon: const Icon(Icons.queue),
+                          ),
+                        if (selected.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                            child: Text('${selected.length} ausgewählt'),
+                          ),
                         IconButton(
-                          onPressed: () => showPrinterSettingsDialog(context),
-                          tooltip: 'Etikettendrucker einrichten',
-                          icon: const Icon(Icons.settings_outlined),
+                          onPressed: () => setState(() => cards = !cards),
+                          tooltip: cards ? 'Tabellenansicht' : 'Kartenansicht',
+                          icon: Icon(
+                            cards ? Icons.table_rows : Icons.view_list,
+                          ),
                         ),
-                      if (canPrintLabels)
-                        IconButton(
-                          onPressed: () => showPrintQueueDialog(context),
-                          tooltip: 'Zwischengespeicherte Druckaufträge',
-                          icon: const Icon(Icons.queue),
-                        ),
-                      if (selected.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 10),
-                          child: Text('${selected.length} ausgewählt'),
-                        ),
-                      IconButton(
-                        onPressed: () => setState(() => cards = !cards),
-                        tooltip: cards ? 'Tabellenansicht' : 'Kartenansicht',
-                        icon: Icon(cards ? Icons.table_rows : Icons.view_list),
-                      ),
-                    ]),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     Expanded(
                       child: filtered.isEmpty
                           ? Center(
-                              child: Text(archived
-                                  ? 'Noch kein Material im Archiv.'
-                                  : 'Keine Inventareinträge gefunden.'),
+                              child: Text(
+                                archived
+                                    ? 'Noch kein Material im Archiv.'
+                                    : 'Keine Inventareinträge gefunden.',
+                              ),
                             )
                           : cards
-                              ? _cardView()
-                              : _tableView(),
+                          ? _cardView()
+                          : _tableView(),
                     ),
                   ],
                 ),
@@ -1510,7 +1738,7 @@ class _InventoryPageState extends State<InventoryPage> {
     return ListView.separated(
       padding: EdgeInsets.zero,
       itemCount: filtered.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (_, index) {
         final item = filtered[index];
         return Card(
@@ -1518,26 +1746,34 @@ class _InventoryPageState extends State<InventoryPage> {
             onTap: () => _detail(item),
             leading: Checkbox(
               value: selected.contains(item['id']),
-              onChanged: (value) => setState(() => value == true
-                  ? selected.add(item['id'].toString())
-                  : selected.remove(item['id'])),
+              onChanged: (value) => setState(
+                () => value == true
+                    ? selected.add(item['id'].toString())
+                    : selected.remove(item['id']),
+              ),
             ),
             title: Text(item['name']?.toString() ?? 'Unbenannt'),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                    'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}'),
+                  'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}',
+                ),
                 Text(
-                    'Kategorie: ${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}'),
+                  'Kategorie: ${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}',
+                ),
                 Text(
-                    'Standort: ${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}'),
+                  'Standort: ${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}',
+                ),
                 Text(
-                    'Verfügbar: ${item['availableQuantity']} von ${item['quantity']} ${item['unit']}'),
+                  'Verfügbar: ${item['availableQuantity']} von ${item['quantity']} ${item['unit']}',
+                ),
                 Text(
-                    'Fachbereich: ${item['department']?.toString().isNotEmpty == true ? item['department'] : '-'}'),
+                  'Fachbereich: ${item['department']?.toString().isNotEmpty == true ? item['department'] : '-'}',
+                ),
                 Text(
-                    'Nächste Prüfung: ${_formatDate(item['nextInspectionDate'])}'),
+                  'Nächste Prüfung: ${_formatDate(item['nextInspectionDate'])}',
+                ),
               ],
             ),
             trailing: Row(
@@ -1582,20 +1818,26 @@ class _InventoryPageState extends State<InventoryPage> {
                       PopupMenuItem(
                         value: 'archive',
                         child: ListTile(
-                          leading:
-                              Icon(archived ? Icons.unarchive : Icons.archive),
+                          leading: Icon(
+                            archived ? Icons.unarchive : Icons.archive,
+                          ),
                           title: Text(
-                              archived ? 'Wiederherstellen' : 'Archivieren'),
+                            archived ? 'Wiederherstellen' : 'Archivieren',
+                          ),
                         ),
                       ),
                     if (can('inventory.archive') && archived)
                       PopupMenuItem(
                         value: 'delete',
                         child: ListTile(
-                          leading: Icon(Icons.delete_outline,
-                              color: Colors.red.shade700),
-                          title: Text('Endgültig löschen',
-                              style: TextStyle(color: Colors.red.shade700)),
+                          leading: Icon(
+                            Icons.delete_outline,
+                            color: Colors.red.shade700,
+                          ),
+                          title: Text(
+                            'Endgültig löschen',
+                            style: TextStyle(color: Colors.red.shade700),
+                          ),
                         ),
                       ),
                   ],
@@ -1640,7 +1882,7 @@ class _InventoryTableSource extends DataTableSource {
   final bool canArchive;
   final bool archived;
   final void Function(Map<String, dynamic> item, bool selected)
-      onSelectionChanged;
+  onSelectionChanged;
   final void Function(Map<String, dynamic> item) onDetail;
   final void Function(Map<String, dynamic> item) onPrint;
   final void Function(Map<String, dynamic>? item) onEdit;
@@ -1657,10 +1899,12 @@ class _InventoryTableSource extends DataTableSource {
       index: index,
       selected: isSelected,
       cells: [
-        DataCell(Checkbox(
-          value: isSelected,
-          onChanged: (value) => onSelectionChanged(item, value == true),
-        )),
+        DataCell(
+          Checkbox(
+            value: isSelected,
+            onChanged: (value) => onSelectionChanged(item, value == true),
+          ),
+        ),
         DataCell(
           Text(item['inventoryNumber']?.toString() ?? '-'),
           onTap: () => onDetail(item),
@@ -1669,55 +1913,65 @@ class _InventoryTableSource extends DataTableSource {
           Text(item['name']?.toString() ?? '-'),
           onTap: () => onDetail(item),
         ),
-        DataCell(Text(
-          '${categoryName(item['categoryCode'])} / '
-          '${categoryName(item['subcategoryCode'])}',
-        )),
-        DataCell(Text(
-          '${locationName(item['locationId'])} · '
-          '${stockName(item['stockStructureId'])}',
-        )),
-        DataCell(Text(
-          '${item['availableQuantity']}/${item['quantity']} ${item['unit']}',
-        )),
+        DataCell(
+          Text(
+            '${categoryName(item['categoryCode'])} / '
+            '${categoryName(item['subcategoryCode'])}',
+          ),
+        ),
+        DataCell(
+          Text(
+            '${locationName(item['locationId'])} · '
+            '${stockName(item['stockStructureId'])}',
+          ),
+        ),
+        DataCell(
+          Text(
+            '${item['availableQuantity']}/${item['quantity']} ${item['unit']}',
+          ),
+        ),
         DataCell(Chip(label: Text(item['status']?.toString() ?? '-'))),
         DataCell(Text(item['department']?.toString() ?? '-')),
         DataCell(Text(formatDate(item['nextInspectionDate']))),
-        DataCell(Row(children: [
-          IconButton(
-            onPressed: () => onDetail(item),
-            tooltip: 'Details',
-            icon: const Icon(Icons.visibility_outlined),
-          ),
-          if (canPrint)
-            IconButton(
-              onPressed: () => onPrint(item),
-              tooltip: 'Etikett drucken',
-              icon: const Icon(Icons.print_outlined),
-            ),
-          if (canWrite)
-            IconButton(
-              onPressed: () => onEdit(item),
-              tooltip: 'Bearbeiten',
-              icon: const Icon(Icons.edit_outlined),
-            ),
-          if (canArchive &&
-              (!archived || item['inventoryNumberReleasedAt'] == null))
-            IconButton(
-              onPressed: () => onArchive(item),
-              tooltip: archived ? 'Wiederherstellen' : 'Archivieren',
-              icon: Icon(
-                archived ? Icons.unarchive : Icons.archive_outlined,
+        DataCell(
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => onDetail(item),
+                tooltip: 'Details',
+                icon: const Icon(Icons.visibility_outlined),
               ),
-            ),
-          if (canArchive && archived)
-            IconButton(
-              onPressed: () => onDelete(item),
-              tooltip: 'Endgültig löschen',
-              color: Colors.red.shade700,
-              icon: const Icon(Icons.delete_outline),
-            ),
-        ])),
+              if (canPrint)
+                IconButton(
+                  onPressed: () => onPrint(item),
+                  tooltip: 'Etikett drucken',
+                  icon: const Icon(Icons.print_outlined),
+                ),
+              if (canWrite)
+                IconButton(
+                  onPressed: () => onEdit(item),
+                  tooltip: 'Bearbeiten',
+                  icon: const Icon(Icons.edit_outlined),
+                ),
+              if (canArchive &&
+                  (!archived || item['inventoryNumberReleasedAt'] == null))
+                IconButton(
+                  onPressed: () => onArchive(item),
+                  tooltip: archived ? 'Wiederherstellen' : 'Archivieren',
+                  icon: Icon(
+                    archived ? Icons.unarchive : Icons.archive_outlined,
+                  ),
+                ),
+              if (canArchive && archived)
+                IconButton(
+                  onPressed: () => onDelete(item),
+                  tooltip: 'Endgültig löschen',
+                  color: Colors.red.shade700,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -1764,14 +2018,19 @@ class InventoryDetailDialog extends StatelessWidget {
     final text = value?.toString() ?? '';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SizedBox(
-          width: 145,
-          child:
-              Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-        ),
-        Expanded(child: Text(text.isEmpty ? '-' : text)),
-      ]),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 145,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(child: Text(text.isEmpty ? '-' : text)),
+        ],
+      ),
     );
   }
 
@@ -1786,8 +2045,9 @@ class InventoryDetailDialog extends StatelessWidget {
         appBar: AppBar(
           title: Text(item['name']),
           leading: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close)),
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close),
+          ),
           actions: [
             if (canPrint)
               TextButton.icon(
@@ -1819,124 +2079,169 @@ class InventoryDetailDialog extends StatelessWidget {
               ),
           ],
         ),
-        body: ListView(padding: const EdgeInsets.all(24), children: [
-          Wrap(spacing: 24, runSpacing: 24, children: [
-            SizedBox(
-              width: 430,
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Stammdaten',
-                            style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 12),
-                        _line('Inventarnummer', item['inventoryNumber']),
-                        _line('Kategorie',
-                            '${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}'),
-                        _line('Standort',
-                            '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}'),
-                        _line('Status', item['status']),
-                        _line('Bestand',
-                            '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}'),
-                        _line('Hersteller / Modell',
-                            '${item['manufacturer'] ?? ''} ${item['model'] ?? ''}'),
-                        _line('Baujahr', item['manufacturingYear']),
-                        _line('Seriennummer', item['serialNumber']),
-                        _line('Fachbereich', item['department']),
-                        _line('Anschaffung',
-                            '${_formatDate(item['purchaseDate'])} · ${item['purchasePrice'] ?? '-'} €'),
-                        _line('Nächste Prüfung',
-                            _formatDate(item['nextInspectionDate'])),
-                        _line('Beschreibung', item['description']),
-                        _line('Notizen', item['notes']),
-                      ]),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 430,
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(children: [
-                    Text('Barcode & QR-Code',
-                        style: Theme.of(context).textTheme.titleLarge),
-                    const SizedBox(height: 20),
-                    bw.BarcodeWidget(
-                      barcode: bw.Barcode.code128(),
-                      data: item['inventoryNumber'],
-                      height: 90,
+        body: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            Wrap(
+              spacing: 24,
+              runSpacing: 24,
+              children: [
+                SizedBox(
+                  width: 430,
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Stammdaten',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 12),
+                          _line('Inventarnummer', item['inventoryNumber']),
+                          _line(
+                            'Kategorie',
+                            '${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}',
+                          ),
+                          _line(
+                            'Standort',
+                            '${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}',
+                          ),
+                          _line('Status', item['status']),
+                          _line(
+                            'Bestand',
+                            '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}',
+                          ),
+                          _line(
+                            'Hersteller / Modell',
+                            '${item['manufacturer'] ?? ''} ${item['model'] ?? ''}',
+                          ),
+                          _line('Baujahr', item['manufacturingYear']),
+                          _line('Seriennummer', item['serialNumber']),
+                          _line('Fachbereich', item['department']),
+                          _line(
+                            'Anschaffung',
+                            '${_formatDate(item['purchaseDate'])} · ${item['purchasePrice'] ?? '-'} €',
+                          ),
+                          _line(
+                            'Nächste Prüfung',
+                            _formatDate(item['nextInspectionDate']),
+                          ),
+                          _line('Beschreibung', item['description']),
+                          _line('Notizen', item['notes']),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 24),
-                    bw.BarcodeWidget(
-                      barcode: bw.Barcode.qrCode(),
-                      data: item['inventoryNumber'],
-                      width: 180,
-                      height: 180,
-                      drawText: false,
-                    ),
-                  ]),
+                  ),
                 ),
-              ),
+                SizedBox(
+                  width: 430,
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        children: [
+                          Text(
+                            'Barcode & QR-Code',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 20),
+                          bw.BarcodeWidget(
+                            barcode: bw.Barcode.code128(),
+                            data: item['inventoryNumber'],
+                            height: 90,
+                          ),
+                          const SizedBox(height: 24),
+                          bw.BarcodeWidget(
+                            barcode: bw.Barcode.qrCode(),
+                            data: item['inventoryNumber'],
+                            width: 180,
+                            height: 180,
+                            drawText: false,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ]),
-          const SizedBox(height: 24),
-          Text('Bewegungsverlauf',
-              style: Theme.of(context).textTheme.titleLarge),
-          if (movements.isEmpty)
-            const ListTile(title: Text('Noch keine Bewegungen vorhanden.')),
-          ...movements.map((entry) => ListTile(
-                leading: Icon(entry['action'] == 'issue'
-                    ? Icons.logout
-                    : entry['action'] == 'return'
-                        ? Icons.login
-                        : Icons.move_down),
+            const SizedBox(height: 24),
+            Text(
+              'Bewegungsverlauf',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            if (movements.isEmpty)
+              const ListTile(title: Text('Noch keine Bewegungen vorhanden.')),
+            ...movements.map(
+              (entry) => ListTile(
+                leading: Icon(
+                  entry['action'] == 'issue'
+                      ? Icons.logout
+                      : entry['action'] == 'return'
+                      ? Icons.login
+                      : Icons.move_down,
+                ),
                 title: Text(
-                    '${entry['action']} · ${entry['quantity']} ${item['unit']}'),
+                  '${entry['action']} · ${entry['quantity']} ${item['unit']}',
+                ),
                 subtitle: Text(
-                    '${entry['recipient'] ?? ''} ${_formatDate(entry['createdAt'], includeTime: true)}'),
-              )),
-          const SizedBox(height: 16),
-          Text('Prüfungen', style: Theme.of(context).textTheme.titleLarge),
-          if (inspections.isEmpty)
-            const ListTile(title: Text('Noch keine Prüfungen vorhanden.')),
-          ...inspections.map((entry) => ListTile(
+                  '${entry['recipient'] ?? ''} ${_formatDate(entry['createdAt'], includeTime: true)}',
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('Prüfungen', style: Theme.of(context).textTheme.titleLarge),
+            if (inspections.isEmpty)
+              const ListTile(title: Text('Noch keine Prüfungen vorhanden.')),
+            ...inspections.map(
+              (entry) => ListTile(
                 leading: const Icon(Icons.fact_check_outlined),
                 title: Text(
-                    '${entry['result']} · ${_formatDate(entry['inspectionDate'])}'),
+                  '${entry['result']} · ${_formatDate(entry['inspectionDate'])}',
+                ),
                 subtitle: Text('${entry['inspector']} ${entry['notes'] ?? ''}'),
-              )),
-          const SizedBox(height: 16),
-          Text('Mängel', style: Theme.of(context).textTheme.titleLarge),
-          if (defects.isEmpty)
-            const ListTile(title: Text('Keine Mängel erfasst.')),
-          ...defects.map((entry) => ListTile(
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('Mängel', style: Theme.of(context).textTheme.titleLarge),
+            if (defects.isEmpty)
+              const ListTile(title: Text('Keine Mängel erfasst.')),
+            ...defects.map(
+              (entry) => ListTile(
                 leading: const Icon(Icons.report_problem_outlined),
                 title: Text(entry['description']),
                 subtitle: Text(
-                    '${entry['status']} · ${_formatDate(entry['createdAt'], includeTime: true)}'),
+                  '${entry['status']} · ${_formatDate(entry['createdAt'], includeTime: true)}',
+                ),
                 trailing: IconButton(
                   onPressed: () =>
                       Navigator.pop(context, 'print-defect:${entry['id']}'),
                   tooltip: 'Ausgefüllte Mängelmeldung drucken',
                   icon: const Icon(Icons.print_outlined),
                 ),
-              )),
-          const SizedBox(height: 16),
-          Text('Dokumente', style: Theme.of(context).textTheme.titleLarge),
-          if (documents.isEmpty)
-            const ListTile(
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('Dokumente', style: Theme.of(context).textTheme.titleLarge),
+            if (documents.isEmpty)
+              const ListTile(
                 title: Text(
-                    'Noch keine Anleitungen oder Prüfberichte vorhanden.')),
-          ...documents.map((entry) => ListTile(
+                  'Noch keine Anleitungen oder Prüfberichte vorhanden.',
+                ),
+              ),
+            ...documents.map(
+              (entry) => ListTile(
                 leading: const Icon(Icons.description_outlined),
                 title: Text(entry['title']),
-                subtitle:
-                    Text('${entry['documentType']} · ${entry['fileName']}'),
-              )),
-        ]),
+                subtitle: Text(
+                  '${entry['documentType']} · ${entry['fileName']}',
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

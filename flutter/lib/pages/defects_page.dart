@@ -2,13 +2,14 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
 
 import '../services/authenticated_api_client.dart';
 import '../services/debouncer.dart';
 import '../services/file_save_mime_type.dart';
 import '../widgets/date_input_field.dart';
+import '../widgets/keyboard_dropdown_button_form_field.dart';
 
 const _statuses = <String>[
   'Neu',
@@ -27,11 +28,12 @@ const _nextStatus = <String, String>{
   'Behoben': 'Geprüft/Geschlossen',
 };
 
-typedef DefectRequest = Future<dynamic> Function(
-  String path, {
-  String method,
-  Map<String, dynamic>? body,
-});
+typedef DefectRequest =
+    Future<dynamic> Function(
+      String path, {
+      String method,
+      Map<String, dynamic>? body,
+    });
 
 class DefectsPage extends StatefulWidget {
   final String token;
@@ -89,8 +91,11 @@ class _DefectsPageState extends State<DefectsPage> {
     super.dispose();
   }
 
-  Future<dynamic> _request(String path,
-      {String method = 'GET', Map<String, dynamic>? body}) async {
+  Future<dynamic> _request(
+    String path, {
+    String method = 'GET',
+    Map<String, dynamic>? body,
+  }) async {
     try {
       if (widget.request != null) {
         return await widget.request!(path, method: method, body: body);
@@ -133,23 +138,23 @@ class _DefectsPageState extends State<DefectsPage> {
     setState(() {
       _defects = results[0] is List
           ? (results[0] as List)
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
+                .map((entry) => Map<String, dynamic>.from(entry as Map))
+                .toList()
           : [];
       _notifications = results[1] is List
           ? (results[1] as List)
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
+                .map((entry) => Map<String, dynamic>.from(entry as Map))
+                .toList()
           : [];
       _emailImports = results[2] is List
           ? (results[2] as List)
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
+                .map((entry) => Map<String, dynamic>.from(entry as Map))
+                .toList()
           : [];
       _items = results[3] is List
           ? (results[3] as List)
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
+                .map((entry) => Map<String, dynamic>.from(entry as Map))
+                .toList()
           : [];
       if (_selectedDefectId != null) _selectedDetail = null;
       _loading = false;
@@ -181,14 +186,16 @@ class _DefectsPageState extends State<DefectsPage> {
       }
       return;
     }
-    final selectedStillVisible =
-        visible.any((entry) => entry['id']?.toString() == _selectedDefectId);
+    final selectedStillVisible = visible.any(
+      (entry) => entry['id']?.toString() == _selectedDefectId,
+    );
     if (!selectedStillVisible) {
       await _selectDefect(visible.first, openOnCompact: false);
     } else if (_selectedDetail == null && !_detailLoading) {
       await _selectDefect(
         visible.firstWhere(
-            (entry) => entry['id']?.toString() == _selectedDefectId),
+          (entry) => entry['id']?.toString() == _selectedDefectId,
+        ),
         openOnCompact: false,
       );
     }
@@ -199,8 +206,10 @@ class _DefectsPageState extends State<DefectsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureSelection());
   }
 
-  Future<void> _selectDefect(Map<String, dynamic> summary,
-      {bool openOnCompact = true}) async {
+  Future<void> _selectDefect(
+    Map<String, dynamic> summary, {
+    bool openOnCompact = true,
+  }) async {
     final compact = MediaQuery.sizeOf(context).width < 1050;
     if (openOnCompact && compact) {
       await _showDetail(summary);
@@ -227,26 +236,30 @@ class _DefectsPageState extends State<DefectsPage> {
     final id = _selectedDefectId;
     if (id == null) return;
     final summary = _defects.cast<Map<String, dynamic>?>().firstWhere(
-          (entry) => entry?['id']?.toString() == id,
-          orElse: () => _selectedDetail,
-        );
+      (entry) => entry?['id']?.toString() == id,
+      orElse: () => _selectedDetail,
+    );
     if (summary != null) await _selectDefect(summary, openOnCompact: false);
   }
 
-  Future<void> _replaceSelected(dynamic result,
-      {bool reloadList = true}) async {
+  Future<void> _replaceSelected(
+    dynamic result, {
+    bool reloadList = true,
+  }) async {
     if (result is! Map || !mounted) return;
     final updated = Map<String, dynamic>.from(result);
     setState(() {
       _selectedDefectId = updated['id']?.toString();
       _selectedDetail = updated;
       final index = _defects.indexWhere(
-          (entry) => entry['id']?.toString() == updated['id']?.toString());
+        (entry) => entry['id']?.toString() == updated['id']?.toString(),
+      );
       if (index >= 0) _defects[index] = updated;
     });
     if (reloadList) {
       final data = await _request(
-          '/api/defects?archived=${_showArchived ? 'all' : 'false'}');
+        '/api/defects?archived=${_showArchived ? 'all' : 'false'}',
+      );
       if (data is List && mounted) {
         setState(() {
           _defects = data
@@ -266,26 +279,28 @@ class _DefectsPageState extends State<DefectsPage> {
   }
 
   List<Map<String, dynamic>> get _filtered => _defects.where((defect) {
-        final haystack = [
-          defect['defectNumber'],
-          defect['title'],
-          defect['description'],
-          defect['entityName'],
-          defect['inventoryNumber'],
-          defect['assignee'],
-          defect['contactName'],
-          defect['contactEmail'],
-          defect['contactPhone'],
-        ].join(' ').toLowerCase();
-        return haystack.contains(_search.toLowerCase()) &&
-            (_status == 'Alle' || defect['status'] == _status) &&
-            (_priority == 'Alle' || defect['priority'] == _priority) &&
-            (_entityType == 'Alle' || defect['entityType'] == _entityType) &&
-            (!_onlyMine || defect['assigneeUserId'] == _currentUserId);
-      }).toList();
+    final haystack = [
+      defect['defectNumber'],
+      defect['title'],
+      defect['description'],
+      defect['entityName'],
+      defect['inventoryNumber'],
+      defect['assignee'],
+      defect['contactName'],
+      defect['contactEmail'],
+      defect['contactPhone'],
+    ].join(' ').toLowerCase();
+    return haystack.contains(_search.toLowerCase()) &&
+        (_status == 'Alle' || defect['status'] == _status) &&
+        (_priority == 'Alle' || defect['priority'] == _priority) &&
+        (_entityType == 'Alle' || defect['entityType'] == _entityType) &&
+        (!_onlyMine || defect['assigneeUserId'] == _currentUserId);
+  }).toList();
 
-  Future<void> _create(
-      {String? initialEntityType, String? initialEntityId}) async {
+  Future<void> _create({
+    String? initialEntityType,
+    String? initialEntityId,
+  }) async {
     final payload = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => _DefectFormDialog(
@@ -299,25 +314,35 @@ class _DefectsPageState extends State<DefectsPage> {
         (payload.remove('_pendingImages') as List? ?? const [])
             .map((entry) => Map<String, dynamic>.from(entry as Map))
             .toList();
-    final created =
-        await _request('/api/defects', method: 'POST', body: payload);
+    final created = await _request(
+      '/api/defects',
+      method: 'POST',
+      body: payload,
+    );
     if (created is Map) {
       if (created['offlineQueued'] == true) {
-        _message(pendingImages.isEmpty
-            ? 'Mangel wurde offline gespeichert und wird später synchronisiert.'
-            : 'Mangel wurde offline gespeichert. Bilder werden offline nicht übernommen.');
+        _message(
+          pendingImages.isEmpty
+              ? 'Mangel wurde offline gespeichert und wird später synchronisiert.'
+              : 'Mangel wurde offline gespeichert. Bilder werden offline nicht übernommen.',
+        );
         await _load();
         return;
       }
       var uploadedImages = 0;
       for (final image in pendingImages) {
-        final uploaded = await _request('/api/defects/${created['id']}/images',
-            method: 'POST', body: image);
+        final uploaded = await _request(
+          '/api/defects/${created['id']}/images',
+          method: 'POST',
+          body: image,
+        );
         if (uploaded != null) uploadedImages += 1;
       }
-      _message(pendingImages.isEmpty
-          ? 'Mangel wurde erfasst und der Artikel als defekt markiert.'
-          : 'Mangel wurde erfasst; $uploadedImages von ${pendingImages.length} Bildern wurden hochgeladen.');
+      _message(
+        pendingImages.isEmpty
+            ? 'Mangel wurde erfasst und der Artikel als defekt markiert.'
+            : 'Mangel wurde erfasst; $uploadedImages von ${pendingImages.length} Bildern wurden hochgeladen.',
+      );
       await _load();
     }
   }
@@ -357,19 +382,23 @@ class _DefectsPageState extends State<DefectsPage> {
       builder: (context) => AlertDialog(
         title: const Text('Mängelbericht herunterladen'),
         content: const Text(
-            'Die Vorlage kann leer oder mit Inventarnummer und Kontaktdaten vorbefüllt erstellt werden.'),
+          'Die Vorlage kann leer oder mit Inventarnummer und Kontaktdaten vorbefüllt erstellt werden.',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Abbrechen')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
           OutlinedButton(
-              onPressed: () => Navigator.pop(context, 'blank'),
-              child: const Text('Leere Vorlage')),
+            onPressed: () => Navigator.pop(context, 'blank'),
+            child: const Text('Leere Vorlage'),
+          ),
           FilledButton(
-              onPressed: _items.isEmpty
-                  ? null
-                  : () => Navigator.pop(context, 'prefilled'),
-              child: const Text('Vorbefüllt')),
+            onPressed: _items.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'prefilled'),
+            child: const Text('Vorbefüllt'),
+          ),
         ],
       ),
     );
@@ -385,26 +414,34 @@ class _DefectsPageState extends State<DefectsPage> {
             width: 560,
             height: 420,
             child: ListView(
-              children: ([..._items]..sort((left, right) =>
-                      left['inventoryNumber']
-                          .toString()
-                          .compareTo(right['inventoryNumber'].toString())))
-                  .map((item) => ListTile(
-                        leading: Icon(item['entityType'] == 'MaterialItem'
-                            ? Icons.inventory_2_outlined
-                            : Icons.checkroom_outlined),
-                        title: Text(item['name']?.toString() ?? ''),
-                        subtitle:
-                            Text(item['inventoryNumber']?.toString() ?? ''),
-                        onTap: () => Navigator.pop(context, item),
+              children:
+                  ([..._items]..sort(
+                        (left, right) => left['inventoryNumber']
+                            .toString()
+                            .compareTo(right['inventoryNumber'].toString()),
                       ))
-                  .toList(),
+                      .map(
+                        (item) => ListTile(
+                          leading: Icon(
+                            item['entityType'] == 'MaterialItem'
+                                ? Icons.inventory_2_outlined
+                                : Icons.checkroom_outlined,
+                          ),
+                          title: Text(item['name']?.toString() ?? ''),
+                          subtitle: Text(
+                            item['inventoryNumber']?.toString() ?? '',
+                          ),
+                          onTap: () => Navigator.pop(context, item),
+                        ),
+                      )
+                      .toList(),
             ),
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Abbrechen')),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
           ],
         ),
       );
@@ -429,39 +466,46 @@ class _DefectsPageState extends State<DefectsPage> {
               : ListView(
                   shrinkWrap: true,
                   children: _notifications
-                      .map((notification) => ListTile(
-                            leading: Icon(notification['readAt'] == null
+                      .map(
+                        (notification) => ListTile(
+                          leading: Icon(
+                            notification['readAt'] == null
                                 ? Icons.notifications_active
-                                : Icons.notifications_none),
-                            title:
-                                Text(notification['title']?.toString() ?? ''),
-                            subtitle:
-                                Text(notification['message']?.toString() ?? ''),
-                            onTap: () async {
-                              await _request(
-                                  '/api/notifications/${notification['id']}/read',
-                                  method: 'PATCH');
-                              if (dialogContext.mounted) {
-                                Navigator.pop(dialogContext);
-                              }
-                              await _load();
-                            },
-                          ))
+                                : Icons.notifications_none,
+                          ),
+                          title: Text(notification['title']?.toString() ?? ''),
+                          subtitle: Text(
+                            notification['message']?.toString() ?? '',
+                          ),
+                          onTap: () async {
+                            await _request(
+                              '/api/notifications/${notification['id']}/read',
+                              method: 'PATCH',
+                            );
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+                            await _load();
+                          },
+                        ),
+                      )
                       .toList(),
                 ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Schließen')),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Schließen'),
+          ),
         ],
       ),
     );
   }
 
   Future<void> _showEmailQueue() async {
-    final pending =
-        _emailImports.where((entry) => entry['status'] == 'pending').toList();
+    final pending = _emailImports
+        .where((entry) => entry['status'] == 'pending')
+        .toList();
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -471,10 +515,11 @@ class _DefectsPageState extends State<DefectsPage> {
           height: 480,
           child: pending.isEmpty
               ? const Center(
-                  child: Text('Keine E-Mail-Meldungen müssen geprüft werden.'))
+                  child: Text('Keine E-Mail-Meldungen müssen geprüft werden.'),
+                )
               : ListView.separated(
                   itemCount: pending.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, index) {
                     final entry = pending[index];
                     final problems =
@@ -482,12 +527,14 @@ class _DefectsPageState extends State<DefectsPage> {
                     return ListTile(
                       leading: const Icon(Icons.mark_email_unread_outlined),
                       title: Text(
-                          entry['subject']?.toString().isNotEmpty == true
-                              ? entry['subject'].toString()
-                              : 'Mängelmeldung ohne Betreff'),
+                        entry['subject']?.toString().isNotEmpty == true
+                            ? entry['subject'].toString()
+                            : 'Mängelmeldung ohne Betreff',
+                      ),
                       subtitle: Text(
-                          '${entry['sender']?.toString().isNotEmpty == true ? entry['sender'] : 'Unbekannter Absender'}'
-                          ' · $problems Prüfhinweis${problems == 1 ? '' : 'e'}'),
+                        '${entry['sender']?.toString().isNotEmpty == true ? entry['sender'] : 'Unbekannter Absender'}'
+                        ' · $problems Prüfhinweis${problems == 1 ? '' : 'e'}',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () async {
                         Navigator.pop(dialogContext);
@@ -501,20 +548,23 @@ class _DefectsPageState extends State<DefectsPage> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Schließen')),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Schließen'),
+          ),
         ],
       ),
     );
   }
 
   Future<void> _reviewEmailImport(Map<String, dynamic> summary) async {
-    final response =
-        await _request('/api/defect-email-imports/${summary['id']}');
+    final response = await _request(
+      '/api/defect-email-imports/${summary['id']}',
+    );
     if (response is! Map || !mounted) return;
     final entry = Map<String, dynamic>.from(response);
-    final extracted =
-        Map<String, dynamic>.from(entry['extractedData'] as Map? ?? const {});
+    final extracted = Map<String, dynamic>.from(
+      entry['extractedData'] as Map? ?? const {},
+    );
     Map<String, dynamic>? selectedItem;
     for (final item in _items) {
       if (item['inventoryNumber']?.toString() ==
@@ -523,23 +573,29 @@ class _DefectsPageState extends State<DefectsPage> {
         break;
       }
     }
-    final description =
-        TextEditingController(text: extracted['description']?.toString() ?? '');
+    final description = TextEditingController(
+      text: extracted['description']?.toString() ?? '',
+    );
     final measuresTaken = TextEditingController(
-        text: extracted['measuresTaken']?.toString() ??
-            extracted['cause']?.toString() ??
-            '');
-    final name =
-        TextEditingController(text: extracted['contactName']?.toString() ?? '');
+      text:
+          extracted['measuresTaken']?.toString() ??
+          extracted['cause']?.toString() ??
+          '',
+    );
+    final name = TextEditingController(
+      text: extracted['contactName']?.toString() ?? '',
+    );
     final email = TextEditingController(
-        text: extracted['contactEmail']?.toString() ?? '');
+      text: extracted['contactEmail']?.toString() ?? '',
+    );
     final phone = TextEditingController(
-        text: extracted['contactPhone']?.toString() ?? '');
+      text: extracted['contactPhone']?.toString() ?? '',
+    );
     final reason = TextEditingController();
     const safetyValues = [
       'Nicht einsatzfähig',
       'Eingeschränkt',
-      'Einsatzfähig'
+      'Einsatzfähig',
     ];
     String? safety = safetyValues.contains(extracted['operationalSafety'])
         ? extracted['operationalSafety'].toString()
@@ -548,10 +604,12 @@ class _DefectsPageState extends State<DefectsPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final problems = (entry['problems'] as List? ?? const [])
-              .map((value) => value.toString());
-          final attachments = (entry['attachments'] as List? ?? const [])
-              .map((value) => Map<String, dynamic>.from(value as Map));
+          final problems = (entry['problems'] as List? ?? const []).map(
+            (value) => value.toString(),
+          );
+          final attachments = (entry['attachments'] as List? ?? const []).map(
+            (value) => Map<String, dynamic>.from(value as Map),
+          );
           return AlertDialog(
             title: const Text('E-Mail-Meldung prüfen'),
             content: SizedBox(
@@ -560,10 +618,13 @@ class _DefectsPageState extends State<DefectsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(entry['subject']?.toString() ?? '',
-                        style: Theme.of(context).textTheme.titleMedium),
                     Text(
-                        '${entry['senderName'] ?? ''} <${entry['sender'] ?? ''}>'),
+                      entry['subject']?.toString() ?? '',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      '${entry['senderName'] ?? ''} <${entry['sender'] ?? ''}>',
+                    ),
                     if (problems.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Card(
@@ -573,9 +634,10 @@ class _DefectsPageState extends State<DefectsPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Automatische Prüfung',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.bold)),
+                              const Text(
+                                'Automatische Prüfung',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
                               ...problems.map((problem) => Text('• $problem')),
                             ],
                           ),
@@ -587,13 +649,17 @@ class _DefectsPageState extends State<DefectsPage> {
                       initialValue: selectedItem,
                       isExpanded: true,
                       decoration: const InputDecoration(
-                          labelText: 'Betroffener Artikel *'),
+                        labelText: 'Betroffener Artikel *',
+                      ),
                       items: _items
-                          .map((item) => DropdownMenuItem(
-                                value: item,
-                                child: Text(
-                                    '${item['inventoryNumber']} · ${item['name']}'),
-                              ))
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item,
+                              child: Text(
+                                '${item['inventoryNumber']} · ${item['name']}',
+                              ),
+                            ),
+                          )
                           .toList(),
                       onChanged: (value) =>
                           setDialogState(() => selectedItem = value),
@@ -602,76 +668,99 @@ class _DefectsPageState extends State<DefectsPage> {
                     TextField(
                       controller: description,
                       maxLines: 5,
-                      decoration:
-                          const InputDecoration(labelText: 'Beschreibung *'),
+                      decoration: const InputDecoration(
+                        labelText: 'Beschreibung *',
+                      ),
                     ),
                     TextField(
                       controller: measuresTaken,
                       maxLines: 3,
                       decoration: const InputDecoration(
-                          labelText: 'Getroffene Maßnahmen'),
+                        labelText: 'Getroffene Maßnahmen',
+                      ),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       initialValue: safety,
                       decoration: const InputDecoration(
-                          labelText: 'Einsatzbereitschaft *'),
+                        labelText: 'Einsatzbereitschaft *',
+                      ),
                       items: safetyValues
-                          .map((value) => DropdownMenuItem(
-                              value: value, child: Text(value)))
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(value),
+                            ),
+                          )
                           .toList(),
                       onChanged: (value) =>
                           setDialogState(() => safety = value),
                     ),
                     const SizedBox(height: 8),
                     TextField(
-                        controller: name,
-                        decoration: const InputDecoration(
-                            labelText: 'Name der meldenden Person *')),
+                      controller: name,
+                      decoration: const InputDecoration(
+                        labelText: 'Name der meldenden Person *',
+                      ),
+                    ),
                     TextField(
-                        controller: email,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                            labelText: 'E-Mail der meldenden Person *')),
+                      controller: email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'E-Mail der meldenden Person *',
+                      ),
+                    ),
                     TextField(
-                        controller: phone,
-                        decoration:
-                            const InputDecoration(labelText: 'Telefonnummer')),
+                      controller: phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Telefonnummer',
+                      ),
+                    ),
                     const SizedBox(height: 16),
-                    Text('Anhänge',
-                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      'Anhänge',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     Wrap(
                       spacing: 8,
                       children: attachments
-                          .map((attachment) => ActionChip(
-                                avatar: Icon(attachment['role'] == 'report'
+                          .map(
+                            (attachment) => ActionChip(
+                              avatar: Icon(
+                                attachment['role'] == 'report'
                                     ? Icons.description_outlined
-                                    : Icons.image_outlined),
-                                label: Text(
-                                    attachment['fileName']?.toString() ?? ''),
-                                onPressed: attachment['fileBase64'] == null
-                                    ? null
-                                    : () => _saveDownloadPayload({
-                                          'fileName': attachment['fileName'],
-                                          'mimeType': attachment['mimeType'],
-                                          'fileBase64':
-                                              attachment['fileBase64'],
-                                        }),
-                              ))
+                                    : Icons.image_outlined,
+                              ),
+                              label: Text(
+                                attachment['fileName']?.toString() ?? '',
+                              ),
+                              onPressed: attachment['fileBase64'] == null
+                                  ? null
+                                  : () => _saveDownloadPayload({
+                                      'fileName': attachment['fileName'],
+                                      'mimeType': attachment['mimeType'],
+                                      'fileBase64': attachment['fileBase64'],
+                                    }),
+                            ),
+                          )
                           .toList(),
                     ),
                     if (entry['emailText']?.toString().isNotEmpty == true) ...[
                       const SizedBox(height: 16),
-                      Text('E-Mail-Text',
-                          style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        'E-Mail-Text',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                       SelectableText(entry['emailText'].toString()),
                     ],
                     if (_can('defects.edit')) ...[
                       const SizedBox(height: 16),
                       TextField(
-                          controller: reason,
-                          decoration: const InputDecoration(
-                              labelText: 'Grund beim Verwerfen')),
+                        controller: reason,
+                        decoration: const InputDecoration(
+                          labelText: 'Grund beim Verwerfen',
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -679,52 +768,57 @@ class _DefectsPageState extends State<DefectsPage> {
             ),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('Schließen')),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Schließen'),
+              ),
               if (_can('defects.edit'))
                 TextButton.icon(
-                    onPressed: () async {
-                      final discarded = await _request(
-                          '/api/defect-email-imports/${entry['id']}/discard',
-                          method: 'POST',
-                          body: {'reason': reason.text.trim()});
-                      if (discarded != null && dialogContext.mounted) {
-                        Navigator.pop(dialogContext, true);
-                      }
-                    },
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Verwerfen')),
+                  onPressed: () async {
+                    final discarded = await _request(
+                      '/api/defect-email-imports/${entry['id']}/discard',
+                      method: 'POST',
+                      body: {'reason': reason.text.trim()},
+                    );
+                    if (discarded != null && dialogContext.mounted) {
+                      Navigator.pop(dialogContext, true);
+                    }
+                  },
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Verwerfen'),
+                ),
               if (_can('defects.report'))
                 FilledButton.icon(
-                    onPressed: () async {
-                      if (selectedItem == null ||
-                          description.text.trim().isEmpty ||
-                          safety == null ||
-                          name.text.trim().isEmpty ||
-                          email.text.trim().isEmpty) {
-                        _message('Bitte alle Pflichtfelder ergänzen.');
-                        return;
-                      }
-                      final created = await _request(
-                          '/api/defect-email-imports/${entry['id']}/process',
-                          method: 'POST',
-                          body: {
-                            'inventoryNumber':
-                                selectedItem!['inventoryNumber'].toString(),
-                            'description': description.text.trim(),
-                            'measuresTaken': measuresTaken.text.trim(),
-                            'operationalSafety': safety,
-                            'contactName': name.text.trim(),
-                            'contactEmail': email.text.trim(),
-                            'contactPhone': phone.text.trim(),
-                          });
-                      if (created != null && dialogContext.mounted) {
-                        _message('E-Mail-Meldung wurde als Mangel angelegt.');
-                        Navigator.pop(dialogContext, true);
-                      }
-                    },
-                    icon: const Icon(Icons.check),
-                    label: const Text('Mangel anlegen')),
+                  onPressed: () async {
+                    if (selectedItem == null ||
+                        description.text.trim().isEmpty ||
+                        safety == null ||
+                        name.text.trim().isEmpty ||
+                        email.text.trim().isEmpty) {
+                      _message('Bitte alle Pflichtfelder ergänzen.');
+                      return;
+                    }
+                    final created = await _request(
+                      '/api/defect-email-imports/${entry['id']}/process',
+                      method: 'POST',
+                      body: {
+                        'inventoryNumber': selectedItem!['inventoryNumber']
+                            .toString(),
+                        'description': description.text.trim(),
+                        'measuresTaken': measuresTaken.text.trim(),
+                        'operationalSafety': safety,
+                        'contactName': name.text.trim(),
+                        'contactEmail': email.text.trim(),
+                        'contactPhone': phone.text.trim(),
+                      },
+                    );
+                    if (created != null && dialogContext.mounted) {
+                      _message('E-Mail-Meldung wurde als Mangel angelegt.');
+                      Navigator.pop(dialogContext, true);
+                    }
+                  },
+                  icon: const Icon(Icons.check),
+                  label: const Text('Mangel anlegen'),
+                ),
             ],
           );
         },
@@ -742,8 +836,11 @@ class _DefectsPageState extends State<DefectsPage> {
   Future<bool> _saveSelected(Map<String, dynamic> payload) async {
     final detail = _selectedDetail;
     if (detail == null) return false;
-    final result = await _request('/api/defects/${detail['id']}',
-        method: 'PUT', body: payload);
+    final result = await _request(
+      '/api/defects/${detail['id']}',
+      method: 'PUT',
+      body: payload,
+    );
     if (result is! Map) return false;
     await _replaceSelected(result);
     if (mounted) _message('Änderungen wurden gespeichert.');
@@ -755,14 +852,17 @@ class _DefectsPageState extends State<DefectsPage> {
     if (detail == null) return;
     final entityType = detail['entityType']?.toString() ?? '';
     final result = await _request(
-        '/api/defects/assignees?entityType=${Uri.encodeQueryComponent(entityType)}');
+      '/api/defects/assignees?entityType=${Uri.encodeQueryComponent(entityType)}',
+    );
     if (result is! List || !mounted) return;
-    final assignees =
-        result.map((entry) => Map<String, dynamic>.from(entry as Map)).toList();
+    final assignees = result
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
     Map<String, dynamic>? payload;
     if (assignToMe) {
-      final currentIsAssignable =
-          assignees.any((entry) => entry['id']?.toString() == _currentUserId);
+      final currentIsAssignable = assignees.any(
+        (entry) => entry['id']?.toString() == _currentUserId,
+      );
       if (!currentIsAssignable) {
         _message('Du kannst für diesen Mängelbereich nicht zugewiesen werden.');
         return;
@@ -776,15 +876,18 @@ class _DefectsPageState extends State<DefectsPage> {
     } else {
       payload = await showDialog<Map<String, dynamic>>(
         context: context,
-        builder: (_) => _DefectAssignmentDialog(
-          defect: detail,
-          assignees: assignees,
-        ),
+        builder: (_) =>
+            _DefectAssignmentDialog(defect: detail, assignees: assignees),
       );
     }
     if (payload == null) return;
-    await _replaceSelected(await _request('/api/defects/${detail['id']}/assign',
-        method: 'POST', body: payload));
+    await _replaceSelected(
+      await _request(
+        '/api/defects/${detail['id']}/assign',
+        method: 'POST',
+        body: payload,
+      ),
+    );
   }
 
   Future<void> _transitionSelected({String? status}) async {
@@ -797,10 +900,13 @@ class _DefectsPageState extends State<DefectsPage> {
       _message('Bitte dokumentiere vor dem Schließen die Behebung.');
       return;
     }
-    await _replaceSelected(await _request(
+    await _replaceSelected(
+      await _request(
         '/api/defects/${detail['id']}/transition',
         method: 'POST',
-        body: {'status': target}));
+        body: {'status': target},
+      ),
+    );
   }
 
   Future<void> _printSelected() async {
@@ -813,16 +919,22 @@ class _DefectsPageState extends State<DefectsPage> {
   Future<void> _addSelectedComment(String value) async {
     final detail = _selectedDetail;
     if (detail == null || value.trim().isEmpty) return;
-    final result = await _request('/api/defects/${detail['id']}/comments',
-        method: 'POST', body: {'text': value.trim()});
+    final result = await _request(
+      '/api/defects/${detail['id']}/comments',
+      method: 'POST',
+      body: {'text': value.trim()},
+    );
     if (result != null) await _refreshSelected();
   }
 
   Future<void> _addSelectedChecklist(String value) async {
     final detail = _selectedDetail;
     if (detail == null || value.trim().isEmpty) return;
-    final result = await _request('/api/defects/${detail['id']}/checklist',
-        method: 'POST', body: {'label': value.trim()});
+    final result = await _request(
+      '/api/defects/${detail['id']}/checklist',
+      method: 'POST',
+      body: {'label': value.trim()},
+    );
     if (result != null) await _refreshSelected();
   }
 
@@ -830,9 +942,10 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/checklist/$itemId',
-        method: 'PATCH',
-        body: {'done': done});
+      '/api/defects/${detail['id']}/checklist/$itemId',
+      method: 'PATCH',
+      body: {'done': done},
+    );
     if (result != null) await _refreshSelected();
   }
 
@@ -848,28 +961,35 @@ class _DefectsPageState extends State<DefectsPage> {
         title: const Text('Folgeaufgabe hinzufügen'),
         content: SizedBox(
           width: 520,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
                 controller: label,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: 'Aufgabe *')),
-            TextField(
+                decoration: const InputDecoration(labelText: 'Aufgabe *'),
+              ),
+              TextField(
                 controller: assignee,
-                decoration: const InputDecoration(labelText: 'Verantwortlich')),
-            DateInputField(controller: dueDate, label: 'Frist'),
-          ]),
+                decoration: const InputDecoration(labelText: 'Verantwortlich'),
+              ),
+              DateInputField(controller: dueDate, label: 'Frist'),
+            ],
+          ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Abbrechen')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, {
-                    'label': label.text.trim(),
-                    'assignee': assignee.text.trim(),
-                    'dueDate': dateInputToIso(dueDate.text),
-                  }),
-              child: const Text('Hinzufügen')),
+            onPressed: () => Navigator.pop(context, {
+              'label': label.text.trim(),
+              'assignee': assignee.text.trim(),
+              'dueDate': dateInputToIso(dueDate.text),
+            }),
+            child: const Text('Hinzufügen'),
+          ),
         ],
       ),
     );
@@ -878,9 +998,10 @@ class _DefectsPageState extends State<DefectsPage> {
     dueDate.dispose();
     if (payload == null || payload['label'].toString().isEmpty) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/follow-up-tasks',
-        method: 'POST',
-        body: payload);
+      '/api/defects/${detail['id']}/follow-up-tasks',
+      method: 'POST',
+      body: payload,
+    );
     if (result != null) await _refreshSelected();
   }
 
@@ -888,9 +1009,10 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/follow-up-tasks/$taskId',
-        method: 'PATCH',
-        body: {'done': done});
+      '/api/defects/${detail['id']}/follow-up-tasks/$taskId',
+      method: 'PATCH',
+      body: {'done': done},
+    );
     if (result != null) await _refreshSelected();
   }
 
@@ -907,39 +1029,48 @@ class _DefectsPageState extends State<DefectsPage> {
           title: const Text('Vorgang verknüpfen'),
           content: SizedBox(
             width: 520,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              DropdownButtonFormField<String>(
-                initialValue: type,
-                decoration: const InputDecoration(labelText: 'Art'),
-                items: const ['Reparatur', 'Beschaffung']
-                    .map((value) =>
-                        DropdownMenuItem(value: value, child: Text(value)))
-                    .toList(),
-                onChanged: (value) =>
-                    setDialogState(() => type = value ?? type),
-              ),
-              TextField(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: type,
+                  decoration: const InputDecoration(labelText: 'Art'),
+                  items: const ['Reparatur', 'Beschaffung']
+                      .map(
+                        (value) =>
+                            DropdownMenuItem(value: value, child: Text(value)),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => type = value ?? type),
+                ),
+                TextField(
                   controller: label,
                   autofocus: true,
-                  decoration:
-                      const InputDecoration(labelText: 'Bezeichnung *')),
-              TextField(
+                  decoration: const InputDecoration(labelText: 'Bezeichnung *'),
+                ),
+                TextField(
                   controller: reference,
                   decoration: const InputDecoration(
-                      labelText: 'Vorgangs-/Referenz-ID')),
-            ]),
+                    labelText: 'Vorgangs-/Referenz-ID',
+                  ),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Abbrechen')),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
             FilledButton(
-                onPressed: () => Navigator.pop(context, {
-                      'type': type,
-                      'label': label.text.trim(),
-                      'referenceId': reference.text.trim(),
-                    }),
-                child: const Text('Verknüpfen')),
+              onPressed: () => Navigator.pop(context, {
+                'type': type,
+                'label': label.text.trim(),
+                'referenceId': reference.text.trim(),
+              }),
+              child: const Text('Verknüpfen'),
+            ),
           ],
         ),
       ),
@@ -948,9 +1079,10 @@ class _DefectsPageState extends State<DefectsPage> {
     reference.dispose();
     if (payload == null || payload['label'].toString().isEmpty) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/related-actions',
-        method: 'POST',
-        body: payload);
+      '/api/defects/${detail['id']}/related-actions',
+      method: 'POST',
+      body: payload,
+    );
     if (result != null) await _refreshSelected();
   }
 
@@ -968,13 +1100,15 @@ class _DefectsPageState extends State<DefectsPage> {
       return;
     }
     final extension = file.name.split('.').last.toLowerCase();
-    final uploaded = await _request('/api/defects/${detail['id']}/images',
-        method: 'POST',
-        body: {
-          'fileName': file.name,
-          'mimeType': extension == 'png' ? 'image/png' : 'image/jpeg',
-          'fileBase64': base64Encode(bytes),
-        });
+    final uploaded = await _request(
+      '/api/defects/${detail['id']}/images',
+      method: 'POST',
+      body: {
+        'fileName': file.name,
+        'mimeType': extension == 'png' ? 'image/png' : 'image/jpeg',
+        'fileBase64': base64Encode(bytes),
+      },
+    );
     if (uploaded != null) await _refreshSelected();
   }
 
@@ -982,8 +1116,9 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/images/$imageId',
-        method: 'DELETE');
+      '/api/defects/${detail['id']}/images/$imageId',
+      method: 'DELETE',
+    );
     if (result != null) await _refreshSelected();
   }
 
@@ -991,17 +1126,19 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) return;
     await _replaceSelected(
-        await _request('/api/defects/${detail['id']}/archive', method: 'POST'));
+      await _request('/api/defects/${detail['id']}/archive', method: 'POST'),
+    );
   }
 
   Future<void> _disposeSelectedWithoutReplacement() async {
     final detail = _selectedDetail;
     if (detail == null) return;
     final quantity = TextEditingController(
-        text: detail['affectedQuantity']?.toString() ?? '1');
+      text: detail['affectedQuantity']?.toString() ?? '1',
+    );
     final reason = TextEditingController(
-        text:
-            'Aussonderung ohne Ersatz wegen Mangel ${detail['defectNumber']}.');
+      text: 'Aussonderung ohne Ersatz wegen Mangel ${detail['defectNumber']}.',
+    );
     final inventoryNumber = detail['inventoryNumber']?.toString() ?? '-';
     final payload = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -1010,39 +1147,53 @@ class _DefectsPageState extends State<DefectsPage> {
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text(
-                  'Inventarnummer: $inventoryNumber\n\nBei vollständiger Aussonderung wird die Inventarnummer freigegeben. Diese Aktion kann nicht rückgängig gemacht werden.'),
-              const SizedBox(height: 12),
-              TextField(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Inventarnummer: $inventoryNumber\n\nBei vollständiger Aussonderung wird die Inventarnummer freigegeben. Diese Aktion kann nicht rückgängig gemacht werden.',
+                ),
+                const SizedBox(height: 12),
+                TextField(
                   controller: quantity,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
-                      labelText: 'Auszusondernde Menge *',
-                      helperText:
-                          'Bei einer Teilmenge bleibt die Inventarnummer belegt.')),
-              TextField(
+                    labelText: 'Auszusondernde Menge *',
+                    helperText:
+                        'Bei einer Teilmenge bleibt die Inventarnummer belegt.',
+                  ),
+                ),
+                TextField(
                   controller: reason,
                   maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Begründung *')),
-            ]),
+                  decoration: const InputDecoration(labelText: 'Begründung *'),
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Abbrechen')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton.icon(
             style: FilledButton.styleFrom(
-                backgroundColor: Colors.red.shade700,
-                foregroundColor: Colors.white),
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () {
               final parsed = num.tryParse(quantity.text.replaceAll(',', '.'));
               if (parsed == null || parsed <= 0 || reason.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
                     content: Text(
-                        'Bitte Menge und Begründung vollständig angeben.')));
+                      'Bitte Menge und Begründung vollständig angeben.',
+                    ),
+                  ),
+                );
                 return;
               }
               Navigator.pop(context, {
@@ -1060,15 +1211,18 @@ class _DefectsPageState extends State<DefectsPage> {
     reason.dispose();
     if (payload == null) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/dispose-without-replacement',
-        method: 'POST',
-        body: payload);
+      '/api/defects/${detail['id']}/dispose-without-replacement',
+      method: 'POST',
+      body: payload,
+    );
     if (result is Map && result['defect'] is Map) {
       final updated = Map<String, dynamic>.from(result['defect'] as Map);
       final disposal = updated['disposal'] as Map?;
-      _message(disposal?['inventoryNumberReleased'] == true
-          ? 'Artikel ausgesondert; Inventarnummer ${disposal?['inventoryNumber'] ?? inventoryNumber} wurde freigegeben.'
-          : 'Teilmenge ausgesondert; die Inventarnummer bleibt belegt.');
+      _message(
+        disposal?['inventoryNumberReleased'] == true
+            ? 'Artikel ausgesondert; Inventarnummer ${disposal?['inventoryNumber'] ?? inventoryNumber} wurde freigegeben.'
+            : 'Teilmenge ausgesondert; die Inventarnummer bleibt belegt.',
+      );
       await _replaceSelected(updated);
     }
   }
@@ -1077,16 +1231,21 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) return;
     final disposalQuantity = TextEditingController(
-        text: detail['affectedQuantity']?.toString() ?? '1');
+      text: detail['affectedQuantity']?.toString() ?? '1',
+    );
     final replacementQuantity = TextEditingController(
-        text: detail['affectedQuantity']?.toString() ?? '1');
-    final budget =
-        TextEditingController(text: detail['estimatedCost']?.toString() ?? '');
+      text: detail['affectedQuantity']?.toString() ?? '1',
+    );
+    final budget = TextEditingController(
+      text: detail['estimatedCost']?.toString() ?? '',
+    );
     final reason = TextEditingController(
-        text:
-            'Ersatzbeschaffung nach Aussonderung wegen Mangel ${detail['defectNumber']}.');
+      text:
+          'Ersatzbeschaffung nach Aussonderung wegen Mangel ${detail['defectNumber']}.',
+    );
     final department = TextEditingController(
-        text: detail['responsibleDepartment']?.toString() ?? '');
+      text: detail['responsibleDepartment']?.toString() ?? '',
+    );
     final costCenter = TextEditingController();
     final desiredDate = TextEditingController();
     final payload = await showDialog<Map<String, dynamic>>(
@@ -1096,52 +1255,73 @@ class _DefectsPageState extends State<DefectsPage> {
         content: SizedBox(
           width: 620,
           child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Text(
-                  'Der Artikel wird ausgesondert und gleichzeitig ein vorbefüllter Beschaffungsentwurf angelegt.'),
-              TextField(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Der Artikel wird ausgesondert und gleichzeitig ein vorbefüllter Beschaffungsentwurf angelegt.',
+                ),
+                TextField(
                   controller: disposalQuantity,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
-                      labelText: 'Auszusondernde Menge *')),
-              TextField(
+                    labelText: 'Auszusondernde Menge *',
+                  ),
+                ),
+                TextField(
                   controller: replacementQuantity,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
-                      labelText: 'Zu beschaffende Ersatzmenge *')),
-              TextField(
+                    labelText: 'Zu beschaffende Ersatzmenge *',
+                  ),
+                ),
+                TextField(
                   controller: budget,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
-                      labelText: 'Beantragtes Bruttobudget (€) *')),
-              TextField(
+                    labelText: 'Beantragtes Bruttobudget (€) *',
+                  ),
+                ),
+                TextField(
                   controller: reason,
                   maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Begründung *')),
-              TextField(
+                  decoration: const InputDecoration(labelText: 'Begründung *'),
+                ),
+                TextField(
                   controller: department,
-                  decoration: const InputDecoration(labelText: 'Fachbereich')),
-              TextField(
+                  decoration: const InputDecoration(labelText: 'Fachbereich'),
+                ),
+                TextField(
                   controller: costCenter,
-                  decoration: const InputDecoration(labelText: 'Kostenstelle')),
-              DateInputField(
-                  controller: desiredDate, label: 'Wunschlieferdatum'),
-            ]),
+                  decoration: const InputDecoration(labelText: 'Kostenstelle'),
+                ),
+                DateInputField(
+                  controller: desiredDate,
+                  label: 'Wunschlieferdatum',
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Abbrechen')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton.icon(
             onPressed: () {
-              final disposal =
-                  num.tryParse(disposalQuantity.text.replaceAll(',', '.'));
-              final replacement =
-                  num.tryParse(replacementQuantity.text.replaceAll(',', '.'));
+              final disposal = num.tryParse(
+                disposalQuantity.text.replaceAll(',', '.'),
+              );
+              final replacement = num.tryParse(
+                replacementQuantity.text.replaceAll(',', '.'),
+              );
               final gross = num.tryParse(budget.text.replaceAll(',', '.'));
               if (disposal == null ||
                   disposal <= 0 ||
@@ -1150,9 +1330,13 @@ class _DefectsPageState extends State<DefectsPage> {
                   gross == null ||
                   gross <= 0 ||
                   reason.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
                     content: Text(
-                        'Bitte Mengen, Bruttobudget und Begründung vollständig angeben.')));
+                      'Bitte Mengen, Bruttobudget und Begründung vollständig angeben.',
+                    ),
+                  ),
+                );
                 return;
               }
               Navigator.pop(context, {
@@ -1184,13 +1368,15 @@ class _DefectsPageState extends State<DefectsPage> {
     }
     if (payload == null) return;
     final result = await _request(
-        '/api/defects/${detail['id']}/dispose-and-procure',
-        method: 'POST',
-        body: payload);
+      '/api/defects/${detail['id']}/dispose-and-procure',
+      method: 'POST',
+      body: payload,
+    );
     if (result is Map && result['defect'] is Map) {
       final request = result['procurementRequest'] as Map?;
       _message(
-          'Artikel ausgesondert; Beschaffungsentwurf ${request?['number'] ?? ''} wurde angelegt.');
+        'Artikel ausgesondert; Beschaffungsentwurf ${request?['number'] ?? ''} wurde angelegt.',
+      );
       await _replaceSelected(result['defect']);
     }
   }
@@ -1216,31 +1402,40 @@ class _DefectsPageState extends State<DefectsPage> {
               builder: (_) => _DefectFormDialog(items: _items, defect: detail),
             );
             if (payload == null) return;
-            await replaceFrom(await _request('/api/defects/${detail['id']}',
-                method: 'PUT', body: payload));
+            await replaceFrom(
+              await _request(
+                '/api/defects/${detail['id']}',
+                method: 'PUT',
+                body: payload,
+              ),
+            );
           }
 
           Future<void> assign() async {
             final entityType = detail['entityType']?.toString() ?? '';
             final result = await _request(
-                '/api/defects/assignees?entityType=${Uri.encodeQueryComponent(entityType)}');
+              '/api/defects/assignees?entityType=${Uri.encodeQueryComponent(entityType)}',
+            );
             if (result is! List || !dialogContext.mounted) return;
             final assignees = result
-                .map((entry) =>
-                    Map<String, dynamic>.from(entry as Map<dynamic, dynamic>))
+                .map(
+                  (entry) =>
+                      Map<String, dynamic>.from(entry as Map<dynamic, dynamic>),
+                )
                 .toList();
             final payload = await showDialog<Map<String, dynamic>>(
               context: dialogContext,
-              builder: (_) => _DefectAssignmentDialog(
-                defect: detail,
-                assignees: assignees,
-              ),
+              builder: (_) =>
+                  _DefectAssignmentDialog(defect: detail, assignees: assignees),
             );
             if (payload != null) {
-              await replaceFrom(await _request(
+              await replaceFrom(
+                await _request(
                   '/api/defects/${detail['id']}/assign',
                   method: 'POST',
-                  body: payload));
+                  body: payload,
+                ),
+              );
             }
           }
 
@@ -1250,13 +1445,17 @@ class _DefectsPageState extends State<DefectsPage> {
             if (target == 'Geprüft/Geschlossen' &&
                 (detail['resolution']?.toString().trim().isEmpty ?? true)) {
               _message(
-                  'Bitte dokumentiere zuerst die Behebung über „Bearbeiten“.');
+                'Bitte dokumentiere zuerst die Behebung über „Bearbeiten“.',
+              );
               return;
             }
-            await replaceFrom(await _request(
+            await replaceFrom(
+              await _request(
                 '/api/defects/${detail['id']}/transition',
                 method: 'POST',
-                body: {'status': target}));
+                body: {'status': target},
+              ),
+            );
           }
 
           Future<void> printReport() async {
@@ -1271,23 +1470,29 @@ class _DefectsPageState extends State<DefectsPage> {
               builder: (context) => AlertDialog(
                 title: const Text('Kommentar hinzufügen'),
                 content: TextField(
-                    controller: controller,
-                    maxLines: 4,
-                    decoration: const InputDecoration(labelText: 'Kommentar')),
+                  controller: controller,
+                  maxLines: 4,
+                  decoration: const InputDecoration(labelText: 'Kommentar'),
+                ),
                 actions: [
                   TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Abbrechen'),
+                  ),
                   FilledButton(
-                      onPressed: () => Navigator.pop(context, controller.text),
-                      child: const Text('Speichern')),
+                    onPressed: () => Navigator.pop(context, controller.text),
+                    child: const Text('Speichern'),
+                  ),
                 ],
               ),
             );
             controller.dispose();
             if (value == null || value.trim().isEmpty) return;
-            await _request('/api/defects/${detail['id']}/comments',
-                method: 'POST', body: {'text': value});
+            await _request(
+              '/api/defects/${detail['id']}/comments',
+              method: 'POST',
+              body: {'text': value},
+            );
             final refreshed = await _request('/api/defects/${detail['id']}');
             await replaceFrom(refreshed);
           }
@@ -1299,22 +1504,28 @@ class _DefectsPageState extends State<DefectsPage> {
               builder: (context) => AlertDialog(
                 title: const Text('Aufgabe hinzufügen'),
                 content: TextField(
-                    controller: controller,
-                    decoration: const InputDecoration(labelText: 'Aufgabe')),
+                  controller: controller,
+                  decoration: const InputDecoration(labelText: 'Aufgabe'),
+                ),
                 actions: [
                   TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Abbrechen'),
+                  ),
                   FilledButton(
-                      onPressed: () => Navigator.pop(context, controller.text),
-                      child: const Text('Hinzufügen')),
+                    onPressed: () => Navigator.pop(context, controller.text),
+                    child: const Text('Hinzufügen'),
+                  ),
                 ],
               ),
             );
             controller.dispose();
             if (value == null || value.trim().isEmpty) return;
-            await _request('/api/defects/${detail['id']}/checklist',
-                method: 'POST', body: {'label': value});
+            await _request(
+              '/api/defects/${detail['id']}/checklist',
+              method: 'POST',
+              body: {'label': value},
+            );
             await replaceFrom(await _request('/api/defects/${detail['id']}'));
           }
 
@@ -1329,37 +1540,50 @@ class _DefectsPageState extends State<DefectsPage> {
                   title: const Text('Vorgang verknüpfen'),
                   content: SizedBox(
                     width: 480,
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      DropdownButtonFormField<String>(
-                        initialValue: type,
-                        decoration: const InputDecoration(labelText: 'Art'),
-                        items: const ['Reparatur', 'Beschaffung']
-                            .map((value) => DropdownMenuItem(
-                                value: value, child: Text(value)))
-                            .toList(),
-                        onChanged: (value) => setState(() => type = value!),
-                      ),
-                      TextField(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: type,
+                          decoration: const InputDecoration(labelText: 'Art'),
+                          items: const ['Reparatur', 'Beschaffung']
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(value),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) => setState(() => type = value!),
+                        ),
+                        TextField(
                           controller: label,
                           decoration: const InputDecoration(
-                              labelText: 'Bezeichnung *')),
-                      TextField(
+                            labelText: 'Bezeichnung *',
+                          ),
+                        ),
+                        TextField(
                           controller: reference,
                           decoration: const InputDecoration(
-                              labelText: 'Vorgangs-/Referenz-ID')),
-                    ]),
+                            labelText: 'Vorgangs-/Referenz-ID',
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   actions: [
                     TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Abbrechen')),
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Abbrechen'),
+                    ),
                     FilledButton(
-                        onPressed: () => Navigator.pop(context, {
-                              'type': type,
-                              'label': label.text.trim(),
-                              'referenceId': reference.text.trim(),
-                            }),
-                        child: const Text('Verknüpfen')),
+                      onPressed: () => Navigator.pop(context, {
+                        'type': type,
+                        'label': label.text.trim(),
+                        'referenceId': reference.text.trim(),
+                      }),
+                      child: const Text('Verknüpfen'),
+                    ),
                   ],
                 ),
               ),
@@ -1367,23 +1591,31 @@ class _DefectsPageState extends State<DefectsPage> {
             label.dispose();
             reference.dispose();
             if (payload == null || payload['label'].toString().isEmpty) return;
-            await _request('/api/defects/${detail['id']}/related-actions',
-                method: 'POST', body: payload);
+            await _request(
+              '/api/defects/${detail['id']}/related-actions',
+              method: 'POST',
+              body: payload,
+            );
             await replaceFrom(await _request('/api/defects/${detail['id']}'));
           }
 
           Future<void> disposeAndProcure() async {
             final disposalQuantity = TextEditingController(
-                text: detail['affectedQuantity']?.toString() ?? '1');
+              text: detail['affectedQuantity']?.toString() ?? '1',
+            );
             final replacementQuantity = TextEditingController(
-                text: detail['affectedQuantity']?.toString() ?? '1');
+              text: detail['affectedQuantity']?.toString() ?? '1',
+            );
             final budget = TextEditingController(
-                text: detail['estimatedCost']?.toString() ?? '');
+              text: detail['estimatedCost']?.toString() ?? '',
+            );
             final reason = TextEditingController(
-                text:
-                    'Ersatzbeschaffung nach Aussonderung wegen Mangel ${detail['defectNumber']}.');
+              text:
+                  'Ersatzbeschaffung nach Aussonderung wegen Mangel ${detail['defectNumber']}.',
+            );
             final department = TextEditingController(
-                text: detail['responsibleDepartment']?.toString() ?? '');
+              text: detail['responsibleDepartment']?.toString() ?? '',
+            );
             final costCenter = TextEditingController();
             final desiredDate = TextEditingController();
             final payload = await showDialog<Map<String, dynamic>>(
@@ -1393,75 +1625,109 @@ class _DefectsPageState extends State<DefectsPage> {
                 content: SizedBox(
                   width: 560,
                   child: SingleChildScrollView(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const Text(
-                          'Der Artikel wird ausgesondert und gleichzeitig ein vorbefüllter Beschaffungsentwurf angelegt.'),
-                      TextField(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Der Artikel wird ausgesondert und gleichzeitig ein vorbefüllter Beschaffungsentwurf angelegt.',
+                        ),
+                        TextField(
                           controller: disposalQuantity,
                           keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
+                            decimal: true,
+                          ),
                           decoration: const InputDecoration(
-                              labelText: 'Auszusondernde Menge *')),
-                      TextField(
+                            labelText: 'Auszusondernde Menge *',
+                          ),
+                        ),
+                        TextField(
                           controller: replacementQuantity,
                           keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
+                            decimal: true,
+                          ),
                           decoration: const InputDecoration(
-                              labelText: 'Zu beschaffende Ersatzmenge *')),
-                      TextField(
+                            labelText: 'Zu beschaffende Ersatzmenge *',
+                          ),
+                        ),
+                        TextField(
                           controller: budget,
                           keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
+                            decimal: true,
+                          ),
                           decoration: const InputDecoration(
-                              labelText: 'Beantragtes Bruttobudget (€) *')),
-                      TextField(
+                            labelText: 'Beantragtes Bruttobudget (€) *',
+                          ),
+                        ),
+                        TextField(
                           controller: reason,
                           maxLines: 3,
-                          decoration:
-                              const InputDecoration(labelText: 'Begründung *')),
-                      TextField(
+                          decoration: const InputDecoration(
+                            labelText: 'Begründung *',
+                          ),
+                        ),
+                        TextField(
                           controller: department,
-                          decoration:
-                              const InputDecoration(labelText: 'Fachbereich')),
-                      TextField(
+                          decoration: const InputDecoration(
+                            labelText: 'Fachbereich',
+                          ),
+                        ),
+                        TextField(
                           controller: costCenter,
-                          decoration:
-                              const InputDecoration(labelText: 'Kostenstelle')),
-                      DateInputField(
-                          controller: desiredDate, label: 'Wunschlieferdatum'),
-                    ]),
+                          decoration: const InputDecoration(
+                            labelText: 'Kostenstelle',
+                          ),
+                        ),
+                        DateInputField(
+                          controller: desiredDate,
+                          label: 'Wunschlieferdatum',
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 actions: [
                   TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Abbrechen'),
+                  ),
                   FilledButton.icon(
                     onPressed: () {
-                      if ((num.tryParse(disposalQuantity.text
-                                      .replaceAll(',', '.')) ??
+                      if ((num.tryParse(
+                                    disposalQuantity.text.replaceAll(',', '.'),
+                                  ) ??
                                   0) <=
                               0 ||
-                          (num.tryParse(replacementQuantity.text
-                                      .replaceAll(',', '.')) ??
+                          (num.tryParse(
+                                    replacementQuantity.text.replaceAll(
+                                      ',',
+                                      '.',
+                                    ),
+                                  ) ??
                                   0) <=
                               0 ||
                           (num.tryParse(budget.text.replaceAll(',', '.')) ??
                                   0) <=
                               0 ||
                           reason.text.trim().isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
                             content: Text(
-                                'Bitte Mengen, Bruttobudget und Begründung vollständig angeben.')));
+                              'Bitte Mengen, Bruttobudget und Begründung vollständig angeben.',
+                            ),
+                          ),
+                        );
                         return;
                       }
                       Navigator.pop(context, {
                         'disposalQuantity': num.parse(
-                            disposalQuantity.text.replaceAll(',', '.')),
+                          disposalQuantity.text.replaceAll(',', '.'),
+                        ),
                         'replacementQuantity': num.parse(
-                            replacementQuantity.text.replaceAll(',', '.')),
-                        'requestedBudgetGross':
-                            num.parse(budget.text.replaceAll(',', '.')),
+                          replacementQuantity.text.replaceAll(',', '.'),
+                        ),
+                        'requestedBudgetGross': num.parse(
+                          budget.text.replaceAll(',', '.'),
+                        ),
                         'reason': reason.text.trim(),
                         'department': department.text.trim(),
                         'costCenter': costCenter.text.trim(),
@@ -1487,23 +1753,27 @@ class _DefectsPageState extends State<DefectsPage> {
             }
             if (payload == null) return;
             final result = await _request(
-                '/api/defects/${detail['id']}/dispose-and-procure',
-                method: 'POST',
-                body: payload);
+              '/api/defects/${detail['id']}/dispose-and-procure',
+              method: 'POST',
+              body: payload,
+            );
             if (result is Map && result['defect'] is Map) {
               final request = result['procurementRequest'] as Map?;
               _message(
-                  'Artikel ausgesondert; Beschaffungsentwurf ${request?['number'] ?? ''} wurde angelegt.');
+                'Artikel ausgesondert; Beschaffungsentwurf ${request?['number'] ?? ''} wurde angelegt.',
+              );
               await replaceFrom(result['defect']);
             }
           }
 
           Future<void> disposeWithoutReplacement() async {
             final disposalQuantity = TextEditingController(
-                text: detail['affectedQuantity']?.toString() ?? '1');
+              text: detail['affectedQuantity']?.toString() ?? '1',
+            );
             final reason = TextEditingController(
-                text:
-                    'Aussonderung ohne Ersatz wegen Mangel ${detail['defectNumber']}.');
+              text:
+                  'Aussonderung ohne Ersatz wegen Mangel ${detail['defectNumber']}.',
+            );
             final inventoryNumber =
                 detail['inventoryNumber']?.toString() ?? '-';
             final payload = await showDialog<Map<String, dynamic>>(
@@ -1512,39 +1782,54 @@ class _DefectsPageState extends State<DefectsPage> {
                 title: const Text('Aussondern ohne Ersatz'),
                 content: SizedBox(
                   width: 520,
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Text(
-                        'Inventarnummer: $inventoryNumber\n\nBei vollständiger Aussonderung wird die Inventarnummer freigegeben und kann automatisch oder manuell für einen neuen Artikel verwendet werden. Die Aussonderung kann nicht rückgängig gemacht werden.'),
-                    const SizedBox(height: 12),
-                    TextField(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Inventarnummer: $inventoryNumber\n\nBei vollständiger Aussonderung wird die Inventarnummer freigegeben und kann automatisch oder manuell für einen neuen Artikel verwendet werden. Die Aussonderung kann nicht rückgängig gemacht werden.',
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
                         controller: disposalQuantity,
                         keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
+                          decimal: true,
+                        ),
                         decoration: const InputDecoration(
-                            labelText: 'Auszusondernde Menge *',
-                            helperText:
-                                'Bei einer Teilmenge bleibt die Inventarnummer belegt.')),
-                    TextField(
+                          labelText: 'Auszusondernde Menge *',
+                          helperText:
+                              'Bei einer Teilmenge bleibt die Inventarnummer belegt.',
+                        ),
+                      ),
+                      TextField(
                         controller: reason,
                         maxLines: 3,
-                        decoration:
-                            const InputDecoration(labelText: 'Begründung *')),
-                  ]),
+                        decoration: const InputDecoration(
+                          labelText: 'Begründung *',
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 actions: [
                   TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Abbrechen'),
+                  ),
                   FilledButton.icon(
                     onPressed: () {
                       final quantity = num.tryParse(
-                          disposalQuantity.text.replaceAll(',', '.'));
+                        disposalQuantity.text.replaceAll(',', '.'),
+                      );
                       if (quantity == null ||
                           quantity <= 0 ||
                           reason.text.trim().isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
                             content: Text(
-                                'Bitte Menge und Begründung vollständig angeben.')));
+                              'Bitte Menge und Begründung vollständig angeben.',
+                            ),
+                          ),
+                        );
                         return;
                       }
                       Navigator.pop(context, {
@@ -1553,8 +1838,9 @@ class _DefectsPageState extends State<DefectsPage> {
                       });
                     },
                     style: FilledButton.styleFrom(
-                        backgroundColor: Colors.red.shade700,
-                        foregroundColor: Colors.white),
+                      backgroundColor: Colors.red.shade700,
+                      foregroundColor: Colors.white,
+                    ),
                     icon: const Icon(Icons.delete_forever),
                     label: const Text('Endgültig aussondern'),
                   ),
@@ -1565,19 +1851,23 @@ class _DefectsPageState extends State<DefectsPage> {
             reason.dispose();
             if (payload == null) return;
             final result = await _request(
-                '/api/defects/${detail['id']}/dispose-without-replacement',
-                method: 'POST',
-                body: payload);
+              '/api/defects/${detail['id']}/dispose-without-replacement',
+              method: 'POST',
+              body: payload,
+            );
             if (result is Map && result['defect'] is Map) {
-              final updated =
-                  Map<String, dynamic>.from(result['defect'] as Map);
+              final updated = Map<String, dynamic>.from(
+                result['defect'] as Map,
+              );
               final disposal = updated['disposal'] as Map?;
               if (disposal?['inventoryNumberReleased'] == true) {
                 _message(
-                    'Artikel ausgesondert; Inventarnummer ${disposal?['inventoryNumber'] ?? inventoryNumber} wurde freigegeben.');
+                  'Artikel ausgesondert; Inventarnummer ${disposal?['inventoryNumber'] ?? inventoryNumber} wurde freigegeben.',
+                );
               } else {
                 _message(
-                    'Teilmenge ausgesondert; die Inventarnummer bleibt bis zur vollständigen Aussonderung belegt.');
+                  'Teilmenge ausgesondert; die Inventarnummer bleibt bis zur vollständigen Aussonderung belegt.',
+                );
               }
               await replaceFrom(updated);
             }
@@ -1593,29 +1883,38 @@ class _DefectsPageState extends State<DefectsPage> {
                 title: const Text('Folgeaufgabe hinzufügen'),
                 content: SizedBox(
                   width: 480,
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    TextField(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
                         controller: label,
-                        decoration:
-                            const InputDecoration(labelText: 'Aufgabe *')),
-                    TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'Aufgabe *',
+                        ),
+                      ),
+                      TextField(
                         controller: assignee,
-                        decoration:
-                            const InputDecoration(labelText: 'Verantwortlich')),
-                    DateInputField(controller: dueDate, label: 'Frist'),
-                  ]),
+                        decoration: const InputDecoration(
+                          labelText: 'Verantwortlich',
+                        ),
+                      ),
+                      DateInputField(controller: dueDate, label: 'Frist'),
+                    ],
+                  ),
                 ),
                 actions: [
                   TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Abbrechen'),
+                  ),
                   FilledButton(
-                      onPressed: () => Navigator.pop(context, {
-                            'label': label.text.trim(),
-                            'assignee': assignee.text.trim(),
-                            'dueDate': dateInputToIso(dueDate.text),
-                          }),
-                      child: const Text('Hinzufügen')),
+                    onPressed: () => Navigator.pop(context, {
+                      'label': label.text.trim(),
+                      'assignee': assignee.text.trim(),
+                      'dueDate': dateInputToIso(dueDate.text),
+                    }),
+                    child: const Text('Hinzufügen'),
+                  ),
                 ],
               ),
             );
@@ -1623,8 +1922,11 @@ class _DefectsPageState extends State<DefectsPage> {
             assignee.dispose();
             dueDate.dispose();
             if (payload == null || payload['label'].toString().isEmpty) return;
-            await _request('/api/defects/${detail['id']}/follow-up-tasks',
-                method: 'POST', body: payload);
+            await _request(
+              '/api/defects/${detail['id']}/follow-up-tasks',
+              method: 'POST',
+              body: payload,
+            );
             await replaceFrom(await _request('/api/defects/${detail['id']}'));
           }
 
@@ -1640,13 +1942,15 @@ class _DefectsPageState extends State<DefectsPage> {
               return;
             }
             final extension = file.name.split('.').last.toLowerCase();
-            await _request('/api/defects/${detail['id']}/images',
-                method: 'POST',
-                body: {
-                  'fileName': file.name,
-                  'mimeType': extension == 'png' ? 'image/png' : 'image/jpeg',
-                  'fileBase64': base64Encode(bytes),
-                });
+            await _request(
+              '/api/defects/${detail['id']}/images',
+              method: 'POST',
+              body: {
+                'fileName': file.name,
+                'mimeType': extension == 'png' ? 'image/png' : 'image/jpeg',
+                'fileBase64': base64Encode(bytes),
+              },
+            );
             await replaceFrom(await _request('/api/defects/${detail['id']}'));
           }
 
@@ -1656,12 +1960,15 @@ class _DefectsPageState extends State<DefectsPage> {
           final comments = (detail['comments'] as List? ?? const []).reversed;
           final relatedActions =
               (detail['relatedActions'] as List? ?? const []).reversed;
-          final followUps = (detail['followUpTasks'] as List? ?? const [])
-              .map((entry) => Map<String, dynamic>.from(entry as Map));
-          final images = (detail['images'] as List? ?? const [])
-              .map((entry) => Map<String, dynamic>.from(entry as Map));
-          final documents = (detail['documents'] as List? ?? const [])
-              .map((entry) => Map<String, dynamic>.from(entry as Map));
+          final followUps = (detail['followUpTasks'] as List? ?? const []).map(
+            (entry) => Map<String, dynamic>.from(entry as Map),
+          );
+          final images = (detail['images'] as List? ?? const []).map(
+            (entry) => Map<String, dynamic>.from(entry as Map),
+          );
+          final documents = (detail['documents'] as List? ?? const []).map(
+            (entry) => Map<String, dynamic>.from(entry as Map),
+          );
           final history = (detail['history'] as List? ?? const []).reversed;
           final archived = detail['archivedAt'] != null;
           final compactDialog = MediaQuery.sizeOf(context).width < 1050;
@@ -1672,7 +1979,8 @@ class _DefectsPageState extends State<DefectsPage> {
             shape: compactDialog
                 ? const RoundedRectangleBorder()
                 : const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(28))),
+                    borderRadius: BorderRadius.all(Radius.circular(28)),
+                  ),
             title: Text('${detail['defectNumber']} · ${detail['title']}'),
             content: SizedBox(
               width: compactDialog ? double.maxFinite : 800,
@@ -1683,194 +1991,257 @@ class _DefectsPageState extends State<DefectsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Wrap(spacing: 8, runSpacing: 8, children: [
-                      Chip(label: Text(detail['status']?.toString() ?? '')),
-                      Chip(label: Text(detail['priority']?.toString() ?? '')),
-                      Chip(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        Chip(label: Text(detail['status']?.toString() ?? '')),
+                        Chip(label: Text(detail['priority']?.toString() ?? '')),
+                        Chip(
                           label: Text(
-                              '${detail['entityName']} · ${detail['inventoryNumber'] ?? '-'}')),
-                      Chip(
-                          label:
-                              Text('Menge ${detail['affectedQuantity'] ?? 1}')),
-                    ]),
+                            '${detail['entityName']} · ${detail['inventoryNumber'] ?? '-'}',
+                          ),
+                        ),
+                        Chip(
+                          label: Text(
+                            'Menge ${detail['affectedQuantity'] ?? 1}',
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     Text(detail['description']?.toString() ?? ''),
                     const Divider(height: 28),
                     _facts(detail),
                     const SizedBox(height: 16),
-                    Wrap(spacing: 8, runSpacing: 8, children: [
-                      OutlinedButton.icon(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
                           onPressed: printReport,
                           icon: const Icon(Icons.print_outlined),
-                          label: const Text('Mängelmeldung drucken')),
-                      if (!archived) ...[
-                        if (_can('defects.edit'))
-                          OutlinedButton.icon(
+                          label: const Text('Mängelmeldung drucken'),
+                        ),
+                        if (!archived) ...[
+                          if (_can('defects.edit'))
+                            OutlinedButton.icon(
                               onPressed: edit,
                               icon: const Icon(Icons.edit),
-                              label: const Text('Bearbeiten')),
-                        if (_can('defects.assign'))
-                          OutlinedButton.icon(
+                              label: const Text('Bearbeiten'),
+                            ),
+                          if (_can('defects.assign'))
+                            OutlinedButton.icon(
                               onPressed: assign,
                               icon: const Icon(Icons.person_add),
-                              label: const Text('Zuweisen')),
-                        if (_can('defects.edit') &&
-                            detail['disposal'] == null &&
-                            ((detail['entityType'] == 'MaterialItem' &&
-                                    _can('inventory.write')) ||
-                                (detail['entityType'] == 'ClothingItem' &&
-                                    _can('clothing.write'))))
-                          OutlinedButton.icon(
+                              label: const Text('Zuweisen'),
+                            ),
+                          if (_can('defects.edit') &&
+                              detail['disposal'] == null &&
+                              ((detail['entityType'] == 'MaterialItem' &&
+                                      _can('inventory.write')) ||
+                                  (detail['entityType'] == 'ClothingItem' &&
+                                      _can('clothing.write'))))
+                            OutlinedButton.icon(
                               onPressed: disposeWithoutReplacement,
                               icon: const Icon(Icons.delete_forever),
-                              label: const Text('Aussondern ohne Ersatz')),
-                        if (_can('defects.edit') &&
-                            _can('procurement.request') &&
-                            detail['disposal'] == null &&
-                            ((detail['entityType'] == 'MaterialItem' &&
-                                    _can('inventory.write')) ||
-                                (detail['entityType'] == 'ClothingItem' &&
-                                    _can('clothing.write'))))
-                          FilledButton.icon(
+                              label: const Text('Aussondern ohne Ersatz'),
+                            ),
+                          if (_can('defects.edit') &&
+                              _can('procurement.request') &&
+                              detail['disposal'] == null &&
+                              ((detail['entityType'] == 'MaterialItem' &&
+                                      _can('inventory.write')) ||
+                                  (detail['entityType'] == 'ClothingItem' &&
+                                      _can('clothing.write'))))
+                            FilledButton.icon(
                               onPressed: disposeAndProcure,
                               icon: const Icon(Icons.delete_sweep),
-                              label:
-                                  const Text('Aussondern & Ersatz beschaffen')),
-                        if (_nextStatus.containsKey(detail['status']))
-                          FilledButton.icon(
+                              label: const Text(
+                                'Aussondern & Ersatz beschaffen',
+                              ),
+                            ),
+                          if (_nextStatus.containsKey(detail['status']))
+                            FilledButton.icon(
                               onPressed: transition,
                               icon: const Icon(Icons.arrow_forward),
                               label: Text(
-                                  'Weiter: ${_nextStatus[detail['status']]}')),
-                        if (detail['status'] == 'Geprüft/Geschlossen' &&
-                            _can('defects.edit'))
-                          OutlinedButton(
-                              onPressed: () async => replaceFrom(await _request(
+                                'Weiter: ${_nextStatus[detail['status']]}',
+                              ),
+                            ),
+                          if (detail['status'] == 'Geprüft/Geschlossen' &&
+                              _can('defects.edit'))
+                            OutlinedButton(
+                              onPressed: () async => replaceFrom(
+                                await _request(
                                   '/api/defects/${detail['id']}/transition',
                                   method: 'POST',
-                                  body: {'status': 'Neu'})),
-                              child: const Text('Wieder öffnen')),
+                                  body: {'status': 'Neu'},
+                                ),
+                              ),
+                              child: const Text('Wieder öffnen'),
+                            ),
+                        ],
                       ],
-                    ]),
+                    ),
                     const Divider(height: 28),
-                    Row(children: [
-                      Text('Checkliste',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const Spacer(),
-                      if (!archived && _can('defects.edit'))
-                        IconButton(
+                    Row(
+                      children: [
+                        Text(
+                          'Checkliste',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        if (!archived && _can('defects.edit'))
+                          IconButton(
                             onPressed: addChecklist,
                             tooltip: 'Aufgabe hinzufügen',
-                            icon: const Icon(Icons.add_task)),
-                    ]),
+                            icon: const Icon(Icons.add_task),
+                          ),
+                      ],
+                    ),
                     if (checklist.isEmpty) const Text('Keine Aufgaben.'),
-                    ...checklist.map((item) => CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: item['done'] == true,
-                          title: Text(item['label']?.toString() ?? ''),
-                          onChanged: archived || !_can('defects.edit')
-                              ? null
-                              : (value) async {
+                    ...checklist.map(
+                      (item) => CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: item['done'] == true,
+                        title: Text(item['label']?.toString() ?? ''),
+                        onChanged: archived || !_can('defects.edit')
+                            ? null
+                            : (value) async {
+                                await _request(
+                                  '/api/defects/${detail['id']}/checklist/${item['id']}',
+                                  method: 'PATCH',
+                                  body: {'done': value == true},
+                                );
+                                await replaceFrom(
                                   await _request(
-                                      '/api/defects/${detail['id']}/checklist/${item['id']}',
-                                      method: 'PATCH',
-                                      body: {'done': value == true});
-                                  await replaceFrom(await _request(
-                                      '/api/defects/${detail['id']}'));
-                                },
-                        )),
-                    Row(children: [
-                      Text('Verknüpfte Vorgänge',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const Spacer(),
-                      if (!archived && _can('defects.edit'))
-                        IconButton(
+                                    '/api/defects/${detail['id']}',
+                                  ),
+                                );
+                              },
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Text(
+                          'Verknüpfte Vorgänge',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        if (!archived && _can('defects.edit'))
+                          IconButton(
                             onPressed: addRelatedAction,
                             tooltip:
                                 'Reparatur oder bestehende Beschaffung verknüpfen',
-                            icon: const Icon(Icons.link)),
-                    ]),
+                            icon: const Icon(Icons.link),
+                          ),
+                      ],
+                    ),
                     if (relatedActions.isEmpty)
                       const Text('Keine Vorgänge verknüpft.'),
-                    ...relatedActions.map((entry) => ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.link),
-                          title: Text('${entry['type']} · ${entry['label']}'),
-                          subtitle: entry['referenceId'] == null
-                              ? null
-                              : Text('Referenz: ${entry['referenceId']}'),
-                        )),
-                    Row(children: [
-                      Text('Folgeaufgaben',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const Spacer(),
-                      if (!archived && _can('defects.edit'))
-                        IconButton(
+                    ...relatedActions.map(
+                      (entry) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.link),
+                        title: Text('${entry['type']} · ${entry['label']}'),
+                        subtitle: entry['referenceId'] == null
+                            ? null
+                            : Text('Referenz: ${entry['referenceId']}'),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Text(
+                          'Folgeaufgaben',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        if (!archived && _can('defects.edit'))
+                          IconButton(
                             onPressed: addFollowUp,
                             tooltip: 'Folgeaufgabe hinzufügen',
-                            icon: const Icon(Icons.playlist_add)),
-                    ]),
+                            icon: const Icon(Icons.playlist_add),
+                          ),
+                      ],
+                    ),
                     if (followUps.isEmpty) const Text('Keine Folgeaufgaben.'),
-                    ...followUps.map((task) => CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: task['done'] == true,
-                          title: Text(task['label']?.toString() ?? ''),
-                          subtitle: Text([
-                            task['assignee'],
-                            task['dueDate'] == null
-                                ? null
-                                : 'Frist ${task['dueDate']}'
-                          ]
+                    ...followUps.map(
+                      (task) => CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: task['done'] == true,
+                        title: Text(task['label']?.toString() ?? ''),
+                        subtitle: Text(
+                          [
+                                task['assignee'],
+                                task['dueDate'] == null
+                                    ? null
+                                    : 'Frist ${task['dueDate']}',
+                              ]
                               .whereType<String>()
                               .where((v) => v.isNotEmpty)
-                              .join(' · ')),
-                          onChanged: archived || !_can('defects.edit')
-                              ? null
-                              : (value) async {
+                              .join(' · '),
+                        ),
+                        onChanged: archived || !_can('defects.edit')
+                            ? null
+                            : (value) async {
+                                await _request(
+                                  '/api/defects/${detail['id']}/follow-up-tasks/${task['id']}',
+                                  method: 'PATCH',
+                                  body: {'done': value == true},
+                                );
+                                await replaceFrom(
                                   await _request(
-                                      '/api/defects/${detail['id']}/follow-up-tasks/${task['id']}',
-                                      method: 'PATCH',
-                                      body: {'done': value == true});
-                                  await replaceFrom(await _request(
-                                      '/api/defects/${detail['id']}'));
-                                },
-                        )),
+                                    '/api/defects/${detail['id']}',
+                                  ),
+                                );
+                              },
+                      ),
+                    ),
                     if (documents.isNotEmpty) ...[
-                      Text('Mängelbericht',
-                          style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        'Mängelbericht',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: documents
-                            .map((document) => ActionChip(
-                                  avatar:
-                                      const Icon(Icons.description_outlined),
-                                  label: Text(
-                                      document['fileName']?.toString() ?? ''),
-                                  onPressed: document['fileBase64'] == null
-                                      ? null
-                                      : () => _saveDownloadPayload({
-                                            'fileName': document['fileName'],
-                                            'mimeType': document['mimeType'],
-                                            'fileBase64':
-                                                document['fileBase64'],
-                                          }),
-                                ))
+                            .map(
+                              (document) => ActionChip(
+                                avatar: const Icon(Icons.description_outlined),
+                                label: Text(
+                                  document['fileName']?.toString() ?? '',
+                                ),
+                                onPressed: document['fileBase64'] == null
+                                    ? null
+                                    : () => _saveDownloadPayload({
+                                        'fileName': document['fileName'],
+                                        'mimeType': document['mimeType'],
+                                        'fileBase64': document['fileBase64'],
+                                      }),
+                              ),
+                            )
                             .toList(),
                       ),
                       const SizedBox(height: 16),
                     ],
-                    Row(children: [
-                      Text('Bilder (${images.length}/10)',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const Spacer(),
-                      if (!archived && _can('defects.edit'))
-                        IconButton(
+                    Row(
+                      children: [
+                        Text(
+                          'Bilder (${images.length}/10)',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        if (!archived && _can('defects.edit'))
+                          IconButton(
                             onPressed: addImage,
                             tooltip: 'JPEG/PNG hinzufügen',
-                            icon: const Icon(Icons.add_photo_alternate)),
-                    ]),
+                            icon: const Icon(Icons.add_photo_alternate),
+                          ),
+                      ],
+                    ),
                     if (images.isEmpty) const Text('Keine Bilder.'),
                     Wrap(
                       spacing: 8,
@@ -1881,49 +2252,70 @@ class _DefectsPageState extends State<DefectsPage> {
                             : base64Decode(image['fileBase64'].toString());
                         return SizedBox(
                           width: 150,
-                          child: Column(children: [
-                            if (bytes.isNotEmpty)
-                              Image.memory(bytes,
+                          child: Column(
+                            children: [
+                              if (bytes.isNotEmpty)
+                                Image.memory(
+                                  bytes,
                                   height: 100,
                                   width: 150,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) =>
-                                      const Icon(Icons.broken_image, size: 64)),
-                            Text(image['fileName']?.toString() ?? '',
-                                overflow: TextOverflow.ellipsis),
-                          ]),
+                                  errorBuilder: (_, _, _) =>
+                                      const Icon(Icons.broken_image, size: 64),
+                                ),
+                              Text(
+                                image['fileName']?.toString() ?? '',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
                         );
                       }).toList(),
                     ),
                     const Divider(height: 28),
-                    Row(children: [
-                      Text('Kommentare',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const Spacer(),
-                      if (!archived && _can('defects.edit'))
-                        IconButton(
+                    Row(
+                      children: [
+                        Text(
+                          'Kommentare',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        if (!archived && _can('defects.edit'))
+                          IconButton(
                             onPressed: addComment,
-                            icon: const Icon(Icons.add_comment)),
-                    ]),
+                            icon: const Icon(Icons.add_comment),
+                          ),
+                      ],
+                    ),
                     if (comments.isEmpty) const Text('Keine Kommentare.'),
-                    ...comments.map((entry) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(entry['text']?.toString() ?? ''),
-                          subtitle: Text(
-                              '${entry['author'] ?? '-'} · ${_formatDateTime(entry['createdAt'])}'),
-                        )),
+                    ...comments.map(
+                      (entry) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(entry['text']?.toString() ?? ''),
+                        subtitle: Text(
+                          '${entry['author'] ?? '-'} · ${_formatDateTime(entry['createdAt'])}',
+                        ),
+                      ),
+                    ),
                     const Divider(height: 28),
-                    Text('Änderungsverlauf',
-                        style: Theme.of(context).textTheme.titleMedium),
-                    ...history.map((entry) => ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(entry['details']?.toString() ??
+                    Text(
+                      'Änderungsverlauf',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    ...history.map(
+                      (entry) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          entry['details']?.toString() ??
                               entry['action']?.toString() ??
-                              ''),
-                          subtitle: Text(
-                              '${entry['actor'] ?? '-'} · ${_formatDateTime(entry['at'])}'),
-                        )),
+                              '',
+                        ),
+                        subtitle: Text(
+                          '${entry['actor'] ?? '-'} · ${_formatDateTime(entry['at'])}',
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1933,17 +2325,20 @@ class _DefectsPageState extends State<DefectsPage> {
                   detail['status'] == 'Geprüft/Geschlossen' &&
                   _can('defects.archive'))
                 TextButton.icon(
-                    onPressed: () async {
-                      final result = await _request(
-                          '/api/defects/${detail['id']}/archive',
-                          method: 'POST');
-                      await replaceFrom(result);
-                    },
-                    icon: const Icon(Icons.archive),
-                    label: const Text('Archivieren')),
+                  onPressed: () async {
+                    final result = await _request(
+                      '/api/defects/${detail['id']}/archive',
+                      method: 'POST',
+                    );
+                    await replaceFrom(result);
+                  },
+                  icon: const Icon(Icons.archive),
+                  label: const Text('Archivieren'),
+                ),
               TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Schließen')),
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Schließen'),
+              ),
             ],
           );
         },
@@ -1970,8 +2365,9 @@ class _DefectsPageState extends State<DefectsPage> {
       'Geschätzte Kosten': defect['estimatedCost'] == null
           ? null
           : '${defect['estimatedCost']} €',
-      'Tatsächliche Kosten':
-          defect['actualCost'] == null ? null : '${defect['actualCost']} €',
+      'Tatsächliche Kosten': defect['actualCost'] == null
+          ? null
+          : '${defect['actualCost']} €',
       'Behebung': defect['resolution'],
       'Prüfung': defect['linkedInspectionId'],
       'Wiederholung von': defect['recurrenceOfId'],
@@ -1979,29 +2375,34 @@ class _DefectsPageState extends State<DefectsPage> {
       'Aussonderung': disposal == null
           ? null
           : disposal['mode'] == 'without-replacement'
-              ? 'Ohne Ersatz'
-              : 'Mit Ersatzbeschaffung',
+          ? 'Ohne Ersatz'
+          : 'Mit Ersatzbeschaffung',
       'Aussonderungsgrund': disposal?['reason'],
       'Inventarnummer freigegeben': disposal == null
           ? null
           : disposal['inventoryNumberReleased'] == true
-              ? 'Ja · ${disposal['inventoryNumber'] ?? '-'}'
-              : 'Nein (Teilaussonderung)',
+          ? 'Ja · ${disposal['inventoryNumber'] ?? '-'}'
+          : 'Nein (Teilaussonderung)',
     }..removeWhere((_, value) => value == null || value.toString().isEmpty);
     return Wrap(
       spacing: 24,
       runSpacing: 12,
       children: values.entries
-          .map((entry) => SizedBox(
-                width: 230,
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(entry.key,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      Text(entry.value.toString()),
-                    ]),
-              ))
+          .map(
+            (entry) => SizedBox(
+              width: 230,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.key,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text(entry.value.toString()),
+                ],
+              ),
+            ),
+          )
           .toList(),
     );
   }
@@ -2014,19 +2415,21 @@ class _DefectsPageState extends State<DefectsPage> {
   }
 
   Color _priorityColor(String value) => switch (value) {
-        'Kritisch' => Colors.red,
-        'Hoch' => Colors.deepOrange,
-        'Niedrig' => Colors.blueGrey,
-        _ => Colors.amber.shade800,
-      };
+    'Kritisch' => Colors.red,
+    'Hoch' => Colors.deepOrange,
+    'Niedrig' => Colors.blueGrey,
+    _ => Colors.amber.shade800,
+  };
 
   @override
   Widget build(BuildContext context) {
-    final unread =
-        _notifications.where((entry) => entry['readAt'] == null).length;
+    final unread = _notifications
+        .where((entry) => entry['readAt'] == null)
+        .length;
     final filteredDefects = _filtered;
-    final pendingEmailCount =
-        _emailImports.where((entry) => entry['status'] == 'pending').length;
+    final pendingEmailCount = _emailImports
+        .where((entry) => entry['status'] == 'pending')
+        .length;
     var openDefectCount = 0;
     var defectsInProgressCount = 0;
     for (final defect in _defects) {
@@ -2067,14 +2470,16 @@ class _DefectsPageState extends State<DefectsPage> {
             isLabelVisible: unread > 0,
             label: Text('$unread'),
             child: IconButton(
-                onPressed: _showNotifications,
-                tooltip: 'Benachrichtigungen',
-                icon: const Icon(Icons.notifications_outlined)),
+              onPressed: _showNotifications,
+              tooltip: 'Benachrichtigungen',
+              icon: const Icon(Icons.notifications_outlined),
+            ),
           ),
           IconButton(
-              onPressed: _load,
-              tooltip: 'Aktualisieren',
-              icon: const Icon(Icons.refresh)),
+            onPressed: _load,
+            tooltip: 'Aktualisieren',
+            icon: const Icon(Icons.refresh),
+          ),
         ],
       ),
       body: _loading
@@ -2089,76 +2494,111 @@ class _DefectsPageState extends State<DefectsPage> {
                   compact: !wide,
                 );
                 if (!wide) {
-                  return Column(children: [
-                    controls,
-                    Expanded(
-                      child: RefreshIndicator(
-                        onRefresh: _load,
-                        child: filteredDefects.isEmpty
-                            ? ListView(children: const [
-                                SizedBox(height: 100),
-                                Center(child: Text('Keine Mängel gefunden.')),
-                              ])
-                            : ListView.builder(
-                                padding:
-                                    const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                                itemCount: filteredDefects.length,
-                                itemBuilder: (_, index) => _defectListEntry(
-                                  filteredDefects[index],
-                                  selected: false,
-                                  dense: false,
+                  return Column(
+                    children: [
+                      controls,
+                      Expanded(
+                        child: RefreshIndicator(
+                          onRefresh: _load,
+                          child: filteredDefects.isEmpty
+                              ? ListView(
+                                  children: const [
+                                    SizedBox(height: 100),
+                                    Center(
+                                      child: Text('Keine Mängel gefunden.'),
+                                    ),
+                                  ],
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    4,
+                                    12,
+                                    24,
+                                  ),
+                                  itemCount: filteredDefects.length,
+                                  itemBuilder: (_, index) => _defectListEntry(
+                                    filteredDefects[index],
+                                    selected: false,
+                                    dense: false,
+                                  ),
                                 ),
-                              ),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                final listWidth = (constraints.maxWidth * .34).clamp(
+                  390.0,
+                  540.0,
+                );
+                return Column(
+                  children: [
+                    controls,
+                    const Divider(height: 1),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: listWidth,
+                            child: Column(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    12,
+                                    12,
+                                    8,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        '${filteredDefects.length} Mängel',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                      const Spacer(),
+                                      const Text('Auswahl öffnen'),
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  child: filteredDefects.isEmpty
+                                      ? const Center(
+                                          child: Text('Keine Mängel gefunden.'),
+                                        )
+                                      : ListView.builder(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            10,
+                                            0,
+                                            10,
+                                            20,
+                                          ),
+                                          itemCount: filteredDefects.length,
+                                          itemBuilder: (_, index) {
+                                            final defect =
+                                                filteredDefects[index];
+                                            return _defectListEntry(
+                                              defect,
+                                              selected:
+                                                  defect['id']?.toString() ==
+                                                  _selectedDefectId,
+                                              dense: true,
+                                            );
+                                          },
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const VerticalDivider(width: 1),
+                          Expanded(child: _buildSelectedWorkspace()),
+                        ],
                       ),
                     ),
-                  ]);
-                }
-                final listWidth =
-                    (constraints.maxWidth * .34).clamp(390.0, 540.0);
-                return Column(children: [
-                  controls,
-                  const Divider(height: 1),
-                  Expanded(
-                    child: Row(children: [
-                      SizedBox(
-                        width: listWidth,
-                        child: Column(children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
-                            child: Row(children: [
-                              Text('${filteredDefects.length} Mängel',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              const Spacer(),
-                              const Text('Auswahl öffnen'),
-                            ]),
-                          ),
-                          Expanded(
-                            child: filteredDefects.isEmpty
-                                ? const Center(
-                                    child: Text('Keine Mängel gefunden.'))
-                                : ListView.builder(
-                                    padding: const EdgeInsets.fromLTRB(
-                                        10, 0, 10, 20),
-                                    itemCount: filteredDefects.length,
-                                    itemBuilder: (_, index) {
-                                      final defect = filteredDefects[index];
-                                      return _defectListEntry(
-                                        defect,
-                                        selected: defect['id']?.toString() ==
-                                            _selectedDefectId,
-                                        dense: true,
-                                      );
-                                    },
-                                  ),
-                          ),
-                        ]),
-                      ),
-                      const VerticalDivider(width: 1),
-                      Expanded(child: _buildSelectedWorkspace()),
-                    ]),
-                  ),
-                ]);
+                  ],
+                );
               },
             ),
     );
@@ -2192,12 +2632,20 @@ class _DefectsPageState extends State<DefectsPage> {
                 }),
               ),
             ),
-            _filter('Status', ['Alle', ..._statuses], _status,
-                (value) => _changeFilter(() => _status = value),
-                width: compact ? 170 : 180),
-            _filter('Priorität', ['Alle', ..._priorities], _priority,
-                (value) => _changeFilter(() => _priority = value),
-                width: compact ? 150 : 165),
+            _filter(
+              'Status',
+              ['Alle', ..._statuses],
+              _status,
+              (value) => _changeFilter(() => _status = value),
+              width: compact ? 170 : 180,
+            ),
+            _filter(
+              'Priorität',
+              ['Alle', ..._priorities],
+              _priority,
+              (value) => _changeFilter(() => _priority = value),
+              width: compact ? 150 : 165,
+            ),
             _filter(
               'Bereich',
               const ['Alle', 'MaterialItem', 'ClothingItem'],
@@ -2262,7 +2710,8 @@ class _DefectsPageState extends State<DefectsPage> {
         content: const SizedBox(
           width: 560,
           child: SelectableText(
-              'Ausgefüllten Bericht als PDF, PNG oder JPEG zusammen mit optionalen Schadensbildern an maengel@materialkompass.org senden.'),
+            'Ausgefüllten Bericht als PDF, PNG oder JPEG zusammen mit optionalen Schadensbildern an maengel@materialkompass.org senden.',
+          ),
         ),
         actions: [
           TextButton.icon(
@@ -2282,15 +2731,19 @@ class _DefectsPageState extends State<DefectsPage> {
             label: const Text('Prüfwarteschlange'),
           ),
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Schließen')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Schließen'),
+          ),
         ],
       ),
     );
   }
 
-  Widget _defectListEntry(Map<String, dynamic> defect,
-      {required bool selected, required bool dense}) {
+  Widget _defectListEntry(
+    Map<String, dynamic> defect, {
+    required bool selected,
+    required bool dense,
+  }) {
     final dueDate = defect['dueDate']?.toString();
     final assignee = defect['assignee']?.toString() ?? '';
     return Card(
@@ -2303,7 +2756,9 @@ class _DefectsPageState extends State<DefectsPage> {
         dense: dense,
         selected: selected,
         contentPadding: EdgeInsets.symmetric(
-            horizontal: dense ? 12 : 16, vertical: dense ? 2 : 6),
+          horizontal: dense ? 12 : 16,
+          vertical: dense ? 2 : 6,
+        ),
         leading: Container(
           width: 5,
           height: dense ? 48 : 58,
@@ -2320,15 +2775,17 @@ class _DefectsPageState extends State<DefectsPage> {
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 4),
-          child: Text([
-            '${defect['entityName']} · ${defect['inventoryNumber'] ?? '-'}',
+          child: Text(
             [
-              defect['status'],
-              defect['priority'],
-              if (assignee.isNotEmpty) assignee,
-              if (dueDate != null && dueDate.isNotEmpty) 'Frist $dueDate',
-            ].whereType<Object>().join(' · '),
-          ].join('\n')),
+              '${defect['entityName']} · ${defect['inventoryNumber'] ?? '-'}',
+              [
+                defect['status'],
+                defect['priority'],
+                if (assignee.isNotEmpty) assignee,
+                if (dueDate != null && dueDate.isNotEmpty) 'Frist $dueDate',
+              ].whereType<Object>().join(' · '),
+            ].join('\n'),
+          ),
         ),
         isThreeLine: true,
         trailing: defect['archivedAt'] == null
@@ -2346,22 +2803,25 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) {
       return const Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.touch_app_outlined, size: 48),
-          SizedBox(height: 12),
-          Text('Wähle einen Mangel aus.'),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.touch_app_outlined, size: 48),
+            SizedBox(height: 12),
+            Text('Wähle einen Mangel aus.'),
+          ],
+        ),
       );
     }
     final canWriteEntity =
         (detail['entityType'] == 'MaterialItem' && _can('inventory.write')) ||
-            (detail['entityType'] == 'ClothingItem' && _can('clothing.write'));
+        (detail['entityType'] == 'ClothingItem' && _can('clothing.write'));
     final nextStatus = _nextStatus[detail['status']];
     final canTransition = nextStatus == null
         ? false
         : ['Behoben', 'Geprüft/Geschlossen'].contains(nextStatus)
-            ? _can('defects.close')
-            : _can('defects.edit');
+        ? _can('defects.close')
+        : _can('defects.edit');
     return _DefectDetailWorkspace(
       key: ValueKey(detail['id']),
       defect: detail,
@@ -2394,9 +2854,14 @@ class _DefectsPageState extends State<DefectsPage> {
     );
   }
 
-  Widget _filter(String label, List<String> values, String selected,
-      ValueChanged<String> changed,
-      {Map<String, String> labels = const {}, double width = 190}) {
+  Widget _filter(
+    String label,
+    List<String> values,
+    String selected,
+    ValueChanged<String> changed, {
+    Map<String, String> labels = const {},
+    double width = 190,
+  }) {
     return SizedBox(
       width: width,
       child: DropdownButtonFormField<String>(
@@ -2405,10 +2870,15 @@ class _DefectsPageState extends State<DefectsPage> {
         isExpanded: true,
         decoration: InputDecoration(labelText: label, isDense: true),
         items: values
-            .map((value) => DropdownMenuItem(
+            .map(
+              (value) => DropdownMenuItem(
                 value: value,
-                child: Text(labels[value] ?? value,
-                    overflow: TextOverflow.ellipsis)))
+                child: Text(
+                  labels[value] ?? value,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            )
             .toList(),
         onChanged: (value) {
           if (value != null) changed(value);
@@ -2556,466 +3026,627 @@ class _DefectDetailWorkspaceState extends State<_DefectDetailWorkspace> {
     final nextStatus = _nextStatus[defect['status']];
     final disposalAvailable = defect['disposal'] == null;
 
-    return Column(children: [
-      Material(
-        color: Theme.of(context).colorScheme.surface,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 16, 12),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${defect['defectNumber']} · ${defect['title']}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      const SizedBox(height: 6),
-                      Wrap(spacing: 7, runSpacing: 6, children: [
-                        Chip(
-                            visualDensity: VisualDensity.compact,
-                            label: Text(defect['status']?.toString() ?? '-')),
-                        Chip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: const Icon(Icons.flag_outlined, size: 17),
-                            label: Text(defect['priority']?.toString() ?? '-')),
-                        Chip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: const Icon(Icons.inventory_2_outlined,
-                                size: 17),
-                            label: Text(
-                                '${defect['entityName']} · ${defect['inventoryNumber'] ?? '-'}')),
-                        if (archived)
-                          const Chip(
-                              visualDensity: VisualDensity.compact,
-                              avatar: Icon(Icons.archive_outlined, size: 17),
-                              label: Text('Archiviert')),
-                      ]),
-                    ]),
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'Weitere Aktionen',
-                onSelected: (value) {
-                  switch (value) {
-                    case 'print':
-                      widget.onPrint();
-                    case 'related':
-                      widget.onAddRelatedAction();
-                    case 'dispose':
-                      widget.onDisposeWithoutReplacement();
-                    case 'procure':
-                      widget.onDisposeAndProcure();
-                    case 'archive':
-                      widget.onArchive();
-                    case 'reopen':
-                      widget.onReopen();
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                      value: 'print',
-                      child: ListTile(
-                          leading: Icon(Icons.print_outlined),
-                          title: Text('Mängelmeldung drucken'))),
-                  if (!archived && widget.canEdit)
-                    const PopupMenuItem(
-                        value: 'related',
-                        child: ListTile(
-                            leading: Icon(Icons.link),
-                            title: Text('Vorgang verknüpfen'))),
-                  if (!archived && widget.canDispose && disposalAvailable)
-                    const PopupMenuItem(
-                        value: 'dispose',
-                        child: ListTile(
-                            leading: Icon(Icons.delete_forever),
-                            title: Text('Aussondern ohne Ersatz'))),
-                  if (!archived && widget.canProcure && disposalAvailable)
-                    const PopupMenuItem(
-                        value: 'procure',
-                        child: ListTile(
-                            leading: Icon(Icons.delete_sweep),
-                            title: Text('Aussondern & Ersatz beschaffen'))),
-                  if (!archived &&
-                      defect['status'] == 'Geprüft/Geschlossen' &&
-                      widget.canEdit)
-                    const PopupMenuItem(
-                        value: 'reopen', child: Text('Wieder öffnen')),
-                  if (!archived &&
-                      defect['status'] == 'Geprüft/Geschlossen' &&
-                      widget.canArchive)
-                    const PopupMenuItem(
-                        value: 'archive', child: Text('Archivieren')),
-                ],
-              ),
-            ]),
-            if (!archived) ...[
-              const SizedBox(height: 10),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                if (nextStatus != null && widget.canTransition)
-                  FilledButton.icon(
-                    onPressed: widget.onTransition,
-                    icon: const Icon(Icons.arrow_forward),
-                    label: Text('Weiter: $nextStatus'),
-                  ),
-                if (widget.canAssign) ...[
-                  OutlinedButton.icon(
-                    onPressed: widget.onAssignToMe,
-                    icon: const Icon(Icons.how_to_reg_outlined),
-                    label: const Text('Mir zuweisen'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: widget.onAssign,
-                    icon: const Icon(Icons.person_add_alt),
-                    label: const Text('Zuweisung & Frist'),
-                  ),
-                ],
-                if (widget.canEdit)
-                  OutlinedButton.icon(
-                    onPressed: () => setState(() => editing = true),
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Bearbeiten'),
-                  ),
-              ]),
-            ],
-          ]),
-        ),
-      ),
-      const Divider(height: 1),
-      Expanded(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
-          child: LayoutBuilder(builder: (context, constraints) {
-            final twoColumns = constraints.maxWidth >= 760;
-            final overview = _WorkspaceSection(
-              title: 'Überblick',
-              icon: Icons.subject_outlined,
-              child: Column(
+    return Column(
+      children: [
+        Material(
+          color: Theme.of(context).colorScheme.surface,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(defect['description']?.toString() ?? '-'),
-                    const SizedBox(height: 16),
-                    _DefectsPageState._facts(defect),
-                  ]),
-            );
-            final work = Column(children: [
-              _WorkspaceSection(
-                title: 'Laufende Bearbeitung',
-                icon: Icons.construction_outlined,
-                trailing: !archived && widget.canEdit
-                    ? IconButton(
-                        tooltip: 'Folgeaufgabe hinzufügen',
-                        onPressed: widget.onAddFollowUp,
-                        icon: const Icon(Icons.playlist_add))
-                    : null,
-                child: Column(children: [
-                  _CompactFact(
-                      label: 'Verantwortlich',
-                      value:
-                          defect['assignee']?.toString() ?? 'Nicht zugewiesen'),
-                  _CompactFact(
-                      label: 'Fachbereich',
-                      value:
-                          defect['responsibleDepartment']?.toString() ?? '-'),
-                  _CompactFact(
-                      label: 'Frist',
-                      value: defect['dueDate']?.toString() ?? '-'),
-                  const Divider(),
-                  if (followUps.isEmpty)
-                    const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Keine Folgeaufgaben.')),
-                  ...followUps.map((task) => CheckboxListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        value: task['done'] == true,
-                        title: Text(task['label']?.toString() ?? ''),
-                        subtitle: Text([
-                          task['assignee'],
-                          task['dueDate'] == null
-                              ? null
-                              : 'Frist ${task['dueDate']}'
-                        ]
-                            .whereType<String>()
-                            .where((value) => value.isNotEmpty)
-                            .join(' · ')),
-                        onChanged: archived || !widget.canEdit
-                            ? null
-                            : (value) => widget.onToggleFollowUp(
-                                task['id'].toString(), value == true),
-                      )),
-                ]),
-              ),
-              const SizedBox(height: 14),
-              _WorkspaceSection(
-                title: 'Checkliste',
-                icon: Icons.checklist_outlined,
-                child: Column(children: [
-                  if (checklistItems.isEmpty)
-                    const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Keine Aufgaben.')),
-                  ...checklistItems.map((item) => CheckboxListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        value: item['done'] == true,
-                        title: Text(item['label']?.toString() ?? ''),
-                        onChanged: archived || !widget.canEdit
-                            ? null
-                            : (value) => widget.onToggleChecklist(
-                                item['id'].toString(), value == true),
-                      )),
-                  if (!archived && widget.canEdit)
-                    Row(children: [
-                      Expanded(
-                        child: TextField(
-                          controller: checklist,
-                          onSubmitted: (_) => _submitChecklist(),
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            labelText: 'Neue Aufgabe',
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${defect['defectNumber']} · ${defect['title']}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.headlineSmall,
                           ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Aufgabe hinzufügen',
-                        onPressed: addingChecklist ? null : _submitChecklist,
-                        icon: addingChecklist
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.add_task),
-                      ),
-                    ]),
-                ]),
-              ),
-            ]);
-            return Column(children: [
-              if (twoColumns)
-                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(flex: 6, child: overview),
-                  const SizedBox(width: 14),
-                  Expanded(flex: 4, child: work),
-                ])
-              else ...[
-                overview,
-                const SizedBox(height: 14),
-                work,
-              ],
-              const SizedBox(height: 14),
-              _WorkspaceSection(
-                title: 'Kommentare',
-                icon: Icons.forum_outlined,
-                child: Column(children: [
-                  if (!archived && widget.canEdit)
-                    Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                      Expanded(
-                        child: TextField(
-                          controller: comment,
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: const InputDecoration(
-                              labelText: 'Kommentar hinzufügen'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.icon(
-                        onPressed: sendingComment ? null : _submitComment,
-                        icon: sendingComment
-                            ? const SizedBox.square(
-                                dimension: 17,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.send),
-                        label: const Text('Senden'),
-                      ),
-                    ]),
-                  if (comments.isEmpty)
-                    const Padding(
-                        padding: EdgeInsets.only(top: 10),
-                        child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text('Keine Kommentare.'))),
-                  ...comments.map((entry) => ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(entry['text']?.toString() ?? ''),
-                        subtitle: Text(
-                            '${entry['author'] ?? '-'} · ${widget.formatDateTime(entry['createdAt'])}'),
-                      )),
-                ]),
-              ),
-              const SizedBox(height: 14),
-              _WorkspaceSection(
-                title: 'Verknüpfte Vorgänge',
-                icon: Icons.link,
-                trailing: !archived && widget.canEdit
-                    ? IconButton(
-                        onPressed: widget.onAddRelatedAction,
-                        tooltip: 'Vorgang verknüpfen',
-                        icon: const Icon(Icons.add_link))
-                    : null,
-                child: related.isEmpty
-                    ? const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Keine Vorgänge verknüpft.'))
-                    : Column(
-                        children: related
-                            .map((entry) => ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: const Icon(Icons.link),
-                                  title: Text(
-                                      '${entry['type']} · ${entry['label']}'),
-                                  subtitle: entry['referenceId'] == null
-                                      ? null
-                                      : Text(
-                                          'Referenz: ${entry['referenceId']}'),
-                                ))
-                            .toList(),
-                      ),
-              ),
-              const SizedBox(height: 14),
-              Card(
-                clipBehavior: Clip.antiAlias,
-                child: ExpansionTile(
-                  leading: const Icon(Icons.photo_library_outlined),
-                  title: Text(
-                      'Bilder & Dokumente (${images.length + documents.length})'),
-                  childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  children: [
-                    if (!archived && widget.canEdit)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: OutlinedButton.icon(
-                          onPressed:
-                              images.length >= 10 ? null : widget.onAddImage,
-                          icon: const Icon(Icons.add_photo_alternate_outlined),
-                          label: const Text('Bild hinzufügen'),
-                        ),
-                      ),
-                    if (images.isEmpty && documents.isEmpty)
-                      const Text('Keine Bilder oder Dokumente.'),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: images.map((image) {
-                        final bytes = image['fileBase64'] == null
-                            ? Uint8List(0)
-                            : base64Decode(image['fileBase64'].toString());
-                        return SizedBox(
-                          width: 170,
-                          child: Card(
-                            child: Column(children: [
-                              if (bytes.isNotEmpty)
-                                Image.memory(bytes,
-                                    height: 110,
-                                    width: 170,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>
-                                        const SizedBox(
-                                            height: 110,
-                                            child: Icon(Icons.broken_image,
-                                                size: 48))),
-                              Row(children: [
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(left: 8),
-                                    child: Text(
-                                        image['fileName']?.toString() ?? '',
-                                        overflow: TextOverflow.ellipsis),
-                                  ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 6,
+                            children: [
+                              Chip(
+                                visualDensity: VisualDensity.compact,
+                                label: Text(
+                                  defect['status']?.toString() ?? '-',
                                 ),
-                                if (!archived && widget.canEdit)
-                                  IconButton(
-                                    tooltip: 'Bild löschen',
-                                    onPressed: () async {
-                                      final confirmed = await showDialog<bool>(
-                                        context: context,
-                                        builder: (context) => AlertDialog(
-                                          title: const Text('Bild löschen?'),
-                                          content: Text(
-                                              '${image['fileName'] ?? 'Dieses Bild'} wird dauerhaft entfernt.'),
-                                          actions: [
-                                            TextButton(
-                                                onPressed: () => Navigator.pop(
-                                                    context, false),
-                                                child: const Text('Abbrechen')),
-                                            FilledButton(
-                                                onPressed: () => Navigator.pop(
-                                                    context, true),
-                                                child: const Text('Löschen')),
-                                          ],
-                                        ),
-                                      );
-                                      if (confirmed == true) {
-                                        widget.onDeleteImage(
-                                            image['id'].toString());
-                                      }
-                                    },
-                                    icon: const Icon(Icons.delete_outline),
+                              ),
+                              Chip(
+                                visualDensity: VisualDensity.compact,
+                                avatar: const Icon(
+                                  Icons.flag_outlined,
+                                  size: 17,
+                                ),
+                                label: Text(
+                                  defect['priority']?.toString() ?? '-',
+                                ),
+                              ),
+                              Chip(
+                                visualDensity: VisualDensity.compact,
+                                avatar: const Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 17,
+                                ),
+                                label: Text(
+                                  '${defect['entityName']} · ${defect['inventoryNumber'] ?? '-'}',
+                                ),
+                              ),
+                              if (archived)
+                                const Chip(
+                                  visualDensity: VisualDensity.compact,
+                                  avatar: Icon(
+                                    Icons.archive_outlined,
+                                    size: 17,
                                   ),
-                              ]),
-                            ]),
+                                  label: Text('Archiviert'),
+                                ),
+                            ],
                           ),
-                        );
-                      }).toList(),
-                    ),
-                    if (documents.isNotEmpty) ...[
-                      const Divider(),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: documents
-                            .map((document) => ActionChip(
-                                  avatar:
-                                      const Icon(Icons.description_outlined),
-                                  label: Text(
-                                      document['fileName']?.toString() ?? ''),
-                                  onPressed: document['fileBase64'] == null
-                                      ? null
-                                      : () => widget.onDownload({
-                                            'fileName': document['fileName'],
-                                            'mimeType': document['mimeType'],
-                                            'fileBase64':
-                                                document['fileBase64'],
-                                          }),
-                                ))
-                            .toList(),
+                        ],
                       ),
-                    ],
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Weitere Aktionen',
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'print':
+                            widget.onPrint();
+                          case 'related':
+                            widget.onAddRelatedAction();
+                          case 'dispose':
+                            widget.onDisposeWithoutReplacement();
+                          case 'procure':
+                            widget.onDisposeAndProcure();
+                          case 'archive':
+                            widget.onArchive();
+                          case 'reopen':
+                            widget.onReopen();
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'print',
+                          child: ListTile(
+                            leading: Icon(Icons.print_outlined),
+                            title: Text('Mängelmeldung drucken'),
+                          ),
+                        ),
+                        if (!archived && widget.canEdit)
+                          const PopupMenuItem(
+                            value: 'related',
+                            child: ListTile(
+                              leading: Icon(Icons.link),
+                              title: Text('Vorgang verknüpfen'),
+                            ),
+                          ),
+                        if (!archived && widget.canDispose && disposalAvailable)
+                          const PopupMenuItem(
+                            value: 'dispose',
+                            child: ListTile(
+                              leading: Icon(Icons.delete_forever),
+                              title: Text('Aussondern ohne Ersatz'),
+                            ),
+                          ),
+                        if (!archived && widget.canProcure && disposalAvailable)
+                          const PopupMenuItem(
+                            value: 'procure',
+                            child: ListTile(
+                              leading: Icon(Icons.delete_sweep),
+                              title: Text('Aussondern & Ersatz beschaffen'),
+                            ),
+                          ),
+                        if (!archived &&
+                            defect['status'] == 'Geprüft/Geschlossen' &&
+                            widget.canEdit)
+                          const PopupMenuItem(
+                            value: 'reopen',
+                            child: Text('Wieder öffnen'),
+                          ),
+                        if (!archived &&
+                            defect['status'] == 'Geprüft/Geschlossen' &&
+                            widget.canArchive)
+                          const PopupMenuItem(
+                            value: 'archive',
+                            child: Text('Archivieren'),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 10),
-              Card(
-                clipBehavior: Clip.antiAlias,
-                child: ExpansionTile(
-                  leading: const Icon(Icons.history),
-                  title: Text('Änderungsverlauf (${history.length})'),
-                  childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  children: history
-                      .map((entry) => ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(entry['details']?.toString() ??
-                                entry['action']?.toString() ??
-                                ''),
-                            subtitle: Text(
-                                '${entry['actor'] ?? '-'} · ${widget.formatDateTime(entry['at'])}'),
-                          ))
-                      .toList(),
-                ),
-              ),
-            ]);
-          }),
+                if (!archived) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (nextStatus != null && widget.canTransition)
+                        FilledButton.icon(
+                          onPressed: widget.onTransition,
+                          icon: const Icon(Icons.arrow_forward),
+                          label: Text('Weiter: $nextStatus'),
+                        ),
+                      if (widget.canAssign) ...[
+                        OutlinedButton.icon(
+                          onPressed: widget.onAssignToMe,
+                          icon: const Icon(Icons.how_to_reg_outlined),
+                          label: const Text('Mir zuweisen'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: widget.onAssign,
+                          icon: const Icon(Icons.person_add_alt),
+                          label: const Text('Zuweisung & Frist'),
+                        ),
+                      ],
+                      if (widget.canEdit)
+                        OutlinedButton.icon(
+                          onPressed: () => setState(() => editing = true),
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Bearbeiten'),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
-      ),
-    ]);
+        const Divider(height: 1),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final twoColumns = constraints.maxWidth >= 760;
+                final overview = _WorkspaceSection(
+                  title: 'Überblick',
+                  icon: Icons.subject_outlined,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(defect['description']?.toString() ?? '-'),
+                      const SizedBox(height: 16),
+                      _DefectsPageState._facts(defect),
+                    ],
+                  ),
+                );
+                final work = Column(
+                  children: [
+                    _WorkspaceSection(
+                      title: 'Laufende Bearbeitung',
+                      icon: Icons.construction_outlined,
+                      trailing: !archived && widget.canEdit
+                          ? IconButton(
+                              tooltip: 'Folgeaufgabe hinzufügen',
+                              onPressed: widget.onAddFollowUp,
+                              icon: const Icon(Icons.playlist_add),
+                            )
+                          : null,
+                      child: Column(
+                        children: [
+                          _CompactFact(
+                            label: 'Verantwortlich',
+                            value:
+                                defect['assignee']?.toString() ??
+                                'Nicht zugewiesen',
+                          ),
+                          _CompactFact(
+                            label: 'Fachbereich',
+                            value:
+                                defect['responsibleDepartment']?.toString() ??
+                                '-',
+                          ),
+                          _CompactFact(
+                            label: 'Frist',
+                            value: defect['dueDate']?.toString() ?? '-',
+                          ),
+                          const Divider(),
+                          if (followUps.isEmpty)
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text('Keine Folgeaufgaben.'),
+                            ),
+                          ...followUps.map(
+                            (task) => CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              value: task['done'] == true,
+                              title: Text(task['label']?.toString() ?? ''),
+                              subtitle: Text(
+                                [
+                                      task['assignee'],
+                                      task['dueDate'] == null
+                                          ? null
+                                          : 'Frist ${task['dueDate']}',
+                                    ]
+                                    .whereType<String>()
+                                    .where((value) => value.isNotEmpty)
+                                    .join(' · '),
+                              ),
+                              onChanged: archived || !widget.canEdit
+                                  ? null
+                                  : (value) => widget.onToggleFollowUp(
+                                      task['id'].toString(),
+                                      value == true,
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _WorkspaceSection(
+                      title: 'Checkliste',
+                      icon: Icons.checklist_outlined,
+                      child: Column(
+                        children: [
+                          if (checklistItems.isEmpty)
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text('Keine Aufgaben.'),
+                            ),
+                          ...checklistItems.map(
+                            (item) => CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              value: item['done'] == true,
+                              title: Text(item['label']?.toString() ?? ''),
+                              onChanged: archived || !widget.canEdit
+                                  ? null
+                                  : (value) => widget.onToggleChecklist(
+                                      item['id'].toString(),
+                                      value == true,
+                                    ),
+                            ),
+                          ),
+                          if (!archived && widget.canEdit)
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: checklist,
+                                    onSubmitted: (_) => _submitChecklist(),
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      labelText: 'Neue Aufgabe',
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Aufgabe hinzufügen',
+                                  onPressed: addingChecklist
+                                      ? null
+                                      : _submitChecklist,
+                                  icon: addingChecklist
+                                      ? const SizedBox.square(
+                                          dimension: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.add_task),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+                return Column(
+                  children: [
+                    if (twoColumns)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 6, child: overview),
+                          const SizedBox(width: 14),
+                          Expanded(flex: 4, child: work),
+                        ],
+                      )
+                    else ...[
+                      overview,
+                      const SizedBox(height: 14),
+                      work,
+                    ],
+                    const SizedBox(height: 14),
+                    _WorkspaceSection(
+                      title: 'Kommentare',
+                      icon: Icons.forum_outlined,
+                      child: Column(
+                        children: [
+                          if (!archived && widget.canEdit)
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: comment,
+                                    minLines: 1,
+                                    maxLines: 4,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Kommentar hinzufügen',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton.icon(
+                                  onPressed: sendingComment
+                                      ? null
+                                      : _submitComment,
+                                  icon: sendingComment
+                                      ? const SizedBox.square(
+                                          dimension: 17,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.send),
+                                  label: const Text('Senden'),
+                                ),
+                              ],
+                            ),
+                          if (comments.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 10),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text('Keine Kommentare.'),
+                              ),
+                            ),
+                          ...comments.map(
+                            (entry) => ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(entry['text']?.toString() ?? ''),
+                              subtitle: Text(
+                                '${entry['author'] ?? '-'} · ${widget.formatDateTime(entry['createdAt'])}',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _WorkspaceSection(
+                      title: 'Verknüpfte Vorgänge',
+                      icon: Icons.link,
+                      trailing: !archived && widget.canEdit
+                          ? IconButton(
+                              onPressed: widget.onAddRelatedAction,
+                              tooltip: 'Vorgang verknüpfen',
+                              icon: const Icon(Icons.add_link),
+                            )
+                          : null,
+                      child: related.isEmpty
+                          ? const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text('Keine Vorgänge verknüpft.'),
+                            )
+                          : Column(
+                              children: related
+                                  .map(
+                                    (entry) => ListTile(
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      leading: const Icon(Icons.link),
+                                      title: Text(
+                                        '${entry['type']} · ${entry['label']}',
+                                      ),
+                                      subtitle: entry['referenceId'] == null
+                                          ? null
+                                          : Text(
+                                              'Referenz: ${entry['referenceId']}',
+                                            ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                    ),
+                    const SizedBox(height: 14),
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: ExpansionTile(
+                        leading: const Icon(Icons.photo_library_outlined),
+                        title: Text(
+                          'Bilder & Dokumente (${images.length + documents.length})',
+                        ),
+                        childrenPadding: const EdgeInsets.fromLTRB(
+                          16,
+                          0,
+                          16,
+                          16,
+                        ),
+                        children: [
+                          if (!archived && widget.canEdit)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: OutlinedButton.icon(
+                                onPressed: images.length >= 10
+                                    ? null
+                                    : widget.onAddImage,
+                                icon: const Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                ),
+                                label: const Text('Bild hinzufügen'),
+                              ),
+                            ),
+                          if (images.isEmpty && documents.isEmpty)
+                            const Text('Keine Bilder oder Dokumente.'),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: images.map((image) {
+                              final bytes = image['fileBase64'] == null
+                                  ? Uint8List(0)
+                                  : base64Decode(
+                                      image['fileBase64'].toString(),
+                                    );
+                              return SizedBox(
+                                width: 170,
+                                child: Card(
+                                  child: Column(
+                                    children: [
+                                      if (bytes.isNotEmpty)
+                                        Image.memory(
+                                          bytes,
+                                          height: 110,
+                                          width: 170,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, _, _) =>
+                                              const SizedBox(
+                                                height: 110,
+                                                child: Icon(
+                                                  Icons.broken_image,
+                                                  size: 48,
+                                                ),
+                                              ),
+                                        ),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(
+                                                left: 8,
+                                              ),
+                                              child: Text(
+                                                image['fileName']?.toString() ??
+                                                    '',
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ),
+                                          if (!archived && widget.canEdit)
+                                            IconButton(
+                                              tooltip: 'Bild löschen',
+                                              onPressed: () async {
+                                                final confirmed =
+                                                    await showDialog<bool>(
+                                                      context: context,
+                                                      builder: (context) => AlertDialog(
+                                                        title: const Text(
+                                                          'Bild löschen?',
+                                                        ),
+                                                        content: Text(
+                                                          '${image['fileName'] ?? 'Dieses Bild'} wird dauerhaft entfernt.',
+                                                        ),
+                                                        actions: [
+                                                          TextButton(
+                                                            onPressed: () =>
+                                                                Navigator.pop(
+                                                                  context,
+                                                                  false,
+                                                                ),
+                                                            child: const Text(
+                                                              'Abbrechen',
+                                                            ),
+                                                          ),
+                                                          FilledButton(
+                                                            onPressed: () =>
+                                                                Navigator.pop(
+                                                                  context,
+                                                                  true,
+                                                                ),
+                                                            child: const Text(
+                                                              'Löschen',
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    );
+                                                if (confirmed == true) {
+                                                  widget.onDeleteImage(
+                                                    image['id'].toString(),
+                                                  );
+                                                }
+                                              },
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          if (documents.isNotEmpty) ...[
+                            const Divider(),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: documents
+                                  .map(
+                                    (document) => ActionChip(
+                                      avatar: const Icon(
+                                        Icons.description_outlined,
+                                      ),
+                                      label: Text(
+                                        document['fileName']?.toString() ?? '',
+                                      ),
+                                      onPressed: document['fileBase64'] == null
+                                          ? null
+                                          : () => widget.onDownload({
+                                              'fileName': document['fileName'],
+                                              'mimeType': document['mimeType'],
+                                              'fileBase64':
+                                                  document['fileBase64'],
+                                            }),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: ExpansionTile(
+                        leading: const Icon(Icons.history),
+                        title: Text('Änderungsverlauf (${history.length})'),
+                        childrenPadding: const EdgeInsets.fromLTRB(
+                          16,
+                          0,
+                          16,
+                          16,
+                        ),
+                        children: history
+                            .map(
+                              (entry) => ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  entry['details']?.toString() ??
+                                      entry['action']?.toString() ??
+                                      '',
+                                ),
+                                subtitle: Text(
+                                  '${entry['actor'] ?? '-'} · ${widget.formatDateTime(entry['at'])}',
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -3034,24 +3665,31 @@ class _WorkspaceSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
               Icon(icon, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                  child: Text(title,
-                      style: Theme.of(context).textTheme.titleMedium)),
-              if (trailing != null) trailing!,
-            ]),
-            const Divider(),
-            child,
-          ]),
-        ),
-      );
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+          const Divider(),
+          child,
+        ],
+      ),
+    ),
+  );
 }
 
 class _CompactFact extends StatelessWidget {
@@ -3062,15 +3700,21 @@ class _CompactFact extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SizedBox(
-              width: 120,
-              child: Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w600))),
-          Expanded(child: Text(value)),
-        ]),
-      );
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 120,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        Expanded(child: Text(value)),
+      ],
+    ),
+  );
 }
 
 class _DefectInlineEditor extends StatefulWidget {
@@ -3135,14 +3779,14 @@ class _DefectInlineEditorState extends State<_DefectInlineEditor> {
   }
 
   Map<String, dynamic> _payload() => {
-        for (final entry in fields.entries)
-          entry.key: entry.key == 'dueDate'
-              ? dateInputToIso(entry.value.text)
-              : entry.value.text.trim(),
-        'priority': priority,
-        'riskLevel': risk,
-        'operationalSafety': operationalSafety,
-      };
+    for (final entry in fields.entries)
+      entry.key: entry.key == 'dueDate'
+          ? dateInputToIso(entry.value.text)
+          : entry.value.text.trim(),
+    'priority': priority,
+    'riskLevel': risk,
+    'operationalSafety': operationalSafety,
+  };
 
   Future<void> _save() async {
     if (saving || formKey.currentState?.validate() != true) return;
@@ -3151,8 +3795,13 @@ class _DefectInlineEditorState extends State<_DefectInlineEditor> {
     if (mounted && !saved) setState(() => saving = false);
   }
 
-  TextFormField _field(String name, String label,
-      {int maxLines = 1, TextInputType? keyboardType, bool required = false}) {
+  TextFormField _field(
+    String name,
+    String label, {
+    int maxLines = 1,
+    TextInputType? keyboardType,
+    bool required = false,
+  }) {
     return TextFormField(
       controller: fields[name],
       maxLines: maxLines,
@@ -3160,14 +3809,18 @@ class _DefectInlineEditorState extends State<_DefectInlineEditor> {
       decoration: InputDecoration(labelText: label),
       validator: required
           ? (value) => value == null || value.trim().isEmpty
-              ? '$label ist erforderlich.'
-              : null
+                ? '$label ist erforderlich.'
+                : null
           : null,
     );
   }
 
-  Widget _dropdown(String label, String value, List<String> values,
-      ValueChanged<String> changed) {
+  Widget _dropdown(
+    String label,
+    String value,
+    List<String> values,
+    ValueChanged<String> changed,
+  ) {
     return DropdownButtonFormField<String>(
       initialValue: value,
       decoration: InputDecoration(labelText: label),
@@ -3191,140 +3844,212 @@ class _DefectInlineEditorState extends State<_DefectInlineEditor> {
         autofocus: true,
         child: Form(
           key: formKey,
-          child: Column(children: [
-            Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 16, 12),
-                child: Row(children: [
-                  IconButton(
-                      tooltip: 'Bearbeitung abbrechen (Esc)',
-                      onPressed: saving ? null : widget.onCancel,
-                      icon: const Icon(Icons.close)),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Mangel bearbeiten',
-                              style: Theme.of(context).textTheme.headlineSmall),
-                          Text(
-                              '${widget.defect['defectNumber']} · ${widget.defect['entityName']}'),
-                        ]),
-                  ),
-                  TextButton(
-                      onPressed: saving ? null : widget.onCancel,
-                      child: const Text('Abbrechen')),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: saving ? null : _save,
-                    icon: saving
-                        ? const SizedBox.square(
-                            dimension: 17,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.save_outlined),
-                    label: const Text('Speichern  Strg+S'),
-                  ),
-                ]),
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: LayoutBuilder(builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 780;
-                final main = _WorkspaceSection(
-                  title: 'Mangelbeschreibung',
-                  icon: Icons.report_problem_outlined,
-                  child: Column(children: [
-                    _field('title', 'Titel *', required: true),
-                    _field('description', 'Beschreibung *',
-                        maxLines: 5, required: true),
-                    Row(children: [
+          child: Column(
+            children: [
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 16, 12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Bearbeitung abbrechen (Esc)',
+                        onPressed: saving ? null : widget.onCancel,
+                        icon: const Icon(Icons.close),
+                      ),
+                      const SizedBox(width: 4),
                       Expanded(
-                          child: _dropdown('Priorität', priority, _priorities,
-                              (value) => setState(() => priority = value))),
-                      const SizedBox(width: 10),
-                      Expanded(
-                          child: _dropdown(
-                              'Gefährdungsstufe',
-                              risk,
-                              const [
-                                'Keine Angabe',
-                                'Niedrig',
-                                'Mittel',
-                                'Hoch'
-                              ],
-                              (value) => setState(() => risk = value))),
-                    ]),
-                    _dropdown(
-                        'Einsatzbereitschaft',
-                        operationalSafety,
-                        const [
-                          'Einsatzfähig',
-                          'Eingeschränkt',
-                          'Nicht einsatzfähig'
-                        ],
-                        (value) => setState(() => operationalSafety = value)),
-                    _field('damageType', 'Schadensart'),
-                    _field('cause', 'Ursache', maxLines: 3),
-                    _field('measuresTaken', 'Getroffene Maßnahmen',
-                        maxLines: 4),
-                    _field('resolution', 'Behebung/Arbeitsnachweis',
-                        maxLines: 4),
-                  ]),
-                );
-                final organization = Column(children: [
-                  _WorkspaceSection(
-                    title: 'Zuständigkeit & Kosten',
-                    icon: Icons.assignment_ind_outlined,
-                    child: Column(children: [
-                      _field(
-                          'responsibleDepartment', 'Zuständiger Fachbereich'),
-                      DateInputField(
-                          controller: fields['dueDate']!, label: 'Frist'),
-                      _field('estimatedCost', 'Geschätzte Kosten (€)',
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true)),
-                      _field('actualCost', 'Tatsächliche Kosten (€)',
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true)),
-                    ]),
-                  ),
-                  const SizedBox(height: 14),
-                  _WorkspaceSection(
-                    title: 'Kontakt & Verknüpfungen',
-                    icon: Icons.contact_mail_outlined,
-                    child: Column(children: [
-                      _field('contactName', 'Kontaktname'),
-                      _field('contactEmail', 'Kontakt-E-Mail',
-                          keyboardType: TextInputType.emailAddress),
-                      _field('contactPhone', 'Kontakttelefon',
-                          keyboardType: TextInputType.phone),
-                      _field('recurrenceOfId', 'Wiederholung von (Mangel-ID)'),
-                      _field('duplicateOfId', 'Duplikat von (Mangel-ID)'),
-                    ]),
-                  ),
-                ]);
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(18),
-                  child: wide
-                      ? Row(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(flex: 6, child: main),
-                            const SizedBox(width: 14),
-                            Expanded(flex: 4, child: organization),
+                            Text(
+                              'Mangel bearbeiten',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            Text(
+                              '${widget.defect['defectNumber']} · ${widget.defect['entityName']}',
+                            ),
                           ],
-                        )
-                      : Column(children: [
-                          main,
-                          const SizedBox(height: 14),
-                          organization,
-                        ]),
-                );
-              }),
-            ),
-          ]),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: saving ? null : widget.onCancel,
+                        child: const Text('Abbrechen'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: saving ? null : _save,
+                        icon: saving
+                            ? const SizedBox.square(
+                                dimension: 17,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.save_outlined),
+                        label: const Text('Speichern  Strg+S'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 780;
+                    final main = _WorkspaceSection(
+                      title: 'Mangelbeschreibung',
+                      icon: Icons.report_problem_outlined,
+                      child: Column(
+                        children: [
+                          _field('title', 'Titel *', required: true),
+                          _field(
+                            'description',
+                            'Beschreibung *',
+                            maxLines: 5,
+                            required: true,
+                          ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _dropdown(
+                                  'Priorität',
+                                  priority,
+                                  _priorities,
+                                  (value) => setState(() => priority = value),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _dropdown(
+                                  'Gefährdungsstufe',
+                                  risk,
+                                  const [
+                                    'Keine Angabe',
+                                    'Niedrig',
+                                    'Mittel',
+                                    'Hoch',
+                                  ],
+                                  (value) => setState(() => risk = value),
+                                ),
+                              ),
+                            ],
+                          ),
+                          _dropdown(
+                            'Einsatzbereitschaft',
+                            operationalSafety,
+                            const [
+                              'Einsatzfähig',
+                              'Eingeschränkt',
+                              'Nicht einsatzfähig',
+                            ],
+                            (value) =>
+                                setState(() => operationalSafety = value),
+                          ),
+                          _field('damageType', 'Schadensart'),
+                          _field('cause', 'Ursache', maxLines: 3),
+                          _field(
+                            'measuresTaken',
+                            'Getroffene Maßnahmen',
+                            maxLines: 4,
+                          ),
+                          _field(
+                            'resolution',
+                            'Behebung/Arbeitsnachweis',
+                            maxLines: 4,
+                          ),
+                        ],
+                      ),
+                    );
+                    final organization = Column(
+                      children: [
+                        _WorkspaceSection(
+                          title: 'Zuständigkeit & Kosten',
+                          icon: Icons.assignment_ind_outlined,
+                          child: Column(
+                            children: [
+                              _field(
+                                'responsibleDepartment',
+                                'Zuständiger Fachbereich',
+                              ),
+                              DateInputField(
+                                controller: fields['dueDate']!,
+                                label: 'Frist',
+                              ),
+                              _field(
+                                'estimatedCost',
+                                'Geschätzte Kosten (€)',
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                              ),
+                              _field(
+                                'actualCost',
+                                'Tatsächliche Kosten (€)',
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _WorkspaceSection(
+                          title: 'Kontakt & Verknüpfungen',
+                          icon: Icons.contact_mail_outlined,
+                          child: Column(
+                            children: [
+                              _field('contactName', 'Kontaktname'),
+                              _field(
+                                'contactEmail',
+                                'Kontakt-E-Mail',
+                                keyboardType: TextInputType.emailAddress,
+                              ),
+                              _field(
+                                'contactPhone',
+                                'Kontakttelefon',
+                                keyboardType: TextInputType.phone,
+                              ),
+                              _field(
+                                'recurrenceOfId',
+                                'Wiederholung von (Mangel-ID)',
+                              ),
+                              _field(
+                                'duplicateOfId',
+                                'Duplikat von (Mangel-ID)',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(18),
+                      child: wide
+                          ? Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(flex: 6, child: main),
+                                const SizedBox(width: 14),
+                                Expanded(flex: 4, child: organization),
+                              ],
+                            )
+                          : Column(
+                              children: [
+                                main,
+                                const SizedBox(height: 14),
+                                organization,
+                              ],
+                            ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -3359,9 +4084,11 @@ class _DefectAssignmentDialogState extends State<_DefectAssignmentDialog> {
   void initState() {
     super.initState();
     final currentUserId = widget.defect['assigneeUserId']?.toString();
-    final currentUserIsSelectable = currentUserId != null &&
+    final currentUserIsSelectable =
+        currentUserId != null &&
         widget.assignees.any((entry) => entry['id'] == currentUserId);
-    assignmentType = currentUserIsSelectable ||
+    assignmentType =
+        currentUserIsSelectable ||
             (!hasAssignment && widget.assignees.isNotEmpty)
         ? 'user'
         : 'external';
@@ -3369,13 +4096,16 @@ class _DefectAssignmentDialogState extends State<_DefectAssignmentDialog> {
         ? currentUserId
         : widget.assignees.firstOrNull?['id']?.toString();
     externalAssignee = TextEditingController(
-        text: assignmentType == 'external'
-            ? widget.defect['assignee']?.toString() ?? ''
-            : '');
+      text: assignmentType == 'external'
+          ? widget.defect['assignee']?.toString() ?? ''
+          : '',
+    );
     department = TextEditingController(
-        text: widget.defect['responsibleDepartment']?.toString() ?? '');
-    dueDate =
-        TextEditingController(text: widget.defect['dueDate']?.toString() ?? '');
+      text: widget.defect['responsibleDepartment']?.toString() ?? '',
+    );
+    dueDate = TextEditingController(
+      text: widget.defect['dueDate']?.toString() ?? '',
+    );
   }
 
   @override
@@ -3396,12 +4126,16 @@ class _DefectAssignmentDialogState extends State<_DefectAssignmentDialog> {
   void _submit() {
     if (assignmentType == 'user' && assigneeUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Bitte einen Nutzer auswählen.')));
+        const SnackBar(content: Text('Bitte einen Nutzer auswählen.')),
+      );
       return;
     }
     if (assignmentType == 'external' && externalAssignee.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Bitte eine verantwortliche Person angeben.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bitte eine verantwortliche Person angeben.'),
+        ),
+      );
       return;
     }
     Navigator.pop(context, {
@@ -3420,47 +4154,62 @@ class _DefectAssignmentDialogState extends State<_DefectAssignmentDialog> {
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            DropdownButtonFormField<String>(
-              initialValue: assignmentType,
-              decoration: const InputDecoration(labelText: 'Zuweisungsart'),
-              items: [
-                if (widget.assignees.isNotEmpty)
-                  const DropdownMenuItem(
-                      value: 'user', child: Text('Nutzerkonto')),
-                const DropdownMenuItem(
-                    value: 'external', child: Text('Externe Person')),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => assignmentType = value);
-              },
-            ),
-            const SizedBox(height: 12),
-            if (assignmentType == 'user')
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               DropdownButtonFormField<String>(
-                initialValue: assigneeUserId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                    labelText: 'Verantwortlicher Nutzer *'),
-                items: widget.assignees
-                    .map((user) => DropdownMenuItem(
-                        value: user['id']?.toString(),
-                        child: Text(_userLabel(user),
-                            overflow: TextOverflow.ellipsis)))
-                    .toList(),
-                onChanged: (value) => setState(() => assigneeUserId = value),
-              )
-            else
-              TextField(
-                controller: externalAssignee,
-                decoration: const InputDecoration(
-                    labelText: 'Externe verantwortliche Person *'),
+                initialValue: assignmentType,
+                decoration: const InputDecoration(labelText: 'Zuweisungsart'),
+                items: [
+                  if (widget.assignees.isNotEmpty)
+                    const DropdownMenuItem(
+                      value: 'user',
+                      child: Text('Nutzerkonto'),
+                    ),
+                  const DropdownMenuItem(
+                    value: 'external',
+                    child: Text('Externe Person'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => assignmentType = value);
+                },
               ),
-            TextField(
+              const SizedBox(height: 12),
+              if (assignmentType == 'user')
+                DropdownButtonFormField<String>(
+                  initialValue: assigneeUserId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Verantwortlicher Nutzer *',
+                  ),
+                  items: widget.assignees
+                      .map(
+                        (user) => DropdownMenuItem(
+                          value: user['id']?.toString(),
+                          child: Text(
+                            _userLabel(user),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => setState(() => assigneeUserId = value),
+                )
+              else
+                TextField(
+                  controller: externalAssignee,
+                  decoration: const InputDecoration(
+                    labelText: 'Externe verantwortliche Person *',
+                  ),
+                ),
+              TextField(
                 controller: department,
-                decoration: const InputDecoration(labelText: 'Fachbereich')),
-            DateInputField(controller: dueDate, label: 'Frist'),
-          ]),
+                decoration: const InputDecoration(labelText: 'Fachbereich'),
+              ),
+              DateInputField(controller: dueDate, label: 'Frist'),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -3470,8 +4219,9 @@ class _DefectAssignmentDialogState extends State<_DefectAssignmentDialog> {
             child: const Text('Zuweisung aufheben'),
           ),
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton(onPressed: _submit, child: const Text('Zuweisen')),
       ],
     );
@@ -3527,40 +4277,54 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
     super.initState();
     final value = widget.defect ?? const <String, dynamic>{};
     title = TextEditingController(text: value['title']?.toString() ?? '');
-    description =
-        TextEditingController(text: value['description']?.toString() ?? '');
+    description = TextEditingController(
+      text: value['description']?.toString() ?? '',
+    );
     quantity = TextEditingController(
-        text: value['affectedQuantity']?.toString() ?? '1');
-    damageType =
-        TextEditingController(text: value['damageType']?.toString() ?? '');
+      text: value['affectedQuantity']?.toString() ?? '1',
+    );
+    damageType = TextEditingController(
+      text: value['damageType']?.toString() ?? '',
+    );
     cause = TextEditingController(text: value['cause']?.toString() ?? '');
-    measuresTaken =
-        TextEditingController(text: value['measuresTaken']?.toString() ?? '');
+    measuresTaken = TextEditingController(
+      text: value['measuresTaken']?.toString() ?? '',
+    );
     assignee = TextEditingController(text: value['assignee']?.toString() ?? '');
     department = TextEditingController(
-        text: value['responsibleDepartment']?.toString() ?? '');
+      text: value['responsibleDepartment']?.toString() ?? '',
+    );
     dueDate = TextEditingController(text: value['dueDate']?.toString() ?? '');
-    estimatedCost =
-        TextEditingController(text: value['estimatedCost']?.toString() ?? '');
-    actualCost =
-        TextEditingController(text: value['actualCost']?.toString() ?? '');
-    resolution =
-        TextEditingController(text: value['resolution']?.toString() ?? '');
-    recurrence =
-        TextEditingController(text: value['recurrenceOfId']?.toString() ?? '');
-    duplicate =
-        TextEditingController(text: value['duplicateOfId']?.toString() ?? '');
-    contactName =
-        TextEditingController(text: value['contactName']?.toString() ?? '');
-    contactEmail =
-        TextEditingController(text: value['contactEmail']?.toString() ?? '');
-    contactPhone =
-        TextEditingController(text: value['contactPhone']?.toString() ?? '');
+    estimatedCost = TextEditingController(
+      text: value['estimatedCost']?.toString() ?? '',
+    );
+    actualCost = TextEditingController(
+      text: value['actualCost']?.toString() ?? '',
+    );
+    resolution = TextEditingController(
+      text: value['resolution']?.toString() ?? '',
+    );
+    recurrence = TextEditingController(
+      text: value['recurrenceOfId']?.toString() ?? '',
+    );
+    duplicate = TextEditingController(
+      text: value['duplicateOfId']?.toString() ?? '',
+    );
+    contactName = TextEditingController(
+      text: value['contactName']?.toString() ?? '',
+    );
+    contactEmail = TextEditingController(
+      text: value['contactEmail']?.toString() ?? '',
+    );
+    contactPhone = TextEditingController(
+      text: value['contactPhone']?.toString() ?? '',
+    );
     priority = value['priority']?.toString() ?? 'Normal';
     risk = value['riskLevel']?.toString() ?? 'Keine Angabe';
     operationalSafety =
         value['operationalSafety']?.toString() ?? 'Nicht einsatzfähig';
-    entityType = value['entityType']?.toString() ??
+    entityType =
+        value['entityType']?.toString() ??
         widget.initialEntityType ??
         (widget.items.isEmpty
             ? null
@@ -3595,29 +4359,29 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
   }
 
   Map<String, dynamic> _payload() => {
-        if (!editing) 'entityType': entityType,
-        if (!editing) 'entityId': entityId,
-        if (!editing) 'affectedQuantity': num.tryParse(quantity.text),
-        'title': title.text.trim(),
-        'description': description.text.trim(),
-        'priority': priority,
-        'damageType': damageType.text.trim(),
-        'cause': cause.text.trim(),
-        'measuresTaken': measuresTaken.text.trim(),
-        'riskLevel': risk,
-        'operationalSafety': operationalSafety,
-        'responsibleDepartment': department.text.trim(),
-        'contactName': contactName.text.trim(),
-        'contactEmail': contactEmail.text.trim(),
-        'contactPhone': contactPhone.text.trim(),
-        'dueDate': dateInputToIso(dueDate.text),
-        'estimatedCost': estimatedCost.text.trim(),
-        if (editing) 'actualCost': actualCost.text.trim(),
-        if (editing) 'resolution': resolution.text.trim(),
-        'recurrenceOfId': recurrence.text.trim(),
-        'duplicateOfId': duplicate.text.trim(),
-        if (!editing) '_pendingImages': pendingImages,
-      };
+    if (!editing) 'entityType': entityType,
+    if (!editing) 'entityId': entityId,
+    if (!editing) 'affectedQuantity': num.tryParse(quantity.text),
+    'title': title.text.trim(),
+    'description': description.text.trim(),
+    'priority': priority,
+    'damageType': damageType.text.trim(),
+    'cause': cause.text.trim(),
+    'measuresTaken': measuresTaken.text.trim(),
+    'riskLevel': risk,
+    'operationalSafety': operationalSafety,
+    'responsibleDepartment': department.text.trim(),
+    'contactName': contactName.text.trim(),
+    'contactEmail': contactEmail.text.trim(),
+    'contactPhone': contactPhone.text.trim(),
+    'dueDate': dateInputToIso(dueDate.text),
+    'estimatedCost': estimatedCost.text.trim(),
+    if (editing) 'actualCost': actualCost.text.trim(),
+    if (editing) 'resolution': resolution.text.trim(),
+    'recurrenceOfId': recurrence.text.trim(),
+    'duplicateOfId': duplicate.text.trim(),
+    if (!editing) '_pendingImages': pendingImages,
+  };
 
   Future<void> _selectImages() async {
     final remaining = 10 - pendingImages.length;
@@ -3644,9 +4408,13 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
     if (mounted) {
       setState(() {});
       if (rejected > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
             content: Text(
-                '$rejected Bild(er) wurden wegen fehlender Daten oder mehr als 8 MB übersprungen.')));
+              '$rejected Bild(er) wurden wegen fehlender Daten oder mehr als 8 MB übersprungen.',
+            ),
+          ),
+        );
       }
     }
   }
@@ -3658,8 +4426,9 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
         .whereType<String>()
         .toSet()
         .toList();
-    final selectedItems =
-        widget.items.where((item) => item['entityType'] == entityType).toList();
+    final selectedItems = widget.items
+        .where((item) => item['entityType'] == entityType)
+        .toList();
     if (!editing &&
         entityId != null &&
         !selectedItems.any((item) => item['id'] == entityId)) {
@@ -3669,8 +4438,9 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
       if (title.text.trim().isEmpty ||
           description.text.trim().isEmpty ||
           (!editing && entityId == null)) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Bitte alle Pflichtfelder ausfüllen.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bitte alle Pflichtfelder ausfüllen.')),
+        );
         return;
       }
       Navigator.pop(context, _payload());
@@ -3679,148 +4449,191 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
     final targetSection = _WorkspaceSection(
       title: 'Betroffener Artikel',
       icon: Icons.inventory_2_outlined,
-      child: Column(children: [
-        DropdownButtonFormField<String>(
-          initialValue: entityType,
-          decoration: const InputDecoration(labelText: 'Bereich *'),
-          items: types
-              .map((value) => DropdownMenuItem(
-                  value: value,
-                  child:
-                      Text(value == 'MaterialItem' ? 'Inventar' : 'Kleidung')))
-              .toList(),
-          onChanged: (value) => setState(() {
-            entityType = value;
-            entityId = null;
-          }),
-        ),
-        DropdownButtonFormField<String>(
-          key: ValueKey('$entityType-$entityId'),
-          initialValue: entityId,
-          isExpanded: true,
-          decoration: const InputDecoration(labelText: 'Betroffener Artikel *'),
-          items: selectedItems
-              .map((item) => DropdownMenuItem(
-                  value: item['id']?.toString(),
-                  child: Text(
+      child: Column(
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: entityType,
+            decoration: const InputDecoration(labelText: 'Bereich *'),
+            items: types
+                .map(
+                  (value) => DropdownMenuItem(
+                    value: value,
+                    child: Text(
+                      value == 'MaterialItem' ? 'Inventar' : 'Kleidung',
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) => setState(() {
+              entityType = value;
+              entityId = null;
+            }),
+          ),
+          DropdownButtonFormField<String>(
+            key: ValueKey('$entityType-$entityId'),
+            initialValue: entityId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Betroffener Artikel *',
+            ),
+            items: selectedItems
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: item['id']?.toString(),
+                    child: Text(
                       '${item['name']} · ${item['inventoryNumber'] ?? '-'}',
-                      overflow: TextOverflow.ellipsis)))
-              .toList(),
-          onChanged: (value) => setState(() => entityId = value),
-        ),
-        TextField(
-          controller: quantity,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Betroffene Menge *'),
-        ),
-      ]),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => entityId = value),
+          ),
+          TextField(
+            controller: quantity,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Betroffene Menge *'),
+          ),
+        ],
+      ),
     );
     final descriptionSection = _WorkspaceSection(
       title: 'Mangelbeschreibung',
       icon: Icons.report_problem_outlined,
-      child: Column(children: [
-        TextField(
+      child: Column(
+        children: [
+          TextField(
             controller: title,
             autofocus: true,
-            decoration: const InputDecoration(labelText: 'Titel *')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Titel *'),
+          ),
+          TextField(
             controller: description,
             maxLines: 5,
-            decoration: const InputDecoration(labelText: 'Beschreibung *')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Beschreibung *'),
+          ),
+          TextField(
             controller: damageType,
-            decoration: const InputDecoration(labelText: 'Schadensart')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Schadensart'),
+          ),
+          TextField(
             controller: cause,
             maxLines: 3,
-            decoration: const InputDecoration(labelText: 'Ursache')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Ursache'),
+          ),
+          TextField(
             controller: measuresTaken,
             maxLines: 4,
-            decoration:
-                const InputDecoration(labelText: 'Getroffene Maßnahmen')),
-        if (editing)
-          TextField(
+            decoration: const InputDecoration(
+              labelText: 'Getroffene Maßnahmen',
+            ),
+          ),
+          if (editing)
+            TextField(
               controller: resolution,
               maxLines: 4,
-              decoration:
-                  const InputDecoration(labelText: 'Behebung/Arbeitsnachweis')),
-      ]),
+              decoration: const InputDecoration(
+                labelText: 'Behebung/Arbeitsnachweis',
+              ),
+            ),
+        ],
+      ),
     );
     final classificationSection = _WorkspaceSection(
       title: 'Einstufung & Zuständigkeit',
       icon: Icons.tune,
-      child: Column(children: [
-        DropdownButtonFormField<String>(
-          initialValue: priority,
-          decoration: const InputDecoration(labelText: 'Priorität'),
-          items: _priorities
-              .map(
-                  (value) => DropdownMenuItem(value: value, child: Text(value)))
-              .toList(),
-          onChanged: (value) => setState(() => priority = value!),
-        ),
-        DropdownButtonFormField<String>(
-          initialValue: risk,
-          decoration: const InputDecoration(labelText: 'Gefährdungsstufe'),
-          items: const ['Keine Angabe', 'Niedrig', 'Mittel', 'Hoch']
-              .map(
-                  (value) => DropdownMenuItem(value: value, child: Text(value)))
-              .toList(),
-          onChanged: (value) => setState(() => risk = value!),
-        ),
-        DropdownButtonFormField<String>(
-          initialValue: operationalSafety,
-          decoration: const InputDecoration(labelText: 'Einsatzbereitschaft'),
-          items: const ['Einsatzfähig', 'Eingeschränkt', 'Nicht einsatzfähig']
-              .map(
-                  (value) => DropdownMenuItem(value: value, child: Text(value)))
-              .toList(),
-          onChanged: (value) => setState(() => operationalSafety = value!),
-        ),
-        TextField(
+      child: Column(
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: priority,
+            decoration: const InputDecoration(labelText: 'Priorität'),
+            items: _priorities
+                .map(
+                  (value) => DropdownMenuItem(value: value, child: Text(value)),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => priority = value!),
+          ),
+          DropdownButtonFormField<String>(
+            initialValue: risk,
+            decoration: const InputDecoration(labelText: 'Gefährdungsstufe'),
+            items: const ['Keine Angabe', 'Niedrig', 'Mittel', 'Hoch']
+                .map(
+                  (value) => DropdownMenuItem(value: value, child: Text(value)),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => risk = value!),
+          ),
+          DropdownButtonFormField<String>(
+            initialValue: operationalSafety,
+            decoration: const InputDecoration(labelText: 'Einsatzbereitschaft'),
+            items: const ['Einsatzfähig', 'Eingeschränkt', 'Nicht einsatzfähig']
+                .map(
+                  (value) => DropdownMenuItem(value: value, child: Text(value)),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => operationalSafety = value!),
+          ),
+          TextField(
             controller: department,
-            decoration:
-                const InputDecoration(labelText: 'Zuständiger Fachbereich')),
-        DateInputField(controller: dueDate, label: 'Frist'),
-        TextField(
+            decoration: const InputDecoration(
+              labelText: 'Zuständiger Fachbereich',
+            ),
+          ),
+          DateInputField(controller: dueDate, label: 'Frist'),
+          TextField(
             controller: estimatedCost,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration:
-                const InputDecoration(labelText: 'Geschätzte Kosten (€)')),
-        if (editing)
-          TextField(
+            decoration: const InputDecoration(
+              labelText: 'Geschätzte Kosten (€)',
+            ),
+          ),
+          if (editing)
+            TextField(
               controller: actualCost,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration:
-                  const InputDecoration(labelText: 'Tatsächliche Kosten (€)')),
-      ]),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Tatsächliche Kosten (€)',
+              ),
+            ),
+        ],
+      ),
     );
     final contactSection = _WorkspaceSection(
       title: 'Kontakt & Verknüpfungen',
       icon: Icons.contact_mail_outlined,
-      child: Column(children: [
-        TextField(
+      child: Column(
+        children: [
+          TextField(
             controller: contactName,
-            decoration: const InputDecoration(labelText: 'Kontaktname')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Kontaktname'),
+          ),
+          TextField(
             controller: contactEmail,
             keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'Kontakt-E-Mail')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Kontakt-E-Mail'),
+          ),
+          TextField(
             controller: contactPhone,
             keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(labelText: 'Kontakttelefon')),
-        TextField(
+            decoration: const InputDecoration(labelText: 'Kontakttelefon'),
+          ),
+          TextField(
             controller: recurrence,
             decoration: const InputDecoration(
-                labelText: 'Wiederholung von (Mangel-ID)')),
-        TextField(
+              labelText: 'Wiederholung von (Mangel-ID)',
+            ),
+          ),
+          TextField(
             controller: duplicate,
-            decoration:
-                const InputDecoration(labelText: 'Duplikat von (Mangel-ID)')),
-      ]),
+            decoration: const InputDecoration(
+              labelText: 'Duplikat von (Mangel-ID)',
+            ),
+          ),
+        ],
+      ),
     );
     final imageSection = _WorkspaceSection(
       title: 'Bilder zum Mangel',
@@ -3830,21 +4643,26 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
         icon: const Icon(Icons.add_photo_alternate),
         label: const Text('JPEG/PNG auswählen'),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Maximal 10 Bilder, jeweils höchstens 8 MB.'),
-        if (pendingImages.isNotEmpty)
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: pendingImages
-                .map((image) => InputChip(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Maximal 10 Bilder, jeweils höchstens 8 MB.'),
+          if (pendingImages.isNotEmpty)
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: pendingImages
+                  .map(
+                    (image) => InputChip(
                       label: Text(image['fileName'].toString()),
                       onDeleted: () =>
                           setState(() => pendingImages.remove(image)),
-                    ))
-                .toList(),
-          ),
-      ]),
+                    ),
+                  )
+                  .toList(),
+            ),
+        ],
+      ),
     );
 
     final screen = MediaQuery.sizeOf(context);
@@ -3859,72 +4677,89 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
         autofocus: true,
         child: Material(
           color: Theme.of(context).scaffoldBackgroundColor,
-          child: Column(children: [
-            Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
-                child: Row(children: [
-                  IconButton(
-                      tooltip: 'Abbrechen (Esc)',
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close)),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(editing ? 'Mangel bearbeiten' : 'Mangel melden',
-                        style: Theme.of(context).textTheme.headlineSmall),
+          child: Column(
+            children: [
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Abbrechen (Esc)',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          editing ? 'Mangel bearbeiten' : 'Mangel melden',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Abbrechen'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: submit,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Speichern  Strg+S'),
+                      ),
+                    ],
                   ),
-                  TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                      onPressed: submit,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Speichern  Strg+S')),
-                ]),
+                ),
               ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: LayoutBuilder(builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 820;
-                final left = Column(children: [
-                  if (!editing) ...[
-                    targetSection,
-                    const SizedBox(height: 14),
-                  ],
-                  descriptionSection,
-                  if (!editing) ...[
-                    const SizedBox(height: 14),
-                    imageSection,
-                  ],
-                ]);
-                final right = Column(children: [
-                  classificationSection,
-                  const SizedBox(height: 14),
-                  contactSection,
-                ]);
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(18),
-                  child: wide
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(flex: 6, child: left),
-                            const SizedBox(width: 14),
-                            Expanded(flex: 4, child: right),
-                          ],
-                        )
-                      : Column(children: [
-                          left,
+              const Divider(height: 1),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 820;
+                    final left = Column(
+                      children: [
+                        if (!editing) ...[
+                          targetSection,
                           const SizedBox(height: 14),
-                          right,
-                        ]),
-                );
-              }),
-            ),
-          ]),
+                        ],
+                        descriptionSection,
+                        if (!editing) ...[
+                          const SizedBox(height: 14),
+                          imageSection,
+                        ],
+                      ],
+                    );
+                    final right = Column(
+                      children: [
+                        classificationSection,
+                        const SizedBox(height: 14),
+                        contactSection,
+                      ],
+                    );
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(18),
+                      child: wide
+                          ? Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(flex: 6, child: left),
+                                const SizedBox(width: 14),
+                                Expanded(flex: 4, child: right),
+                              ],
+                            )
+                          : Column(
+                              children: [
+                                left,
+                                const SizedBox(height: 14),
+                                right,
+                              ],
+                            ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

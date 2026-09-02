@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -12,6 +12,7 @@ import '../constants.dart';
 import '../services/app_http_client.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
+import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/label_print_dialogs.dart';
 import 'login_page.dart';
 
@@ -35,11 +36,13 @@ class _WardrobePageState extends State<WardrobePage> {
   List<Map<String, dynamic>> _stocks = [];
   final TextEditingController nameController = TextEditingController();
   final TextEditingController sizeController = TextEditingController();
-  final TextEditingController locationController =
-      TextEditingController(text: 'loc-2');
+  final TextEditingController locationController = TextEditingController(
+    text: 'loc-2',
+  );
   final TextEditingController stockController = TextEditingController();
-  final TextEditingController statusController =
-      TextEditingController(text: 'Lagernd');
+  final TextEditingController statusController = TextEditingController(
+    text: 'Lagernd',
+  );
   final TextEditingController assignedPersonController =
       TextEditingController();
   final TextEditingController transactionPersonController =
@@ -105,8 +108,9 @@ class _WardrobePageState extends State<WardrobePage> {
 
       final data = jsonDecode(response.body);
       if (data is List) {
-        final clothing =
-            data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+        final clothing = data
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
         _currentClothing = clothing;
         return clothing;
       }
@@ -150,21 +154,26 @@ class _WardrobePageState extends State<WardrobePage> {
             child: ListView(
               shrinkWrap: true,
               children: defects
-                  .map((defect) => ListTile(
-                        leading: const Icon(Icons.report_problem_outlined),
-                        title: Text(
-                            '${defect['defectNumber']} · ${defect['title']}'),
-                        subtitle:
-                            Text('${defect['status']} · ${defect['priority']}'),
-                        onTap: () => Navigator.pop(context, defect),
-                      ))
+                  .map(
+                    (defect) => ListTile(
+                      leading: const Icon(Icons.report_problem_outlined),
+                      title: Text(
+                        '${defect['defectNumber']} · ${defect['title']}',
+                      ),
+                      subtitle: Text(
+                        '${defect['status']} · ${defect['priority']}',
+                      ),
+                      onTap: () => Navigator.pop(context, defect),
+                    ),
+                  )
                   .toList(),
             ),
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Abbrechen')),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
           ],
         ),
       );
@@ -178,7 +187,8 @@ class _WardrobePageState extends State<WardrobePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Die Mängelmeldung konnte nicht erstellt werden.')),
+            content: Text('Die Mängelmeldung konnte nicht erstellt werden.'),
+          ),
         );
       }
       return;
@@ -232,29 +242,36 @@ class _WardrobePageState extends State<WardrobePage> {
       final data = jsonDecode(response.body);
       if (data is! List || !mounted) return;
       setState(() {
-        _categories =
-            data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+        _categories = data
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
         final wardrobeMainIds = _categories
-            .where((category) =>
-                (category['parentId'] == null ||
-                    category['parentId'].toString().isEmpty) &&
-                category['useInWardrobe'] == true)
+            .where(
+              (category) =>
+                  (category['parentId'] == null ||
+                      category['parentId'].toString().isEmpty) &&
+                  category['useInWardrobe'] == true,
+            )
             .map((category) => category['id']?.toString())
             .whereType<String>()
             .toSet();
         _selectableCategories = _categories
-            .where((category) =>
-                wardrobeMainIds.contains(category['id']?.toString()) ||
-                wardrobeMainIds.contains(category['parentId']?.toString()))
+            .where(
+              (category) =>
+                  wardrobeMainIds.contains(category['id']?.toString()) ||
+                  wardrobeMainIds.contains(category['parentId']?.toString()),
+            )
             .toList();
         if (_selectedCategoryId != null &&
-            !_selectableCategories
-                .any((category) => category['id'] == _selectedCategoryId)) {
+            !_selectableCategories.any(
+              (category) => category['id'] == _selectedCategoryId,
+            )) {
           _selectedCategoryId = null;
         }
         if (_categoryFilterId != 'alle' &&
-            !_selectableCategories
-                .any((category) => category['id'] == _categoryFilterId)) {
+            !_selectableCategories.any(
+              (category) => category['id'] == _categoryFilterId,
+            )) {
           _categoryFilterId = 'alle';
         }
       });
@@ -266,10 +283,14 @@ class _WardrobePageState extends State<WardrobePage> {
   Future<void> _fetchStorageLocations() async {
     try {
       final responses = await Future.wait([
-        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/locations'),
-            headers: {'Authorization': 'Bearer ${widget.token}'}),
-        AppHttpClient.get(Uri.parse('$apiBaseUrl/api/stock-structures'),
-            headers: {'Authorization': 'Bearer ${widget.token}'}),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/locations'),
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/stock-structures'),
+          headers: {'Authorization': 'Bearer ${widget.token}'},
+        ),
       ]);
       if (responses.any((response) => response.statusCode != 200) || !mounted) {
         return;
@@ -360,7 +381,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   const SizedBox(height: 8),
                   Text('$skipped Zeilen wurden übersprungen:'),
                   const SizedBox(height: 4),
-                  ...skippedRows.take(8).map(
+                  ...skippedRows
+                      .take(8)
+                      .map(
                         (entry) => Text(
                           'Zeile ${entry['row']}: ${entry['reason']}',
                           style: Theme.of(dialogContext).textTheme.bodySmall,
@@ -383,9 +406,9 @@ class _WardrobePageState extends State<WardrobePage> {
     } catch (error) {
       if (!mounted) return;
       final message = error.toString().replaceFirst('Exception: ', '');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) setState(() => _isTransferringTable = false);
     }
@@ -403,11 +426,14 @@ class _WardrobePageState extends State<WardrobePage> {
         data = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
       } catch (_) {
         throw Exception(
-            'Der Exportdienst ist noch nicht verfügbar. Bitte den Server neu starten.');
+          'Der Exportdienst ist noch nicht verfügbar. Bitte den Server neu starten.',
+        );
       }
       if (response.statusCode != 200) {
-        throw Exception(data['error']?.toString() ??
-            'Export fehlgeschlagen (${response.statusCode})');
+        throw Exception(
+          data['error']?.toString() ??
+              'Export fehlgeschlagen (${response.statusCode})',
+        );
       }
 
       final fileName = data['fileName']?.toString() ?? 'kleiderkammer.$format';
@@ -424,14 +450,15 @@ class _WardrobePageState extends State<WardrobePage> {
             : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$fileName wurde exportiert.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$fileName wurde exportiert.')));
     } catch (error) {
       if (!mounted) return;
       final message = error.toString().replaceFirst('Exception: ', '');
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) setState(() => _isTransferringTable = false);
     }
@@ -465,7 +492,8 @@ class _WardrobePageState extends State<WardrobePage> {
         !allowedSizes.contains(sizeController.text.trim())) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Bitte eine vordefinierte Größe auswählen')),
+          content: Text('Bitte eine vordefinierte Größe auswählen'),
+        ),
       );
       return;
     }
@@ -558,10 +586,14 @@ class _WardrobePageState extends State<WardrobePage> {
   }
 
   Future<void> _printSelected() async {
-    await _printItems(_currentClothing
-        .where((item) =>
-            _selectedClothingIds.contains(item['id']?.toString() ?? ''))
-        .toList());
+    await _printItems(
+      _currentClothing
+          .where(
+            (item) =>
+                _selectedClothingIds.contains(item['id']?.toString() ?? ''),
+          )
+          .toList(),
+    );
   }
 
   List<String> _sizesForCategory(String? categoryId) {
@@ -589,8 +621,10 @@ class _WardrobePageState extends State<WardrobePage> {
 
   Widget _buildCategoryField(VoidCallback refreshDialog) {
     return DropdownButtonFormField<String?>(
-      initialValue: _selectableCategories
-              .any((category) => category['id'] == _selectedCategoryId)
+      initialValue:
+          _selectableCategories.any(
+            (category) => category['id'] == _selectedCategoryId,
+          )
           ? _selectedCategoryId
           : null,
       decoration: const InputDecoration(labelText: 'Kategorie'),
@@ -625,8 +659,9 @@ class _WardrobePageState extends State<WardrobePage> {
         decoration: const InputDecoration(labelText: 'Größe'),
       );
     }
-    final selectedSize =
-        sizes.contains(sizeController.text) ? sizeController.text : null;
+    final selectedSize = sizes.contains(sizeController.text)
+        ? sizeController.text
+        : null;
     return DropdownButtonFormField<String>(
       key: ValueKey('size-$_selectedCategoryId-$selectedSize'),
       initialValue: selectedSize,
@@ -653,13 +688,13 @@ class _WardrobePageState extends State<WardrobePage> {
     final locationId = item['locationId']?.toString();
     final stockId = item['stockStructureId']?.toString();
     final location = _locations.cast<Map<String, dynamic>?>().firstWhere(
-          (entry) => entry?['id']?.toString() == locationId,
-          orElse: () => null,
-        );
+      (entry) => entry?['id']?.toString() == locationId,
+      orElse: () => null,
+    );
     final stock = _stocks.cast<Map<String, dynamic>?>().firstWhere(
-          (entry) => entry?['id']?.toString() == stockId,
-          orElse: () => null,
-        );
+      (entry) => entry?['id']?.toString() == stockId,
+      orElse: () => null,
+    );
     final locationName = location?['name']?.toString() ?? locationId ?? '-';
     if (stock == null) return locationName;
     return stock['path']?.toString() ??
@@ -671,16 +706,17 @@ class _WardrobePageState extends State<WardrobePage> {
     final parentId = category['parentId']?.toString();
     if (parentId == null || parentId.isEmpty) return name;
     final parent = _categories.cast<Map<String, dynamic>?>().firstWhere(
-          (entry) => entry?['id']?.toString() == parentId,
-          orElse: () => null,
-        );
+      (entry) => entry?['id']?.toString() == parentId,
+      orElse: () => null,
+    );
     final parentName = parent?['name']?.toString();
     return parentName == null ? name : '$parentName › $name';
   }
 
   List<Widget> _buildStorageFields(VoidCallback refreshDialog) {
-    final locationIds =
-        _locations.map((entry) => entry['id'].toString()).toSet();
+    final locationIds = _locations
+        .map((entry) => entry['id'].toString())
+        .toSet();
     final selectedLocation = locationIds.contains(locationController.text)
         ? locationController.text
         : (_locations.isEmpty ? null : _locations.first['id'].toString());
@@ -691,10 +727,12 @@ class _WardrobePageState extends State<WardrobePage> {
     final availableStocks = _stocks
         .where((entry) => entry['locationId']?.toString() == selectedLocation)
         .toList();
-    final stockIds =
-        availableStocks.map((entry) => entry['id'].toString()).toSet();
-    final selectedStock =
-        stockIds.contains(stockController.text) ? stockController.text : null;
+    final stockIds = availableStocks
+        .map((entry) => entry['id'].toString())
+        .toSet();
+    final selectedStock = stockIds.contains(stockController.text)
+        ? stockController.text
+        : null;
     if (selectedStock == null && stockController.text.isNotEmpty) {
       stockController.clear();
     }
@@ -703,10 +741,12 @@ class _WardrobePageState extends State<WardrobePage> {
         initialValue: selectedLocation,
         decoration: const InputDecoration(labelText: 'Lagerort *'),
         items: _locations
-            .map((entry) => DropdownMenuItem(
-                  value: entry['id'].toString(),
-                  child: Text('${entry['name']} (${entry['code']})'),
-                ))
+            .map(
+              (entry) => DropdownMenuItem(
+                value: entry['id'].toString(),
+                child: Text('${entry['name']} (${entry['code']})'),
+              ),
+            )
             .toList(),
         onChanged: _locations.isEmpty
             ? null
@@ -722,12 +762,18 @@ class _WardrobePageState extends State<WardrobePage> {
         decoration: const InputDecoration(labelText: 'Lagerplatz'),
         items: [
           const DropdownMenuItem<String>(
-              value: null, child: Text('Kein Lagerplatz')),
-          ...availableStocks.map((entry) => DropdownMenuItem(
-                value: entry['id'].toString(),
-                child: Text(entry['path']?.toString() ??
-                    '${entry['name']} · ${entry['section']}'),
-              )),
+            value: null,
+            child: Text('Kein Lagerplatz'),
+          ),
+          ...availableStocks.map(
+            (entry) => DropdownMenuItem(
+              value: entry['id'].toString(),
+              child: Text(
+                entry['path']?.toString() ??
+                    '${entry['name']} · ${entry['section']}',
+              ),
+            ),
+          ),
         ],
         onChanged: (value) => stockController.text = value ?? '',
       ),
@@ -755,8 +801,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: inventoryNumberController,
-                    decoration:
-                        const InputDecoration(labelText: 'Inventarnummer'),
+                    decoration: const InputDecoration(
+                      labelText: 'Inventarnummer',
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -786,8 +833,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: assignedPersonController,
-                    decoration:
-                        const InputDecoration(labelText: 'Zugewiesene Person'),
+                    decoration: const InputDecoration(
+                      labelText: 'Zugewiesene Person',
+                    ),
                   ),
                 ],
               ),
@@ -817,8 +865,9 @@ class _WardrobePageState extends State<WardrobePage> {
     manufacturerController.text = item['manufacturer']?.toString() ?? '';
     manufacturingYearController.text =
         item['manufacturingYear']?.toString() ?? '';
-    purchaseDateController.text =
-        item['purchaseDate'] == null ? '' : _formatDate(item['purchaseDate']);
+    purchaseDateController.text = item['purchaseDate'] == null
+        ? ''
+        : _formatDate(item['purchaseDate']);
     locationController.text = item['locationId']?.toString() ?? 'loc-2';
     stockController.text = item['stockStructureId']?.toString() ?? '';
     statusController.text = item['status']?.toString() ?? 'Lagernd';
@@ -843,8 +892,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: inventoryNumberController,
-                    decoration:
-                        const InputDecoration(labelText: 'Inventarnummer'),
+                    decoration: const InputDecoration(
+                      labelText: 'Inventarnummer',
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -874,8 +924,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: assignedPersonController,
-                    decoration:
-                        const InputDecoration(labelText: 'Zugewiesene Person'),
+                    decoration: const InputDecoration(
+                      labelText: 'Zugewiesene Person',
+                    ),
                   ),
                 ],
               ),
@@ -904,9 +955,11 @@ class _WardrobePageState extends State<WardrobePage> {
 
   bool _requiresPsageInspection(Map<String, dynamic> item) {
     final categoryId = item['categoryId']?.toString();
-    return _categories.any((category) =>
-        category['id']?.toString() == categoryId &&
-        category['requiresPsageInspection'] == true);
+    return _categories.any(
+      (category) =>
+          category['id']?.toString() == categoryId &&
+          category['requiresPsageInspection'] == true,
+    );
   }
 
   Future<void> _openInspectionDialog(Map<String, dynamic> item) async {
@@ -937,7 +990,8 @@ class _WardrobePageState extends State<WardrobePage> {
                         leading: Icon(Icons.verified_user),
                         title: Text('PSAgE-Sachkunde erforderlich'),
                         subtitle: Text(
-                            'Diese Prüfung kann nur mit der Rolle „Sachkundiger PSAgE“ gespeichert werden.'),
+                          'Diese Prüfung kann nur mit der Rolle „Sachkundiger PSAgE“ gespeichert werden.',
+                        ),
                       ),
                     ),
                   DateInputField(
@@ -951,11 +1005,14 @@ class _WardrobePageState extends State<WardrobePage> {
                     decoration: const InputDecoration(labelText: 'Ergebnis'),
                     items: const [
                       DropdownMenuItem(
-                          value: 'Bestanden', child: Text('Bestanden')),
+                        value: 'Bestanden',
+                        child: Text('Bestanden'),
+                      ),
                       DropdownMenuItem(value: 'Mangel', child: Text('Mangel')),
                       DropdownMenuItem(
-                          value: 'Nicht bestanden',
-                          child: Text('Nicht bestanden')),
+                        value: 'Nicht bestanden',
+                        child: Text('Nicht bestanden'),
+                      ),
                     ],
                     onChanged: (value) =>
                         setDialogState(() => result = value ?? 'Bestanden'),
@@ -968,17 +1025,23 @@ class _WardrobePageState extends State<WardrobePage> {
                   ),
                   if (inspections.isNotEmpty) ...[
                     const SizedBox(height: 20),
-                    const Text('Bisherige Prüfungen',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Bisherige Prüfungen',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                     const SizedBox(height: 6),
-                    ...inspections.take(5).map(
+                    ...inspections
+                        .take(5)
+                        .map(
                           (inspection) => ListTile(
                             contentPadding: EdgeInsets.zero,
                             dense: true,
                             title: Text(
-                                '${_formatDate(inspection['inspectionDate'])} · ${inspection['result']}'),
+                              '${_formatDate(inspection['inspectionDate'])} · ${inspection['result']}',
+                            ),
                             subtitle: Text(
-                                '${inspection['inspector'] ?? '-'}${inspection['nextInspectionDate'] == null ? '' : ' · nächste Prüfung ${_formatDate(inspection['nextInspectionDate'])}'}'),
+                              '${inspection['inspector'] ?? '-'}${inspection['nextInspectionDate'] == null ? '' : ' · nächste Prüfung ${_formatDate(inspection['nextInspectionDate'])}'}',
+                            ),
                           ),
                         ),
                   ],
@@ -995,7 +1058,8 @@ class _WardrobePageState extends State<WardrobePage> {
               onPressed: () async {
                 final response = await AppHttpClient.post(
                   Uri.parse(
-                      '$apiBaseUrl/api/clothing/${item['id']}/inspections'),
+                    '$apiBaseUrl/api/clothing/${item['id']}/inspections',
+                  ),
                   headers: {
                     'Authorization': 'Bearer ${widget.token}',
                     'Content-Type': 'application/json',
@@ -1016,8 +1080,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   message =
                       jsonDecode(response.body)['error']?.toString() ?? message;
                 } catch (_) {}
-                ScaffoldMessenger.of(dialogContext)
-                    .showSnackBar(SnackBar(content: Text(message)));
+                ScaffoldMessenger.of(
+                  dialogContext,
+                ).showSnackBar(SnackBar(content: Text(message)));
               },
               child: const Text('Prüfung speichern'),
             ),
@@ -1036,10 +1101,13 @@ class _WardrobePageState extends State<WardrobePage> {
   }
 
   Future<bool> _submitTransaction(
-      List<String> clothingIds, String action) async {
+    List<String> clothingIds,
+    String action,
+  ) async {
     final isReturn = action == 'zurückgegeben';
-    final personName =
-        isReturn ? 'nicht Ausgegeben' : transactionPersonController.text.trim();
+    final personName = isReturn
+        ? 'nicht Ausgegeben'
+        : transactionPersonController.text.trim();
     if (!isReturn && personName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Bitte eine Person angeben')),
@@ -1048,9 +1116,9 @@ class _WardrobePageState extends State<WardrobePage> {
     }
 
     if (clothingIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bitte Kleidung auswählen')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Bitte Kleidung auswählen')));
       return false;
     }
 
@@ -1117,8 +1185,9 @@ class _WardrobePageState extends State<WardrobePage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Kleidung löschen?'),
-        content:
-            const Text('Möchtest du dieses Kleidungsstück wirklich löschen?'),
+        content: const Text(
+          'Möchtest du dieses Kleidungsstück wirklich löschen?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -1150,13 +1219,13 @@ class _WardrobePageState extends State<WardrobePage> {
         _clothingFuture = _fetchClothing();
         _historyFuture = _fetchHistory();
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kleidungsstück gelöscht')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Kleidungsstück gelöscht')));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Löschen fehlgeschlagen')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Löschen fehlgeschlagen')));
     }
   }
 
@@ -1165,16 +1234,19 @@ class _WardrobePageState extends State<WardrobePage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(action == 'ausgegeben'
-              ? 'Kleidung ausgeben'
-              : 'Kleidung zurücknehmen'),
+          title: Text(
+            action == 'ausgegeben'
+                ? 'Kleidung ausgeben'
+                : 'Kleidung zurücknehmen',
+          ),
           content: action == 'ausgegeben'
               ? TextField(
                   controller: transactionPersonController,
                   decoration: const InputDecoration(labelText: 'Person'),
                 )
               : const Text(
-                  'Für die Rücknahme ist keine Namenseingabe erforderlich.'),
+                  'Für die Rücknahme ist keine Namenseingabe erforderlich.',
+                ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -1183,8 +1255,9 @@ class _WardrobePageState extends State<WardrobePage> {
             FilledButton(
               onPressed: () async {
                 if (clothingId.isNotEmpty) {
-                  final success =
-                      await _submitTransaction([clothingId], action);
+                  final success = await _submitTransaction([
+                    clothingId,
+                  ], action);
                   if (success && context.mounted) {
                     Navigator.of(context).pop();
                   }
@@ -1285,8 +1358,8 @@ class _WardrobePageState extends State<WardrobePage> {
     if (inventoryNumber.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content:
-                Text('Für dieses Kleidungsstück fehlt eine Inventarnummer.')),
+          content: Text('Für dieses Kleidungsstück fehlt eine Inventarnummer.'),
+        ),
       );
       return;
     }
@@ -1356,8 +1429,11 @@ class _WardrobePageState extends State<WardrobePage> {
       return selectedAction == 'ausgegeben' ? !isIssued : isIssued;
     }
 
-    dialogSelectedIds.removeWhere((id) => !_currentClothing
-        .any((item) => item['id']?.toString() == id && matchesAction(item)));
+    dialogSelectedIds.removeWhere(
+      (id) => !_currentClothing.any(
+        (item) => item['id']?.toString() == id && matchesAction(item),
+      ),
+    );
 
     await showDialog<void>(
       context: context,
@@ -1367,8 +1443,10 @@ class _WardrobePageState extends State<WardrobePage> {
             final items = _currentClothing;
             final unselectedItems = items
                 .where(matchesAction)
-                .where((item) =>
-                    !dialogSelectedIds.contains(item['id']?.toString() ?? ''))
+                .where(
+                  (item) =>
+                      !dialogSelectedIds.contains(item['id']?.toString() ?? ''),
+                )
                 .toList();
             final normalizedSearch = clothingSearchQuery.trim().toLowerCase();
             final searchResults = normalizedSearch.isEmpty
@@ -1383,10 +1461,11 @@ class _WardrobePageState extends State<WardrobePage> {
                       item['status'],
                       _categoryName(item['categoryId']),
                     ];
-                    return searchableValues.any((value) => value
-                        .toString()
-                        .toLowerCase()
-                        .contains(normalizedSearch));
+                    return searchableValues.any(
+                      (value) => value.toString().toLowerCase().contains(
+                        normalizedSearch,
+                      ),
+                    );
                   }).toList();
 
             void addSearchResult(Map<String, dynamic> item) {
@@ -1407,12 +1486,14 @@ class _WardrobePageState extends State<WardrobePage> {
               if (normalizedValue.isEmpty) return;
 
               final exactInventoryMatches = searchResults
-                  .where((item) =>
-                      item['inventoryNumber']
-                          ?.toString()
-                          .trim()
-                          .toLowerCase() ==
-                      normalizedValue)
+                  .where(
+                    (item) =>
+                        item['inventoryNumber']
+                            ?.toString()
+                            .trim()
+                            .toLowerCase() ==
+                        normalizedValue,
+                  )
                   .toList();
               if (exactInventoryMatches.length == 1) {
                 addSearchResult(exactInventoryMatches.single);
@@ -1439,8 +1520,9 @@ class _WardrobePageState extends State<WardrobePage> {
                       ],
                       onPressed: (index) {
                         setState(() {
-                          selectedAction =
-                              index == 0 ? 'ausgegeben' : 'zurückgegeben';
+                          selectedAction = index == 0
+                              ? 'ausgegeben'
+                              : 'zurückgegeben';
                           dialogSelectedIds.clear();
                         });
                       },
@@ -1448,12 +1530,11 @@ class _WardrobePageState extends State<WardrobePage> {
                       selectedColor: Colors.white,
                       fillColor: Colors.blue.shade700,
                       color: Colors.black87,
-                      constraints:
-                          const BoxConstraints(minHeight: 40, minWidth: 120),
-                      children: const [
-                        Text('Ausgeben'),
-                        Text('Zurücknehmen'),
-                      ],
+                      constraints: const BoxConstraints(
+                        minHeight: 40,
+                        minWidth: 120,
+                      ),
+                      children: const [Text('Ausgeben'), Text('Zurücknehmen')],
                     ),
                     const SizedBox(height: 16),
                     if (selectedAction == 'ausgegeben') ...[
@@ -1518,7 +1599,7 @@ class _WardrobePageState extends State<WardrobePage> {
                         child: ListView.separated(
                           shrinkWrap: true,
                           itemCount: searchResults.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final item = searchResults[index];
                             final itemId = item['id']?.toString() ?? '';
@@ -1528,18 +1609,20 @@ class _WardrobePageState extends State<WardrobePage> {
                                 item['inventoryNumber']?.toString() ?? '-';
                             final size = item['size']?.toString() ?? '-';
                             final category = _categoryName(item['categoryId']);
-                            final assignedPerson =
-                                item['assignedPerson']?.toString();
+                            final assignedPerson = item['assignedPerson']
+                                ?.toString();
                             return ListTile(
                               contentPadding: EdgeInsets.zero,
                               title: Text('$inventoryNumber • $name'),
-                              subtitle: Text([
-                                'Größe $size',
-                                category,
-                                if (assignedPerson != null &&
-                                    assignedPerson.isNotEmpty)
-                                  assignedPerson,
-                              ].join(' • ')),
+                              subtitle: Text(
+                                [
+                                  'Größe $size',
+                                  category,
+                                  if (assignedPerson != null &&
+                                      assignedPerson.isNotEmpty)
+                                    assignedPerson,
+                                ].join(' • '),
+                              ),
                               trailing: FilledButton.icon(
                                 onPressed: itemId.isEmpty
                                     ? null
@@ -1552,8 +1635,10 @@ class _WardrobePageState extends State<WardrobePage> {
                         ),
                       ),
                     const SizedBox(height: 16),
-                    const Text('Gewählte Kleidungsstücke',
-                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Gewählte Kleidungsstücke',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     const SizedBox(height: 8),
                     if (dialogSelectedIds.isEmpty)
                       const Text('Noch keine Kleidungsstücke ausgewählt.'),
@@ -1592,13 +1677,17 @@ class _WardrobePageState extends State<WardrobePage> {
                     if (dialogSelectedIds.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                            content: Text(
-                                'Bitte mindestens ein Kleidungsstück auswählen')),
+                          content: Text(
+                            'Bitte mindestens ein Kleidungsstück auswählen',
+                          ),
+                        ),
                       );
                       return;
                     }
                     final success = await _submitTransaction(
-                        dialogSelectedIds.toList(), selectedAction);
+                      dialogSelectedIds.toList(),
+                      selectedAction,
+                    );
                     if (success && context.mounted) {
                       Navigator.of(context).pop();
                     }
@@ -1619,7 +1708,8 @@ class _WardrobePageState extends State<WardrobePage> {
     if (_selectedClothingIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Bitte mindestens ein Kleidungsstück auswählen')),
+          content: Text('Bitte mindestens ein Kleidungsstück auswählen'),
+        ),
       );
       return;
     }
@@ -1629,7 +1719,8 @@ class _WardrobePageState extends State<WardrobePage> {
       builder: (context) => AlertDialog(
         title: const Text('Ausgewählte Kleidung löschen?'),
         content: Text(
-            'Möchtest du ${_selectedClothingIds.length} ausgewählte Kleidungsstücke löschen?'),
+          'Möchtest du ${_selectedClothingIds.length} ausgewählte Kleidungsstücke löschen?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -1678,9 +1769,11 @@ class _WardrobePageState extends State<WardrobePage> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(failedCount == 0
-            ? '${deletedIds.length} Kleidungsstücke gelöscht'
-            : '${deletedIds.length} gelöscht, $failedCount konnten nicht gelöscht werden'),
+        content: Text(
+          failedCount == 0
+              ? '${deletedIds.length} Kleidungsstücke gelöscht'
+              : '${deletedIds.length} gelöscht, $failedCount konnten nicht gelöscht werden',
+        ),
       ),
     );
   }
@@ -1689,20 +1782,22 @@ class _WardrobePageState extends State<WardrobePage> {
     if (_selectedClothingIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Bitte mindestens ein Kleidungsstück auswählen')),
+          content: Text('Bitte mindestens ein Kleidungsstück auswählen'),
+        ),
       );
       return;
     }
 
     final selectedItems = _currentClothing
-        .where((item) =>
-            _selectedClothingIds.contains(item['id']?.toString() ?? ''))
+        .where(
+          (item) => _selectedClothingIds.contains(item['id']?.toString() ?? ''),
+        )
         .toList();
     if (selectedItems.length != _selectedClothingIds.length) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content:
-                Text('Die Auswahl ist nicht mehr aktuell. Bitte neu laden.')),
+          content: Text('Die Auswahl ist nicht mehr aktuell. Bitte neu laden.'),
+        ),
       );
       return;
     }
@@ -1712,8 +1807,9 @@ class _WardrobePageState extends State<WardrobePage> {
     if (sourceCategoryIds.length != 1) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:
-              Text('Bitte nur Kleidungsstücke derselben Kategorie auswählen.'),
+          content: Text(
+            'Bitte nur Kleidungsstücke derselben Kategorie auswählen.',
+          ),
         ),
       );
       return;
@@ -1726,7 +1822,8 @@ class _WardrobePageState extends State<WardrobePage> {
     if (targetCategories.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Es ist keine andere Kleiderkategorie vorhanden.')),
+          content: Text('Es ist keine andere Kleiderkategorie vorhanden.'),
+        ),
       );
       return;
     }
@@ -1757,15 +1854,17 @@ class _WardrobePageState extends State<WardrobePage> {
                     border: OutlineInputBorder(),
                   ),
                   items: targetCategories
-                      .map((category) => DropdownMenuItem<String>(
-                            value: category['id']?.toString(),
-                            child: Text(_categoryPath(category)),
-                          ))
+                      .map(
+                        (category) => DropdownMenuItem<String>(
+                          value: category['id']?.toString(),
+                          child: Text(_categoryPath(category)),
+                        ),
+                      )
                       .toList(),
                   onChanged: isSaving
                       ? null
                       : (value) =>
-                          setDialogState(() => targetCategoryId = value),
+                            setDialogState(() => targetCategoryId = value),
                 ),
                 const SizedBox(height: 8),
                 CheckboxListTile(
@@ -1778,7 +1877,8 @@ class _WardrobePageState extends State<WardrobePage> {
                   onChanged: isSaving
                       ? null
                       : (value) => setDialogState(
-                          () => reassignInventoryNumbers = value ?? true),
+                          () => reassignInventoryNumbers = value ?? true,
+                        ),
                 ),
               ],
             ),
@@ -1824,15 +1924,16 @@ class _WardrobePageState extends State<WardrobePage> {
                             message = data['error'].toString();
                           }
                         } catch (_) {}
-                        ScaffoldMessenger.of(dialogContext).showSnackBar(
-                          SnackBar(content: Text(message)),
-                        );
+                        ScaffoldMessenger.of(
+                          dialogContext,
+                        ).showSnackBar(SnackBar(content: Text(message)));
                       } catch (_) {
                         if (dialogContext.mounted) {
                           ScaffoldMessenger.of(dialogContext).showSnackBar(
                             const SnackBar(
                               content: Text(
-                                  'Der Server ist momentan nicht erreichbar.'),
+                                'Der Server ist momentan nicht erreichbar.',
+                              ),
                             ),
                           );
                         }
@@ -1864,7 +1965,8 @@ class _WardrobePageState extends State<WardrobePage> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content: Text('$changedCount Kleidungsstücke wurden verschoben.')),
+        content: Text('$changedCount Kleidungsstücke wurden verschoben.'),
+      ),
     );
   }
 
@@ -1887,7 +1989,9 @@ class _WardrobePageState extends State<WardrobePage> {
                     ButtonSegment(value: 'alle', label: Text('Alle')),
                     ButtonSegment(value: 'verfügbar', label: Text('Verfügbar')),
                     ButtonSegment(
-                        value: 'ausgegeben', label: Text('Ausgegeben')),
+                      value: 'ausgegeben',
+                      label: Text('Ausgegeben'),
+                    ),
                   ],
                   selected: {_filterMode},
                   onSelectionChanged: (selection) {
@@ -1900,9 +2004,10 @@ class _WardrobePageState extends State<WardrobePage> {
               const SizedBox(width: 12),
               SizedBox(
                 width: 180,
-                child: DropdownButton<String>(
+                child: DropdownButtonFormField<String>(
                   isExpanded: true,
-                  value: _categoryFilterId,
+                  initialValue: _categoryFilterId,
+                  decoration: const InputDecoration(isDense: true),
                   items: [
                     const DropdownMenuItem(
                       value: 'alle',
@@ -1931,8 +2036,10 @@ class _WardrobePageState extends State<WardrobePage> {
               ElevatedButton.icon(
                 onPressed: _openCreateDialog,
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                   backgroundColor: Colors.green.shade700,
                   foregroundColor: Colors.white,
                 ),
@@ -1942,8 +2049,10 @@ class _WardrobePageState extends State<WardrobePage> {
               ElevatedButton.icon(
                 onPressed: _openScanAndSearchDialog,
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                   backgroundColor: Colors.indigo.shade700,
                   foregroundColor: Colors.white,
                 ),
@@ -1953,8 +2062,10 @@ class _WardrobePageState extends State<WardrobePage> {
               ElevatedButton.icon(
                 onPressed: _openBulkActionDialog,
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                   backgroundColor: Colors.orange.shade700,
                   foregroundColor: Colors.white,
                 ),
@@ -1964,8 +2075,10 @@ class _WardrobePageState extends State<WardrobePage> {
               ElevatedButton.icon(
                 onPressed: _openBulkCategoryDialog,
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                   backgroundColor: Colors.deepPurple.shade700,
                   foregroundColor: Colors.white,
                 ),
@@ -1975,8 +2088,10 @@ class _WardrobePageState extends State<WardrobePage> {
               ElevatedButton.icon(
                 onPressed: _deleteSelectedClothing,
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                   backgroundColor: Colors.red.shade700,
                   foregroundColor: Colors.white,
                 ),
@@ -1988,7 +2103,9 @@ class _WardrobePageState extends State<WardrobePage> {
                   onPressed: _printSelected,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 10),
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
                     backgroundColor: Colors.blueGrey.shade700,
                     foregroundColor: Colors.white,
                   ),
@@ -2010,8 +2127,10 @@ class _WardrobePageState extends State<WardrobePage> {
               ElevatedButton.icon(
                 onPressed: _isTransferringTable ? null : _importClothingTable,
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                   backgroundColor: Colors.teal.shade700,
                   foregroundColor: Colors.white,
                 ),
@@ -2030,14 +2149,18 @@ class _WardrobePageState extends State<WardrobePage> {
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'xlsx', child: Text('Excel (.xlsx)')),
                   PopupMenuItem(
-                      value: 'ods', child: Text('OpenDocument (.ods)')),
+                    value: 'ods',
+                    child: Text('OpenDocument (.ods)'),
+                  ),
                 ],
                 child: IgnorePointer(
                   child: ElevatedButton.icon(
                     onPressed: () {},
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 10),
+                        horizontal: 10,
+                        vertical: 10,
+                      ),
                       backgroundColor: Colors.indigo.shade700,
                       foregroundColor: Colors.white,
                     ),
@@ -2062,12 +2185,15 @@ class _WardrobePageState extends State<WardrobePage> {
                         child: Text(
                           'Ausgabe-/Rückgabe-Log',
                           style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       SizedBox(height: 8),
                       Expanded(
-                          child: Center(child: CircularProgressIndicator())),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
                     ],
                   );
                 }
@@ -2114,14 +2240,18 @@ class _WardrobePageState extends State<WardrobePage> {
                     item['size'],
                     item['locationId'],
                     _categoryName(item['categoryId']),
-                  ].any((value) =>
-                      value?.toString().toLowerCase().contains(query) ?? false);
+                  ].any(
+                    (value) =>
+                        value?.toString().toLowerCase().contains(query) ??
+                        false,
+                  );
                 }).toList();
                 final visibleIds = filteredClothing
                     .map((item) => item['id']?.toString() ?? '')
                     .where((id) => id.isNotEmpty)
                     .toList();
-                final allVisibleSelected = visibleIds.isNotEmpty &&
+                final allVisibleSelected =
+                    visibleIds.isNotEmpty &&
                     visibleIds.every(_selectedClothingIds.contains);
 
                 return Column(
@@ -2139,12 +2269,16 @@ class _WardrobePageState extends State<WardrobePage> {
                               }
                             });
                           },
-                          icon: Icon(allVisibleSelected
-                              ? Icons.check_box
-                              : Icons.check_box_outline_blank),
-                          label: Text(allVisibleSelected
-                              ? 'Alle abwählen'
-                              : 'Alle auswählen'),
+                          icon: Icon(
+                            allVisibleSelected
+                                ? Icons.check_box
+                                : Icons.check_box_outline_blank,
+                          ),
+                          label: Text(
+                            allVisibleSelected
+                                ? 'Alle abwählen'
+                                : 'Alle auswählen',
+                          ),
                         ),
                       ),
                     Expanded(
@@ -2152,20 +2286,22 @@ class _WardrobePageState extends State<WardrobePage> {
                       child: filteredClothing.isEmpty
                           ? const Center(
                               child: Text(
-                                  'Keine Kleidungsstücke in dieser Ansicht.'))
+                                'Keine Kleidungsstücke in dieser Ansicht.',
+                              ),
+                            )
                           : ListView.separated(
                               itemCount: filteredClothing.length,
-                              separatorBuilder: (_, __) =>
+                              separatorBuilder: (_, _) =>
                                   const SizedBox(height: 12),
                               itemBuilder: (_, index) {
                                 final item = filteredClothing[index];
                                 final isIssued =
                                     (item['status']?.toString() ?? '')
-                                            .toLowerCase() ==
-                                        'ausgegeben';
+                                        .toLowerCase() ==
+                                    'ausgegeben';
                                 final itemId = item['id']?.toString() ?? '';
-                                final isSelected =
-                                    _selectedClothingIds.contains(itemId);
+                                final isSelected = _selectedClothingIds
+                                    .contains(itemId);
                                 return Card(
                                   child: ListTile(
                                     leading: Checkbox(
@@ -2181,37 +2317,47 @@ class _WardrobePageState extends State<WardrobePage> {
                                         });
                                       },
                                     ),
-                                    title: Text(item['name']?.toString() ??
-                                        'Unbenannt'),
+                                    title: Text(
+                                      item['name']?.toString() ?? 'Unbenannt',
+                                    ),
                                     subtitle: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                            'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}'),
+                                          'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}',
+                                        ),
                                         Text(
-                                            'Kategorie: ${_categoryName(item['categoryId'])}'),
+                                          'Kategorie: ${_categoryName(item['categoryId'])}',
+                                        ),
                                         Text(
-                                            'Größe: ${item['size']?.toString() ?? '-'}'),
+                                          'Größe: ${item['size']?.toString() ?? '-'}',
+                                        ),
                                         Text(
-                                            'Status: ${item['status']?.toString() ?? '-'}'),
+                                          'Status: ${item['status']?.toString() ?? '-'}',
+                                        ),
                                         Text(
-                                            'Zugewiesen an: ${item['assignedPerson']?.toString() ?? 'nicht vergeben'}'),
+                                          'Zugewiesen an: ${item['assignedPerson']?.toString() ?? 'nicht vergeben'}',
+                                        ),
                                         Text(
-                                            'Lagerort: ${_storageLabel(item)}'),
+                                          'Lagerort: ${_storageLabel(item)}',
+                                        ),
                                         if (item['inspectionIntervalMonths'] !=
                                             null)
                                           Text(
-                                              'Prüfintervall: ${item['inspectionIntervalMonths']} Monate'),
+                                            'Prüfintervall: ${item['inspectionIntervalMonths']} Monate',
+                                          ),
                                         if (item['nextInspectionDate'] != null)
                                           Text(
                                             'Nächste Prüfung: ${_formatDate(item['nextInspectionDate'])}',
                                             style: TextStyle(
-                                              color: DateTime.tryParse(item[
-                                                                  'nextInspectionDate']
-                                                              .toString())
-                                                          ?.isBefore(
-                                                              DateTime.now()) ==
+                                              color:
+                                                  DateTime.tryParse(
+                                                        item['nextInspectionDate']
+                                                            .toString(),
+                                                      )?.isBefore(
+                                                        DateTime.now(),
+                                                      ) ==
                                                       true
                                                   ? Colors.red.shade700
                                                   : null,
@@ -2222,7 +2368,8 @@ class _WardrobePageState extends State<WardrobePage> {
                                           const Text(
                                             'Prüfung: nur Sachkundige PSAgE',
                                             style: TextStyle(
-                                                fontWeight: FontWeight.w600),
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
                                       ],
                                     ),
@@ -2253,7 +2400,8 @@ class _WardrobePageState extends State<WardrobePage> {
                                                 _printItems([item]),
                                             tooltip: 'Etikett drucken',
                                             icon: const Icon(
-                                                Icons.print_outlined),
+                                              Icons.print_outlined,
+                                            ),
                                           ),
                                         if ((item['defects'] as List?)
                                                 ?.isNotEmpty ==
@@ -2263,30 +2411,35 @@ class _WardrobePageState extends State<WardrobePage> {
                                             tooltip:
                                                 'Ausgefüllte Mängelmeldung drucken',
                                             icon: const Icon(
-                                                Icons.report_outlined),
+                                              Icons.report_outlined,
+                                            ),
                                           ),
                                         OutlinedButton(
                                           onPressed: () =>
                                               _openTransactionDialog(
-                                            item['id']?.toString() ?? '',
+                                                item['id']?.toString() ?? '',
+                                                isIssued
+                                                    ? 'zurückgegeben'
+                                                    : 'ausgegeben',
+                                              ),
+                                          child: Text(
                                             isIssued
-                                                ? 'zurückgegeben'
-                                                : 'ausgegeben',
+                                                ? 'Zurückgeben'
+                                                : 'Ausgeben',
                                           ),
-                                          child: Text(isIssued
-                                              ? 'Zurückgeben'
-                                              : 'Ausgeben'),
                                         ),
                                         FilledButton.icon(
                                           onPressed: () => _deleteClothing(
-                                              item['id']?.toString() ?? ''),
+                                            item['id']?.toString() ?? '',
+                                          ),
                                           style: FilledButton.styleFrom(
                                             backgroundColor:
                                                 Colors.red.shade700,
                                             foregroundColor: Colors.white,
                                           ),
-                                          icon:
-                                              const Icon(Icons.delete_outline),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
                                           label: const Text('Löschen'),
                                         ),
                                       ],
@@ -2302,7 +2455,9 @@ class _WardrobePageState extends State<WardrobePage> {
                       child: Text(
                         'Ausgabe-/Rückgabe-Log',
                         style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -2322,10 +2477,12 @@ class _WardrobePageState extends State<WardrobePage> {
                           return transactions.isEmpty
                               ? const Center(
                                   child: Text(
-                                      'Noch keine Ausgaben oder Rückgaben.'))
+                                    'Noch keine Ausgaben oder Rückgaben.',
+                                  ),
+                                )
                               : ListView.separated(
                                   itemCount: transactions.length,
-                                  separatorBuilder: (_, __) =>
+                                  separatorBuilder: (_, _) =>
                                       const SizedBox(height: 8),
                                   itemBuilder: (_, index) {
                                     final transaction = transactions[index];
@@ -2374,12 +2531,13 @@ class _WardrobePageState extends State<WardrobePage> {
           final history = snapshot.data ?? [];
           if (history.isEmpty) {
             return const Center(
-                child: Text('Noch keine gelöschten Kleidungsstücke.'));
+              child: Text('Noch keine gelöschten Kleidungsstücke.'),
+            );
           }
 
           return ListView.separated(
             itemCount: history.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (_, index) {
               final item = history[index];
               return Card(
@@ -2389,14 +2547,19 @@ class _WardrobePageState extends State<WardrobePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                          'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}'),
+                        'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}',
+                      ),
                       Text('Kategorie: ${_categoryName(item['categoryId'])}'),
-                      Text(item['archivedAt'] == null
-                          ? 'Gelöscht am: ${item['deletedAt']?.toString() ?? '-'}'
-                          : 'Ausgesondert am: ${item['archivedAt']}'),
-                      Text(item['archivedBy'] == null
-                          ? 'Gelöscht von: ${item['deletedBy']?.toString() ?? '-'}'
-                          : 'Ausgesondert von: ${item['archivedBy']}'),
+                      Text(
+                        item['archivedAt'] == null
+                            ? 'Gelöscht am: ${item['deletedAt']?.toString() ?? '-'}'
+                            : 'Ausgesondert am: ${item['archivedAt']}',
+                      ),
+                      Text(
+                        item['archivedBy'] == null
+                            ? 'Gelöscht von: ${item['deletedBy']?.toString() ?? '-'}'
+                            : 'Ausgesondert von: ${item['archivedBy']}',
+                      ),
                       if (item['inventoryNumberReleasedAt'] != null)
                         const Text('Inventarnummer freigegeben'),
                     ],
@@ -2421,7 +2584,8 @@ class _WardrobePageState extends State<WardrobePage> {
             IconButton(
               icon: const Icon(Icons.logout),
               tooltip: 'Abmelden',
-              onPressed: widget.onLogout ??
+              onPressed:
+                  widget.onLogout ??
                   () {
                     Navigator.of(context).pushAndRemoveUntil(
                       MaterialPageRoute(builder: (_) => const LoginPage()),
@@ -2447,10 +2611,7 @@ class _WardrobePageState extends State<WardrobePage> {
             });
           },
           child: TabBarView(
-            children: [
-              _buildInventoryTab(),
-              _buildHistoryTab(),
-            ],
+            children: [_buildInventoryTab(), _buildHistoryTab()],
           ),
         ),
       ),

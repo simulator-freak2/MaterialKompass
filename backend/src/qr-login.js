@@ -251,6 +251,12 @@ function registerQrLoginRoutes({
         (verifiedUser, response) => finishLogin(verifiedUser, response),
       ));
     }
+    if (userMfa?.passkeyRequired(user)) {
+      return res.status(403).json({
+        error: 'Für dieses Konto ist eine starke Anmeldung erforderlich. Verwenden Sie auf der normalen Anmeldeseite einen Passkey.',
+        passkeyRequired: true,
+      });
+    }
     if (userMfa?.enrollmentRequired(user)) {
       return res.json({
         token: createToken(user, { mfaSetupRequired: true }),

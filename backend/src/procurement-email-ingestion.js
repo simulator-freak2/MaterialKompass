@@ -1,4 +1,5 @@
 const { simpleParser } = require('mailparser');
+const { normalizeOfferInput } = require('./procurement-offers');
 
 const MAX_MAIL_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -119,12 +120,6 @@ function registerProcurementEmailRoutes({
     }
     return entry;
   };
-  const money = (value) => {
-    const normalized = typeof value === 'string' && value.includes(',')
-      ? value.replace(/\./g, '').replace(',', '.') : value;
-    return Math.round((Number(normalized) || 0) * 100) / 100;
-  };
-
   app.get('/api/procurement-email-inbox', authMiddleware, requirePermission('procurement.read'), (req, res) => {
     res.json({ address, entries: procurementEmailImports.filter((entry) => canSee(req, entry))
       .slice().reverse().map((entry) => publicEntry(entry)) });
@@ -149,14 +144,14 @@ function registerProcurementEmailRoutes({
     }
     const supplier = suppliers.find((candidate) => candidate.id === req.body.supplierId && candidate.active !== false);
     if (!supplier) return res.status(400).json({ error: 'Ein aktiver Lieferant ist erforderlich.' });
-    const grossTotal = money(req.body.grossTotal);
-    if (grossTotal <= 0) return res.status(400).json({ error: 'Die Angebotssumme muss größer als null sein.' });
+    const normalized = normalizeOfferInput(req.body, request);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    const timestamp = new Date().toISOString();
     const offer = {
       id: nextId('offer', procurementOffers), requestId: request.id, supplierId: supplier.id,
-      offerNumber: text(req.body.offerNumber, 255), offerDate: req.body.offerDate || null,
-      validUntil: req.body.validUntil || null, deliveryDays: Number(req.body.deliveryDays) || null,
-      grossTotal, shippingGross: money(req.body.shippingGross),
-      notes: text(req.body.notes || entry.messageText, 5000), createdAt: new Date().toISOString(),
+      ...normalized.value,
+      notes: text(req.body.notes || entry.messageText, 5000),
+      createdAt: timestamp, updatedAt: timestamp,
       sourceEmailImportId: entry.id,
     };
     procurementOffers.push(offer);

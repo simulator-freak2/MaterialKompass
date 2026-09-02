@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -16,6 +16,7 @@ import '../services/service_device_storage.dart';
 import '../services/temporary_device_file.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
+import '../widgets/keyboard_dropdown_button_form_field.dart';
 import 'dashboard_page.dart';
 import 'login_page.dart';
 

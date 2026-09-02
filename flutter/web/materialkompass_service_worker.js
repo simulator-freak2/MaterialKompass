@@ -6,6 +6,7 @@ const shell = [
   './flutter_bootstrap.js',
   './main.dart.js',
   './manifest.json',
+  './passkeys.js',
 ];
 
 self.addEventListener('install', (event) => {

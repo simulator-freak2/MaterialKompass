@@ -24,9 +24,9 @@ class AuthenticatedApiClient {
   final String token;
 
   Map<String, String> get headers => {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      };
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  };
 
   Future<dynamic> request(
     String path, {
@@ -45,20 +45,20 @@ class AuthenticatedApiClient {
       response = switch (method) {
         'GET' => await AppHttpClient.get(uri, headers: headers),
         'POST' => await AppHttpClient.post(
-            uri,
-            headers: headers,
-            body: body == null ? null : jsonEncode(body),
-          ),
+          uri,
+          headers: headers,
+          body: body == null ? null : jsonEncode(body),
+        ),
         'PUT' => await AppHttpClient.put(
-            uri,
-            headers: headers,
-            body: body == null ? null : jsonEncode(body),
-          ),
+          uri,
+          headers: headers,
+          body: body == null ? null : jsonEncode(body),
+        ),
         'PATCH' => await AppHttpClient.patch(
-            uri,
-            headers: headers,
-            body: body == null ? null : jsonEncode(body),
-          ),
+          uri,
+          headers: headers,
+          body: body == null ? null : jsonEncode(body),
+        ),
         'DELETE' => await AppHttpClient.delete(uri, headers: headers),
         _ => throw StateError('Die HTTP-Methode wurde bereits geprüft.'),
       };

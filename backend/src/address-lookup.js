@@ -79,16 +79,21 @@ function normalizeSuggestion(entry) {
   const code = String(entry?.country_code || '').trim().toLowerCase();
   if (!COUNTRIES_BY_CODE.has(code)) return null;
   const street = String(entry?.street || '').trim();
+  const houseNumber = String(entry?.housenumber || '').trim();
   const postalCode = String(entry?.postcode || '').trim();
   const city = String(entry?.city || entry?.town || entry?.village
     || entry?.municipality || '').trim();
   const country = countryName(code, entry?.country);
-  if (!street || !postalCode || !city || !country) return null;
-  const label = `${street}, ${postalCode} ${city}, ${country}`;
+  if (!street || street.length > 255 || houseNumber.length > 32
+    || !postalCode || postalCode.length > 32 || !city || city.length > 255
+    || !country || country.length > 128) return null;
+  const streetLine = [street, houseNumber].filter(Boolean).join(' ');
+  const label = `${streetLine}, ${postalCode} ${city}, ${country}`;
   return {
     id: String(entry?.place_id || label).trim(),
     label,
     street,
+    houseNumber,
     postalCode,
     city,
     country,
@@ -102,7 +107,13 @@ function normalizeSuggestions(rows, limit = DEFAULT_RESULT_LIMIT) {
   for (const row of rows) {
     const value = normalizeSuggestion(row);
     if (!value) continue;
-    const key = [value.street, value.postalCode, value.city, value.countryCode]
+    const key = [
+      value.street,
+      value.houseNumber,
+      value.postalCode,
+      value.city,
+      value.countryCode,
+    ]
       .join('|').toLocaleLowerCase('de');
     if (seen.has(key)) continue;
     seen.add(key);
@@ -143,6 +154,20 @@ function createAddressLookupService({
     return value;
   }
 
+  async function cachedOperation(key, operation) {
+    const hit = cached(key);
+    if (hit) return hit;
+    if (pending.has(key)) return pending.get(key);
+
+    const promise = (async () => remember(key, await operation()))();
+    pending.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      pending.delete(key);
+    }
+  }
+
   async function request(parameters) {
     const url = new URL('/v1/geocode/autocomplete', baseUrl);
     Object.entries({ ...parameters, apiKey: normalizedApiKey })
@@ -177,12 +202,8 @@ function createAddressLookupService({
     }
     if (!configured) return { configured: false, supported: true, suggestions: [] };
     const boundedLimit = Math.min(Math.max(Number(limit) || DEFAULT_RESULT_LIMIT, 1), 10);
-    const cacheKey = `${code || '*'}\n${boundedLimit}\n${normalizedQuery.toLocaleLowerCase('de')}`;
-    const hit = cached(cacheKey);
-    if (hit) return hit;
-    if (pending.has(cacheKey)) return pending.get(cacheKey);
-
-    const operation = (async () => {
+    const cacheKey = `address\n${code || '*'}\n${boundedLimit}\n${normalizedQuery.toLocaleLowerCase('de')}`;
+    return cachedOperation(cacheKey, async () => {
       const rows = await request({
         text: normalizedQuery,
         filter: `countrycode:${code || ALL_EU_COUNTRY_CODES}`,
@@ -190,29 +211,50 @@ function createAddressLookupService({
         limit: String(boundedLimit),
         format: 'json',
       });
-      return remember(cacheKey, {
+      return {
         configured: true,
         supported: true,
         suggestions: normalizeSuggestions(rows, boundedLimit),
-      });
-    })();
-    pending.set(cacheKey, operation);
-    try {
-      return await operation;
-    } finally {
-      pending.delete(cacheKey);
-    }
+      };
+    });
   }
 
   // Compatibility for clients from earlier releases. Both methods now use
   // Geoapify and deliberately return only the requested field.
   async function localities({ country, postalCode }) {
-    const result = await suggestions({ query: `${postalCode} ${country}`, country });
-    return {
-      configured: result.configured,
-      supported: result.supported,
-      suggestions: uniqueStrings(result.suggestions.map((entry) => entry.city)),
-    };
+    const normalizedPostalCode = String(postalCode || '').trim();
+    const code = countryCode(country);
+    if (!code) return { configured, supported: false, suggestions: [] };
+    if (!normalizedPostalCode || normalizedPostalCode.length > 32) {
+      return { configured, supported: true, suggestions: [] };
+    }
+    if (!configured) return { configured: false, supported: true, suggestions: [] };
+
+    const comparablePostalCode = normalizedPostalCode
+      .toLocaleUpperCase('de').replace(/[\s-]/g, '');
+    const cacheKey = `locality\n${code}\n${comparablePostalCode}`;
+    return cachedOperation(cacheKey, async () => {
+      const rows = await request({
+        text: `${normalizedPostalCode} ${countryName(code)}`,
+        filter: `countrycode:${code}`,
+        lang: 'de',
+        limit: '10',
+        format: 'json',
+      });
+      const matchingRows = rows.filter((entry) => {
+        const rowCode = String(entry?.country_code || '').trim().toLowerCase();
+        const rowPostalCode = String(entry?.postcode || '').trim()
+          .toLocaleUpperCase('de').replace(/[\s-]/g, '');
+        return rowCode === code && rowPostalCode === comparablePostalCode;
+      });
+      return {
+        configured: true,
+        supported: true,
+        suggestions: uniqueStrings(matchingRows.map((entry) => (
+          entry?.city || entry?.town || entry?.village || entry?.municipality
+        ))),
+      };
+    });
   }
 
   async function streets({ country, postalCode, city, query }) {

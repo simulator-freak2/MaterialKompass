@@ -29,13 +29,16 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
         final response = await http.post(
           Uri.parse('$apiBaseUrl/api/service-devices/status'),
           headers: {'Content-Type': 'application/json'},
-          body:
-              jsonEncode({'deviceCredential': stored, ...await _clientInfo()}),
+          body: jsonEncode({
+            'deviceCredential': stored,
+            ...await _clientInfo(),
+          }),
         );
         if (response.statusCode == 200) {
           credential = stored;
-          device =
-              Map<String, dynamic>.from(_object(response)['device'] as Map);
+          device = Map<String, dynamic>.from(
+            _object(response)['device'] as Map,
+          );
         } else {
           await ServiceDeviceStorage.clear();
         }
@@ -51,15 +54,17 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
   @override
   Widget build(BuildContext context) {
     if (!ready) {
-      return const Stack(children: [
-        AbsorbPointer(child: LoginPage()),
-        Positioned.fill(
-          child: ColoredBox(
-            color: Color(0x55FFFFFF),
-            child: Center(child: CircularProgressIndicator()),
+      return const Stack(
+        children: [
+          AbsorbPointer(child: LoginPage()),
+          Positioned.fill(
+            child: ColoredBox(
+              color: Color(0x55FFFFFF),
+              child: Center(child: CircularProgressIndicator()),
+            ),
           ),
-        ),
-      ]);
+        ],
+      );
     }
     if (kIsWeb || credential == null) return const LoginPage();
     return ServiceDeviceLoginPage(
@@ -92,8 +97,9 @@ class _ServiceDeviceActivationPageState
     super.dispose();
   }
 
-  void message(String value) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(value)));
+  void message(String value) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(value)));
 
   Future<void> loadDevices() async {
     setState(() => loading = true);
@@ -101,13 +107,17 @@ class _ServiceDeviceActivationPageState
       final response = await http.post(
         Uri.parse('$apiBaseUrl/api/service-devices/activation/options'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(
-            {'identifier': identifier.text, 'password': password.text}),
+        body: jsonEncode({
+          'identifier': identifier.text,
+          'password': password.text,
+        }),
       );
       if (!mounted) return;
       if (response.statusCode != 200) {
-        return message(_object(response)['error']?.toString() ??
-            'Admin-Anmeldung fehlgeschlagen.');
+        return message(
+          _object(response)['error']?.toString() ??
+              'Admin-Anmeldung fehlgeschlagen.',
+        );
       }
       devices = (jsonDecode(response.body) as List)
           .cast<Map>()
@@ -140,18 +150,19 @@ class _ServiceDeviceActivationPageState
       final data = _object(response);
       if (response.statusCode != 200) {
         return message(
-            data['error']?.toString() ?? 'Aktivierung fehlgeschlagen.');
+          data['error']?.toString() ?? 'Aktivierung fehlgeschlagen.',
+        );
       }
       final credential = data['deviceCredential'].toString();
       await ServiceDeviceStorage.saveCredential(credential);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
-            builder: (_) => ServiceDeviceLoginPage(
-                  deviceCredential: credential,
-                  initialDevice:
-                      Map<String, dynamic>.from(data['device'] as Map),
-                )),
+          builder: (_) => ServiceDeviceLoginPage(
+            deviceCredential: credential,
+            initialDevice: Map<String, dynamic>.from(data['device'] as Map),
+          ),
+        ),
         (_) => false,
       );
     } finally {
@@ -176,60 +187,78 @@ class _ServiceDeviceActivationPageState
       : Scaffold(
           appBar: AppBar(title: const Text('Dienstgerät aktivieren')),
           body: Center(
-              child: SingleChildScrollView(
-                  child: Card(
-            margin: const EdgeInsets.all(24),
-            child: SizedBox(
-                width: 520,
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.devices_other, size: 56),
-                    const SizedBox(height: 12),
-                    const Text(
-                        'Die Aktivierung muss einmalig durch einen Administrator erfolgen.'),
-                    const SizedBox(height: 16),
-                    TextField(
-                        controller: identifier,
-                        decoration: const InputDecoration(
+            child: SingleChildScrollView(
+              child: Card(
+                margin: const EdgeInsets.all(24),
+                child: SizedBox(
+                  width: 520,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.devices_other, size: 56),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Die Aktivierung muss einmalig durch einen Administrator erfolgen.',
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: identifier,
+                          decoration: const InputDecoration(
                             labelText: 'Admin-Benutzername oder E-Mail',
-                            border: OutlineInputBorder())),
-                    const SizedBox(height: 12),
-                    TextField(
-                        controller: password,
-                        obscureText: true,
-                        decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: password,
+                          obscureText: true,
+                          decoration: const InputDecoration(
                             labelText: 'Admin-Passwort',
-                            border: OutlineInputBorder())),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                        onPressed: loading ? null : loadDevices,
-                        icon: const Icon(Icons.login),
-                        label: const Text('Geräte laden')),
-                    if (devices.isNotEmpty) ...[
-                      const SizedBox(height: 20),
-                      DropdownButtonFormField<String>(
-                        initialValue: selectedId,
-                        decoration: const InputDecoration(
-                            labelText: 'Vorbereitetes Gerät',
-                            border: OutlineInputBorder()),
-                        items: devices
-                            .map((entry) => DropdownMenuItem(
-                                value: entry['id'].toString(),
-                                child: Text(
-                                    '${entry['name']} · ${entry['inventoryNumber']}')))
-                            .toList(),
-                        onChanged: (value) =>
-                            setState(() => selectedId = value),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                          onPressed: loading ? null : activateDevice,
-                          icon: const Icon(Icons.verified_user),
-                          label: const Text('Dieses Gerät aktivieren')),
-                    ],
-                  ]),
-                )),
-          ))),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: loading ? null : loadDevices,
+                          icon: const Icon(Icons.login),
+                          label: const Text('Geräte laden'),
+                        ),
+                        if (devices.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          DropdownButtonFormField<String>(
+                            initialValue: selectedId,
+                            decoration: const InputDecoration(
+                              labelText: 'Vorbereitetes Gerät',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: devices
+                                .map(
+                                  (entry) => DropdownMenuItem(
+                                    value: entry['id'].toString(),
+                                    child: Text(
+                                      '${entry['name']} · ${entry['inventoryNumber']}',
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) =>
+                                setState(() => selectedId = value),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: loading ? null : activateDevice,
+                            icon: const Icon(Icons.verified_user),
+                            label: const Text('Dieses Gerät aktivieren'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         );
 }

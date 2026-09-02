@@ -68,8 +68,10 @@ class _ClientUpdateGateState extends State<ClientUpdateGate>
       if (!opened && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content:
-                  Text('Der System-Installer konnte nicht gestartet werden.')),
+            content: Text(
+              'Der System-Installer konnte nicht gestartet werden.',
+            ),
+          ),
         );
       }
     } catch (error) {
@@ -119,12 +121,15 @@ class _ClientUpdateGateState extends State<ClientUpdateGate>
           canPop: !update.required,
           child: AlertDialog(
             title: const Text('Update verfügbar'),
-            content: Text([
-              'MaterialKompass ${update.version} ist verfügbar.',
-              if (update.notes?.trim().isNotEmpty == true) update.notes!.trim(),
-              if (update.required)
-                'Dieses Update ist erforderlich, um fortzufahren.',
-            ].join('\n\n')),
+            content: Text(
+              [
+                'MaterialKompass ${update.version} ist verfügbar.',
+                if (update.notes?.trim().isNotEmpty == true)
+                  update.notes!.trim(),
+                if (update.required)
+                  'Dieses Update ist erforderlich, um fortzufahren.',
+              ].join('\n\n'),
+            ),
             actions: [
               if (!update.required)
                 TextButton(

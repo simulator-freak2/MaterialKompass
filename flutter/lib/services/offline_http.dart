@@ -70,7 +70,11 @@ Future<Response> get(Uri url, {Map<String, String>? headers}) async {
     final response = await _client.get(url, headers: headers).timeout(_timeout);
     if (response.statusCode >= 200 && response.statusCode < 300) {
       await store.cacheResponse(
-          subject, url, response.statusCode, response.body);
+        subject,
+        url,
+        response.statusCode,
+        response.body,
+      );
       await store.markOnline();
       unawaited(flush(headers: headers));
     } else if (_transientStatusCodes.contains(response.statusCode)) {
@@ -98,7 +102,10 @@ Future<Response> get(Uri url, {Map<String, String>? headers}) async {
 }
 
 Future<Map<String, dynamic>?> _syntheticDeviceResponse(
-    OfflineStore store, String subject, Uri url) async {
+  OfflineStore store,
+  String subject,
+  Uri url,
+) async {
   if (url.path != '/api/device/search' &&
       url.path != '/api/device/defect-target') {
     return null;
@@ -116,33 +123,44 @@ Future<Map<String, dynamic>?> _syntheticDeviceResponse(
   final material = await values('/api/material?archived=false');
   final clothing = await values('/api/clothing');
   final combined = [
-    ...material.map((entry) => {
-          ...Map<String, dynamic>.from(entry as Map),
-          'entityType': 'MaterialItem'
-        }),
-    ...clothing.map((entry) => {
-          ...Map<String, dynamic>.from(entry as Map),
-          'entityType': 'ClothingItem'
-        }),
+    ...material.map(
+      (entry) => {
+        ...Map<String, dynamic>.from(entry as Map),
+        'entityType': 'MaterialItem',
+      },
+    ),
+    ...clothing.map(
+      (entry) => {
+        ...Map<String, dynamic>.from(entry as Map),
+        'entityType': 'ClothingItem',
+      },
+    ),
   ];
   if (url.path == '/api/device/defect-target') {
     final number = url.queryParameters['inventoryNumber']?.toLowerCase() ?? '';
     final match = combined
-        .where((entry) =>
-            entry['inventoryNumber']?.toString().toLowerCase() == number)
+        .where(
+          (entry) =>
+              entry['inventoryNumber']?.toString().toLowerCase() == number,
+        )
         .firstOrNull;
     if (match == null) return null;
     return {'statusCode': 200, 'body': jsonEncode(match)};
   }
   final query = url.queryParameters['q']?.trim().toLowerCase() ?? '';
   final matches = combined
-      .where((entry) => [
-            entry['inventoryNumber'],
-            entry['name'],
-            entry['serialNumber'],
-            entry['manufacturer']
-          ].any((value) =>
-              value?.toString().toLowerCase().contains(query) == true))
+      .where(
+        (entry) =>
+            [
+              entry['inventoryNumber'],
+              entry['name'],
+              entry['serialNumber'],
+              entry['manufacturer'],
+            ].any(
+              (value) =>
+                  value?.toString().toLowerCase().contains(query) == true,
+            ),
+      )
       .take(100)
       .toList();
   return {'statusCode': 200, 'body': jsonEncode(matches)};
@@ -153,32 +171,28 @@ Future<Response> post(
   Map<String, String>? headers,
   Object? body,
   Encoding? encoding,
-}) =>
-    _write('POST', url, headers: headers, body: body, encoding: encoding);
+}) => _write('POST', url, headers: headers, body: body, encoding: encoding);
 
 Future<Response> put(
   Uri url, {
   Map<String, String>? headers,
   Object? body,
   Encoding? encoding,
-}) =>
-    _write('PUT', url, headers: headers, body: body, encoding: encoding);
+}) => _write('PUT', url, headers: headers, body: body, encoding: encoding);
 
 Future<Response> patch(
   Uri url, {
   Map<String, String>? headers,
   Object? body,
   Encoding? encoding,
-}) =>
-    _write('PATCH', url, headers: headers, body: body, encoding: encoding);
+}) => _write('PATCH', url, headers: headers, body: body, encoding: encoding);
 
 Future<Response> delete(
   Uri url, {
   Map<String, String>? headers,
   Object? body,
   Encoding? encoding,
-}) =>
-    _write('DELETE', url, headers: headers, body: body, encoding: encoding);
+}) => _write('DELETE', url, headers: headers, body: body, encoding: encoding);
 
 Future<Response> _write(
   String method,
@@ -236,7 +250,7 @@ Future<Response> _enqueueWrite(
     method == 'POST' ? 201 : 200,
     headers: const {
       'content-type': 'application/json',
-      'x-materialkompass-offline-queued': 'true'
+      'x-materialkompass-offline-queued': 'true',
     },
     request: base.Request(method, url),
   );
@@ -289,8 +303,11 @@ Future<void> flush({required Map<String, String>? headers}) async {
           remaining.add(command.failed(message));
           continue;
         }
-        remaining.add(command.failed(
-            'Synchronisation fehlgeschlagen (${response.statusCode}).'));
+        remaining.add(
+          command.failed(
+            'Synchronisation fehlgeschlagen (${response.statusCode}).',
+          ),
+        );
       } catch (_) {
         connectionFailed = true;
         remaining.add(command);

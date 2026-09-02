@@ -2,7 +2,7 @@ name: materialkompass_workspace
 description: Workspace entrypoint for the MaterialKompass Flutter app.
 publish_to: 'none'
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: '>=3.9.0 <4.0.0'
 dependencies:
   flutter:
     sdk: flutter

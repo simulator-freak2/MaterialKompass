@@ -10,31 +10,33 @@ void main() {
     darkness: 18,
   );
 
-  test('inventory label uses 203 dpi dimensions and purchase year fallback',
-      () {
-    final label = LabelData.fromItem({
-      'inventoryNumber': '10050035-02-02-0001',
-      'name': 'Kettensäge',
-      'manufacturer': 'Stihl',
-      'purchaseDate': '2024-06-01',
-      'itemType': 'bulk',
-      'quantity': 3,
-    }, LabelType.inventory);
+  test(
+    'inventory label uses 203 dpi dimensions and purchase year fallback',
+    () {
+      final label = LabelData.fromItem({
+        'inventoryNumber': '10050035-02-02-0001',
+        'name': 'Kettensäge',
+        'manufacturer': 'Stihl',
+        'purchaseDate': '2024-06-01',
+        'itemType': 'bulk',
+        'quantity': 3,
+      }, LabelType.inventory);
 
-    final zpl = LabelPrintService.instance.buildZpl(label, printer, 3);
+      final zpl = LabelPrintService.instance.buildZpl(label, printer, 3);
 
-    expect(label.year, '2024');
-    expect(label.suggestedCopies, 3);
-    expect(zpl, contains('^PW406'));
-    expect(zpl, contains('^LL203'));
-    expect(zpl, contains('^MNY'));
-    expect(zpl, contains('^MTT'));
-    expect(zpl, contains('^BCN,43'));
-    expect(zpl, contains('^FD10050035-02-02-0001^FS'));
-    expect(zpl, contains('^FDBJ:2024^FS'));
-    expect(zpl, contains('^PQ3'));
-    expect(zpl, isNot(contains('GR:')));
-  });
+      expect(label.year, '2024');
+      expect(label.suggestedCopies, 3);
+      expect(zpl, contains('^PW406'));
+      expect(zpl, contains('^LL203'));
+      expect(zpl, contains('^MNY'));
+      expect(zpl, contains('^MTT'));
+      expect(zpl, contains('^BCN,43'));
+      expect(zpl, contains('^FD10050035-02-02-0001^FS'));
+      expect(zpl, contains('^FDBJ:2024^FS'));
+      expect(zpl, contains('^PQ3'));
+      expect(zpl, isNot(contains('GR:')));
+    },
+  );
 
   test('clothing label includes size and explicit manufacturing year', () {
     final label = LabelData.fromItem({

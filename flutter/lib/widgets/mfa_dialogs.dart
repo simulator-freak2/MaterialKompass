@@ -83,7 +83,8 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
                           Navigator.pop(dialogContext, data);
                         } else {
                           setDialogState(() {
-                            error = data['error']?.toString() ??
+                            error =
+                                data['error']?.toString() ??
                                 'Der Code konnte nicht geprüft werden.';
                             submitting = false;
                           });
@@ -140,10 +141,14 @@ Future<Map<String, dynamic>?> setupMfa(
   final setup = _object(setupResponse);
   if (setupResponse.statusCode != 200) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(setup['error']?.toString() ??
-            '2-FA konnte nicht vorbereitet werden.'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            setup['error']?.toString() ??
+                '2-FA konnte nicht vorbereitet werden.',
+          ),
+        ),
+      );
     }
     return null;
   }
@@ -235,7 +240,8 @@ Future<Map<String, dynamic>?> setupMfa(
                           Navigator.pop(dialogContext, data);
                         } else {
                           setDialogState(() {
-                            error = data['error']?.toString() ??
+                            error =
+                                data['error']?.toString() ??
                                 'Der Code ist ungültig.';
                             submitting = false;
                           });
@@ -269,42 +275,40 @@ Future<Map<String, dynamic>?> setupMfa(
 Future<void> showRecoveryCodes(
   BuildContext context,
   List<String> recoveryCodes,
-) =>
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Wiederherstellungscodes sichern'),
-        content: SizedBox(
-          width: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Jeder Code ist nur einmal verwendbar. Bewahren Sie diese '
-                'Codes getrennt von Ihrem Passwort sicher auf. Sie werden '
-                'später nicht erneut angezeigt.',
-              ),
-              const SizedBox(height: 16),
-              SelectableText(
-                recoveryCodes.join('\n'),
-                style: const TextStyle(fontFamily: 'monospace'),
-              ),
-            ],
+) => showDialog<void>(
+  context: context,
+  barrierDismissible: false,
+  builder: (dialogContext) => AlertDialog(
+    title: const Text('Wiederherstellungscodes sichern'),
+    content: SizedBox(
+      width: 440,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Jeder Code ist nur einmal verwendbar. Bewahren Sie diese '
+            'Codes getrennt von Ihrem Passwort sicher auf. Sie werden '
+            'später nicht erneut angezeigt.',
           ),
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: () => Clipboard.setData(
-              ClipboardData(text: recoveryCodes.join('\n')),
-            ),
-            icon: const Icon(Icons.copy),
-            label: const Text('Codes kopieren'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Ich habe die Codes gesichert'),
+          const SizedBox(height: 16),
+          SelectableText(
+            recoveryCodes.join('\n'),
+            style: const TextStyle(fontFamily: 'monospace'),
           ),
         ],
       ),
-    );
+    ),
+    actions: [
+      TextButton.icon(
+        onPressed: () =>
+            Clipboard.setData(ClipboardData(text: recoveryCodes.join('\n'))),
+        icon: const Icon(Icons.copy),
+        label: const Text('Codes kopieren'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(dialogContext),
+        child: const Text('Ich habe die Codes gesichert'),
+      ),
+    ],
+  ),
+);

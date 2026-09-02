@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
+const { registerCalendarRoutes } = require('./calendar');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
   createStocktakeEmailService,
@@ -36,6 +37,7 @@ const { createMailboxCredentialVault } = require('./mailbox-credential-vault');
 const { registerMailManagementRoutes } = require('./mail-management');
 const { sendAccountMail } = require('./mailer');
 const { createUserMfa } = require('./user-mfa');
+const { createPasskeyAuth } = require('./passkeys');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -101,6 +103,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'permissions', 'departments', 'locations', 'shelves', 'storageLevels',
   'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
+  'reservations', 'maintenanceEvents',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'procurementRequests', 'procurementOffers', 'procurementOrders',
@@ -150,7 +153,7 @@ function createApp(options = {}) {
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'no-referrer',
-      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), publickey-credentials-get=(self), publickey-credentials-create=(self)',
       'Cross-Origin-Resource-Policy': 'same-site',
       'Cache-Control': 'no-store',
     });
@@ -240,6 +243,7 @@ function createApp(options = {}) {
   if (options.userData) {
     appData.users = structuredClone(options.userData.users);
     appData.roles = structuredClone(options.userData.roles);
+    appData.passkeys = structuredClone(options.userData.passkeys || []);
   } else if (process.env.NODE_ENV === 'production') {
     // Demo accounts have documented development passwords and must never be
     // exposed by a production instance that runs without a database.
@@ -258,6 +262,8 @@ function createApp(options = {}) {
   const materialMovements = appData.materialMovements;
   const materialInspections = appData.materialInspections;
   const materialDocuments = appData.materialDocuments;
+  const reservations = (appData.reservations ||= []);
+  const maintenanceEvents = (appData.maintenanceEvents ||= []);
   const clothingItems = appData.clothingItems;
   const clothingInspections = appData.clothingInspections || [];
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
@@ -271,6 +277,7 @@ function createApp(options = {}) {
   const auditLogs = appData.auditLogs;
   const exportLogs = appData.exportLogs;
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
+  const passkeys = (appData.passkeys ||= []);
   const serviceDevices = (appData.serviceDevices ||= []);
   const offlineClients = (appData.offlineClients ||= []);
   const offlineCommandResults = (appData.offlineCommandResults ||= []);
@@ -435,6 +442,7 @@ function createApp(options = {}) {
     return createHash('sha256').update(JSON.stringify([
       user.passwordHash, user.active, user.emailVerifiedAt, user.roles, user.permissions,
       user.mfaVersion || 0, user.mfaRequired === true, Boolean(user.mfaEnabledAt),
+      Number(user.passkeyCount || 0),
     ])).digest('base64url').slice(0, 22);
   }
 
@@ -510,7 +518,8 @@ function createApp(options = {}) {
       }
       if (req.mfaSetupRequired
           && !['/api/auth/me', '/api/users/me/mfa', '/api/users/me/mfa/setup',
-            '/api/users/me/mfa/confirm'].includes(req.path)) {
+            '/api/users/me/mfa/confirm', '/api/users/me/passkeys/options',
+            '/api/users/me/passkeys/verify'].includes(req.path)) {
         return res.status(428).json({
           error: 'Richten Sie zuerst die verpflichtende Zwei-Faktor-Authentifizierung ein.',
           mfaSetupRequired: true,
@@ -591,6 +600,30 @@ function createApp(options = {}) {
     });
   });
 
+  const calendarPermissions = [
+    'calendar.read', 'reservations.create', 'reservations.manage', 'maintenance.manage',
+  ];
+  calendarPermissions.forEach((permission) => {
+    if (!permissions.includes(permission)) permissions.push(permission);
+  });
+  const calendarRolePermissions = {
+    Admin: calendarPermissions,
+    Nutzer: ['calendar.read', 'reservations.create'],
+    Fachbereichsleiter: ['calendar.read', 'reservations.create', 'reservations.manage'],
+    Materialwart: calendarPermissions,
+    'Sachkundiger PSAgE': ['calendar.read', 'maintenance.manage'],
+  };
+  roles.forEach((role) => {
+    (calendarRolePermissions[role.name] || []).forEach((permission) => {
+      if (!role.permissions.includes(permission)) role.permissions.push(permission);
+    });
+  });
+  users.forEach((user) => {
+    user.roles.flatMap((name) => calendarRolePermissions[name] || []).forEach((permission) => {
+      if (!user.permissions.includes(permission)) user.permissions.push(permission);
+    });
+  });
+
   if (!permissions.includes('offline.access')) permissions.push('offline.access');
   const offlineRoles = new Set(['Admin', 'Materialwart', 'Kleiderwart', 'Fachbereichsleiter']);
   roles.forEach((role) => {
@@ -615,6 +648,7 @@ function createApp(options = {}) {
   }
 
   let userMfa;
+  let passkeyAuth;
   registerOfflineSync({
     app,
     clients: offlineClients,
@@ -666,6 +700,8 @@ function createApp(options = {}) {
     DefectReport: { permission: 'defects.read', label: 'Mängel' },
     ProcurementRequest: { permission: 'procurement.read', label: 'Beschaffung' },
     Stocktake: { permission: 'stocktakes.read', label: 'Inventuren' },
+    Reservation: { permission: 'calendar.read', label: 'Kalender' },
+    MaintenanceEvent: { permission: 'calendar.read', label: 'Kalender' },
     ExportLog: { permission: 'reports.read', label: 'Berichte' },
   });
 
@@ -704,7 +740,8 @@ function createApp(options = {}) {
       Shelf: 'Regal', StorageLevel: 'Ebene', StorageHierarchy: 'Lagerstruktur',
       StockStructure: 'Lagerplatz', Category: 'Kategorie', MaterialMovement: 'Material',
       IssueTransaction: 'Kleidungsausgabe', DefectReport: 'Mangel',
-      ProcurementRequest: 'Beschaffung', Stocktake: 'Inventur', ExportLog: 'Export',
+      ProcurementRequest: 'Beschaffung', Stocktake: 'Inventur',
+      Reservation: 'Reservierung', MaintenanceEvent: 'Wartung', ExportLog: 'Export',
     };
 
     return {
@@ -1040,7 +1077,10 @@ function createApp(options = {}) {
     userStore: options.userStore,
     accountMailSender: options.accountMailSender,
     dataSubjectExporter: exportDataSubject,
-    onBeforeUserDelete: anonymizeDataSubject,
+    onBeforeUserDelete: async (user) => {
+      anonymizeDataSubject(user);
+      passkeyAuth?.removeUser(user.id);
+    },
     now: options.now,
     defaultMailMessageFor: mailManagement.defaultMessageFor,
     verifyMfaCode: (user, code) => userMfa?.verifyUserCode(user, code),
@@ -1060,6 +1100,28 @@ function createApp(options = {}) {
       || (process.env.NODE_ENV === 'production' ? '' : '0'.repeat(64)),
     securityVersion,
     now: options.now || Date.now,
+  });
+
+  passkeyAuth = createPasskeyAuth({
+    app,
+    users,
+    passkeys,
+    authMiddleware,
+    requirePermission,
+    authRateLimit,
+    createToken,
+    publicUser,
+    userMfa,
+    saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
+    savePasskey: (passkey) => options.userStore?.savePasskey(passkey) || Promise.resolve(),
+    deletePasskey: (id) => options.userStore?.deletePasskey(id) || Promise.resolve(),
+    deleteUserPasskeys: (userId) => options.userStore?.deleteUserPasskeys(userId)
+      || Promise.resolve(),
+    logEvent,
+    securityVersion,
+    now: options.now || Date.now,
+    config: options.passkeyConfig,
+    webauthn: options.passkeyWebAuthn,
   });
 
   registerScannerEmailRoutes({
@@ -1224,6 +1286,12 @@ function createApp(options = {}) {
         user,
         (verifiedUser, response) => finishLogin(verifiedUser, response),
       ));
+    }
+    if (userMfa.passkeyRequired(user)) {
+      return res.status(403).json({
+        error: 'Für dieses Konto ist eine starke Anmeldung erforderlich. Verwenden Sie einen Passkey.',
+        passkeyRequired: true,
+      });
     }
     if (userMfa.enrollmentRequired(user)) {
       return res.json({
@@ -1786,6 +1854,12 @@ function createApp(options = {}) {
     materialInspections, materialDocuments, defectReports, categories, locations,
     stockStructures, clothingItems, deletedClothingItems, logEvent, nextId, XLSX,
     defectManagement,
+  });
+
+  registerCalendarRoutes({
+    app, authMiddleware, requirePermission, hasPermission, reservations,
+    maintenanceEvents, materials, materialMovements, departments, locations, users,
+    logEvent, nextId, defectManagement,
   });
 
   registerStocktakeRoutes({
@@ -2459,6 +2533,22 @@ function createApp(options = {}) {
 
     if (hasPermission(req.user, 'procurement.read')) {
       summary.procurementCount = procurementRequests.length;
+    }
+    if (hasPermission(req.user, 'calendar.read')) {
+      const now = Date.now();
+      const warning = now + 7 * 24 * 60 * 60 * 1000;
+      summary.pendingReservationCount = reservations.filter((entry) =>
+        entry.status === 'Ausstehend'
+        && (hasPermission(req.user, 'reservations.manage')
+          || entry.requesterUserId === req.user.id)).length;
+      summary.upcomingCalendarCount = reservations.filter((entry) =>
+        ['Ausstehend', 'Freigegeben'].includes(entry.status)
+        && new Date(entry.startAt).getTime() >= now
+        && new Date(entry.startAt).getTime() <= warning).length
+        + maintenanceEvents.filter((entry) =>
+          ['Geplant', 'In Arbeit'].includes(entry.status)
+          && new Date(entry.startAt).getTime() <= warning
+          && new Date(entry.endAt).getTime() >= now).length;
     }
     if (hasPermission(req.user, 'procurement.approve')) {
       summary.pendingProcurementApprovals = procurementRequests.filter((item) => item.status === 'Beantragt').length;

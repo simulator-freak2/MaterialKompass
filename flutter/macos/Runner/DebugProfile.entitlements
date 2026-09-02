@@ -14,5 +14,9 @@
 	<true/>
 	<key>keychain-access-groups</key>
 	<array/>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:materialkompass.org</string>
+	</array>
 </dict>
 </plist>

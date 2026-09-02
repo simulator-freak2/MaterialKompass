@@ -34,9 +34,9 @@ class _LocationsPageState extends State<LocationsPage> {
   String _query = '';
 
   Map<String, String> get _headers => {
-        'Authorization': 'Bearer ${widget.token}',
-        'Content-Type': 'application/json',
-      };
+    'Authorization': 'Bearer ${widget.token}',
+    'Content-Type': 'application/json',
+  };
 
   @override
   void initState() {
@@ -60,14 +60,16 @@ class _LocationsPageState extends State<LocationsPage> {
 
   void _sort(List<Map<String, dynamic>> values) {
     values.sort((a, b) {
-      final code = _value(a, 'code')
-          .toLowerCase()
-          .compareTo(_value(b, 'code').toLowerCase());
+      final code = _value(
+        a,
+        'code',
+      ).toLowerCase().compareTo(_value(b, 'code').toLowerCase());
       return code != 0
           ? code
-          : _value(a, 'name')
-              .toLowerCase()
-              .compareTo(_value(b, 'name').toLowerCase());
+          : _value(
+              a,
+              'name',
+            ).toLowerCase().compareTo(_value(b, 'name').toLowerCase());
     });
   }
 
@@ -117,21 +119,25 @@ class _LocationsPageState extends State<LocationsPage> {
     }
     try {
       final responses = await Future.wait([
-        _client.get(Uri.parse('$apiBaseUrl/api/storage-hierarchy'),
-            headers: _headers),
+        _client.get(
+          Uri.parse('$apiBaseUrl/api/storage-hierarchy'),
+          headers: _headers,
+        ),
         _client.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: _headers),
       ]);
       if (responses.any((response) => response.statusCode != 200)) {
         throw Exception('Die Lagerstruktur konnte nicht geladen werden.');
       }
-      final hierarchy =
-          Map<String, dynamic>.from(jsonDecode(responses[0].body) as Map);
+      final hierarchy = Map<String, dynamic>.from(
+        jsonDecode(responses[0].body) as Map,
+      );
       final user = jsonDecode(responses[1].body)['user'] as Map;
       if (!mounted) return;
       setState(() {
         _replaceHierarchy(hierarchy);
-        _canWrite = (user['permissions'] as List? ?? const [])
-            .contains('locations.write');
+        _canWrite = (user['permissions'] as List? ?? const []).contains(
+          'locations.write',
+        );
         _loading = false;
       });
     } catch (error) {
@@ -151,10 +157,16 @@ class _LocationsPageState extends State<LocationsPage> {
     try {
       final uri = Uri.parse('$apiBaseUrl$path');
       final response = switch (method) {
-        'POST' =>
-          await _client.post(uri, headers: _headers, body: jsonEncode(body)),
-        'PUT' =>
-          await _client.put(uri, headers: _headers, body: jsonEncode(body)),
+        'POST' => await _client.post(
+          uri,
+          headers: _headers,
+          body: jsonEncode(body),
+        ),
+        'PUT' => await _client.put(
+          uri,
+          headers: _headers,
+          body: jsonEncode(body),
+        ),
         'DELETE' => await _client.delete(uri, headers: _headers),
         _ => throw ArgumentError('Nicht unterstützte Methode'),
       };
@@ -172,10 +184,12 @@ class _LocationsPageState extends State<LocationsPage> {
 
   void _message(String value, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(value),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
   }
 
   Future<void> _afterChange(String message) async {
@@ -198,14 +212,18 @@ class _LocationsPageState extends State<LocationsPage> {
       ),
     );
     if (saved == true) {
-      await _afterChange(building == null
-          ? 'Gebäude wurde angelegt.'
-          : 'Gebäude wurde aktualisiert.');
+      await _afterChange(
+        building == null
+            ? 'Gebäude wurde angelegt.'
+            : 'Gebäude wurde aktualisiert.',
+      );
     }
   }
 
-  Future<void> _editShelf(String buildingId,
-      [Map<String, dynamic>? shelf]) async {
+  Future<void> _editShelf(
+    String buildingId, [
+    Map<String, dynamic>? shelf,
+  ]) async {
     final id = Uri.encodeComponent(_value(shelf ?? {}, 'id'));
     final saved = await showDialog<bool>(
       context: context,
@@ -226,9 +244,9 @@ class _LocationsPageState extends State<LocationsPage> {
       ),
     );
     if (saved == true) {
-      await _afterChange(shelf == null
-          ? 'Regal wurde angelegt.'
-          : 'Regal wurde aktualisiert.');
+      await _afterChange(
+        shelf == null ? 'Regal wurde angelegt.' : 'Regal wurde aktualisiert.',
+      );
     }
   }
 
@@ -253,14 +271,16 @@ class _LocationsPageState extends State<LocationsPage> {
       ),
     );
     if (saved == true) {
-      await _afterChange(level == null
-          ? 'Ebene wurde angelegt.'
-          : 'Ebene wurde aktualisiert.');
+      await _afterChange(
+        level == null ? 'Ebene wurde angelegt.' : 'Ebene wurde aktualisiert.',
+      );
     }
   }
 
-  Future<void> _editPosition(String levelId,
-      [Map<String, dynamic>? position]) async {
+  Future<void> _editPosition(
+    String levelId, [
+    Map<String, dynamic>? position,
+  ]) async {
     final id = Uri.encodeComponent(_value(position ?? {}, 'id'));
     final saved = await showDialog<bool>(
       context: context,
@@ -283,9 +303,11 @@ class _LocationsPageState extends State<LocationsPage> {
       ),
     );
     if (saved == true) {
-      await _afterChange(position == null
-          ? 'Lagerplatz wurde angelegt.'
-          : 'Lagerplatz wurde aktualisiert.');
+      await _afterChange(
+        position == null
+            ? 'Lagerplatz wurde angelegt.'
+            : 'Lagerplatz wurde aktualisiert.',
+      );
     }
   }
 
@@ -308,8 +330,10 @@ class _LocationsPageState extends State<LocationsPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: Icon(Icons.delete_outline,
-            color: Theme.of(context).colorScheme.error),
+        icon: Icon(
+          Icons.delete_outline,
+          color: Theme.of(context).colorScheme.error,
+        ),
         title: Text('$label löschen?'),
         content: Text(
           'Leere Unterstrukturen werden ebenfalls entfernt. Sobald ein enthaltener Lagerplatz verwendet wird, wird der gesamte Vorgang abgebrochen.',
@@ -321,7 +345,8 @@ class _LocationsPageState extends State<LocationsPage> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Endgültig löschen'),
           ),
@@ -346,9 +371,11 @@ class _LocationsPageState extends State<LocationsPage> {
       _value(building, 'postalCode'),
       _value(building, 'city'),
     ].where((value) => value.isNotEmpty).join(' ');
-    return [firstLine, secondLine, _value(building, 'country')]
-        .where((value) => value.isNotEmpty)
-        .join(', ');
+    return [
+      firstLine,
+      secondLine,
+      _value(building, 'country'),
+    ].where((value) => value.isNotEmpty).join(', ');
   }
 
   int _positionCountForBuilding(String buildingId) =>
@@ -369,7 +396,7 @@ class _LocationsPageState extends State<LocationsPage> {
           [
             _value(building, 'name'),
             _value(building, 'code'),
-            _address(building)
+            _address(building),
           ].any((value) => value.toLowerCase().contains(query));
     }).toList();
   }
@@ -378,18 +405,13 @@ class _LocationsPageState extends State<LocationsPage> {
     required String tooltip,
     required List<PopupMenuEntry<String>> items,
     required ValueChanged<String> onSelected,
-  }) =>
-      PopupMenuButton<String>(
-        tooltip: tooltip,
-        onSelected: onSelected,
-        itemBuilder: (_) => items,
-      );
+  }) => PopupMenuButton<String>(
+    tooltip: tooltip,
+    onSelected: onSelected,
+    itemBuilder: (_) => items,
+  );
 
-  PopupMenuItem<String> _menuItem(
-    String value,
-    IconData icon,
-    String label,
-  ) =>
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String label) =>
       PopupMenuItem(
         value: value,
         child: ListTile(
@@ -410,8 +432,11 @@ class _LocationsPageState extends State<LocationsPage> {
           ? _actions(
               tooltip: 'Lagerplatzaktionen',
               items: [
-                _menuItem('edit', Icons.drive_file_move_outlined,
-                    'Bearbeiten oder verschieben'),
+                _menuItem(
+                  'edit',
+                  Icons.drive_file_move_outlined,
+                  'Bearbeiten oder verschieben',
+                ),
                 _menuItem('delete', Icons.delete_outline, 'Löschen'),
               ],
               onSelected: (action) {
@@ -443,9 +468,15 @@ class _LocationsPageState extends State<LocationsPage> {
                 tooltip: 'Ebenenaktionen',
                 items: [
                   _menuItem(
-                      'add', Icons.add_box_outlined, 'Lagerplatz hinzufügen'),
-                  _menuItem('edit', Icons.drive_file_move_outlined,
-                      'Bearbeiten oder verschieben'),
+                    'add',
+                    Icons.add_box_outlined,
+                    'Lagerplatz hinzufügen',
+                  ),
+                  _menuItem(
+                    'edit',
+                    Icons.drive_file_move_outlined,
+                    'Bearbeiten oder verschieben',
+                  ),
                   _menuItem('delete', Icons.delete_outline, 'Löschen'),
                 ],
                 onSelected: (action) {
@@ -488,8 +519,11 @@ class _LocationsPageState extends State<LocationsPage> {
                 tooltip: 'Regalaktionen',
                 items: [
                   _menuItem('add', Icons.add, 'Ebene hinzufügen'),
-                  _menuItem('edit', Icons.drive_file_move_outlined,
-                      'Bearbeiten oder verschieben'),
+                  _menuItem(
+                    'edit',
+                    Icons.drive_file_move_outlined,
+                    'Bearbeiten oder verschieben',
+                  ),
                   _menuItem('delete', Icons.delete_outline, 'Löschen'),
                 ],
                 onSelected: (action) {
@@ -511,17 +545,19 @@ class _LocationsPageState extends State<LocationsPage> {
   }
 
   Widget _emptyBranch(String message, VoidCallback onAdd) => Padding(
-        padding: const EdgeInsets.fromLTRB(56, 12, 16, 16),
-        child: Row(children: [
-          Expanded(child: Text(message)),
-          if (_canWrite)
-            TextButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add),
-              label: const Text('Anlegen'),
-            ),
-        ]),
-      );
+    padding: const EdgeInsets.fromLTRB(56, 12, 16, 16),
+    child: Row(
+      children: [
+        Expanded(child: Text(message)),
+        if (_canWrite)
+          TextButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add),
+            label: const Text('Anlegen'),
+          ),
+      ],
+    ),
+  );
 
   Widget _buildingCard(Map<String, dynamic> building) {
     final id = _value(building, 'id');
@@ -536,18 +572,23 @@ class _LocationsPageState extends State<LocationsPage> {
         initiallyExpanded: _query.isNotEmpty,
         leading: CircleAvatar(
           backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          child: Icon(Icons.apartment_outlined,
-              color: Theme.of(context).colorScheme.onPrimaryContainer),
+          child: Icon(
+            Icons.apartment_outlined,
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+          ),
         ),
-        title: Text(_value(building, 'name'),
-            style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Text(
+          _value(building, 'name'),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
             Text(address.isEmpty ? 'Adresse noch nicht hinterlegt' : address),
             Text(
-                '${_value(building, 'code')} · ${shelves.length} Regale · $positionCount Lagerplätze'),
+              '${_value(building, 'code')} · ${shelves.length} Regale · $positionCount Lagerplätze',
+            ),
           ],
         ),
         trailing: _canWrite
@@ -555,8 +596,11 @@ class _LocationsPageState extends State<LocationsPage> {
                 tooltip: 'Gebäudeaktionen',
                 items: [
                   _menuItem('add', Icons.add, 'Regal hinzufügen'),
-                  _menuItem('bulk', Icons.auto_awesome_outlined,
-                      'Struktur automatisch anlegen'),
+                  _menuItem(
+                    'bulk',
+                    Icons.auto_awesome_outlined,
+                    'Struktur automatisch anlegen',
+                  ),
                   _menuItem('edit', Icons.edit_outlined, 'Gebäude bearbeiten'),
                   _menuItem('delete', Icons.delete_outline, 'Gebäude löschen'),
                 ],
@@ -574,11 +618,14 @@ class _LocationsPageState extends State<LocationsPage> {
           const Divider(height: 1),
           if (address.isEmpty && _canWrite)
             ListTile(
-              leading: Icon(Icons.warning_amber_outlined,
-                  color: Theme.of(context).colorScheme.error),
+              leading: Icon(
+                Icons.warning_amber_outlined,
+                color: Theme.of(context).colorScheme.error,
+              ),
               title: const Text('Adresse ergänzen'),
               subtitle: const Text(
-                  'Dieses Gebäude wurde aus einer älteren Lagerstruktur übernommen.'),
+                'Dieses Gebäude wurde aus einer älteren Lagerstruktur übernommen.',
+              ),
               trailing: TextButton(
                 onPressed: () => _editBuilding(building),
                 child: const Text('Bearbeiten'),
@@ -594,90 +641,111 @@ class _LocationsPageState extends State<LocationsPage> {
   }
 
   Widget _metric(IconData icon, int value, String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 20),
-          const SizedBox(width: 8),
-          Text('$value', style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(width: 5),
-          Text(label),
-        ]),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 8),
+        Text('$value', style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(width: 5),
+        Text(label),
+      ],
+    ),
+  );
 
   Widget _overview() => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Gebäude und Lagerstruktur',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Gebäude → Regal → Ebene → Lagerplatz. Artikel können weiterhin auch nur einem Gebäude zugeordnet werden.',
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Text('Gebäude und Lagerstruktur',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 4),
-              const Text(
-                  'Gebäude → Regal → Ebene → Lagerplatz. Artikel können weiterhin auch nur einem Gebäude zugeordnet werden.'),
-              const SizedBox(height: 16),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                _metric(Icons.apartment_outlined, _buildings.length, 'Gebäude'),
-                _metric(Icons.shelves, _shelves.length, 'Regale'),
-                _metric(Icons.layers_outlined, _levels.length, 'Ebenen'),
-                _metric(Icons.inventory_2_outlined, _positions.length,
-                    'Lagerplätze'),
-              ]),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _searchController,
-                onChanged: (value) => setState(() => _query = value),
-                decoration: InputDecoration(
-                  labelText: 'Lagerstruktur durchsuchen',
-                  hintText: 'Gebäude, Adresse, Regal, Ebene oder Lagerplatz',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _query.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Suche leeren',
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _query = '');
-                          },
-                          icon: const Icon(Icons.clear),
-                        ),
-                ),
+              _metric(Icons.apartment_outlined, _buildings.length, 'Gebäude'),
+              _metric(Icons.shelves, _shelves.length, 'Regale'),
+              _metric(Icons.layers_outlined, _levels.length, 'Ebenen'),
+              _metric(
+                Icons.inventory_2_outlined,
+                _positions.length,
+                'Lagerplätze',
               ),
             ],
           ),
-        ),
-      );
+          const SizedBox(height: 16),
+          TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _query = value),
+            decoration: InputDecoration(
+              labelText: 'Lagerstruktur durchsuchen',
+              hintText: 'Gebäude, Adresse, Regal, Ebene oder Lagerplatz',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Suche leeren',
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _query = '');
+                      },
+                      icon: const Icon(Icons.clear),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _emptyState() {
     final filtering = _query.trim().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 48),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(filtering ? Icons.search_off : Icons.apartment_outlined, size: 52),
-        const SizedBox(height: 12),
-        Text(filtering
-            ? 'Keine passende Lagerstruktur gefunden.'
-            : 'Noch keine Gebäude vorhanden.'),
-        const SizedBox(height: 8),
-        if (filtering)
-          TextButton(
-            onPressed: () {
-              _searchController.clear();
-              setState(() => _query = '');
-            },
-            child: const Text('Suche zurücksetzen'),
-          )
-        else if (_canWrite)
-          FilledButton.icon(
-            onPressed: _editBuilding,
-            icon: const Icon(Icons.add_business_outlined),
-            label: const Text('Erstes Gebäude anlegen'),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            filtering ? Icons.search_off : Icons.apartment_outlined,
+            size: 52,
           ),
-      ]),
+          const SizedBox(height: 12),
+          Text(
+            filtering
+                ? 'Keine passende Lagerstruktur gefunden.'
+                : 'Noch keine Gebäude vorhanden.',
+          ),
+          const SizedBox(height: 8),
+          if (filtering)
+            TextButton(
+              onPressed: () {
+                _searchController.clear();
+                setState(() => _query = '');
+              },
+              child: const Text('Suche zurücksetzen'),
+            )
+          else if (_canWrite)
+            FilledButton.icon(
+              onPressed: _editBuilding,
+              icon: const Icon(Icons.add_business_outlined),
+              label: const Text('Erstes Gebäude anlegen'),
+            ),
+        ],
+      ),
     );
   }
 
@@ -705,46 +773,52 @@ class _LocationsPageState extends State<LocationsPage> {
       body: _loading && _buildings.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : _loadError != null && _buildings.isEmpty
-              ? Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.cloud_off_outlined,
-                        size: 52, color: Theme.of(context).colorScheme.error),
-                    const SizedBox(height: 12),
-                    Text(_loadError!),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: _load,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Erneut versuchen'),
-                    ),
-                  ]),
-                )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                    itemCount: visible.isEmpty ? 3 : visible.length + 2,
-                    itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1100),
-                            child: _overview(),
-                          ),
-                        );
-                      }
-                      if (index == 1) return const SizedBox(height: 8);
-                      final buildingIndex = index - 2;
-                      if (visible.isEmpty) return _emptyState();
-                      return Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1100),
-                          child: _buildingCard(visible[buildingIndex]),
-                        ),
-                      );
-                    },
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.cloud_off_outlined,
+                    size: 52,
+                    color: Theme.of(context).colorScheme.error,
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  Text(_loadError!),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Erneut versuchen'),
+                  ),
+                ],
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+                itemCount: visible.isEmpty ? 3 : visible.length + 2,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1100),
+                        child: _overview(),
+                      ),
+                    );
+                  }
+                  if (index == 1) return const SizedBox(height: 8);
+                  final buildingIndex = index - 2;
+                  if (visible.isEmpty) return _emptyState();
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1100),
+                      child: _buildingCard(visible[buildingIndex]),
+                    ),
+                  );
+                },
+              ),
+            ),
     );
   }
 }

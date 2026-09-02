@@ -13,6 +13,8 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 
 - Backend-API mit Express und JWT-Login
 - Nutzer- und Rollenverwaltung mit E-Mail-Verifizierung und Passwort-Reset
+- Passwortlose Passkey-Anmeldung mit mehreren benannten Passkeys pro Konto,
+  verpflichtender lokaler Nutzerprüfung und administrativem Reset
 - Kontobezogene TOTP-Zwei-Faktor-Authentifizierung mit administrativer Pflicht,
   Einrichtungsfrist und einmal verwendbaren Wiederherstellungscodes
 - Administratives Anlegen, Suchen, Bearbeiten, Deaktivieren und Löschen von Accounts
@@ -74,17 +76,39 @@ mit einer üblichen Authenticator-App ein. Nach der Bestätigung werden zehn ein
 verwendbare Wiederherstellungscodes angezeigt. Diese Codes werden nur bei der
 Erstellung ausgegeben und serverseitig ausschließlich gehasht gespeichert.
 
-Admins entscheiden in der Nutzerverwaltung pro Konto, ob 2-FA freiwillig oder
-verpflichtend ist. Wird die Pflicht für ein noch nicht eingerichtetes Konto aktiviert,
+Admins entscheiden in der Nutzerverwaltung pro Konto, ob eine starke Anmeldung
+freiwillig oder verpflichtend ist. TOTP und Passkeys erfüllen diese Pflicht. Wird sie
+für ein noch nicht abgesichertes Konto aktiviert,
 gilt eine Einrichtungsfrist von 14 Tagen. Nach deren Ablauf erlaubt ein eingeschränktes
-Login nur noch die Einrichtung des zweiten Faktors. Passwort-, persönliche QR- und
-persönliche Dienstgeräteanmeldungen durchlaufen anschließend dieselbe kurzlebige,
-einmal verwendbare 2-FA-Challenge. Eine gerätebezogene MFA bleibt davon unabhängig.
+Login nur noch die Einrichtung von TOTP oder eines Passkeys. Passwort-, persönliche
+QR- und persönliche Dienstgeräteanmeldungen durchlaufen bei eingerichtetem TOTP
+dieselbe kurzlebige, einmal verwendbare 2-FA-Challenge. Ist ausschließlich ein Passkey
+eingerichtet und starke Anmeldung verpflichtend, muss die Passkey-Anmeldung verwendet
+werden. Eine gerätebezogene MFA bleibt davon unabhängig.
 
 2-FA-Geheimnisse werden mit AES-256-GCM und einem eigenen, zufälligen
 `MFA_ENCRYPTION_KEY` verschlüsselt. Aktivierung, Deaktivierung, Richtlinienänderungen,
 neue Wiederherstellungscodes und administrative Resets werden protokolliert und per
 Sicherheits-E-Mail angekündigt. Ein Reset macht bestehende Sitzungen ungültig.
+
+## Passkeys
+
+Auf Web, Android, iOS, macOS und Windows kann die Anmeldung passwortlos mit einem
+Passkey erfolgen. MaterialKompass fordert dafür immer einen gerätegebundenen
+Entsperrvorgang wie Windows Hello, Touch ID, Face ID, Geräte-PIN oder einen
+FIDO2-Sicherheitsschlüssel an. Synchronisierte Passkeys werden unterstützt; der
+private Schlüssel verlässt den jeweiligen Authenticator nicht.
+
+Der macOS-Client setzt wegen der nativen Passkey-Unterstützung macOS 13.5 oder neuer
+voraus.
+
+Unter **Mein Account → Passkeys** lassen sich bis zu 20 Passkeys benennen, hinzufügen,
+umbenennen und widerrufen. Hinzufügen und Widerrufen erfordern erneut das aktuelle
+Passwort und, falls eingerichtet, einen TOTP- oder Wiederherstellungscode. Änderungen
+beenden bestehende Sitzungen. Admins können nach geprüfter Identität alle Passkeys
+eines Kontos zurücksetzen. Passwortanmeldung und E-Mail-Passwortreset bleiben als
+Wiederherstellungsweg erhalten. Linux verwendet weiterhin Passwort und optional TOTP;
+Passkeys sind dort im aktuellen Client nicht verfügbar.
 
 Die normale Systemsuche blendet ausgegebene, archivierte und ausgesonderte
 Artikel aus. Für eine Mängelmeldung kann ein ausgegebener Artikel ausschließlich
@@ -349,19 +373,24 @@ Ausfallsicherheit muss `BACKUP_DIR` zusätzlich verschlüsselt auf ein getrennte
 repliziert werden.
 
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
-`JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`, die MariaDB-,
+`JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`,
+die Passkey-, MariaDB-,
 IONOS-SMTP- und `DEFECT_IMAP_*`-Werte müssen als Server-Umgebungsvariablen gesetzt werden. Der
 erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpasswort
 muss direkt nach der ersten Anmeldung geändert werden.
 
 Physische Adressmasken verwenden eine gemeinsame EU-Adresssuche. Nach mindestens drei
 Zeichen fragt das Backend Geoapify mit 450 ms Verzögerung ab und liefert strukturierte
-Vorschläge für Straße, Postleitzahl, Ort und Land. Eine Auswahl befüllt diese Felder;
-die Hausnummer bleibt bewusst manuell und alle Werte bleiben editierbar. Übertragen
-werden nur die bereits eingegebenen Adressbestandteile, niemals Lieferanten- oder
-Kontaktdaten. `GEOAPIFY_API_KEY` wird ausschließlich im Backend hinterlegt und nicht an
-Clients ausgeliefert. Ohne Schlüssel oder bei einem Ausfall bleiben alle Felder manuell
-ausfüllbar. `GEOAPIFY_BASE_URL` muss normalerweise nicht verändert werden.
+Vorschläge für Straße, Hausnummer, Postleitzahl, Ort und Land. Eine ausgefüllte
+Hausnummer wird in die Suche einbezogen und bei einer Auswahl übernommen, sofern der
+Adressdienst sie bestätigt; andernfalls bleibt die Eingabe erhalten. Zu einer
+Postleitzahl wird ein eindeutiger Ort automatisch ergänzt, mehrere Orte bleiben
+auswählbar. Vorschlagslisten lassen sich mit den Pfeiltasten, Enter und Escape bedienen.
+Alle Werte bleiben editierbar. Übertragen werden nur die bereits eingegebenen
+Adressbestandteile, niemals Lieferanten- oder Kontaktdaten. `GEOAPIFY_API_KEY` wird
+ausschließlich im Backend hinterlegt und nicht an Clients ausgeliefert. Ohne Schlüssel
+oder bei einem Ausfall bleiben alle Felder manuell ausfüllbar. `GEOAPIFY_BASE_URL` muss
+normalerweise nicht verändert werden.
 
 In Produktion muss `JWT_SECRET` mindestens 32 zufällige Zeichen enthalten und
 `APP_BASE_URL` HTTPS verwenden. Das Backend akzeptiert außerhalb von `/health` keine
@@ -390,10 +419,16 @@ erzwingt das Backend über eine MariaDB-Sperre genau eine aktive Backend-Instanz
 zweite Instanz beendet sich beim Start, statt konkurrierende Snapshots zu überschreiben.
 Für die Konto-2-FA muss bei Bestandsinstallationen vor dem neuen Backendstart
 `backend/src/db/migrations/20260821_user_mfa.sql` ausgeführt werden.
+Für Passkeys muss anschließend
+`backend/src/db/migrations/20260830_user_passkeys.sql` ausgeführt werden. Die Migration
+speichert nur öffentliche Schlüssel, zufällige Credential-IDs, Zähler und technische
+Metadaten; private Passkey-Schlüssel werden nie an MaterialKompass übertragen.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
 ### Flutter
+
+Der Client benötigt Flutter 3.35 oder neuer und Dart 3.9 oder neuer.
 
 ```bash
 cd flutter
@@ -406,6 +441,40 @@ Die Web-API ist beim Build konfigurierbar:
 ```bash
 flutter build web --dart-define=API_BASE_URL=https://materialkompass.org
 ```
+
+Für Passkeys müssen RP-ID und Origins exakt zur produktiven Domain passen:
+
+```dotenv
+PASSKEY_RP_ID=materialkompass.org
+PASSKEY_RP_NAME=MaterialKompass
+PASSKEY_ORIGINS=https://materialkompass.org
+```
+
+Der Web-Client liefert die fest eingecheckte Passkey-Browserbrücke selbst aus; zur
+Laufzeit wird kein JavaScript von einem CDN nachgeladen. Der Reverse Proxy muss
+`/.well-known/assetlinks.json` und
+`/.well-known/apple-app-site-association` ohne Umleitung vom Backend ausliefern.
+
+Android benötigt zusätzlich den Paketnamen, alle produktiven SHA-256-Zertifikat-
+Fingerprints und je Signierschlüssel dessen Base64URL-App-Origin:
+
+```dotenv
+PASSKEY_ANDROID_PACKAGE=org.materialkompass.materialkompass
+PASSKEY_ANDROID_SHA256_FINGERPRINTS=AA:BB:...:FF
+PASSKEY_ANDROID_ORIGINS=android:apk-key-hash:<base64url-sha256-des-signierzertifikats>
+```
+
+iOS und macOS verwenden die eingecheckte Associated-Domains-Berechtigung
+`webcredentials:materialkompass.org`. Zusätzlich muss die Apple-Team-ID gesetzt und
+das Provisioning Profile für Associated Domains freigeschaltet sein:
+
+```dotenv
+PASSKEY_APPLE_TEAM_ID=<APPLE-TEAM-ID>
+PASSKEY_APPLE_BUNDLE_ID=org.materialkompass.materialkompass
+```
+
+Die Zuordnungsdateien müssen nach jeder Signatur- oder Bundle-ID-Änderung kontrolliert
+werden. Debug-Fingerprints gehören nicht in die Produktionskonfiguration.
 
 Der Web-Build teilt die Fachbereiche in bedarfsgeladene Module. Der eigene, bei jedem
 Build versionierte Service Worker hält die App-Oberfläche und bereits besuchte Bereiche
@@ -467,6 +536,32 @@ entschlüsselt werden können. docker-mailserver wird standardmäßig im Contain
 `mailserver` erwartet; bei einem anderen Namen muss `MAILSERVER_CONTAINER` angepasst
 werden.
 
+### Angebote erfassen und korrigieren
+
+Ein Angebot wird im geöffneten Beschaffungsvorgang über **Angebot erfassen** angelegt.
+Für jede beantragte Position muss festgelegt werden, ob sie angeboten wurde. Angebotene
+Positionen benötigen jeweils ihre vollständige Brutto-Positionssumme; nicht angebotene
+Positionen werden ausdrücklich abgewählt und mit 0,00 Euro gespeichert.
+
+Unter den Positionen stehen die zusätzlichen Angebotsbestandteile. **Versandkosten**
+und **Rabatt** sind immer vorhanden und dürfen 0,00 Euro betragen. Versandkosten können
+nicht negativ sein. Ein positiver Rabatt wird abgezogen; ein negativer Rabatt erhöht
+die Summe entsprechend. Weitere Bestandteile lassen sich mit einer Bezeichnung und der
+Berechnungsart „Hinzurechnen“ oder „Abziehen“ ergänzen.
+
+Die Anwendung zeigt während der Eingabe dauerhaft die aus Positionen und Bestandteilen
+berechnete Brutto-Gesamtsumme. Daneben wird die Gesamtsumme des Angebotsdokuments
+eingetragen. Grün bedeutet, dass beide Werte centgenau übereinstimmen. Bei einer roten
+Abweichungsanzeige kann das Angebot nicht gespeichert werden.
+
+Über das Stiftsymbol im Angebotsvergleich können Antragsteller und Administratoren ein
+Angebot in den Status **Beantragt** und **Genehmigt** korrigieren. Eine bereits getroffene
+Angebotsauswahl wird dabei aus Sicherheitsgründen aufgehoben und muss erneut bestätigt
+werden. Sobald das Angebot für eine Bestellung verwendet wurde, ist es unveränderlich.
+Gleichzeitige Änderungen werden erkannt; in diesem Fall muss der Vorgang neu geladen
+werden. Ältere Angebote ohne Positionsaufteilung bleiben sichtbar und verlangen beim
+ersten Bearbeiten die einmalige Aufteilung auf die einzelnen Positionen.
+
 ### Angebots-Postbox
 
 Die Beschaffung besitzt den Reiter „Postbox“. Eingehende Angebote werden aus einem
@@ -476,6 +571,10 @@ eigenen IMAP-Postfach gelesen und nach dem Import serverseitig in den Ordner
 werden. Enthält Betreff, Nachricht oder Dateiname eine Beschaffungsnummer wie
 `BA-2026-0001`, ordnet MaterialKompass die E-Mail automatisch zu. Auch der Lieferant
 wird anhand seiner hinterlegten Absenderadresse vorgeschlagen.
+
+Nach Auswahl des zugehörigen Beschaffungsvorgangs verwendet die Übernahme aus der
+Postbox dieselbe positionsbasierte Erfassung und Kontrollsumme wie die manuelle
+Angebotseingabe.
 
 Für den produktiven Betrieb werden `PROCUREMENT_IMAP_HOST`,
 `PROCUREMENT_IMAP_USER` (üblicherweise `angebote@materialkompass.org`) und
@@ -514,7 +613,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.4.1
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.4.2
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -522,7 +621,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.4.1
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.4.2
 ```
 
 macOS wird auf einem Mac als DMG gebaut:

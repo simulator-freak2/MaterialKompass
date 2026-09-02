@@ -1,7 +1,8 @@
 # Performance- und Kompatibilitätsbericht
 
-Stand: 16. August 2026. Die Messungen wurden als Release-Build beziehungsweise
-frischer Node-Prozess auf der lokalen Windows-Entwicklungsumgebung durchgeführt.
+Stand: 30. August 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
+als Release-Build beziehungsweise frischer Node-Prozess auf der lokalen
+Windows-Entwicklungsumgebung durchgeführt.
 Sie dienen als reproduzierbare Vergleichswerte, nicht als Garantie für jede
 Produktionshardware.
 
@@ -51,22 +52,32 @@ Bereichs benötigt.
 - Der versionsgebundene Web-Service-Worker speichert App-Shell und bereits verwendete
   Module für Verbindungsabbrüche. `/api/` und damit vertrauliche Anwendungsdaten werden
   ausdrücklich nicht im Service-Worker-Cache gespeichert.
+- Passkey-Credentials werden beim Backendstart einmal nach Credential-ID indiziert;
+  eine Anmeldung benötigt dadurch keinen linearen Datenbank- oder Nutzerscan. Die
+  normalisierte Tabelle besitzt eindeutige beziehungsweise gezielte Indizes. Kurzlebige
+  WebAuthn-Challenges sind auf 5.000 Einträge begrenzt und werden bei jedem neuen
+  Vorgang bereinigt.
+- Die kleine WebAuthn-Browserbrücke wird selbst gehostet und gemeinsam mit der App-Shell
+  versioniert. Damit entfallen ein zusätzlicher CDN-Verbindungsaufbau und eine externe
+  Laufzeitabhängigkeit auf der Loginseite.
 - Eine ungenutzte Flutter-Abhängigkeit und ein ungenutztes Laufzeit-Asset wurden entfernt;
   das sichtbare Login-Logo wird in einer zur Anzeige passenden Auflösung erzeugt.
 
 ## Prüfstatus
 
-- `flutter analyze`: ohne Befund
-- Flutter-Tests: 34 von 34 bestanden
-- Windows-Release-Build: bestanden, Ausgabeordner 34.338.252 Bytes
-- Web-Release-Build: bestanden; eigener Service Worker syntaktisch und in der
-  Bootstrap-Datei geprüft
+- `flutter analyze`: keine Fehler oder Warnungen in der Passkey-Umsetzung; 19 bereits
+  bestehende Stilhinweise in anderen Fachseiten bleiben sichtbar
+- Flutter-Tests: 42 von 42 bestanden
+- Windows-Release-Build: bestanden; native Passkey-/Windows-Hello-Pluginintegration
+  kompiliert (die Größenangabe 34.338.252 Bytes stammt aus der Messung vom 16. August)
+- Web-Release-Build: bestanden; selbst gehostete Passkey-Brücke, Prüfsumme und eigener
+  Service Worker im erzeugten Build geprüft
 - Android: Java-/Flutter-/Plugin-Kompilierung erreicht. Ein Release-Build benötigt den
   absichtlich nicht versionierten Betreiber-Signierschlüssel. Der Debug-Build wurde auf
   dieser Maschine beim nativen Merge durch nur 0,62 GB freien Platz auf Laufwerk C:
   verhindert; ein alternativer Gradle-Cache auf E: konnte seine Distribution wegen des
   lokalen Downloadstillstands nicht initialisieren.
-- Backend-Tests: 112 von 112 bestanden
+- Backend-Tests: 129 von 129 bestanden; `npm audit --omit=dev` meldet 0 Schwachstellen
 
 ## Betriebsgrenzen
 
@@ -76,3 +87,7 @@ Fachaktionen stehen ausschließlich in installierten nativen Apps zur Verfügung
 und sonstige Anhänge werden nicht offline vorgemerkt. Für reproduzierbare
 Android-Release-Builds sind Java 17 oder neuer sowie
 `flutter/android/key.properties` mit dem dauerhaften Release-Schlüssel erforderlich.
+Passkeys werden vom aktuellen Client auf Web, Android, iOS, macOS und Windows
+unterstützt. Linux bleibt beim Passwort-/TOTP-Fallback. Die native Freigabe setzt die
+korrekte Domainzuordnung zum produktiven Apple-Team beziehungsweise Android-
+Signierzertifikat voraus.

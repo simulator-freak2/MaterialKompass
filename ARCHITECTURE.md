@@ -10,7 +10,7 @@ Eine Flutter-App stellt die Bedienoberfläche bereit, ein Express-Backend prüft
 Anmeldung und Berechtigungen und speichert die Fachdaten in MariaDB.
 
 ```text
-Flutter (Web, Windows, Android)
+Flutter (Web, Windows, macOS, Linux, Android, iOS)
   -> HTTPS + JSON + JWT
 Express-API
   -> UserStore / PersistenceCoordinator
@@ -31,6 +31,7 @@ Anfragen im HTTP-Header `Authorization: Bearer …`.
 | Mängel | `flutter/lib/pages/defects_page.dart`, `backend/src/defects.js` |
 | Nutzer, Rollen, Anmeldung | `backend/src/user-management.js`, Authentifizierung in `backend/src/app.js` |
 | Konto-2-FA und Login-Challenges | `backend/src/user-mfa.js`, `backend/src/mfa-security.js`, `backend/src/totp.js` |
+| Passkey-Zeremonien und Credential-Index | `backend/src/passkeys.js`, `flutter/lib/services/passkey_service.dart` |
 | Dienstgeräte und Gerätesitzungen | `backend/src/service-devices.js`, `flutter/lib/pages/service_device_*.dart` |
 | Offline-Snapshot und Synchronisation | `backend/src/offline-sync.js`, `flutter/lib/services/offline_*.dart` |
 | Datenbanktabellen und Migrationen | `backend/src/db/schema.sql`, `backend/src/db/migrations/` |
@@ -84,6 +85,14 @@ fünf Minuten gültige, serverseitig einmal verwendbare Challenge. Erst TOTP ode
 noch unbenutzter Wiederherstellungscode schließt die Anmeldung ab. TOTP-Geheimnisse
 liegen AES-256-GCM-verschlüsselt, Wiederherstellungscodes nur als Prüfsummen vor.
 Änderungen an Faktor oder Richtlinie fließen in die JWT-Sicherheitsversion ein.
+
+Passkeys verwenden WebAuthn mit discoverable Credentials und verpflichtender lokaler
+Nutzerprüfung. Registrierungs- und Anmelde-Challenges liegen nur gehasht, einmal
+verwendbar, zeitlich begrenzt und größenbeschränkt im Arbeitsspeicher. Das Backend
+ordnet Credential-IDs über einen Map-Index in konstanter Zeit einem Konto zu und
+persistiert ausschließlich öffentliche Schlüssel und WebAuthn-Metadaten in
+`user_passkeys`. Eine erfolgreiche Passkey-Zeremonie gilt selbst als starke Anmeldung;
+TOTP wird dabei nicht zusätzlich verlangt.
 
 Schreibzugriffe werden nicht blind automatisch wiederholt. Nur die in
 `offline_http.dart` aufgeführten Vorgänge dürfen in die Warteschlange. Das

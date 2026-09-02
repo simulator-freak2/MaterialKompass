@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:materialkompass/main.dart';
 import 'package:materialkompass/pages/categories_page.dart';
@@ -20,71 +21,75 @@ void main() {
 
     expect(find.text('MaterialKompass Login'), findsOneWidget);
     expect(find.text('Interne Materialverwaltung'), findsOneWidget);
+    expect(find.text('Mit Passkey anmelden'), findsOneWidget);
     expect(find.text('Bestätigungs-E-Mail erneut senden'), findsOneWidget);
     expect(find.text('App herunterladen'), findsNothing);
     expect(find.textContaining('herunterladen'), findsNothing);
   });
 
-  testWidgets('Dashboard is usable on a narrow phone screen',
-      (WidgetTester tester) async {
+  testWidgets('Dashboard is usable on a narrow phone screen', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
     var loadCount = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(
-        token: 'demo',
-        dashboardLoader: () async {
-          loadCount += 1;
-          return {
-            'summary': {
-              'materialCount': 42,
-              'issuedMaterialCount': 7,
-              'defectiveMaterialCount': 2,
-              'dueInspectionCount': 3,
-              'clothingCount': 18,
-              'defectCount': 1,
-              'openDefectCount': 1,
-              'defectsInProgressCount': 1,
-              'pendingDefectEmailCount': 2,
-              'procurementCount': 5,
-              'pendingProcurementApprovals': 2,
-              'overdueProcurementOrders': 1,
-              'openProcurementReceipts': 4,
-            },
-            'currentUser': {
-              'name': 'Admin User',
-              'roles': ['Admin'],
-              'permissions': [
-                'users.read',
-                'roles.read',
-                'locations.read',
-                'categories.read',
-                'inventory.read',
-                'clothing.read',
-                'defects.read',
-                'procurement.read',
-                'procurement.approve',
-                'procurement.order',
-                'procurement.receive',
-              ],
-            },
-            'recentActivity': [
-              {
-                'entityLabel': 'Material',
-                'itemName': 'Rettungsweste',
-                'actionLabel': 'aktualisiert',
-                'actor': 'Testnutzer',
-                'timestamp': '2026-07-23T10:00:00Z',
-                'area': 'Inventar',
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage(
+          token: 'demo',
+          dashboardLoader: () async {
+            loadCount += 1;
+            return {
+              'summary': {
+                'materialCount': 42,
+                'issuedMaterialCount': 7,
+                'defectiveMaterialCount': 2,
+                'dueInspectionCount': 3,
+                'clothingCount': 18,
+                'defectCount': 1,
+                'openDefectCount': 1,
+                'defectsInProgressCount': 1,
+                'pendingDefectEmailCount': 2,
+                'procurementCount': 5,
+                'pendingProcurementApprovals': 2,
+                'overdueProcurementOrders': 1,
+                'openProcurementReceipts': 4,
               },
-            ],
-          };
-        },
+              'currentUser': {
+                'name': 'Admin User',
+                'roles': ['Admin'],
+                'permissions': [
+                  'users.read',
+                  'roles.read',
+                  'locations.read',
+                  'categories.read',
+                  'inventory.read',
+                  'clothing.read',
+                  'defects.read',
+                  'procurement.read',
+                  'procurement.approve',
+                  'procurement.order',
+                  'procurement.receive',
+                ],
+              },
+              'recentActivity': [
+                {
+                  'entityLabel': 'Material',
+                  'itemName': 'Rettungsweste',
+                  'actionLabel': 'aktualisiert',
+                  'actor': 'Testnutzer',
+                  'timestamp': '2026-07-23T10:00:00Z',
+                  'area': 'Inventar',
+                },
+              ],
+            };
+          },
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
@@ -93,12 +98,16 @@ void main() {
     expect(find.text('Material ausgegeben'), findsOneWidget);
     expect(find.text('E-Mail-Prüfungen'), findsOneWidget);
 
-    final firstCard = tester.getTopLeft(find.byWidgetPredicate(
-      (widget) => widget is StatCard && widget.title == 'Material',
-    ));
-    final secondCard = tester.getTopLeft(find.byWidgetPredicate(
-      (widget) => widget is StatCard && widget.title == 'Material ausgegeben',
-    ));
+    final firstCard = tester.getTopLeft(
+      find.byWidgetPredicate(
+        (widget) => widget is StatCard && widget.title == 'Material',
+      ),
+    );
+    final secondCard = tester.getTopLeft(
+      find.byWidgetPredicate(
+        (widget) => widget is StatCard && widget.title == 'Material ausgegeben',
+      ),
+    );
     expect((firstCard.dy - secondCard.dy).abs(), lessThan(5));
     expect(secondCard.dx, greaterThan(firstCard.dx));
 
@@ -125,39 +134,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Dashboard hides areas and metrics without permission',
-      (WidgetTester tester) async {
+  testWidgets('Dashboard hides areas and metrics without permission', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(
-        token: 'restricted',
-        dashboardLoader: () async => {
-          'summary': {
-            'materialCount': 12,
-            'issuedMaterialCount': 2,
-            'defectiveMaterialCount': 1,
-            'dueInspectionCount': 0,
-            // Even accidentally supplied values must stay hidden in the UI.
-            'clothingCount': 99,
-            'pendingProcurementApprovals': 8,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage(
+          token: 'restricted',
+          dashboardLoader: () async => {
+            'summary': {
+              'materialCount': 12,
+              'issuedMaterialCount': 2,
+              'defectiveMaterialCount': 1,
+              'dueInspectionCount': 0,
+              // Even accidentally supplied values must stay hidden in the UI.
+              'clothingCount': 99,
+              'pendingProcurementApprovals': 8,
+            },
+            'currentUser': {
+              'name': 'Lesender Nutzer',
+              'roles': ['Nutzer'],
+              'permissions': [
+                'dashboard.read',
+                'inventory.read',
+                'locations.read',
+              ],
+            },
+            'recentActivity': const [],
           },
-          'currentUser': {
-            'name': 'Lesender Nutzer',
-            'roles': ['Nutzer'],
-            'permissions': [
-              'dashboard.read',
-              'inventory.read',
-              'locations.read',
-            ],
-          },
-          'recentActivity': const [],
-        },
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Inventar'), findsOneWidget);
@@ -171,24 +183,27 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Dashboard asks for confirmation before exiting the software',
-      (WidgetTester tester) async {
+  testWidgets('Dashboard asks for confirmation before exiting the software', (
+    WidgetTester tester,
+  ) async {
     var exitCount = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(
-        token: 'demo',
-        appExit: () async => exitCount += 1,
-        dashboardLoader: () async => {
-          'summary': const {},
-          'currentUser': {
-            'name': 'Testnutzer',
-            'roles': ['Nutzer'],
-            'permissions': const [],
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage(
+          token: 'demo',
+          appExit: () async => exitCount += 1,
+          dashboardLoader: () async => {
+            'summary': const {},
+            'currentUser': {
+              'name': 'Testnutzer',
+              'roles': ['Nutzer'],
+              'permissions': const [],
+            },
+            'recentActivity': const [],
           },
-          'recentActivity': const [],
-        },
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Software beenden'));
@@ -201,13 +216,16 @@ void main() {
     expect(exitCount, 1);
   });
 
-  testWidgets('Admin user dialog covers accounts and roles',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: UserDialog(user: null, roles: ['Admin', 'Nutzer']),
+  testWidgets('Admin user dialog covers accounts and roles', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: UserDialog(user: null, roles: ['Admin', 'Nutzer']),
+        ),
       ),
-    ));
+    );
 
     expect(find.text('Nutzer anlegen'), findsOneWidget);
     expect(find.text('Name'), findsOneWidget);
@@ -217,20 +235,23 @@ void main() {
     expect(find.text('Account aktiv'), findsOneWidget);
   });
 
-  testWidgets('Role dialog can edit name and permissions',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: RoleDialog(
-          permissions: ['dashboard.read', 'users.read'],
-          role: {
-            'id': 'role-reader',
-            'name': 'Leser',
-            'permissions': ['dashboard.read'],
-          },
+  testWidgets('Role dialog can edit name and permissions', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: RoleDialog(
+            permissions: ['dashboard.read', 'users.read'],
+            role: {
+              'id': 'role-reader',
+              'name': 'Leser',
+              'permissions': ['dashboard.read'],
+            },
+          ),
         ),
       ),
-    ));
+    );
 
     expect(find.text('Rolle bearbeiten'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Leser'), findsOneWidget);
@@ -239,20 +260,23 @@ void main() {
     expect(find.text('Speichern'), findsOneWidget);
   });
 
-  testWidgets('Department dialog centrally edits name, code and status',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: DepartmentDialog(
-          department: {
-            'id': 'department-technik',
-            'name': 'Technik',
-            'code': 'TECH',
-            'active': true,
-          },
+  testWidgets('Department dialog centrally edits name, code and status', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: DepartmentDialog(
+            department: {
+              'id': 'department-technik',
+              'name': 'Technik',
+              'code': 'TECH',
+              'active': true,
+            },
+          ),
         ),
       ),
-    ));
+    );
 
     expect(find.text('Fachbereich bearbeiten'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Technik'), findsOneWidget);
@@ -260,17 +284,20 @@ void main() {
     expect(find.text('Fachbereich aktiv'), findsOneWidget);
   });
 
-  testWidgets('Scanner email dialog creates an admin-managed address',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: ScannerEmailDialog(
-          address: null,
-          domain: 'materialkompass.org',
-          destinations: ['Mängel', 'Dokumente'],
+  testWidgets('Scanner email dialog creates an admin-managed address', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ScannerEmailDialog(
+            address: null,
+            domain: 'materialkompass.org',
+            destinations: ['Mängel', 'Dokumente'],
+          ),
         ),
       ),
-    ));
+    );
 
     expect(find.text('Scanner-Postfach anlegen'), findsOneWidget);
     expect(find.text('@materialkompass.org'), findsOneWidget);
@@ -278,29 +305,36 @@ void main() {
     expect(find.text('Adresse aktiv'), findsOneWidget);
   });
 
-  testWidgets('Mailbox credentials are displayed only in the result dialog',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: MailboxCredentialsDialog(credentials: {
-          'email': 'scanner01@materialkompass.org',
-          'initialPassword': 'generated-secret',
-          'mailServer': 'mail.materialkompass.org',
-          'smtpPort': 587,
-          'imapPort': 993,
-        }),
+  testWidgets('Mailbox credentials are displayed only in the result dialog', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: MailboxCredentialsDialog(
+            credentials: {
+              'email': 'scanner01@materialkompass.org',
+              'initialPassword': 'generated-secret',
+              'mailServer': 'mail.materialkompass.org',
+              'smtpPort': 587,
+              'imapPort': 993,
+            },
+          ),
+        ),
       ),
-    ));
+    );
 
     expect(find.text('Postfach wurde angelegt'), findsOneWidget);
     expect(find.textContaining('generated-secret'), findsOneWidget);
     expect(find.text('Zugangsdaten kopieren'), findsOneWidget);
   });
 
-  testWidgets('Wardrobe page renders its main actions',
-      (WidgetTester tester) async {
-    await tester
-        .pumpWidget(const MaterialApp(home: WardrobePage(token: 'demo-token')));
+  testWidgets('Wardrobe page renders its main actions', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: WardrobePage(token: 'demo-token')),
+    );
 
     expect(find.text('Kleiderkammer'), findsOneWidget);
     expect(find.text('Neue Kleidung anlegen'), findsOneWidget);
@@ -343,10 +377,12 @@ void main() {
     expect(find.text('Kleidungsstück'), findsNothing);
   });
 
-  testWidgets('Category management has its own page',
-      (WidgetTester tester) async {
-    await tester
-        .pumpWidget(const MaterialApp(home: CategoriesPage(token: 'demo')));
+  testWidgets('Category management has its own page', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: CategoriesPage(token: 'demo')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Kategorieverwaltung'), findsOneWidget);
@@ -363,29 +399,32 @@ void main() {
     expect(find.text('Prüfintervall (Monate)'), findsOneWidget);
   });
 
-  testWidgets('Inventory form covers individual and quantity items',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: InventoryFormDialog(
-          categories: const [
-            {'id': '02', 'name': 'Werkzeug', 'parentId': null},
-            {'id': '02-02', 'name': 'Handwerk', 'parentId': '02'},
-          ],
-          locations: const [
-            {'id': 'loc-1', 'name': 'Hauptlager'},
-          ],
-          stocks: const [
-            {
-              'id': 'stock-1',
-              'name': 'Regal A',
-              'section': 'A1',
-              'locationId': 'loc-1',
-            },
-          ],
+  testWidgets('Inventory form covers individual and quantity items', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InventoryFormDialog(
+            categories: const [
+              {'id': '02', 'name': 'Werkzeug', 'parentId': null},
+              {'id': '02-02', 'name': 'Handwerk', 'parentId': '02'},
+            ],
+            locations: const [
+              {'id': 'loc-1', 'name': 'Hauptlager'},
+            ],
+            stocks: const [
+              {
+                'id': 'stock-1',
+                'name': 'Regal A',
+                'section': 'A1',
+                'locationId': 'loc-1',
+              },
+            ],
+          ),
         ),
       ),
-    ));
+    );
 
     expect(find.text('Material anlegen'), findsOneWidget);
     expect(find.text('Bezeichnung *'), findsOneWidget);
@@ -395,8 +434,9 @@ void main() {
     expect(find.text('Nächster Prüftermin (TT.MM.JJJJ)'), findsOneWidget);
   });
 
-  testWidgets('Procurement page exposes its three work areas',
-      (WidgetTester tester) async {
+  testWidgets('Procurement page exposes its three work areas', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       const MaterialApp(home: ProcurementPage(token: 'demo-token')),
     );
@@ -407,22 +447,25 @@ void main() {
     expect(find.text('Lieferanten'), findsOneWidget);
   });
 
-  testWidgets('Procurement request dialog can create line items',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: ProcurementRequestDialog(
-          departments: const [],
-          categories: const [
-            {'id': '02', 'name': 'Werkzeug', 'parentId': null},
-            {'id': '02-02', 'name': 'Handwerk', 'parentId': '02'},
-          ],
-          suppliers: const [
-            {'id': 'supplier-1', 'name': 'Testlieferant', 'active': true},
-          ],
+  testWidgets('Procurement request dialog can create line items', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProcurementRequestDialog(
+            departments: const [],
+            categories: const [
+              {'id': '02', 'name': 'Werkzeug', 'parentId': null},
+              {'id': '02-02', 'name': 'Handwerk', 'parentId': '02'},
+            ],
+            suppliers: const [
+              {'id': 'supplier-1', 'name': 'Testlieferant', 'active': true},
+            ],
+          ),
         ),
       ),
-    ));
+    );
 
     expect(find.text('Beschaffungsantrag anlegen'), findsOneWidget);
     expect(find.text('Titel *'), findsOneWidget);
@@ -433,181 +476,343 @@ void main() {
     expect(find.text('Entwurf speichern'), findsOneWidget);
   });
 
-  testWidgets('Procurement request dialog restores the requested budget',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: ProcurementRequestDialog(
-          departments: const [],
-          categories: const [
-            {'id': '02', 'name': 'Werkzeug', 'parentId': null},
-          ],
-          suppliers: const [],
-          request: const {
-            'title': 'Testvorgang',
-            'reason': 'Test',
-            'requestedBudgetGross': 125.50,
-            'priority': 'Normal',
-            'items': [
-              {
-                'id': 'item-1',
-                'name': 'Testmaterial',
-                'categoryId': '02',
-                'quantity': 1,
-                'unit': 'Stück',
-                'taxRate': 19,
-              }
+  testWidgets('Procurement request dialog restores the requested budget', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProcurementRequestDialog(
+            departments: const [],
+            categories: const [
+              {'id': '02', 'name': 'Werkzeug', 'parentId': null},
             ],
-          },
+            suppliers: const [],
+            request: const {
+              'title': 'Testvorgang',
+              'reason': 'Test',
+              'requestedBudgetGross': 125.50,
+              'priority': 'Normal',
+              'items': [
+                {
+                  'id': 'item-1',
+                  'name': 'Testmaterial',
+                  'categoryId': '02',
+                  'quantity': 1,
+                  'unit': 'Stück',
+                  'taxRate': 19,
+                },
+              ],
+            },
+          ),
         ),
       ),
-    ));
+    );
 
-    final budgetField = tester.widget<TextField>(find.byWidgetPredicate(
+    final budgetField = tester.widget<TextField>(
+      find.byWidgetPredicate(
         (widget) =>
             widget is TextField &&
-            widget.decoration?.labelText == 'Beantragtes Budget *'));
+            widget.decoration?.labelText == 'Beantragtes Budget *',
+      ),
+    );
     expect(budgetField.controller?.text, '125.5');
     expect(find.text('Beschaffungsentwurf bearbeiten'), findsOneWidget);
   });
 
   testWidgets(
-      'Supplier dialog requires a structured address and shows legacy data',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: SupplierDialog(
-          token: 'demo-token',
-          supplier: {
-            'name': 'Althandel',
-            'address': 'Alte Freitextanschrift 1, Beispielstadt',
-            'active': true,
-          },
+    'Supplier dialog requires a structured address and shows legacy data',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SupplierDialog(
+              token: 'demo-token',
+              supplier: {
+                'name': 'Althandel',
+                'address': 'Alte Freitextanschrift 1, Beispielstadt',
+                'active': true,
+              },
+            ),
+          ),
         ),
-      ),
-    ));
+      );
 
-    expect(find.text('Straße *'), findsOneWidget);
-    expect(find.text('Hausnummer *'), findsOneWidget);
-    expect(find.text('Postleitzahl *'), findsOneWidget);
-    expect(find.text('Ort *'), findsOneWidget);
-    expect(find.text('Land *'), findsOneWidget);
-    expect(find.textContaining('Bisherige Anschrift:'), findsOneWidget);
+      expect(find.text('Straße *'), findsOneWidget);
+      expect(find.text('Hausnummer *'), findsOneWidget);
+      expect(find.text('Postleitzahl *'), findsOneWidget);
+      expect(find.text('Ort *'), findsOneWidget);
+      expect(find.text('Land *'), findsOneWidget);
+      expect(find.textContaining('Bisherige Anschrift:'), findsOneWidget);
 
-    await tester.tap(find.text('Speichern'));
-    await tester.pump();
-    expect(
-        find.textContaining('Bitte Name, Straße, Hausnummer'), findsOneWidget);
-  });
+      await tester.tap(find.text('Speichern'));
+      await tester.pump();
+      expect(
+        find.textContaining('Bitte Name, Straße, Hausnummer'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets(
-      'Address input debounces suggestions and keeps the house number manual',
-      (WidgetTester tester) async {
+    'Address input includes house numbers and supports arrow and enter keys',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final street = TextEditingController();
+      final houseNumber = TextEditingController(text: '12');
+      final postalCode = TextEditingController();
+      final city = TextEditingController();
+      final country = TextEditingController(text: 'Frankreich');
+      final calls = <List<String>>[];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: AddressInput(
+                token: 'demo-token',
+                streetController: street,
+                houseNumberController: houseNumber,
+                postalCodeController: postalCode,
+                cityController: city,
+                countryController: country,
+                suggestionLoader: (query, selectedCountry) async {
+                  calls.add([query, selectedCountry]);
+                  return const AddressLookupResult(
+                    configured: true,
+                    supported: true,
+                    suggestions: [
+                      AddressSuggestion(
+                        id: 'address-1',
+                        label: 'Rue de Rivoli 10, 75001 Paris, Frankreich',
+                        street: 'Rue de Rivoli',
+                        houseNumber: '10',
+                        postalCode: '75001',
+                        city: 'Paris',
+                        country: 'Frankreich',
+                        countryCode: 'fr',
+                      ),
+                      AddressSuggestion(
+                        id: 'address-2',
+                        label: 'Rue de Rivoli 20, 75001 Paris, Frankreich',
+                        street: 'Rue de Rivoli',
+                        houseNumber: '20',
+                        postalCode: '75001',
+                        city: 'Paris',
+                        country: 'Frankreich',
+                        countryCode: 'fr',
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.enterText(find.widgetWithText(TextField, 'Straße *'), 'Rue');
+      await tester.pump(const Duration(milliseconds: 449));
+      expect(calls, isEmpty);
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+
+      expect(calls, [
+        ['Rue 12 Frankreich', 'Frankreich'],
+      ]);
+      expect(
+        find.text('Rue de Rivoli 10, 75001 Paris, Frankreich'),
+        findsOneWidget,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      expect(street.text, 'Rue de Rivoli');
+      expect(houseNumber.text, '20');
+      expect(postalCode.text, '75001');
+      expect(city.text, 'Paris');
+      expect(country.text, 'Frankreich');
+      expect(find.textContaining('einschließlich Hausnummer'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Address input fills a unique city from postal code', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final street = TextEditingController();
-    final houseNumber = TextEditingController(text: '12');
+    final houseNumber = TextEditingController();
     final postalCode = TextEditingController();
     final city = TextEditingController();
-    final country = TextEditingController(text: 'Frankreich');
-    final calls = <List<String>>[];
+    final country = TextEditingController(text: 'Deutschland');
+    final localityCalls = <List<String>>[];
 
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: SingleChildScrollView(
-          child: AddressInput(
-            token: 'demo-token',
-            streetController: street,
-            houseNumberController: houseNumber,
-            postalCodeController: postalCode,
-            cityController: city,
-            countryController: country,
-            suggestionLoader: (query, selectedCountry) async {
-              calls.add([query, selectedCountry]);
-              return const AddressLookupResult(
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: AddressInput(
+              token: 'demo-token',
+              streetController: street,
+              houseNumberController: houseNumber,
+              postalCodeController: postalCode,
+              cityController: city,
+              countryController: country,
+              suggestionLoader: (_, _) async => const AddressLookupResult(
                 configured: true,
                 supported: true,
-                suggestions: [
-                  AddressSuggestion(
-                    id: 'address-1',
-                    label: 'Rue de Rivoli, 75001 Paris, Frankreich',
-                    street: 'Rue de Rivoli',
-                    postalCode: '75001',
-                    city: 'Paris',
-                    country: 'Frankreich',
-                    countryCode: 'fr',
-                  ),
-                ],
-              );
-            },
+                suggestions: [],
+              ),
+              localityLoader: (postalCode, selectedCountry) async {
+                localityCalls.add([postalCode, selectedCountry]);
+                return const AddressLocalityResult(
+                  configured: true,
+                  supported: true,
+                  suggestions: ['Neustadt am Rübenberge'],
+                );
+              },
+            ),
           ),
         ),
       ),
-    ));
+    );
 
     await tester.enterText(
-      find.widgetWithText(TextField, 'Straße *'),
-      'Rue',
+      find.widgetWithText(TextField, 'Postleitzahl *'),
+      '31535',
     );
     await tester.pump(const Duration(milliseconds: 449));
-    expect(calls, isEmpty);
+    expect(localityCalls, isEmpty);
     await tester.pump(const Duration(milliseconds: 1));
     await tester.pump();
 
-    expect(calls, [
-      ['Rue Frankreich', 'Frankreich']
+    expect(localityCalls, [
+      ['31535', 'Deutschland'],
     ]);
-    expect(find.text('Rue de Rivoli, 75001 Paris, Frankreich'), findsOneWidget);
-
-    await tester.tap(find.text('Rue de Rivoli, 75001 Paris, Frankreich'));
-    await tester.pump();
-
-    expect(street.text, 'Rue de Rivoli');
-    expect(houseNumber.text, '12');
-    expect(postalCode.text, '75001');
-    expect(city.text, 'Paris');
-    expect(country.text, 'Frankreich');
-    expect(find.textContaining('Hausnummer bitte manuell'), findsOneWidget);
+    expect(city.text, 'Neustadt am Rübenberge');
+    expect(find.textContaining('Ort aus der Postleitzahl'), findsOneWidget);
   });
 
-  testWidgets('Order dialog treats offer price as gross line total',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: OrderDialog(
-          request: const {
-            'approvedBudgetGross': 450,
-            'preferredSupplierId': 'supplier-1',
-            'selectedOfferId': 'offer-1',
-            'items': [
-              {
-                'id': 'item-1',
-                'name': 'Feststoffweste',
-                'quantity': 20,
-              }
+  testWidgets('Order dialog treats offer price as gross line total', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: OrderDialog(
+            request: const {
+              'approvedBudgetGross': 450,
+              'preferredSupplierId': 'supplier-1',
+              'selectedOfferId': 'offer-1',
+              'items': [
+                {'id': 'item-1', 'name': 'Feststoffweste', 'quantity': 20},
+              ],
+              'offers': [
+                {
+                  'id': 'offer-1',
+                  'supplierId': 'supplier-1',
+                  'grossTotal': 432.50,
+                },
+              ],
+            },
+            suppliers: const [
+              {'id': 'supplier-1', 'name': 'DLRG Fachhandel'},
             ],
-            'offers': [
-              {
-                'id': 'offer-1',
-                'supplierId': 'supplier-1',
-                'grossTotal': 432.50,
-              }
-            ],
-          },
-          suppliers: const [
-            {'id': 'supplier-1', 'name': 'DLRG Fachhandel'},
-          ],
+          ),
         ),
       ),
-    ));
+    );
 
-    final totalField = tester.widget<TextField>(find.byWidgetPredicate(
+    final totalField = tester.widget<TextField>(
+      find.byWidgetPredicate(
         (widget) =>
             widget is TextField &&
-            widget.decoration?.labelText == 'Positionssumme brutto'));
+            widget.decoration?.labelText == 'Positionssumme brutto',
+      ),
+    );
     expect(totalField.controller?.text, '432.5');
     expect(find.text('Freigegebenes Budget'), findsOneWidget);
   });
+
+  testWidgets(
+    'Offer dialog reconciles line items, shipping and discount live',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1400, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: OfferDialog(
+              request: const {
+                'items': [
+                  {
+                    'id': 'item-1',
+                    'name': 'Helm',
+                    'quantity': 2,
+                    'unit': 'Stück',
+                  },
+                  {
+                    'id': 'item-2',
+                    'name': 'Handschuhe',
+                    'quantity': 4,
+                    'unit': 'Paar',
+                  },
+                ],
+              },
+              suppliers: const [
+                {'id': 'supplier-1', 'name': 'DLRG Fachhandel'},
+              ],
+              initialSupplierId: 'supplier-1',
+            ),
+          ),
+        ),
+      );
+
+      final positionFields = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Positionssumme brutto *',
+      );
+      expect(positionFields, findsNWidgets(2));
+      await tester.enterText(positionFields.at(0), '20,00');
+      await tester.enterText(positionFields.at(1), '10,00');
+
+      final componentFields = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Betrag brutto',
+      );
+      await tester.enterText(componentFields.at(0), '5,00');
+      await tester.enterText(componentFields.at(1), '2,00');
+      final documentField = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText ==
+                'Gesamtsumme laut Angebotsdokument brutto *',
+      );
+      await tester.enterText(documentField, '33,00');
+      await tester.pump();
+
+      expect(find.text('33,00 €'), findsOneWidget);
+      expect(
+        find.text('Eingabe und Angebot stimmen centgenau überein.'),
+        findsOneWidget,
+      );
+      final save = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Speichern'),
+      );
+      expect(save.onPressed, isNotNull);
+    },
+  );
 }
