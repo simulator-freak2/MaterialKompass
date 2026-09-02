@@ -123,8 +123,9 @@ class _CalendarPageState extends State<CalendarPage> {
       final kind = entry['kind']?.toString() ?? '';
       if (kindFilter == 'Reservierungen' && kind != 'reservation') return false;
       if (kindFilter == 'Wartungen' &&
-          !['maintenance', 'maintenance-due'].contains(kind))
+          !['maintenance', 'maintenance-due'].contains(kind)) {
         return false;
+      }
       if (kindFilter == 'Prüfungen' && kind != 'inspection') return false;
       if (statusFilter != 'Alle' && entry['status'] != statusFilter) {
         return false;
@@ -139,8 +140,9 @@ class _CalendarPageState extends State<CalendarPage> {
         (value) => value.toString(),
       );
       if (departmentFilter != null &&
-          !eventDepartments.contains(departmentFilter))
+          !eventDepartments.contains(departmentFilter)) {
         return false;
+      }
       if (query.isNotEmpty) {
         final haystack = [
           entry['inventoryNumber'],
@@ -187,12 +189,13 @@ class _CalendarPageState extends State<CalendarPage> {
         method: existing == null ? 'POST' : 'PUT',
         body: body,
       );
-      if (mounted)
+      if (mounted) {
         _message(
           existing == null
               ? 'Reservierung wurde angelegt.'
               : 'Reservierung wurde aktualisiert.',
         );
+      }
       await _load();
     } on AuthenticatedApiException catch (error) {
       if (mounted) _message(error.message, error: true);
@@ -805,10 +808,12 @@ class _CalendarPageState extends State<CalendarPage> {
         'inspection',
         'maintenance',
         'maintenance-due',
-      ].contains(event['kind']))
+      ].contains(event['kind'])) {
         return false;
-      if (['Abgeschlossen', 'Abgebrochen'].contains(event['status']))
+      }
+      if (['Abgeschlossen', 'Abgebrochen'].contains(event['status'])) {
         return false;
+      }
       final start = DateTime.tryParse(
         event['startAt']?.toString() ?? '',
       )?.toLocal();
@@ -1189,10 +1194,11 @@ class DateTimeTile extends StatelessWidget {
       context: context,
       initialTime: TimeOfDay.fromDateTime(value),
     );
-    if (time != null)
+    if (time != null) {
       onChanged(
         DateTime(date.year, date.month, date.day, time.hour, time.minute),
       );
+    }
   }
 
   @override

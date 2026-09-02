@@ -527,7 +527,7 @@ class _AddressInputState extends State<AddressInput> {
       controller: _suggestionScrollController,
       shrinkWrap: true,
       itemCount: _visibleSuggestionCount,
-      separatorBuilder: (_, __) => const Divider(height: 1),
+      separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         if (_suggestions.isEmpty) {
           final locality = _localitySuggestions[index];

@@ -1001,7 +1001,7 @@ class _InventoryPageState extends State<InventoryPage> {
                           )
                         : ListView.separated(
                             itemCount: availableItems.length,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (_, _) =>
                                 const Divider(height: 1),
                             itemBuilder: (_, index) {
                               final item = availableItems[index];
@@ -1211,7 +1211,7 @@ class _InventoryPageState extends State<InventoryPage> {
                           )
                         : ListView.separated(
                             itemCount: movableItems.length,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (_, _) =>
                                 const Divider(height: 1),
                             itemBuilder: (_, index) {
                               final item = movableItems[index];
@@ -1738,7 +1738,7 @@ class _InventoryPageState extends State<InventoryPage> {
     return ListView.separated(
       padding: EdgeInsets.zero,
       itemCount: filtered.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (_, index) {
         final item = filtered[index];
         return Card(

@@ -86,7 +86,7 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
           'deviceCredential': widget.deviceCredential,
           ...await _clientInfo(),
           if (qrCredential == null) 'password': systemPassword.text,
-          if (qrCredential != null) 'qrCredential': qrCredential,
+          'qrCredential': ?qrCredential,
           ...factorBody(device?['systemMfa']?.toString() ?? 'off'),
         }),
       );
@@ -152,8 +152,8 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
             'identifier': identifier.text,
             'password': personalPassword.text,
           },
-          if (qrCredential != null) 'qrCredential': qrCredential,
-          if (nfcCredential != null) 'nfcLoginCredential': nfcCredential,
+          'qrCredential': ?qrCredential,
+          'nfcLoginCredential': ?nfcCredential,
           ...factorBody(device?['personalMfa']?.toString() ?? 'off'),
         }),
       );

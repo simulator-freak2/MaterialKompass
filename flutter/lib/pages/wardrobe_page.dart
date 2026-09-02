@@ -1599,7 +1599,7 @@ class _WardrobePageState extends State<WardrobePage> {
                         child: ListView.separated(
                           shrinkWrap: true,
                           itemCount: searchResults.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final item = searchResults[index];
                             final itemId = item['id']?.toString() ?? '';
@@ -2291,7 +2291,7 @@ class _WardrobePageState extends State<WardrobePage> {
                             )
                           : ListView.separated(
                               itemCount: filteredClothing.length,
-                              separatorBuilder: (_, __) =>
+                              separatorBuilder: (_, _) =>
                                   const SizedBox(height: 12),
                               itemBuilder: (_, index) {
                                 final item = filteredClothing[index];
@@ -2482,7 +2482,7 @@ class _WardrobePageState extends State<WardrobePage> {
                                 )
                               : ListView.separated(
                                   itemCount: transactions.length,
-                                  separatorBuilder: (_, __) =>
+                                  separatorBuilder: (_, _) =>
                                       const SizedBox(height: 8),
                                   itemBuilder: (_, index) {
                                     final transaction = transactions[index];
@@ -2537,7 +2537,7 @@ class _WardrobePageState extends State<WardrobePage> {
 
           return ListView.separated(
             itemCount: history.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (_, index) {
               final item = history[index];
               return Card(

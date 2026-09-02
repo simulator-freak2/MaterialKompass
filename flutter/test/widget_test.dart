@@ -667,7 +667,7 @@ void main() {
               postalCodeController: postalCode,
               cityController: city,
               countryController: country,
-              suggestionLoader: (_, __) async => const AddressLookupResult(
+              suggestionLoader: (_, _) async => const AddressLookupResult(
                 configured: true,
                 supported: true,
                 suggestions: [],

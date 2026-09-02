@@ -519,7 +519,7 @@ class _DefectsPageState extends State<DefectsPage> {
                 )
               : ListView.separated(
                   itemCount: pending.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, index) {
                     final entry = pending[index];
                     final problems =
@@ -2260,7 +2260,7 @@ class _DefectsPageState extends State<DefectsPage> {
                                   height: 100,
                                   width: 150,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) =>
+                                  errorBuilder: (_, _, _) =>
                                       const Icon(Icons.broken_image, size: 64),
                                 ),
                               Text(
@@ -3500,7 +3500,7 @@ class _DefectDetailWorkspaceState extends State<_DefectDetailWorkspace> {
                                           height: 110,
                                           width: 170,
                                           fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
+                                          errorBuilder: (_, _, _) =>
                                               const SizedBox(
                                                 height: 110,
                                                 child: Icon(
@@ -3681,7 +3681,7 @@ class _WorkspaceSection extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              if (trailing != null) trailing!,
+              ?trailing,
             ],
           ),
           const Divider(),
