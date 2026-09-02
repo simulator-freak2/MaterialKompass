@@ -99,6 +99,9 @@ Entsperrvorgang wie Windows Hello, Touch ID, Face ID, Geräte-PIN oder einen
 FIDO2-Sicherheitsschlüssel an. Synchronisierte Passkeys werden unterstützt; der
 private Schlüssel verlässt den jeweiligen Authenticator nicht.
 
+Der macOS-Client setzt wegen der nativen Passkey-Unterstützung macOS 13.5 oder neuer
+voraus.
+
 Unter **Mein Account → Passkeys** lassen sich bis zu 20 Passkeys benennen, hinzufügen,
 umbenennen und widerrufen. Hinzufügen und Widerrufen erfordern erneut das aktuelle
 Passwort und, falls eingerichtet, einen TOTP- oder Wiederherstellungscode. Änderungen
