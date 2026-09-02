@@ -94,6 +94,7 @@ class AddressSuggestion {
   final String id;
   final String label;
   final String street;
+  final String houseNumber;
   final String postalCode;
   final String city;
   final String country;
@@ -103,6 +104,7 @@ class AddressSuggestion {
     required this.id,
     required this.label,
     required this.street,
+    this.houseNumber = '',
     required this.postalCode,
     required this.city,
     required this.country,
@@ -114,6 +116,7 @@ class AddressSuggestion {
         id: json['id']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
         street: json['street']?.toString() ?? '',
+        houseNumber: json['houseNumber']?.toString() ?? '',
         postalCode: json['postalCode']?.toString() ?? '',
         city: json['city']?.toString() ?? '',
         country: json['country']?.toString() ?? '',
@@ -139,10 +142,23 @@ class AddressLookupResult {
   });
 }
 
-typedef AddressSuggestionLoader = Future<AddressLookupResult> Function(
-  String query,
-  String country,
-);
+class AddressLocalityResult {
+  final bool configured;
+  final bool supported;
+  final List<String> suggestions;
+
+  const AddressLocalityResult({
+    required this.configured,
+    required this.supported,
+    required this.suggestions,
+  });
+}
+
+typedef AddressSuggestionLoader =
+    Future<AddressLookupResult> Function(String query, String country);
+
+typedef AddressLocalityLoader =
+    Future<AddressLocalityResult> Function(String postalCode, String country);
 
 class AddressLookupService {
   static const _cacheLimit = 30;
@@ -150,6 +166,9 @@ class AddressLookupService {
   final String token;
   final LinkedHashMap<String, AddressLookupResult> _cache = LinkedHashMap();
   final Map<String, Future<AddressLookupResult>> _pending = {};
+  final LinkedHashMap<String, AddressLocalityResult> _localityCache =
+      LinkedHashMap();
+  final Map<String, Future<AddressLocalityResult>> _localityPending = {};
 
   AddressLookupService(this.token);
 
@@ -173,6 +192,36 @@ class AddressLookupService {
     });
   }
 
+  Future<AddressLocalityResult> loadLocalities(
+    String postalCode,
+    String country,
+  ) {
+    final normalizedPostalCode = postalCode.trim();
+    final normalizedCountry = country.trim();
+    final cacheKey =
+        '${normalizedCountry.toLowerCase()}\n${normalizedPostalCode.toLowerCase()}';
+    final cached = _localityCache.remove(cacheKey);
+    if (cached != null) {
+      _localityCache[cacheKey] = cached;
+      return Future.value(cached);
+    }
+    return _localityPending.putIfAbsent(cacheKey, () async {
+      try {
+        final result = await _requestLocalities(
+          normalizedPostalCode,
+          normalizedCountry,
+        );
+        if (_localityCache.length >= _cacheLimit) {
+          _localityCache.remove(_localityCache.keys.first);
+        }
+        _localityCache[cacheKey] = result;
+        return result;
+      } finally {
+        _localityPending.remove(cacheKey);
+      }
+    });
+  }
+
   Future<AddressLookupResult> _request(String query, String country) async {
     final uri = Uri.parse('$apiBaseUrl/api/address-suggestions').replace(
       queryParameters: {
@@ -180,9 +229,10 @@ class AddressLookupService {
         if (country.isNotEmpty) 'country': country,
       },
     );
-    final response = await AppHttpClient.get(uri, headers: {
-      'Authorization': 'Bearer $token',
-    }).timeout(const Duration(seconds: 7));
+    final response = await AppHttpClient.get(
+      uri,
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 7));
     final decoded = jsonDecode(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final message = decoded is Map ? decoded['error']?.toString() : null;
@@ -192,11 +242,47 @@ class AddressLookupService {
     final suggestions = <AddressSuggestion>[];
     for (final raw in (data['suggestions'] as List?) ?? const []) {
       if (raw is! Map) continue;
-      final suggestion =
-          AddressSuggestion.fromJson(Map<String, dynamic>.from(raw));
+      final suggestion = AddressSuggestion.fromJson(
+        Map<String, dynamic>.from(raw),
+      );
       if (suggestion.isComplete) suggestions.add(suggestion);
     }
     return AddressLookupResult(
+      configured: data['configured'] != false,
+      supported: data['supported'] != false,
+      suggestions: List.unmodifiable(suggestions),
+    );
+  }
+
+  Future<AddressLocalityResult> _requestLocalities(
+    String postalCode,
+    String country,
+  ) async {
+    final uri = Uri.parse(
+      '$apiBaseUrl/api/address-suggestions/localities',
+    ).replace(queryParameters: {'postalCode': postalCode, 'country': country});
+    final response = await AppHttpClient.get(
+      uri,
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 7));
+    final decoded = jsonDecode(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final message = decoded is Map ? decoded['error']?.toString() : null;
+      throw Exception(message ?? 'Ortssuche fehlgeschlagen.');
+    }
+    final data = Map<String, dynamic>.from(decoded as Map);
+    final suggestions = <String>[];
+    final seen = <String>{};
+    for (final raw in (data['suggestions'] as List?) ?? const []) {
+      final suggestion = raw?.toString().trim() ?? '';
+      final key = suggestion.toLowerCase();
+      if (suggestion.isEmpty || suggestion.length > 255 || !seen.add(key)) {
+        continue;
+      }
+      suggestions.add(suggestion);
+      if (suggestions.length >= 20) break;
+    }
+    return AddressLocalityResult(
       configured: data['configured'] != false,
       supported: data['supported'] != false,
       suggestions: List.unmodifiable(suggestions),

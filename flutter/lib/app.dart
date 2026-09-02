@@ -15,7 +15,9 @@ class MaterialKompassApp extends StatelessWidget {
     if (uri != null &&
         (uri.path == 'verify-email' || uri.path == 'password-reset')) {
       return AuthLinkPage(
-          action: uri.path, token: uri.queryParameters['token'] ?? '');
+        action: uri.path,
+        token: uri.queryParameters['token'] ?? '',
+      );
     }
     return const ServiceDeviceBootstrap();
   }

@@ -27,7 +27,7 @@ class ApiResponse {
 
 class ApiClient {
   ApiClient({http.Client? client, this.timeout = const Duration(seconds: 15)})
-      : _client = client ?? http.Client();
+    : _client = client ?? http.Client();
 
   final http.Client _client;
   final Duration timeout;
@@ -37,19 +37,25 @@ class ApiClient {
     Map<String, String>? queryParameters,
     Map<String, String>? headers,
   }) =>
-      _request(
-        'GET',
-        path,
-        queryParameters: queryParameters,
-        headers: headers,
-      );
+      _request('GET', path, queryParameters: queryParameters, headers: headers);
 
   Future<ApiResponse> post(
     String path, {
     Object? body,
     Map<String, String>? headers,
-  }) =>
-      _request('POST', path, body: body, headers: headers);
+  }) => _request('POST', path, body: body, headers: headers);
+
+  Future<ApiResponse> patch(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) => _request('PATCH', path, body: body, headers: headers);
+
+  Future<ApiResponse> delete(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) => _request('DELETE', path, body: body, headers: headers);
 
   Future<ApiResponse> _request(
     String method,
@@ -69,13 +75,30 @@ class ApiClient {
       final response = switch (method) {
         'GET' =>
           await _client.get(uri, headers: requestHeaders).timeout(timeout),
-        'POST' => await _client
-            .post(
-              uri,
-              headers: requestHeaders,
-              body: body == null ? null : jsonEncode(body),
-            )
-            .timeout(timeout),
+        'POST' =>
+          await _client
+              .post(
+                uri,
+                headers: requestHeaders,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(timeout),
+        'PATCH' =>
+          await _client
+              .patch(
+                uri,
+                headers: requestHeaders,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(timeout),
+        'DELETE' =>
+          await _client
+              .delete(
+                uri,
+                headers: requestHeaders,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(timeout),
         _ => throw ArgumentError.value(method, 'method'),
       };
       dynamic data;

@@ -59,8 +59,8 @@ class _DashboardPageState extends State<DashboardPage>
   }
 
   Future<void> _sync() => offline_transport.flush(
-        headers: {'Authorization': 'Bearer ${widget.token}'},
-      );
+    headers: {'Authorization': 'Bearer ${widget.token}'},
+  );
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -93,10 +93,14 @@ class _DashboardPageState extends State<DashboardPage>
 
   Future<Map<String, dynamic>> loadDashboard() async {
     final responses = await Future.wait([
-      AppHttpClient.get(Uri.parse('$apiBaseUrl/api/dashboard'),
-          headers: {'Authorization': 'Bearer ${widget.token}'}),
-      AppHttpClient.get(Uri.parse('$apiBaseUrl/api/auth/me'),
-          headers: {'Authorization': 'Bearer ${widget.token}'}),
+      AppHttpClient.get(
+        Uri.parse('$apiBaseUrl/api/dashboard'),
+        headers: {'Authorization': 'Bearer ${widget.token}'},
+      ),
+      AppHttpClient.get(
+        Uri.parse('$apiBaseUrl/api/auth/me'),
+        headers: {'Authorization': 'Bearer ${widget.token}'},
+      ),
     ]);
     if (responses.any((response) => response.statusCode != 200)) {
       throw Exception('Failed to load dashboard');
@@ -108,8 +112,9 @@ class _DashboardPageState extends State<DashboardPage>
 
   Future<void> _logout(BuildContext context) async {
     final store = OfflineStore.instance;
-    final subject =
-        store.subjectFromHeaders({'Authorization': 'Bearer ${widget.token}'});
+    final subject = store.subjectFromHeaders({
+      'Authorization': 'Bearer ${widget.token}',
+    });
     final pending = (await store.commands())
         .where((entry) => entry.subject == subject)
         .length;
@@ -200,17 +205,19 @@ class _DashboardPageState extends State<DashboardPage>
       await loadLibrary();
       if (rootNavigator.mounted) rootNavigator.pop();
       if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => pageBuilder()),
-      );
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => pageBuilder()));
     } catch (_) {
       if (rootNavigator.mounted) rootNavigator.pop();
       if (mounted) {
-        messenger.showSnackBar(const SnackBar(
-          content: Text(
-            'Der Bereich konnte nicht geladen werden. Bitte die Verbindung prüfen.',
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Der Bereich konnte nicht geladen werden. Bitte die Verbindung prüfen.',
+            ),
           ),
-        ));
+        );
       }
     }
   }
@@ -235,28 +242,38 @@ class _DashboardPageState extends State<DashboardPage>
                 : ListView(
                     shrinkWrap: true,
                     children: commands
-                        .map((entry) => ListTile(
-                              leading: Icon(entry.failure == null
+                        .map(
+                          (entry) => ListTile(
+                            leading: Icon(
+                              entry.failure == null
                                   ? Icons.schedule
-                                  : Icons.sync_problem),
-                              title: Text(
-                                  '${entry.method} ${Uri.parse(entry.uri).path}'),
-                              subtitle: Text(entry.failure ??
-                                  'Wartet seit ${_formatActivityTime(entry.createdAt.toIso8601String())} auf eine Verbindung.'),
-                              trailing: entry.failure == null
-                                  ? null
-                                  : IconButton(
-                                      tooltip: 'Abgelehnte Änderung verwerfen',
-                                      icon: const Icon(Icons.delete_outline),
-                                      onPressed: () async {
-                                        await store.discardCommand(
-                                            subject, entry.id);
-                                        commands.removeWhere((command) =>
-                                            command.id == entry.id);
-                                        setDialogState(() {});
-                                      },
-                                    ),
-                            ))
+                                  : Icons.sync_problem,
+                            ),
+                            title: Text(
+                              '${entry.method} ${Uri.parse(entry.uri).path}',
+                            ),
+                            subtitle: Text(
+                              entry.failure ??
+                                  'Wartet seit ${_formatActivityTime(entry.createdAt.toIso8601String())} auf eine Verbindung.',
+                            ),
+                            trailing: entry.failure == null
+                                ? null
+                                : IconButton(
+                                    tooltip: 'Abgelehnte Änderung verwerfen',
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () async {
+                                      await store.discardCommand(
+                                        subject,
+                                        entry.id,
+                                      );
+                                      commands.removeWhere(
+                                        (command) => command.id == entry.id,
+                                      );
+                                      setDialogState(() {});
+                                    },
+                                  ),
+                          ),
+                        )
                         .toList(),
                   ),
           ),
@@ -288,9 +305,9 @@ class _DashboardPageState extends State<DashboardPage>
     );
     final locations = response.statusCode == 200
         ? (jsonDecode(response.body) as List)
-            .cast<Map>()
-            .map((entry) => Map<String, dynamic>.from(entry))
-            .toList()
+              .cast<Map>()
+              .map((entry) => Map<String, dynamic>.from(entry))
+              .toList()
         : <Map<String, dynamic>>[];
     var mobileData = settings['mobileData'] != false;
     var largeFileMb =
@@ -315,7 +332,8 @@ class _DashboardPageState extends State<DashboardPage>
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Synchronisation über Mobilfunk'),
                   subtitle: const Text(
-                      'WLAN und LAN bleiben unabhängig davon erlaubt.'),
+                    'WLAN und LAN bleiben unabhängig davon erlaubt.',
+                  ),
                   value: mobileData,
                   onChanged: (value) =>
                       setDialogState(() => mobileData = value),
@@ -339,7 +357,8 @@ class _DashboardPageState extends State<DashboardPage>
                   contentPadding: EdgeInsets.zero,
                   title: Text('Offline-Standorte'),
                   subtitle: Text(
-                      'Ohne Auswahl werden alle berechtigten Standorte geladen.'),
+                    'Ohne Auswahl werden alle berechtigten Standorte geladen.',
+                  ),
                 ),
                 ...locations.map((entry) {
                   final id = entry['id'].toString();
@@ -395,7 +414,8 @@ class _DashboardPageState extends State<DashboardPage>
   String _activityTitle(Map<String, dynamic> entry) {
     final entity = entry['entityLabel']?.toString() ?? 'Eintrag';
     final itemName = entry['itemName']?.toString();
-    final action = entry['actionLabel']?.toString() ??
+    final action =
+        entry['actionLabel']?.toString() ??
         entry['action']?.toString() ??
         'bearbeitet';
     return itemName == null || itemName.isEmpty
@@ -434,16 +454,18 @@ class _DashboardPageState extends State<DashboardPage>
               tooltip: status.offline
                   ? 'Offline · ${status.pending} ausstehend'
                   : status.syncing
-                      ? 'Synchronisierung läuft'
-                      : 'Online · ${status.pending} ausstehend',
+                  ? 'Synchronisierung läuft'
+                  : 'Online · ${status.pending} ausstehend',
               icon: Badge(
                 isLabelVisible: status.pending > 0,
                 label: Text('${status.pending}'),
-                child: Icon(status.offline
-                    ? Icons.cloud_off
-                    : status.syncing
-                        ? Icons.sync
-                        : Icons.cloud_done),
+                child: Icon(
+                  status.offline
+                      ? Icons.cloud_off
+                      : status.syncing
+                      ? Icons.sync
+                      : Icons.cloud_done,
+                ),
               ),
             ),
           ),
@@ -514,10 +536,12 @@ class _DashboardPageState extends State<DashboardPage>
           }
 
           final data = snapshot.data ?? {};
-          final summary =
-              Map<String, dynamic>.from(data['summary'] as Map? ?? const {});
+          final summary = Map<String, dynamic>.from(
+            data['summary'] as Map? ?? const {},
+          );
           final currentUser = Map<String, dynamic>.from(
-              data['currentUser'] as Map? ?? const {});
+            data['currentUser'] as Map? ?? const {},
+          );
           final permissions = (currentUser['permissions'] as List? ?? const [])
               .map((permission) => permission.toString())
               .toSet();
@@ -543,13 +567,15 @@ class _DashboardPageState extends State<DashboardPage>
                 'Berichte': 'reports.read',
                 'Inventuren': 'stocktakes.read',
               };
-              final activities =
-                  (data['recentActivity'] as List? ?? const []).where((entry) {
-                if (entry is! Map) return false;
-                final requiredPermission =
-                    activityPermissions[entry['area']?.toString()];
-                return requiredPermission != null && can(requiredPermission);
-              }).toList();
+              final activities = (data['recentActivity'] as List? ?? const [])
+                  .where((entry) {
+                    if (entry is! Map) return false;
+                    final requiredPermission =
+                        activityPermissions[entry['area']?.toString()];
+                    return requiredPermission != null &&
+                        can(requiredPermission);
+                  })
+                  .toList();
               final actions = <_DashboardAction>[
                 _DashboardAction(
                   icon: Icons.menu_book_outlined,
@@ -816,11 +842,11 @@ class _DashboardPageState extends State<DashboardPage>
                                         const NeverScrollableScrollPhysics(),
                                     gridDelegate:
                                         SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: isMobile ? 2 : 3,
-                                      crossAxisSpacing: 12,
-                                      mainAxisSpacing: 12,
-                                      mainAxisExtent: isMobile ? 132 : 112,
-                                    ),
+                                          crossAxisCount: isMobile ? 2 : 3,
+                                          crossAxisSpacing: 12,
+                                          mainAxisSpacing: 12,
+                                          mainAxisExtent: isMobile ? 132 : 112,
+                                        ),
                                     itemCount: actions.length,
                                     itemBuilder: (_, index) => _QuickActionCard(
                                       action: actions[index],
@@ -862,7 +888,8 @@ class _DashboardPageState extends State<DashboardPage>
                                     _ActivityCard(
                                       title: _activityTitle(
                                         Map<String, dynamic>.from(
-                                            rawEntry as Map),
+                                          rawEntry as Map,
+                                        ),
                                       ),
                                       details: _activityDetails(
                                         Map<String, dynamic>.from(rawEntry),
@@ -980,8 +1007,8 @@ class _SectionHeading extends StatelessWidget {
         Text(
           subtitle,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
@@ -1035,8 +1062,8 @@ class _QuickActionCard extends StatelessWidget {
                         maxLines: compact ? 3 : 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                            ),
+                          color: colors.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),

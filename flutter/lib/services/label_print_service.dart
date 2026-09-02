@@ -37,39 +37,38 @@ class LabelPrinter {
     int? darkness,
     bool? defaultInventory,
     bool? defaultClothing,
-  }) =>
-      LabelPrinter(
-        id: id ?? this.id,
-        name: name ?? this.name,
-        host: host ?? this.host,
-        port: port ?? this.port,
-        speed: speed ?? this.speed,
-        darkness: darkness ?? this.darkness,
-        defaultInventory: defaultInventory ?? this.defaultInventory,
-        defaultClothing: defaultClothing ?? this.defaultClothing,
-      );
+  }) => LabelPrinter(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    host: host ?? this.host,
+    port: port ?? this.port,
+    speed: speed ?? this.speed,
+    darkness: darkness ?? this.darkness,
+    defaultInventory: defaultInventory ?? this.defaultInventory,
+    defaultClothing: defaultClothing ?? this.defaultClothing,
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'host': host,
-        'port': port,
-        'speed': speed,
-        'darkness': darkness,
-        'defaultInventory': defaultInventory,
-        'defaultClothing': defaultClothing,
-      };
+    'id': id,
+    'name': name,
+    'host': host,
+    'port': port,
+    'speed': speed,
+    'darkness': darkness,
+    'defaultInventory': defaultInventory,
+    'defaultClothing': defaultClothing,
+  };
 
   factory LabelPrinter.fromJson(Map<String, dynamic> json) => LabelPrinter(
-        id: json['id']?.toString() ?? '',
-        name: json['name']?.toString() ?? '',
-        host: json['host']?.toString() ?? '',
-        port: int.tryParse(json['port']?.toString() ?? '') ?? 9100,
-        speed: int.tryParse(json['speed']?.toString() ?? '') ?? 4,
-        darkness: int.tryParse(json['darkness']?.toString() ?? '') ?? 15,
-        defaultInventory: json['defaultInventory'] == true,
-        defaultClothing: json['defaultClothing'] == true,
-      );
+    id: json['id']?.toString() ?? '',
+    name: json['name']?.toString() ?? '',
+    host: json['host']?.toString() ?? '',
+    port: int.tryParse(json['port']?.toString() ?? '') ?? 9100,
+    speed: int.tryParse(json['speed']?.toString() ?? '') ?? 4,
+    darkness: int.tryParse(json['darkness']?.toString() ?? '') ?? 15,
+    defaultInventory: json['defaultInventory'] == true,
+    defaultClothing: json['defaultClothing'] == true,
+  );
 }
 
 class LabelData {
@@ -91,15 +90,13 @@ class LabelData {
     this.suggestedCopies = 1,
   });
 
-  factory LabelData.fromItem(
-    Map<String, dynamic> item,
-    LabelType type,
-  ) {
+  factory LabelData.fromItem(Map<String, dynamic> item, LabelType type) {
     var year = item['manufacturingYear']?.toString().trim() ?? '';
     if (year.isEmpty) {
-      year = DateTime.tryParse(item['purchaseDate']?.toString() ?? '')
-              ?.year
-              .toString() ??
+      year =
+          DateTime.tryParse(
+            item['purchaseDate']?.toString() ?? '',
+          )?.year.toString() ??
           '';
     }
     final isBulk = type == LabelType.inventory && item['itemType'] == 'bulk';
@@ -163,8 +160,13 @@ class LabelPrintService extends ChangeNotifier {
         final decoded = jsonDecode(raw) as List;
         _printers
           ..clear()
-          ..addAll(decoded.map((entry) =>
-              LabelPrinter.fromJson(Map<String, dynamic>.from(entry as Map))));
+          ..addAll(
+            decoded.map(
+              (entry) => LabelPrinter.fromJson(
+                Map<String, dynamic>.from(entry as Map),
+              ),
+            ),
+          );
       } catch (_) {
         _printers.clear();
       }
@@ -200,9 +202,11 @@ class LabelPrintService extends ChangeNotifier {
   }
 
   LabelPrinter? defaultPrinter(LabelType type) {
-    final matching = _printers.where((printer) => type == LabelType.inventory
-        ? printer.defaultInventory
-        : printer.defaultClothing);
+    final matching = _printers.where(
+      (printer) => type == LabelType.inventory
+          ? printer.defaultInventory
+          : printer.defaultClothing,
+    );
     return matching.firstOrNull ?? _printers.firstOrNull;
   }
 
@@ -226,19 +230,14 @@ class LabelPrintService extends ChangeNotifier {
     await _send(printer, [LabelPrintLine(testLabel, 1)]);
   }
 
-  Future<void> print(
-    LabelPrinter printer,
-    List<LabelPrintLine> lines,
-  ) =>
+  Future<void> print(LabelPrinter printer, List<LabelPrintLine> lines) =>
       _send(printer, lines);
 
-  Future<void> _send(
-    LabelPrinter printer,
-    List<LabelPrintLine> lines,
-  ) async {
+  Future<void> _send(LabelPrinter printer, List<LabelPrintLine> lines) async {
     if (!supported) {
       throw UnsupportedError(
-          'Etikettendruck ist auf dieser Plattform nicht verfügbar.');
+        'Etikettendruck ist auf dieser Plattform nicht verfügbar.',
+      );
     }
     final zpl = lines
         .where((line) => line.copies > 0)
@@ -248,18 +247,16 @@ class LabelPrintService extends ChangeNotifier {
     await sendRawLabel(printer.host, printer.port, utf8.encode(zpl));
   }
 
-  void enqueue(
-    LabelPrinter printer,
-    List<LabelPrintLine> lines,
-    Object error,
-  ) {
-    _queue.add(LabelPrintJob(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      printer: printer,
-      lines: List.unmodifiable(lines),
-      createdAt: DateTime.now(),
-      error: error.toString(),
-    ));
+  void enqueue(LabelPrinter printer, List<LabelPrintLine> lines, Object error) {
+    _queue.add(
+      LabelPrintJob(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        printer: printer,
+        lines: List.unmodifiable(lines),
+        createdAt: DateTime.now(),
+        error: error.toString(),
+      ),
+    );
     notifyListeners();
   }
 

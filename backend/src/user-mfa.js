@@ -21,6 +21,7 @@ function publicMfa(user) {
   return {
     enabled,
     required: user.mfaRequired === true,
+    strongAuthenticationConfigured: strongAuthenticationEnabled(user),
     graceEndsAt: user.mfaGraceEndsAt || null,
     enabledAt: user.mfaEnabledAt || null,
     lastVerifiedAt: user.mfaLastVerifiedAt || null,
@@ -35,14 +36,18 @@ function mfaEnabled(user) {
   return Boolean(user?.mfaSecretEncrypted && user?.mfaEnabledAt);
 }
 
+function strongAuthenticationEnabled(user) {
+  return mfaEnabled(user) || Number(user?.passkeyCount || 0) > 0;
+}
+
 function enrollmentRequired(user, now = Date.now()) {
-  if (!user?.mfaRequired || mfaEnabled(user)) return false;
+  if (!user?.mfaRequired || strongAuthenticationEnabled(user)) return false;
   const graceEndsAt = Date.parse(user.mfaGraceEndsAt || '');
   return !Number.isFinite(graceEndsAt) || graceEndsAt <= now;
 }
 
 function offlineMfaEligible(user, now = Date.now()) {
-  if (!mfaEnabled(user)) return false;
+  if (!strongAuthenticationEnabled(user)) return false;
   const lastVerifiedAt = Date.parse(user.mfaLastVerifiedAt || '');
   return Number.isFinite(lastVerifiedAt)
     && lastVerifiedAt + OFFLINE_MFA_MAX_AGE_MS > now;
@@ -231,8 +236,10 @@ function createUserMfa({
   });
 
   app.post('/api/users/me/mfa/disable', authMiddleware, async (req, res) => {
-    if (req.user.mfaRequired) {
-      return res.status(409).json({ error: '2-FA ist für dieses Konto verpflichtend.' });
+    if (req.user.mfaRequired && Number(req.user.passkeyCount || 0) === 0) {
+      return res.status(409).json({
+        error: 'Für dieses Konto ist eine starke Anmeldung verpflichtend. Richten Sie vor dem Deaktivieren einen Passkey ein.',
+      });
     }
     if (!await bcrypt.compare(req.body.currentPassword || '', req.user.passwordHash)) {
       return res.status(403).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
@@ -264,7 +271,7 @@ function createUserMfa({
       return res.status(400).json({ error: 'Die 2-FA-Richtlinie ist ungültig.' });
     }
     user.mfaRequired = req.body.required;
-    user.mfaGraceEndsAt = req.body.required && !mfaEnabled(user)
+    user.mfaGraceEndsAt = req.body.required && !strongAuthenticationEnabled(user)
       ? new Date(now() + ENROLLMENT_GRACE_DAYS * 86_400_000).toISOString()
       : null;
     user.mfaVersion = Number(user.mfaVersion || 0) + 1;
@@ -272,10 +279,10 @@ function createUserMfa({
     logEvent('mfa_policy_updated', 'User', { id: user.id, required: user.mfaRequired }, req.user.username);
     await securityNotice(
       user,
-      user.mfaRequired ? 'Zwei-Faktor-Authentifizierung wird verpflichtend' : '2-FA-Richtlinie geändert',
+      user.mfaRequired ? 'Starke Anmeldung wird verpflichtend' : 'Richtlinie für starke Anmeldung geändert',
       user.mfaRequired
-        ? `Ein Administrator hat 2-FA für Ihr MaterialKompass-Konto verpflichtend gemacht. Richten Sie 2-FA bis ${user.mfaGraceEndsAt || 'zum Ende der Einrichtungsfrist'} ein.`
-        : 'Ein Administrator hat die Zwei-Faktor-Authentifizierung für Ihr MaterialKompass-Konto auf freiwillig gesetzt.',
+        ? `Ein Administrator hat eine starke Anmeldung für Ihr MaterialKompass-Konto verpflichtend gemacht. Richten Sie bis ${user.mfaGraceEndsAt || 'zum Ende der Einrichtungsfrist'} einen Passkey oder 2-FA ein.`
+        : 'Ein Administrator hat die starke Anmeldung für Ihr MaterialKompass-Konto auf freiwillig gesetzt.',
     );
     return res.json(publicMfa(user));
   });
@@ -298,7 +305,7 @@ function createUserMfa({
     user.mfaRecoveryCodeHashes = [];
     user.mfaEnabledAt = null;
     user.mfaLastVerifiedAt = null;
-    user.mfaGraceEndsAt = user.mfaRequired
+    user.mfaGraceEndsAt = user.mfaRequired && !strongAuthenticationEnabled(user)
       ? new Date(now() + ENROLLMENT_GRACE_DAYS * 86_400_000).toISOString()
       : null;
     user.mfaVersion = Number(user.mfaVersion || 0) + 1;
@@ -314,7 +321,10 @@ function createUserMfa({
     issueChallenge,
     mfaEnabled,
     offlineMfaEligible: (user) => offlineMfaEligible(user, now()),
+    passkeyRequired: (user) => user?.mfaRequired === true
+      && !mfaEnabled(user) && Number(user?.passkeyCount || 0) > 0,
     publicMfa,
+    strongAuthenticationEnabled,
     verifyUserCode,
   };
 }
@@ -329,4 +339,5 @@ module.exports = {
   mfaEnabled,
   offlineMfaEligible,
   publicMfa,
+  strongAuthenticationEnabled,
 };

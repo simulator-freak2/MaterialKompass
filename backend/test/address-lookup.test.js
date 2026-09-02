@@ -26,7 +26,7 @@ test('address lookup queries Geoapify through an EU filter, normalizes and cache
               postcode: '75001', city: 'Paris', country: 'France', country_code: 'fr',
             },
             {
-              place_id: 'duplicate', street: 'Rue de Rivoli', postcode: '75001',
+              place_id: 'duplicate', street: 'Rue de Rivoli', housenumber: '10', postcode: '75001',
               city: 'Paris', country: 'France', country_code: 'fr',
             },
             {
@@ -47,8 +47,9 @@ test('address lookup queries Geoapify through an EU filter, normalizes and cache
     supported: true,
     suggestions: [{
       id: 'one',
-      label: 'Rue de Rivoli, 75001 Paris, Frankreich',
+      label: 'Rue de Rivoli 10, 75001 Paris, Frankreich',
       street: 'Rue de Rivoli',
+      houseNumber: '10',
       postalCode: '75001',
       city: 'Paris',
       country: 'Frankreich',
@@ -67,6 +68,51 @@ test('address lookup queries Geoapify through an EU filter, normalizes and cache
     service.suggestions({ query: 'Rue de Rivoli Paris', country: 'Frankreich' }),
   ]);
   assert.equal(urls.length, 2, 'parallel identical requests share one provider call');
+});
+
+test('address lookup resolves and caches exact postal-code localities', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return {
+      ok: true,
+      async text() {
+        return JSON.stringify({
+          results: [
+            {
+              postcode: '31535', city: 'Neustadt',
+              country: 'Germany', country_code: 'de',
+            },
+            {
+              postcode: '31535', town: 'Neustadt am Rübenberge',
+              country: 'Germany', country_code: 'de',
+            },
+            {
+              postcode: '31536', city: 'Falscher Ort',
+              country: 'Germany', country_code: 'de',
+            },
+          ],
+        });
+      },
+    };
+  };
+  const service = createAddressLookupService({ fetchImpl, apiKey: 'server-secret' });
+  const first = await service.localities({
+    postalCode: '31535', country: 'Deutschland',
+  });
+  const cached = await service.localities({
+    postalCode: '31535', country: 'Deutschland',
+  });
+
+  assert.deepEqual(first, {
+    configured: true,
+    supported: true,
+    suggestions: ['Neustadt', 'Neustadt am Rübenberge'],
+  });
+  assert.deepEqual(cached, first);
+  assert.equal(urls.length, 1);
+  assert.equal(urls[0].searchParams.get('filter'), 'countrycode:de');
+  assert.equal(urls[0].searchParams.get('text'), '31535 Deutschland');
 });
 
 test('address lookup degrades safely without configuration or for non-EU countries', async () => {

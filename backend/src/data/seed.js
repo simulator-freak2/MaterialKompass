@@ -20,6 +20,7 @@ const permissions = [
   'dashboard.read',
   'stocktakes.read', 'stocktakes.create', 'stocktakes.count',
   'stocktakes.evaluate', 'stocktakes.export', 'stocktakes.email.import',
+  'calendar.read', 'reservations.create', 'reservations.manage', 'maintenance.manage',
 ];
 
 const roles = [
@@ -138,6 +139,8 @@ const materials = [
 const materialMovements = [];
 const materialInspections = [];
 const materialDocuments = [];
+const reservations = [];
+const maintenanceEvents = [];
 const clothingInspections = [];
 
 const clothingItems = [
@@ -208,6 +211,8 @@ module.exports = {
     materialMovements,
     materialInspections,
     materialDocuments,
+    reservations,
+    maintenanceEvents,
     clothingItems,
     clothingInspections,
     issueTransactions,

@@ -13,8 +13,9 @@ class OfflineSessionService {
 
   static Future<void> prepare(String token, {List<String>? locationIds}) {
     if (kIsWeb || token.isEmpty) return Future.value();
-    final subject = OfflineStore.instance
-        .subjectFromHeaders({'Authorization': 'Bearer $token'});
+    final subject = OfflineStore.instance.subjectFromHeaders({
+      'Authorization': 'Bearer $token',
+    });
     final running = _inFlight[subject];
     if (running != null) return running;
     final operation = _prepare(token, subject, locationIds: locationIds);
@@ -31,7 +32,8 @@ class OfflineSessionService {
   }) async {
     final store = OfflineStore.instance;
     await store.pruneExpiredData();
-    final configuredLocations = locationIds ??
+    final configuredLocations =
+        locationIds ??
         ((await store.settings())['locationIds'] as List? ?? const [])
             .map((entry) => entry.toString())
             .toList();
@@ -54,8 +56,9 @@ class OfflineSessionService {
           )
           .timeout(const Duration(seconds: 15));
       if (enrollment.statusCode != 200) return;
-      final enrollmentData =
-          Map<String, dynamic>.from(jsonDecode(enrollment.body) as Map);
+      final enrollmentData = Map<String, dynamic>.from(
+        jsonDecode(enrollment.body) as Map,
+      );
       final checkpoint = await store.syncCheckpoint(subject);
       final checkpointLocations =
           (checkpoint?['locationIds'] as List? ?? const [])
@@ -64,22 +67,22 @@ class OfflineSessionService {
       final requestedLocations = configuredLocations.toSet();
       final sameLocations =
           checkpointLocations.length == requestedLocations.length &&
-              checkpointLocations.containsAll(requestedLocations);
+          checkpointLocations.containsAll(requestedLocations);
       final cursor = checkpoint?['revision'] as num?;
       final useChanges = cursor != null && sameLocations;
       final syncUri = useChanges
-          ? Uri.parse('$apiBaseUrl/api/offline/changes').replace(
-              queryParameters: {'cursor': cursor.toInt().toString()},
-            )
+          ? Uri.parse(
+              '$apiBaseUrl/api/offline/changes',
+            ).replace(queryParameters: {'cursor': cursor.toInt().toString()})
           : Uri.parse('$apiBaseUrl/api/offline/bootstrap');
-      final snapshot = await http.get(
-        syncUri,
-        headers: {...headers, 'X-Offline-Client-Id': clientId},
-      ).timeout(const Duration(seconds: 30));
+      final snapshot = await http
+          .get(syncUri, headers: {...headers, 'X-Offline-Client-Id': clientId})
+          .timeout(const Duration(seconds: 30));
       if (snapshot.statusCode != 200) return;
       final decoded = jsonDecode(snapshot.body);
       if (decoded is! Map) return;
-      final revision = (decoded['revision'] as num?)?.toInt() ??
+      final revision =
+          (decoded['revision'] as num?)?.toInt() ??
           (enrollmentData['revision'] as num?)?.toInt() ??
           0;
       if (decoded['changed'] == false) {
@@ -94,11 +97,11 @@ class OfflineSessionService {
       if (decoded['data'] is! Map) return;
       final data = Map<String, dynamic>.from(decoded['data'] as Map);
       Future<void> cache(String path, Object? value) => store.cacheResponse(
-            subject,
-            Uri.parse('$apiBaseUrl$path'),
-            200,
-            jsonEncode(value ?? const []),
-          );
+        subject,
+        Uri.parse('$apiBaseUrl$path'),
+        200,
+        jsonEncode(value ?? const []),
+      );
       await Future.wait([
         cache('/api/material?archived=false', data['materials']),
         cache('/api/categories', data['categories']),
@@ -120,22 +123,26 @@ class OfflineSessionService {
         cache('/api/defect-email-imports', const []),
         cache('/api/auth/me', {'user': enrollmentData['user']}),
         cache('/api/defect-report-items', [
-          ...(data['materials'] as List? ?? const []).map((item) => {
-                'id': (item as Map)['id'],
-                'entityType': 'MaterialItem',
-                'inventoryNumber': item['inventoryNumber'],
-                'name': item['name'],
-                'quantity': item['quantity'] ?? 1,
-                'status': item['status'],
-              }),
-          ...(data['clothingItems'] as List? ?? const []).map((item) => {
-                'id': (item as Map)['id'],
-                'entityType': 'ClothingItem',
-                'inventoryNumber': item['inventoryNumber'],
-                'name': item['name'],
-                'quantity': 1,
-                'status': item['status'],
-              }),
+          ...(data['materials'] as List? ?? const []).map(
+            (item) => {
+              'id': (item as Map)['id'],
+              'entityType': 'MaterialItem',
+              'inventoryNumber': item['inventoryNumber'],
+              'name': item['name'],
+              'quantity': item['quantity'] ?? 1,
+              'status': item['status'],
+            },
+          ),
+          ...(data['clothingItems'] as List? ?? const []).map(
+            (item) => {
+              'id': (item as Map)['id'],
+              'entityType': 'ClothingItem',
+              'inventoryNumber': item['inventoryNumber'],
+              'name': item['name'],
+              'quantity': 1,
+              'status': item['status'],
+            },
+          ),
         ]),
       ]);
       final dashboardUri = Uri.parse('$apiBaseUrl/api/dashboard');

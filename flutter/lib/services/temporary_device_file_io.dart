@@ -12,10 +12,12 @@ String _safeName(String value) =>
 Future<bool> openTemporaryDeviceFile(String fileName, Uint8List bytes) async {
   final directory = await getTemporaryDirectory();
   final folder = Directory(
-      '${directory.path}${Platform.pathSeparator}materialkompass-device');
+    '${directory.path}${Platform.pathSeparator}materialkompass-device',
+  );
   await folder.create(recursive: true);
-  final file =
-      File('${folder.path}${Platform.pathSeparator}${_safeName(fileName)}');
+  final file = File(
+    '${folder.path}${Platform.pathSeparator}${_safeName(fileName)}',
+  );
   await file.writeAsBytes(bytes, flush: true);
   _temporaryFiles.add(file.path);
   final result = await OpenFilex.open(file.path);

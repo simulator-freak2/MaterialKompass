@@ -517,6 +517,12 @@ function registerServiceDeviceRoutes({
         ),
       ));
     }
+    if (userMfa?.passkeyRequired(user)) {
+      return res.status(403).json({
+        error: 'Für dieses Konto ist eine Passkey-Anmeldung über die normale Anmeldeseite erforderlich.',
+        passkeyRequired: true,
+      });
+    }
     if (userMfa?.enrollmentRequired(user)) {
       return res.status(428).json({
         error: '2-FA muss zunächst über die normale Anmeldung eingerichtet werden.',

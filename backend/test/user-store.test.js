@@ -43,6 +43,42 @@ test('saveUser converts every timestamp before sending it to MariaDB', async () 
   await store.close();
 });
 
+test('savePasskey hashes the credential id and persists only public material', async () => {
+  let sql;
+  let values;
+  const database = {
+    createPool() {
+      return {
+        async query(statement, parameters) { sql = statement; values = parameters; },
+        async end() {},
+      };
+    },
+  };
+  const store = createUserStore(database);
+  await store.savePasskey({
+    id: 'passkey-1',
+    userId: 'admin-1',
+    userHandle: 'dXNlci1oYW5kbGU',
+    credentialId: 'Y3JlZGVudGlhbA',
+    publicKey: Buffer.from('public-key').toString('base64url'),
+    counter: 3,
+    transports: ['internal'],
+    deviceType: 'multiDevice',
+    backedUp: true,
+    name: 'Notebook',
+    createdAt: '2026-08-30T12:00:00.000Z',
+    lastUsedAt: null,
+  });
+
+  assert.match(sql, /INSERT INTO user_passkeys/);
+  assert.equal(values[3], 'Y3JlZGVudGlhbA');
+  assert.equal(Buffer.isBuffer(values[4]), true);
+  assert.equal(values[4].length, 32);
+  assert.equal(values[5].toString(), 'public-key');
+  assert.equal(sql.includes('private'), false);
+  await store.close();
+});
+
 test('application collections save only changed values in one transaction', async () => {
   const calls = [];
   const connection = {

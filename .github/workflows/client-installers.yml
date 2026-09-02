@@ -6,7 +6,7 @@ on:
       version:
         description: Client-Version ohne v
         required: true
-        default: 1.4.1
+        default: 1.4.2
       api_base_url:
         description: Produktive HTTPS-API-Adresse
         required: true

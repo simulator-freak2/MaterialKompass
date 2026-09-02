@@ -1,9 +1,9 @@
 name: materialkompass
-version: 1.4.1+6
+version: 1.4.2+7
 publish_to: 'none'
 description: MaterialKompass for DLRG material management.
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: '>=3.9.0 <4.0.0'
 dependencies:
   barcode_widget: ^2.0.4
   crypto: ^3.0.6
@@ -19,6 +19,7 @@ dependencies:
   open_filex: ^4.7.0
   package_info_plus: ^10.2.1
   path_provider: ^2.1.5
+  passkeys: ^2.22.3
   shared_preferences: ^2.5.3
 
 dev_dependencies:

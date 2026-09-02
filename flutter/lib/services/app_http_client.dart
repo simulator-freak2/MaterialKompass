@@ -22,8 +22,9 @@ class AppHttpClient {
   }) async {
     for (var attempt = 0; attempt < 2; attempt += 1) {
       try {
-        final response =
-            await offline.get(uri, headers: headers).timeout(requestTimeout);
+        final response = await offline
+            .get(uri, headers: headers)
+            .timeout(requestTimeout);
         if (attempt == 0 &&
             transientStatusCodes.contains(response.statusCode)) {
           await Future<void>.delayed(retryDelay);
@@ -45,15 +46,13 @@ class AppHttpClient {
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
-  }) =>
-      offline.post(uri, headers: headers, body: body).timeout(requestTimeout);
+  }) => offline.post(uri, headers: headers, body: body).timeout(requestTimeout);
 
   static Future<base.Response> put(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
-  }) =>
-      offline.put(uri, headers: headers, body: body).timeout(requestTimeout);
+  }) => offline.put(uri, headers: headers, body: body).timeout(requestTimeout);
 
   static Future<base.Response> patch(
     Uri uri, {

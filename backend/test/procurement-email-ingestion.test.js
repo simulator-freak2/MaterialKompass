@@ -70,12 +70,18 @@ test('email offer appears in the procurement inbox and can be imported', async (
       `${baseUrl}/api/procurement-email-inbox/${ingested.entry.id}/process`,
       { method: 'POST', headers, body: JSON.stringify({
         requestId: created.id, supplierId: 'supplier-1', offerNumber: '4711',
-        grossTotal: '432,50', shippingGross: '5,00',
+        documentGrossTotal: '437,50',
+        items: [{ requestItemId: created.items[0].id, offered: true, grossTotal: '432,50' }],
+        components: [
+          { kind: 'shipping', label: 'Versandkosten', operation: 'add', grossAmount: '5,00' },
+          { kind: 'discount', label: 'Rabatt', operation: 'subtract', grossAmount: '0,00' },
+        ],
       }) },
     );
     assert.equal(processResponse.status, 200);
     const processed = await processResponse.json();
     assert.equal(processed.offer.grossTotal, 432.5);
+    assert.equal(processed.offer.calculatedGrossTotal, 437.5);
     assert.equal(processed.entry.status, 'verarbeitet');
 
     const detailResponse = await fetch(`${baseUrl}/api/procurement/${created.id}`, { headers });

@@ -15,10 +15,10 @@ void main() {
       ),
     );
 
-    final response = await api.post('/api/auth/login', body: {
-      'identifier': 'admin',
-      'password': 'secret',
-    });
+    final response = await api.post(
+      '/api/auth/login',
+      body: {'identifier': 'admin', 'password': 'secret'},
+    );
 
     expect(response.statusCode, 200);
     expect(response.object['token'], 'test-token');
@@ -46,6 +46,30 @@ void main() {
         ),
       ),
     );
+    api.close();
+  });
+
+  test('sends PATCH and DELETE bodies through one reusable client', () async {
+    final requests = <http.Request>[];
+    final api = ApiClient(
+      client: MockClient((request) async {
+        requests.add(request);
+        return http.Response(
+          request.method == 'PATCH' ? '{}' : '',
+          request.method == 'PATCH' ? 200 : 204,
+        );
+      }),
+    );
+
+    await api.patch('/api/users/me/passkeys/one', body: {'name': 'Notebook'});
+    await api.delete(
+      '/api/users/me/passkeys/one',
+      body: {'currentPassword': 'secret'},
+    );
+
+    expect(requests.map((request) => request.method), ['PATCH', 'DELETE']);
+    expect(requests.first.body, contains('Notebook'));
+    expect(requests.last.body, contains('currentPassword'));
     api.close();
   });
 

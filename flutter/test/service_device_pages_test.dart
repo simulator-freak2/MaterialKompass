@@ -10,19 +10,22 @@ void main() {
     expect(find.text('Dienstliches Gerät aktivieren'), findsOneWidget);
   });
 
-  testWidgets('activated service device offers system and personal login',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: ServiceDeviceLoginPage(
-        deviceCredential: 'device-credential',
-        initialDevice: const {
-          'id': 'device-1',
-          'name': 'Hallenterminal',
-          'systemMfa': 'off',
-          'personalMfa': 'off',
-        },
+  testWidgets('activated service device offers system and personal login', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ServiceDeviceLoginPage(
+          deviceCredential: 'device-credential',
+          initialDevice: const {
+            'id': 'device-1',
+            'name': 'Hallenterminal',
+            'systemMfa': 'off',
+            'personalMfa': 'off',
+          },
+        ),
       ),
-    ));
+    );
 
     expect(find.text('Systemzugang'), findsOneWidget);
     expect(find.text('Persönliches Konto'), findsOneWidget);

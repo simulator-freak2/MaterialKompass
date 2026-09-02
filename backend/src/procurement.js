@@ -15,6 +15,7 @@ const {
   validBase64,
 } = require('./security-utils');
 const { countryCode } = require('./address-lookup');
+const { normalizeOfferInput, offerGrandTotal } = require('./procurement-offers');
 const MAX_REQUEST_ITEMS = 100;
 const MAX_DOCUMENTS_PER_REQUEST = 20;
 const MAX_INVENTORY_ITEMS_PER_TRANSFER = 500;
@@ -321,18 +322,77 @@ function registerProcurementRoutes({
     if (!['Beantragt', 'Genehmigt'].includes(request.status)) return res.status(409).json({ error: 'In diesem Status können keine Angebote erfasst werden.' });
     const supplier = suppliers.find((entry) => entry.id === req.body.supplierId && entry.active !== false);
     if (!supplier) return res.status(400).json({ error: 'Ein aktiver Lieferant ist erforderlich.' });
-    const offer = { id: nextId('offer', offers), requestId: request.id, supplierId: supplier.id, offerNumber: String(req.body.offerNumber || '').trim(), offerDate: req.body.offerDate || null, validUntil: req.body.validUntil || null, deliveryDays: Number(req.body.deliveryDays) || null, grossTotal: money(req.body.grossTotal), shippingGross: money(req.body.shippingGross), notes: String(req.body.notes || '').trim(), createdAt: now() };
-    if (offer.grossTotal <= 0) return res.status(400).json({ error: 'Die Angebotssumme muss größer als null sein.' });
+    const normalized = normalizeOfferInput(req.body, request);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    const timestamp = now();
+    const offer = {
+      id: nextId('offer', offers), requestId: request.id, supplierId: supplier.id,
+      ...normalized.value, createdAt: timestamp, updatedAt: timestamp,
+    };
     offers.push(offer); event(request, 'Angebot erfasst', req.user.username, { offerId: offer.id, supplierId: supplier.id }); res.status(201).json(offer);
+  });
+
+  app.put('/api/procurement/:id/offers/:offerId', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const request = findVisible(req, res); if (!request) return;
+    if (!isOwner(req.user, request)) return res.status(403).json({ error: 'Nur der Antragsteller darf Angebote bearbeiten.' });
+    const offer = offers.find((entry) => entry.id === req.params.offerId && entry.requestId === request.id);
+    if (!offer) return res.status(404).json({ error: 'Angebot nicht gefunden.' });
+    const requestOffers = offers.filter((entry) => entry.requestId === request.id);
+    const usedByOrder = orders.some((order) => order.requestId === request.id && (
+      order.offerId === offer.id
+      || (!order.offerId && request.selectedOfferId === offer.id)
+      || (!order.offerId && requestOffers.length === 1)
+    ));
+    if (usedByOrder) {
+      return res.status(409).json({ error: 'Das Angebot wurde bereits für eine Bestellung verwendet und kann nicht mehr geändert werden.' });
+    }
+    if (!['Beantragt', 'Genehmigt'].includes(request.status)) {
+      return res.status(409).json({ error: 'In diesem Status können Angebote nicht bearbeitet werden.' });
+    }
+    const expectedUpdatedAt = String(req.body.expectedUpdatedAt || '');
+    const currentRevision = String(offer.updatedAt || offer.createdAt || '');
+    if (expectedUpdatedAt && expectedUpdatedAt !== currentRevision) {
+      return res.status(409).json({ error: 'Das Angebot wurde zwischenzeitlich geändert. Bitte laden Sie den Vorgang neu.' });
+    }
+    const supplier = suppliers.find((entry) => entry.id === req.body.supplierId && entry.active !== false);
+    if (!supplier) return res.status(400).json({ error: 'Ein aktiver Lieferant ist erforderlich.' });
+    const normalized = normalizeOfferInput(req.body, request);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    const before = {
+      supplierId: offer.supplierId,
+      calculatedGrossTotal: offerGrandTotal(offer),
+      documentGrossTotal: offer.documentGrossTotal ?? offerGrandTotal(offer),
+    };
+    const selectionCleared = request.selectedOfferId === offer.id;
+    const editTimestamp = now();
+    const nextRevision = editTimestamp === currentRevision
+      ? new Date(Date.parse(editTimestamp) + 1).toISOString()
+      : editTimestamp;
+    Object.assign(offer, normalized.value, { supplierId: supplier.id, updatedAt: nextRevision });
+    if (selectionCleared) {
+      request.selectedOfferId = null;
+      request.offerSelectionJustification = null;
+    }
+    event(request, 'Angebot bearbeitet', req.user.username, {
+      offerId: offer.id,
+      before,
+      after: {
+        supplierId: offer.supplierId,
+        calculatedGrossTotal: offer.calculatedGrossTotal,
+        documentGrossTotal: offer.documentGrossTotal,
+      },
+      selectionCleared,
+    });
+    return res.json(detail(request));
   });
 
   app.post('/api/procurement/:id/select-offer', authMiddleware, requirePermission('procurement.order'), (req, res) => {
     const request = findVisible(req, res); if (!request) return;
     const offer = offers.find((entry) => entry.id === req.body.offerId && entry.requestId === request.id);
     if (!offer) return res.status(404).json({ error: 'Angebot nicht gefunden.' });
-    const cheapest = Math.min(...offers.filter((entry) => entry.requestId === request.id).map((entry) => entry.grossTotal + entry.shippingGross));
+    const cheapest = Math.min(...offers.filter((entry) => entry.requestId === request.id).map(offerGrandTotal));
     const justification = String(req.body.justification || '').trim();
-    if (offer.grossTotal + offer.shippingGross > cheapest && !justification) return res.status(400).json({ error: 'Die Auswahl eines teureren Angebots muss begründet werden.' });
+    if (offerGrandTotal(offer) > cheapest && !justification) return res.status(400).json({ error: 'Die Auswahl eines teureren Angebots muss begründet werden.' });
     request.selectedOfferId = offer.id; request.offerSelectionJustification = justification;
     event(request, 'Angebot ausgewählt', req.user.username, { offerId: offer.id, justification }); res.json(detail(request));
   });
@@ -383,7 +443,10 @@ function registerProcurementRoutes({
     const approvedBudgetGross = money(request.approvedBudgetGross);
     const alreadyOrderedGross = orders.filter((entry) => entry.requestId === request.id).reduce((sum, entry) => sum + entry.grossTotal, 0);
     if (approvedBudgetGross <= 0 || alreadyOrderedGross + grossTotal > approvedBudgetGross) return res.status(409).json({ error: 'Die Bestellung überschreitet das freigegebene Budget.' });
-    const order = { id: nextId('order', orders), number: yearSequence('BE', orders), requestId: request.id, supplierId: supplier.id, orderDate: req.body.orderDate || new Date().toISOString().slice(0, 10), expectedDeliveryDate: req.body.expectedDeliveryDate || null, items: orderItems, shippingGross, grossTotal, netTotal: money(req.body.netTotal), notes: String(req.body.notes || '').trim(), createdBy: req.user.username, createdAt: now() };
+    const sourceOffer = offers.find((entry) => entry.id === request.selectedOfferId
+      && entry.supplierId === supplier.id)
+      || offers.find((entry) => entry.requestId === request.id && entry.supplierId === supplier.id);
+    const order = { id: nextId('order', orders), number: yearSequence('BE', orders), requestId: request.id, supplierId: supplier.id, offerId: sourceOffer?.id || null, orderDate: req.body.orderDate || new Date().toISOString().slice(0, 10), expectedDeliveryDate: req.body.expectedDeliveryDate || null, items: orderItems, shippingGross, grossTotal, netTotal: money(req.body.netTotal), notes: String(req.body.notes || '').trim(), createdBy: req.user.username, createdAt: now() };
     orders.push(order); request.status = 'Bestellt';
     if (!supplier.customerNumber && req.body.customerNumber) supplier.customerNumber = String(req.body.customerNumber).trim();
     event(request, 'Bestellung angelegt', req.user.username, { orderId: order.id, number: order.number }); res.status(201).json(order);
@@ -581,7 +644,7 @@ function registerProcurementRoutes({
       ]);
     } else if (type === 'offers') {
       title = 'Angebotsvergleich';
-      lines = offers.filter((entry) => entry.requestId === request.id).map((offer) => `${suppliers.find((entry) => entry.id === offer.supplierId)?.name || ''} | ${offer.offerNumber || 'ohne Nummer'} | ${(offer.grossTotal + offer.shippingGross).toFixed(2)} EUR | ${offer.deliveryDays || '-'} Tage${request.selectedOfferId === offer.id ? ' | AUSGEWAEHLT' : ''}`);
+      lines = offers.filter((entry) => entry.requestId === request.id).map((offer) => `${suppliers.find((entry) => entry.id === offer.supplierId)?.name || ''} | ${offer.offerNumber || 'ohne Nummer'} | ${offerGrandTotal(offer).toFixed(2)} EUR | ${offer.deliveryDays || '-'} Tage${request.selectedOfferId === offer.id ? ' | AUSGEWAEHLT' : ''}`);
     } else if (type === 'receipts') {
       title = 'Wareneingaenge';
       lines = receipts.filter((entry) => entry.requestId === request.id).map((receipt) => `${receipt.number} | Lieferschein ${receipt.deliveryNoteNumber || '-'} | ${receipt.receivedAt} | ${receipt.status}`);

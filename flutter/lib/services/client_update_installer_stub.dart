@@ -6,5 +6,4 @@ Future<bool> downloadAndInstallClientUpdate(
   http.Client client,
   ClientUpdate update, {
   void Function(double progress)? onProgress,
-}) async =>
-    false;
+}) async => false;

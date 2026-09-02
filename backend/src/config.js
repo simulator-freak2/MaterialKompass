@@ -88,6 +88,52 @@ function loadRuntimeConfig(env = process.env) {
     if (appBaseUrl.protocol !== 'https:') {
       throw new Error('APP_BASE_URL muss im Produktivbetrieb HTTPS verwenden.');
     }
+    const passkeyRpId = String(env.PASSKEY_RP_ID || appBaseUrl.hostname).toLowerCase();
+    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,62}$/.test(passkeyRpId)) {
+      throw new Error('PASSKEY_RP_ID muss im Produktivbetrieb eine gültige Domain sein.');
+    }
+    const appHostname = appBaseUrl.hostname.toLowerCase();
+    if (appHostname !== passkeyRpId && !appHostname.endsWith(`.${passkeyRpId}`)) {
+      throw new Error('PASSKEY_RP_ID muss die Domain von APP_BASE_URL oder deren übergeordnete Domain sein.');
+    }
+    const passkeyOrigins = parseOrigins(env.PASSKEY_ORIGINS || appBaseUrl.origin);
+    if (passkeyOrigins.length === 0) {
+      throw new Error('PASSKEY_ORIGINS muss mindestens einen HTTPS-Origin enthalten.');
+    }
+    for (const origin of passkeyOrigins) {
+      let parsed;
+      try { parsed = new URL(origin); } catch (_) {
+        throw new Error(`Ungültiger PASSKEY_ORIGIN: ${origin}`);
+      }
+      if (parsed.protocol !== 'https:' || parsed.origin !== origin
+          || parsed.origin !== appBaseUrl.origin
+          || (parsed.hostname !== passkeyRpId && !parsed.hostname.endsWith(`.${passkeyRpId}`))) {
+        throw new Error(
+          `PASSKEY_ORIGIN muss dem Origin von APP_BASE_URL entsprechen und zur RP-ID ${passkeyRpId} gehören: ${origin}`,
+        );
+      }
+    }
+    const androidOrigins = parseOrigins(env.PASSKEY_ANDROID_ORIGINS);
+    if (androidOrigins.some((origin) => !/^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(origin))) {
+      throw new Error('PASSKEY_ANDROID_ORIGINS enthält einen ungültigen APK-Key-Hash-Origin.');
+    }
+    const androidPackage = String(env.PASSKEY_ANDROID_PACKAGE || '').trim();
+    if (androidPackage && !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(androidPackage)) {
+      throw new Error('PASSKEY_ANDROID_PACKAGE ist kein gültiger Android-Paketname.');
+    }
+    const androidFingerprints = String(env.PASSKEY_ANDROID_SHA256_FINGERPRINTS || '')
+      .split(',').map((value) => value.trim()).filter(Boolean);
+    if (androidFingerprints.some((value) => !/^(?:[A-Fa-f0-9]{2}:){31}[A-Fa-f0-9]{2}$/.test(value))) {
+      throw new Error('PASSKEY_ANDROID_SHA256_FINGERPRINTS enthält einen ungültigen SHA-256-Fingerprint.');
+    }
+    const appleTeamId = String(env.PASSKEY_APPLE_TEAM_ID || '').trim();
+    if (appleTeamId && !/^[A-Z0-9]{10}$/.test(appleTeamId)) {
+      throw new Error('PASSKEY_APPLE_TEAM_ID muss aus 10 Großbuchstaben oder Ziffern bestehen.');
+    }
+    const appleBundleId = String(env.PASSKEY_APPLE_BUNDLE_ID || '').trim();
+    if (appleBundleId && !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(appleBundleId)) {
+      throw new Error('PASSKEY_APPLE_BUNDLE_ID ist ungültig.');
+    }
     if (parseTrustProxy(env.TRUST_PROXY) === null) {
       throw new Error(
         'TRUST_PROXY muss im Produktivbetrieb explizit für den TLS-Reverse-Proxy gesetzt sein.',

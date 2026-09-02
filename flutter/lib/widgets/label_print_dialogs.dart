@@ -36,10 +36,13 @@ Future<bool> showLabelPrintDialog(
   await service.load();
   if (!context.mounted) return false;
   if (!service.supported) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text(
-          'Direkter Etikettendruck ist nur in der Windows- und Android-App verfügbar.'),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Direkter Etikettendruck ist nur in der Windows- und Android-App verfügbar.',
+        ),
+      ),
+    );
     return false;
   }
   if (service.printers.isEmpty) {
@@ -57,9 +60,11 @@ Future<bool> showLabelPrintDialog(
   try {
     await service.print(printer, lines);
     if (!context.mounted) return true;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Druckauftrag wurde an „${printer.name}“ gesendet.'),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Druckauftrag wurde an „${printer.name}“ gesendet.'),
+      ),
+    );
     return true;
   } catch (error) {
     if (!context.mounted) return false;
@@ -68,14 +73,17 @@ Future<bool> showLabelPrintDialog(
       builder: (dialogContext) => AlertDialog(
         title: const Text('Drucken fehlgeschlagen'),
         content: Text(
-            'Der Drucker „${printer.name}“ ist nicht erreichbar.\n\n$error\n\nAuftrag für einen manuellen neuen Versuch zwischenspeichern?'),
+          'Der Drucker „${printer.name}“ ist nicht erreichbar.\n\n$error\n\nAuftrag für einen manuellen neuen Versuch zwischenspeichern?',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Verwerfen')),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Verwerfen'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Zwischenspeichern')),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Zwischenspeichern'),
+          ),
         ],
       ),
     );
@@ -100,53 +108,62 @@ class LabelPreview extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         padding: const EdgeInsets.fromLTRB(10, 7, 10, 6),
-        child: LayoutBuilder(builder: (context, constraints) {
-          final scale = constraints.maxWidth / 406;
-          TextStyle style(double size, {FontWeight? weight}) => TextStyle(
-                color: Colors.black,
-                fontSize: size * scale,
-                height: 1,
-                fontWeight: weight ?? FontWeight.w700,
-              );
-          return Column(
-            children: [
-              Text(LabelPrintService.owner,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final scale = constraints.maxWidth / 406;
+            TextStyle style(double size, {FontWeight? weight}) => TextStyle(
+              color: Colors.black,
+              fontSize: size * scale,
+              height: 1,
+              fontWeight: weight ?? FontWeight.w700,
+            );
+            return Column(
+              children: [
+                Text(
+                  LabelPrintService.owner,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: style(19)),
-              SizedBox(height: 8 * scale),
-              Expanded(
-                child: bw.BarcodeWidget(
-                  barcode: bw.Barcode.code128(),
-                  data: label.inventoryNumber,
-                  drawText: false,
-                  padding: EdgeInsets.zero,
+                  style: style(19),
                 ),
-              ),
-              SizedBox(height: 3 * scale),
-              Text(label.inventoryNumber, style: style(18)),
-              SizedBox(height: 4 * scale),
-              Text(label.name,
+                SizedBox(height: 8 * scale),
+                Expanded(
+                  child: bw.BarcodeWidget(
+                    barcode: bw.Barcode.code128(),
+                    data: label.inventoryNumber,
+                    drawText: false,
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+                SizedBox(height: 3 * scale),
+                Text(label.inventoryNumber, style: style(18)),
+                SizedBox(height: 4 * scale),
+                Text(
+                  label.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: style(24)),
-              SizedBox(height: 3 * scale),
-              Text(label.manufacturer,
+                  style: style(24),
+                ),
+                SizedBox(height: 3 * scale),
+                Text(
+                  label.manufacturer,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: style(22)),
-              const Spacer(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('BJ:${label.year}', style: style(25)),
-                  if (label.type == LabelType.clothing && label.size.isNotEmpty)
-                    Text('GR:${label.size}', style: style(25)),
-                ],
-              ),
-            ],
-          );
-        }),
+                  style: style(22),
+                ),
+                const Spacer(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('BJ:${label.year}', style: style(25)),
+                    if (label.type == LabelType.clothing &&
+                        label.size.isNotEmpty)
+                      Text('GR:${label.size}', style: style(25)),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -170,8 +187,10 @@ class _LabelPreviewDialogState extends State<_LabelPreviewDialog> {
   void initState() {
     super.initState();
     copies = widget.labels
-        .map((label) =>
-            TextEditingController(text: label.suggestedCopies.toString()))
+        .map(
+          (label) =>
+              TextEditingController(text: label.suggestedCopies.toString()),
+        )
         .toList();
   }
 
@@ -226,13 +245,15 @@ class _LabelPreviewDialogState extends State<_LabelPreviewDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => showPrinterSettingsDialog(context)
-              .then((_) => mounted ? setState(() {}) : null),
+          onPressed: () => showPrinterSettingsDialog(
+            context,
+          ).then((_) => mounted ? setState(() {}) : null),
           child: const Text('Drucker einrichten'),
         ),
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton.icon(
           onPressed: printer == null
               ? null
@@ -243,8 +264,10 @@ class _LabelPreviewDialogState extends State<_LabelPreviewDialog> {
                     if (count == null || count < 1 || count > 9999) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                            content: Text(
-                                'Anzahl muss zwischen 1 und 9999 liegen.')),
+                          content: Text(
+                            'Anzahl muss zwischen 1 und 9999 liegen.',
+                          ),
+                        ),
                       );
                       return;
                     }
@@ -287,12 +310,14 @@ class _PrinterSettingsDialogState extends State<_PrinterSettingsDialog> {
       await service.test(printer);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Testetikett wurde gesendet.')));
+          const SnackBar(content: Text('Testetikett wurde gesendet.')),
+        );
       }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Testdruck fehlgeschlagen: $error')));
+          SnackBar(content: Text('Testdruck fehlgeschlagen: $error')),
+        );
       }
     } finally {
       if (mounted) setState(() => busy = false);
@@ -310,41 +335,42 @@ class _PrinterSettingsDialogState extends State<_PrinterSettingsDialog> {
             : ListView(
                 shrinkWrap: true,
                 children: service.printers
-                    .map((printer) => Card(
-                          child: ListTile(
-                            title: Text(printer.name),
-                            subtitle: Text(
-                              '${printer.host}:${printer.port} · Geschwindigkeit ${printer.speed} · Schwärzung ${printer.darkness}'
-                              '${printer.defaultInventory ? '\nStandard Inventar' : ''}'
-                              '${printer.defaultClothing ? '\nStandard Kleidung' : ''}',
-                            ),
-                            trailing: Wrap(
-                              children: [
-                                IconButton(
-                                  onPressed: busy ? null : () => test(printer),
-                                  tooltip: 'Testdruck',
-                                  icon: const Icon(Icons.print_outlined),
-                                ),
-                                IconButton(
-                                  onPressed: busy ? null : () => edit(printer),
-                                  tooltip: 'Bearbeiten',
-                                  icon: const Icon(Icons.edit_outlined),
-                                ),
-                                IconButton(
-                                  onPressed: busy
-                                      ? null
-                                      : () async {
-                                          await service
-                                              .deletePrinter(printer.id);
-                                          if (mounted) setState(() {});
-                                        },
-                                  tooltip: 'Löschen',
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                              ],
-                            ),
+                    .map(
+                      (printer) => Card(
+                        child: ListTile(
+                          title: Text(printer.name),
+                          subtitle: Text(
+                            '${printer.host}:${printer.port} · Geschwindigkeit ${printer.speed} · Schwärzung ${printer.darkness}'
+                            '${printer.defaultInventory ? '\nStandard Inventar' : ''}'
+                            '${printer.defaultClothing ? '\nStandard Kleidung' : ''}',
                           ),
-                        ))
+                          trailing: Wrap(
+                            children: [
+                              IconButton(
+                                onPressed: busy ? null : () => test(printer),
+                                tooltip: 'Testdruck',
+                                icon: const Icon(Icons.print_outlined),
+                              ),
+                              IconButton(
+                                onPressed: busy ? null : () => edit(printer),
+                                tooltip: 'Bearbeiten',
+                                icon: const Icon(Icons.edit_outlined),
+                              ),
+                              IconButton(
+                                onPressed: busy
+                                    ? null
+                                    : () async {
+                                        await service.deletePrinter(printer.id);
+                                        if (mounted) setState(() {});
+                                      },
+                                tooltip: 'Löschen',
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
                     .toList(),
               ),
       ),
@@ -405,23 +431,28 @@ class _PrinterEditorState extends State<_PrinterEditor> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(
-          widget.printer == null ? 'Drucker hinzufügen' : 'Drucker bearbeiten'),
+        widget.printer == null ? 'Drucker hinzufügen' : 'Drucker bearbeiten',
+      ),
       content: SizedBox(
         width: 480,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'Anzeigename')),
+              controller: name,
+              decoration: const InputDecoration(labelText: 'Anzeigename'),
+            ),
             TextField(
-                controller: host,
-                decoration: const InputDecoration(labelText: 'IP-Adresse')),
+              controller: host,
+              decoration: const InputDecoration(labelText: 'IP-Adresse'),
+            ),
             TextField(
               controller: port,
               keyboardType: TextInputType.number,
-              decoration:
-                  const InputDecoration(labelText: 'Port', hintText: '9100'),
+              decoration: const InputDecoration(
+                labelText: 'Port',
+                hintText: '9100',
+              ),
             ),
             const SizedBox(height: 12),
             Text('Druckgeschwindigkeit: ${speed.round()}'),
@@ -459,8 +490,9 @@ class _PrinterEditorState extends State<_PrinterEditor> {
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton(
           onPressed: () {
             final parsedPort = int.tryParse(port.text);
@@ -469,15 +501,20 @@ class _PrinterEditorState extends State<_PrinterEditor> {
                 parsedPort == null ||
                 parsedPort < 1 ||
                 parsedPort > 65535) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
                   content: Text(
-                      'Name, IP-Adresse und gültiger Port sind erforderlich.')));
+                    'Name, IP-Adresse und gültiger Port sind erforderlich.',
+                  ),
+                ),
+              );
               return;
             }
             Navigator.pop(
               context,
               LabelPrinter(
-                id: widget.printer?.id ??
+                id:
+                    widget.printer?.id ??
                     DateTime.now().microsecondsSinceEpoch.toString(),
                 name: name.text.trim(),
                 host: host.text.trim(),
@@ -518,45 +555,54 @@ class _PrintQueueDialogState extends State<_PrintQueueDialog> {
             : ListView(
                 shrinkWrap: true,
                 children: service.queue.map((job) {
-                  final count =
-                      job.lines.fold<int>(0, (sum, line) => sum + line.copies);
+                  final count = job.lines.fold<int>(
+                    0,
+                    (sum, line) => sum + line.copies,
+                  );
                   return ListTile(
                     title: Text('$count Etikett(en) · ${job.printer.name}'),
                     subtitle: Text(job.error, maxLines: 2),
-                    trailing: Wrap(children: [
-                      IconButton(
-                        tooltip: 'Erneut drucken',
-                        onPressed: busyId == null
-                            ? () async {
-                                setState(() => busyId = job.id);
-                                try {
-                                  await service.retry(job.id);
-                                  if (mounted) setState(() {});
-                                } catch (error) {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
+                    trailing: Wrap(
+                      children: [
+                        IconButton(
+                          tooltip: 'Erneut drucken',
+                          onPressed: busyId == null
+                              ? () async {
+                                  setState(() => busyId = job.id);
+                                  try {
+                                    await service.retry(job.id);
+                                    if (mounted) setState(() {});
+                                  } catch (error) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
                                         SnackBar(
-                                            content: Text(
-                                                'Drucken fehlgeschlagen: $error')));
+                                          content: Text(
+                                            'Drucken fehlgeschlagen: $error',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  } finally {
+                                    if (mounted) setState(() => busyId = null);
                                   }
-                                } finally {
-                                  if (mounted) setState(() => busyId = null);
                                 }
-                              }
-                            : null,
-                        icon: const Icon(Icons.refresh),
-                      ),
-                      IconButton(
-                        tooltip: 'Verwerfen',
-                        onPressed: busyId == null
-                            ? () {
-                                service.removeJob(job.id);
-                                setState(() {});
-                              }
-                            : null,
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ]),
+                              : null,
+                          icon: const Icon(Icons.refresh),
+                        ),
+                        IconButton(
+                          tooltip: 'Verwerfen',
+                          onPressed: busyId == null
+                              ? () {
+                                  service.removeJob(job.id);
+                                  setState(() {});
+                                }
+                              : null,
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
                   );
                 }).toList(),
               ),

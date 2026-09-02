@@ -141,21 +141,20 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
                             children: [
                               Text(
                                 _selectedCategory ?? 'Alle Anleitungen',
-                                style:
-                                    Theme.of(context).textTheme.headlineSmall,
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.headlineSmall,
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 _query.isEmpty
                                     ? '${_results.length} Beiträge zum Nachschlagen'
                                     : '${_results.length} Treffer für „$_query“',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyMedium
+                                style: Theme.of(context).textTheme.bodyMedium
                                     ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
                                     ),
                               ),
                             ],
@@ -249,9 +248,9 @@ class _GuideHero extends StatelessWidget {
                 'Wie können wir dir helfen?',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: colors.onSecondary,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: colors.onSecondary,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
@@ -259,8 +258,8 @@ class _GuideHero extends StatelessWidget {
                 'für MaterialKompass.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: colors.onSecondary.withValues(alpha: 0.88),
-                    ),
+                  color: colors.onSecondary.withValues(alpha: 0.88),
+                ),
               ),
               const SizedBox(height: 22),
               SearchBar(
@@ -278,8 +277,9 @@ class _GuideHero extends StatelessWidget {
                         ),
                       ],
                 elevation: const WidgetStatePropertyAll(0),
-                backgroundColor:
-                    WidgetStatePropertyAll(colors.surfaceContainerLowest),
+                backgroundColor: WidgetStatePropertyAll(
+                  colors.surfaceContainerLowest,
+                ),
                 padding: const WidgetStatePropertyAll(
                   EdgeInsets.symmetric(horizontal: 18),
                 ),
@@ -394,16 +394,14 @@ class _SidebarTile extends StatelessWidget {
           dense: true,
           selected: selected,
           selectedTileColor: Theme.of(context).colorScheme.primaryContainer,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           leading: Icon(icon, size: 21),
           title: Text(label),
           trailing: count == null
               ? null
-              : Text(
-                  '$count',
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
+              : Text('$count', style: Theme.of(context).textTheme.labelMedium),
           onTap: onTap,
         ),
       ),
@@ -486,9 +484,9 @@ class _ArticleCard extends StatelessWidget {
                     Text(
                       article.category,
                       style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: colors.secondary,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        color: colors.secondary,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -496,8 +494,8 @@ class _ArticleCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 7),
                     Text(
@@ -505,8 +503,8 @@ class _ArticleCard extends StatelessWidget {
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: colors.onSurfaceVariant,
-                          ),
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                     const Spacer(),
                     Row(
@@ -580,9 +578,7 @@ class _ArticleView extends StatelessWidget {
                         Expanded(
                           child: Text(
                             article.category,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
+                            style: Theme.of(context).textTheme.titleMedium
                                 ?.copyWith(color: colors.secondary),
                           ),
                         ),
@@ -591,18 +587,16 @@ class _ArticleView extends StatelessWidget {
                     const SizedBox(height: 18),
                     Text(
                       article.title,
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineMedium
+                      style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 10),
                     Text(
                       article.summary,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: colors.onSurfaceVariant,
-                            height: 1.45,
-                          ),
+                        color: colors.onSurfaceVariant,
+                        height: 1.45,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Row(
@@ -613,7 +607,7 @@ class _ArticleView extends StatelessWidget {
                         const SizedBox(width: 18),
                         const Icon(Icons.verified_outlined, size: 17),
                         const SizedBox(width: 6),
-                        const Text('Stand 1.4.1'),
+                        const Text('Stand 1.4.2'),
                         const SizedBox(width: 18),
                         const Icon(Icons.groups_outlined, size: 17),
                         const SizedBox(width: 6),
@@ -632,9 +626,11 @@ class _ArticleView extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 16),
-                    for (var index = 0;
-                        index < article.steps.length;
-                        index++) ...[
+                    for (
+                      var index = 0;
+                      index < article.steps.length;
+                      index++
+                    ) ...[
                       _GuideStep(
                         number: index + 1,
                         text: article.steps[index],
@@ -669,21 +665,25 @@ class _ArticleView extends StatelessWidget {
                       spacing: 10,
                       children: [
                         OutlinedButton.icon(
-                          onPressed: () => ScaffoldMessenger.of(context)
-                              .showSnackBar(const SnackBar(
-                            content: Text('Danke für deine Rückmeldung.'),
-                          )),
+                          onPressed: () =>
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Danke für deine Rückmeldung.'),
+                                ),
+                              ),
                           icon: const Icon(Icons.thumb_up_outlined),
                           label: const Text('Ja'),
                         ),
                         OutlinedButton.icon(
-                          onPressed: () => ScaffoldMessenger.of(context)
-                              .showSnackBar(const SnackBar(
-                            content: Text(
-                              'Hinweis notiert. Wende dich bei offenen Fragen '
-                              'an deine Administration.',
-                            ),
-                          )),
+                          onPressed: () =>
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Hinweis notiert. Wende dich bei offenen Fragen '
+                                    'an deine Administration.',
+                                  ),
+                                ),
+                              ),
                           icon: const Icon(Icons.thumb_down_outlined),
                           label: const Text('Noch nicht'),
                         ),
@@ -748,10 +748,9 @@ class _GuideStep extends StatelessWidget {
               padding: EdgeInsets.only(bottom: isLast ? 0 : 22, top: 5),
               child: Text(
                 text,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyLarge
-                    ?.copyWith(height: 1.5),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(height: 1.5),
               ),
             ),
           ),
@@ -795,10 +794,9 @@ class _InfoCallout extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Text(text),
@@ -906,9 +904,9 @@ class _GuideIllustrationView extends StatelessWidget {
                     child: Text(
                       illustration.caption,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
-                            height: 1.4,
-                          ),
+                        color: colors.onSurfaceVariant,
+                        height: 1.4,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -992,15 +990,15 @@ class _GuideArticle {
   });
 
   String get searchText => [
-        category,
-        title,
-        summary,
-        audience,
-        prerequisite,
-        ...steps,
-        ...keywords,
-        ...illustrations.map((entry) => '${entry.caption} ${entry.altText}'),
-      ].join(' ').toLowerCase();
+    category,
+    title,
+    summary,
+    audience,
+    prerequisite,
+    ...steps,
+    ...keywords,
+    ...illustrations.map((entry) => '${entry.caption} ${entry.altText}'),
+  ].join(' ').toLowerCase();
 }
 
 class _GuideIllustration {
@@ -1061,6 +1059,37 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Erste Schritte',
+    title: 'Auswahlfelder mit der Tastatur bedienen',
+    summary:
+        'Dropdown-Felder per Anfangsbuchstabe, Präfix und Pfeiltasten schneller auswählen.',
+    icon: Icons.keyboard_alt_outlined,
+    readingMinutes: 2,
+    audience: 'Für alle Rollen mit einer Hardware-Tastatur',
+    prerequisite:
+        'Setze den Tastaturfokus per Tabulatortaste oder Mausklick auf das gewünschte Auswahlfeld.',
+    steps: [
+      'Ist die Liste geschlossen, tippe den Anfangsbuchstaben des sichtbaren Eintrags. Der erste passende Eintrag wird sofort übernommen.',
+      'Tippe mehrere Zeichen zügig nacheinander, um nach einem genaueren Präfix zu suchen, zum Beispiel „mat“ für „Material“.',
+      'Drücke denselben Anfangsbuchstaben wiederholt, um nacheinander durch alle passenden Einträge zu wechseln.',
+      'Ist die Liste geöffnet, wird der Treffer zunächst nur hervorgehoben. Bestätige ihn mit Enter oder per Mausklick.',
+      'Mit Pfeil hoch und Pfeil runter wechselst du in der geöffneten Liste zum vorherigen oder nächsten Eintrag. Pos1 und Ende springen an den Anfang oder das Ende.',
+      'Groß- und Kleinschreibung werden gleich behandelt. A, O und U finden auch Einträge, die mit Ä, Ö oder Ü beginnen.',
+    ],
+    tip:
+        'Gesucht wird nach dem sichtbaren Text. Beginnt ein Eintrag beispielsweise mit einer Inventarnummer, verwende deren erste Ziffer.',
+    keywords: [
+      'dropdown',
+      'auswahlfeld',
+      'tastatur',
+      'anfangsbuchstabe',
+      'präfix',
+      'enter',
+      'pfeiltasten',
+      'barrierefreiheit',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Erste Schritte',
     title: 'QR-Codes richtig verwenden',
     summary:
         'Material scannen und persönliche, System- oder Offline-Codes unterscheiden.',
@@ -1085,7 +1114,7 @@ const _articles = [
       'barcode',
       'qr login',
       'system qr',
-      'offline qr'
+      'offline qr',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1225,7 +1254,7 @@ const _articles = [
       'straße',
       'postleitzahl',
       'lieferant',
-      'gebäude'
+      'gebäude',
     ],
   ),
   _GuideArticle(
@@ -1273,7 +1302,7 @@ const _articles = [
       'reparatur',
       'sperren',
       'maßnahme',
-      'bilder'
+      'bilder',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1310,7 +1339,7 @@ const _articles = [
       'verantwortlich',
       'frist',
       'mir zugewiesen',
-      'benachrichtigung'
+      'benachrichtigung',
     ],
   ),
   _GuideArticle(
@@ -1337,7 +1366,7 @@ const _articles = [
       'ersatz',
       'beschaffungsentwurf',
       'inventarnummer',
-      'teilmenge'
+      'teilmenge',
     ],
   ),
   _GuideArticle(
@@ -1382,7 +1411,7 @@ const _articles = [
       'regal',
       'ebene',
       'lagerplatz',
-      'massenerstellung'
+      'massenerstellung',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1417,7 +1446,7 @@ const _articles = [
       'hauptkategorie',
       'unterkategorie',
       'größe',
-      'prüfintervall'
+      'prüfintervall',
     ],
   ),
   _GuideArticle(
@@ -1446,7 +1475,7 @@ const _articles = [
       'gerätepasswort',
       'mac adresse',
       'ip netz',
-      'admin'
+      'admin',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1483,7 +1512,7 @@ const _articles = [
       'gerätepasswort',
       'nfc',
       'totp',
-      'mängelcode'
+      'mängelcode',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1521,7 +1550,7 @@ const _articles = [
       'standorte',
       'mobilfunk',
       'offline qr',
-      '365 tage'
+      '365 tage',
     ],
   ),
   _GuideArticle(
@@ -1550,7 +1579,7 @@ const _articles = [
       'konflikt',
       'warteschlange',
       'doppelbuchung',
-      'wolke'
+      'wolke',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1561,6 +1590,36 @@ const _articles = [
             'MaterialKompass-Dashboard mit geöffnetem Dialog Offline-Synchronisation, dem Hinweis dass alle Änderungen synchronisiert wurden und der Schaltfläche Jetzt synchronisieren.',
         afterStep: 3,
       ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: 'Passkey einrichten und verwenden',
+    summary:
+        'Passwortlos und phishing-resistent mit Gerätesperre, Biometrie oder Sicherheitsschlüssel anmelden.',
+    icon: Icons.key_outlined,
+    readingMinutes: 5,
+    audience: 'Für alle persönlichen Konten',
+    prerequisite:
+        'Du benötigst ein unterstütztes Gerät mit eingerichteter Gerätesperre oder einen FIDO2-Sicherheitsschlüssel.',
+    steps: [
+      'Öffne auf dem Dashboard „Mein Account“ und den Abschnitt „Passkeys“.',
+      'Wähle „Passkey hinzufügen“, vergib einen verständlichen Gerätenamen und bestätige dein aktuelles Passwort. Ist 2-FA aktiv, gib zusätzlich einen 2-FA- oder Wiederherstellungscode ein.',
+      'Bestätige die Einrichtung mit Windows Hello, Touch ID, Face ID, Geräte-PIN oder deinem Sicherheitsschlüssel. MaterialKompass erhält nur den öffentlichen Schlüssel.',
+      'Wähle bei der nächsten Anmeldung „Mit Passkey anmelden“ und bestätige die lokale Geräteabfrage. Nutzername, Passwort und ein zusätzlicher 2-FA-Code sind dabei nicht nötig.',
+      'Benenne Passkeys unter „Mein Account“ eindeutig und widerrufe verlorene oder nicht mehr verwendete Geräte sofort. Nach Hinzufügen oder Widerruf meldest du dich erneut an.',
+      'Wenn kein Passkey mehr verfügbar ist, nutze Passwort und gegebenenfalls 2-FA oder den E-Mail-Passwortreset. Bei verpflichtender starker Anmeldung kann ein Admin nach Identitätsprüfung alle Passkeys zurücksetzen.',
+    ],
+    tip:
+        'Richte möglichst einen zweiten Passkey oder Sicherheitsschlüssel als Reserve ein und behalte Wiederherstellungscodes getrennt vom Hauptgerät. Linux unterstützt im aktuellen Client nur Passwort und optional 2-FA.',
+    keywords: [
+      'passkey',
+      'webauthn',
+      'windows hello',
+      'touch id',
+      'face id',
+      'sicherheitsschlüssel',
+      'phishing',
     ],
   ),
   _GuideArticle(
@@ -1589,7 +1648,7 @@ const _articles = [
       'totp',
       'authenticator',
       'recovery codes',
-      'wiederherstellungscodes'
+      'wiederherstellungscodes',
     ],
     illustrations: [
       _GuideIllustration(
@@ -1604,28 +1663,30 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
-    title: '2-FA-Pflicht und Wiederherstellung verwalten',
+    title: 'Starke Anmeldung und Wiederherstellung verwalten',
     summary:
-        '2-FA pro Konto verpflichten, Einrichtungsfristen verstehen und Zugänge zurücksetzen.',
+        'Passkey oder 2-FA pro Konto verpflichten, Einrichtungsfristen verstehen und Zugänge zurücksetzen.',
     icon: Icons.security_outlined,
     readingMinutes: 5,
     audience: 'Für Admins',
     prerequisite: 'Du brauchst Verwaltungsrechte für Nutzerkonten.',
     steps: [
       'Öffne die Nutzerverwaltung und bearbeite das gewünschte Konto.',
-      'Aktiviere „Zwei-Faktor-Authentifizierung verpflichtend“, wenn das Konto künftig 2-FA verwenden muss.',
-      'Hat die Person noch keine 2-FA eingerichtet, beginnt eine Einrichtungsfrist von 14 Tagen. Danach ist nur noch eine eingeschränkte Anmeldung zur Einrichtung möglich.',
+      'Aktiviere „Starke Anmeldung verpflichtend“, wenn das Konto künftig einen Passkey oder 2-FA verwenden muss.',
+      'Hat die Person weder Passkey noch 2-FA eingerichtet, beginnt eine Einrichtungsfrist von 14 Tagen. Danach ist nur noch eine eingeschränkte Anmeldung zur Einrichtung möglich.',
       'Nutze „2-FA zurücksetzen“ nur nach sicherer Identitätsprüfung. Der Reset entfernt die Einrichtung und beendet bestehende Sitzungen.',
-      'Informiere die betroffene Person, damit sie 2-FA neu einrichtet und neue Wiederherstellungscodes sicher ablegt.',
+      'Nutze „Alle Passkeys widerrufen“ ebenfalls nur nach sicherer Identitätsprüfung. Informiere die betroffene Person, damit sie den vorgesehenen starken Anmeldeweg neu einrichtet.',
     ],
     tip:
         'Ein administrativer Reset ersetzt keine Identitätsprüfung und wird zusammen mit Richtlinienänderungen im System protokolliert.',
     keywords: [
       '2fa pflicht',
+      'passkey pflicht',
+      'starke anmeldung',
       '14 tage',
       'reset',
       'admin',
-      'eingeschränktes login'
+      'eingeschränktes login',
     ],
   ),
   _GuideArticle(
@@ -1642,7 +1703,7 @@ const _articles = [
       'Öffne die Nutzerverwaltung und lege das Konto mit Name, Nutzername und eindeutiger E-Mail-Adresse an.',
       'Wähle nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden.',
       'Ordne bei Bedarf geleitete Fachbereiche zu und prüfe die daraus entstehenden Bereichs- und Schreibrechte.',
-      'Lege fest, ob 2-FA verpflichtend ist, und aktiviere das Konto.',
+      'Lege fest, ob eine starke Anmeldung per Passkey oder 2-FA verpflichtend ist, und aktiviere das Konto.',
       'Informiere die Person über den vorgesehenen Anmeldeweg. Persönliche QR-Codes verwaltet sie unter „Mein Account“ oder ein Admin in der Nutzerverwaltung.',
       'Deaktiviere nicht mehr benötigte Konten zeitnah und lösche sie nur unter Beachtung der Aufbewahrungsregeln.',
     ],
@@ -1654,7 +1715,7 @@ const _articles = [
       'berechtigung',
       'admin',
       'konto',
-      'fachbereich'
+      'fachbereich',
     ],
   ),
 ];

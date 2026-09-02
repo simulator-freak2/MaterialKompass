@@ -8,6 +8,7 @@ import '../constants.dart';
 import '../services/api_client.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
+import '../services/passkey_service.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
 import 'dashboard_page.dart';
@@ -23,6 +24,7 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final api = ApiClient();
+  final passkeys = PasskeyService();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool loading = false;
@@ -44,6 +46,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void dispose() {
     api.close();
+    passkeys.close();
     emailController.dispose();
     passwordController.dispose();
     super.dispose();
@@ -79,9 +82,9 @@ class _LoginPageState extends State<LoginPage> {
       }
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -90,22 +93,27 @@ class _LoginPageState extends State<LoginPage> {
     String? identifier;
     try {
       identifier = await showDialog<String>(
-          context: context,
-          builder: (_) => AlertDialog(
-                title: const Text('Passwort zurücksetzen'),
-                content: TextField(
-                    controller: controller,
-                    decoration: const InputDecoration(
-                        labelText: 'Nutzername oder E-Mail')),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Abbrechen')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context, controller.text),
-                      child: const Text('Reset-Link anfordern'))
-                ],
-              ));
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Passwort zurücksetzen'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'Nutzername oder E-Mail',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('Reset-Link anfordern'),
+            ),
+          ],
+        ),
+      );
     } finally {
       controller.dispose();
     }
@@ -116,9 +124,13 @@ class _LoginPageState extends State<LoginPage> {
         body: {'identifier': identifier},
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
             content: Text(
-                'Wenn das Konto existiert, wurde eine E-Mail versendet.')));
+              'Wenn das Konto existiert, wurde eine E-Mail versendet.',
+            ),
+          ),
+        );
       }
     } on ApiException catch (error) {
       _showError(error.message);
@@ -135,8 +147,9 @@ class _LoginPageState extends State<LoginPage> {
           title: const Text('Bestätigungs-E-Mail erneut senden'),
           content: TextField(
             controller: controller,
-            decoration:
-                const InputDecoration(labelText: 'Nutzername oder E-Mail'),
+            decoration: const InputDecoration(
+              labelText: 'Nutzername oder E-Mail',
+            ),
           ),
           actions: [
             TextButton(
@@ -161,18 +174,70 @@ class _LoginPageState extends State<LoginPage> {
       );
       if (!mounted) return;
       if (response.statusCode == 202) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-            'Wenn die Bestätigung aussteht und die letzte E-Mail mindestens 24 Stunden alt ist, wurde eine neue E-Mail versendet.',
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Wenn die Bestätigung aussteht und die letzte E-Mail mindestens 24 Stunden alt ist, wurde eine neue E-Mail versendet.',
+            ),
           ),
-        ));
+        );
       } else {
-        _showError(response.object['error']?.toString() ??
-            'Die Bestätigungs-E-Mail konnte nicht angefordert werden.');
+        _showError(
+          response.object['error']?.toString() ??
+              'Die Bestätigungs-E-Mail konnte nicht angefordert werden.',
+        );
       }
     } on ApiException catch (error) {
       if (mounted) _showError(error.message);
     }
+  }
+
+  Future<Map<String, dynamic>?> setupRequiredStrongAuthentication(
+    Map<String, dynamic> loginData,
+  ) async {
+    String method = 'totp';
+    if (PasskeyService.platformSupported) {
+      final selected = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Starke Anmeldung einrichten'),
+          content: const Text(
+            'Für dieses Konto ist eine starke Anmeldung verpflichtend. '
+            'Richten Sie einen Passkey oder eine Authenticator-App ein.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'totp'),
+              child: const Text('Authenticator-App'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, 'passkey'),
+              icon: const Icon(Icons.key_outlined),
+              label: const Text('Passkey'),
+            ),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return null;
+      method = selected;
+    }
+    if (method == 'passkey') {
+      try {
+        return await passkeys.register(
+          token: loginData['token'].toString(),
+          name: 'Passkey auf diesem Gerät',
+          currentPassword: passwordController.text,
+        );
+      } on ApiException catch (error) {
+        if (mounted) _showError(error.message);
+        return null;
+      }
+    }
+    return setupMfa(
+      context,
+      token: loginData['token'].toString(),
+      currentPassword: passwordController.text,
+    );
   }
 
   Future<void> login() async {
@@ -182,7 +247,7 @@ class _LoginPageState extends State<LoginPage> {
         '/api/auth/login',
         body: {
           'identifier': emailController.text,
-          'password': passwordController.text
+          'password': passwordController.text,
         },
       );
       if (!mounted) return;
@@ -194,29 +259,27 @@ class _LoginPageState extends State<LoginPage> {
       }
       if (response.statusCode == 200 || data['token'] != null) {
         if (data['mfaSetupRequired'] == true) {
-          final setup = await setupMfa(
-            context,
-            token: data['token'].toString(),
-            currentPassword: passwordController.text,
-          );
+          final setup = await setupRequiredStrongAuthentication(data);
           if (setup == null || !mounted) {
             _showError(
-                'Die verpflichtende 2-FA-Einrichtung wurde nicht abgeschlossen.');
+              'Die verpflichtende starke Anmeldung wurde nicht eingerichtet.',
+            );
             return;
           }
           data = {...data, ...setup};
         } else {
-          final mfa =
-              data['user'] is Map ? (data['user'] as Map)['mfa'] as Map? : null;
+          final mfa = data['user'] is Map
+              ? (data['user'] as Map)['mfa'] as Map?
+              : null;
           if (mfa?['required'] == true && mfa?['enabled'] != true) {
             final configureNow = await showDialog<bool>(
               context: context,
               builder: (dialogContext) => AlertDialog(
-                title: const Text('2-FA-Einrichtung erforderlich'),
+                title: const Text('Starke Anmeldung erforderlich'),
                 content: Text(
-                  'Ein Administrator hat 2-FA für dieses Konto verpflichtend '
-                  'gemacht. Bitte richten Sie den zweiten Faktor innerhalb '
-                  'der Einrichtungsfrist ein. Frist: '
+                  'Ein Administrator hat eine starke Anmeldung für dieses '
+                  'Konto verpflichtend gemacht. Bitte richten Sie innerhalb '
+                  'der Einrichtungsfrist einen Passkey oder 2-FA ein. Frist: '
                   '${mfa?['graceEndsAt'] ?? '14 Tage'}.',
                 ),
                 actions: [
@@ -232,11 +295,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
             );
             if (configureNow == true && mounted) {
-              final setup = await setupMfa(
-                context,
-                token: data['token'].toString(),
-                currentPassword: passwordController.text,
-              );
+              final setup = await setupRequiredStrongAuthentication(data);
               if (setup != null) data = {...data, ...setup};
             }
           }
@@ -250,9 +309,7 @@ class _LoginPageState extends State<LoginPage> {
           ),
         );
       } else {
-        _showError(
-          data['error']?.toString() ?? 'Login fehlgeschlagen',
-        );
+        _showError(data['error']?.toString() ?? 'Login fehlgeschlagen');
       }
     } on ApiException catch (error) {
       if (mounted) _showError(error.message);
@@ -280,7 +337,7 @@ class _LoginPageState extends State<LoginPage> {
       if (response.statusCode == 200 || data['token'] != null) {
         if (data['mfaSetupRequired'] == true) {
           _showError(
-            'Melden Sie sich einmal mit Ihrem Passwort an, um 2-FA einzurichten.',
+            'Melden Sie sich einmal mit Ihrem Passwort an, um einen Passkey oder 2-FA einzurichten.',
           );
           return;
         }
@@ -299,9 +356,27 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> loginWithPasskey() async {
+    setState(() => loading = true);
+    try {
+      final data = await passkeys.login();
+      if (!mounted) return;
+      final token = data['token'].toString();
+      unawaited(OfflineSessionService.prepare(token));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => DashboardPage(token: token)),
+      );
+    } on ApiException catch (error) {
+      if (mounted) _showError(error.message);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   void _showError(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -333,16 +408,16 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 12),
                           Text(
                             'MaterialKompass',
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
+                            style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
                           const Text(
                             'Interne Materialverwaltung',
                             style: TextStyle(
-                                fontSize: 20, fontWeight: FontWeight.bold),
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           const SizedBox(height: 16),
                           TextField(
@@ -353,7 +428,8 @@ class _LoginPageState extends State<LoginPage> {
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                                labelText: 'Nutzername oder E-Mail'),
+                              labelText: 'Nutzername oder E-Mail',
+                            ),
                           ),
                           const SizedBox(height: 12),
                           TextField(
@@ -366,26 +442,38 @@ class _LoginPageState extends State<LoginPage> {
                             onSubmitted: (_) {
                               if (!loading) login();
                             },
-                            decoration:
-                                const InputDecoration(labelText: 'Passwort'),
+                            decoration: const InputDecoration(
+                              labelText: 'Passwort',
+                            ),
                           ),
                           const SizedBox(height: 20),
                           ElevatedButton(
                             onPressed: loading ? null : login,
                             child: loading
                                 ? CircularProgressIndicator(
-                                    color:
-                                        Theme.of(context).colorScheme.onPrimary,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onPrimary,
                                   )
                                 : const Text('Anmelden'),
                           ),
+                          if (PasskeyService.platformSupported) ...[
+                            const SizedBox(height: 8),
+                            FilledButton.tonalIcon(
+                              onPressed: loading ? null : loginWithPasskey,
+                              icon: const Icon(Icons.key_outlined),
+                              label: const Text('Mit Passkey anmelden'),
+                            ),
+                          ],
                           TextButton(
-                              onPressed: loading ? null : requestPasswordReset,
-                              child: const Text('Passwort vergessen?')),
+                            onPressed: loading ? null : requestPasswordReset,
+                            child: const Text('Passwort vergessen?'),
+                          ),
                           TextButton(
                             onPressed: loading ? null : resendEmailVerification,
-                            child:
-                                const Text('Bestätigungs-E-Mail erneut senden'),
+                            child: const Text(
+                              'Bestätigungs-E-Mail erneut senden',
+                            ),
                           ),
                           OutlinedButton.icon(
                             onPressed: loading ? null : loginWithQrCode,
@@ -398,14 +486,15 @@ class _LoginPageState extends State<LoginPage> {
                               onPressed: loading
                                   ? null
                                   : () => Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) =>
-                                              const ServiceDeviceActivationPage(),
-                                        ),
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            const ServiceDeviceActivationPage(),
                                       ),
+                                    ),
                               icon: const Icon(Icons.devices_other),
-                              label:
-                                  const Text('Dienstliches Gerät aktivieren'),
+                              label: const Text(
+                                'Dienstliches Gerät aktivieren',
+                              ),
                             ),
                           ],
                           if (kIsWeb) ...[
@@ -413,7 +502,9 @@ class _LoginPageState extends State<LoginPage> {
                             const Text(
                               'App herunterladen',
                               style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w600),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             const SizedBox(height: 6),
                             Text(
@@ -436,9 +527,11 @@ class _LoginPageState extends State<LoginPage> {
                                       ? () => downloadApp(download)
                                       : null,
                                   icon: Icon(_downloadIcon(platform)),
-                                  label: Text(available
-                                      ? '${download['label']} herunterladen'
-                                      : '${download['label']} nicht verfügbar'),
+                                  label: Text(
+                                    available
+                                        ? '${download['label']} herunterladen'
+                                        : '${download['label']} nicht verfügbar',
+                                  ),
                                 );
                               }).toList(),
                             ),
@@ -481,8 +574,8 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 IconData _downloadIcon(String platform) => switch (platform) {
-      'windows' => Icons.desktop_windows_outlined,
-      'android' => Icons.android_outlined,
-      'ios' || 'macos' => Icons.apple,
-      _ => Icons.computer_outlined,
-    };
+  'windows' => Icons.desktop_windows_outlined,
+  'android' => Icons.android_outlined,
+  'ios' || 'macos' => Icons.apple,
+  _ => Icons.computer_outlined,
+};

@@ -138,6 +138,9 @@ function registerInventoryRoutes({
       department: String(req.body.department || '').trim(),
       inspectionIntervalMonths: req.body.inspectionIntervalMonths ? number(req.body.inspectionIntervalMonths) : null,
       lastInspectionDate: null, nextInspectionDate: req.body.nextInspectionDate || null,
+      maintenanceIntervalMonths: req.body.maintenanceIntervalMonths ? number(req.body.maintenanceIntervalMonths) : null,
+      nextMaintenanceDate: req.body.nextMaintenanceDate || null,
+      reservationApprovalRequired: req.body.reservationApprovalRequired === true,
       archived: false, createdAt: new Date().toISOString(),
     };
     materials.push(item);
@@ -173,6 +176,11 @@ function registerInventoryRoutes({
       inspectionIntervalMonths: req.body.inspectionIntervalMonths == null
         ? item.inspectionIntervalMonths ?? null : number(req.body.inspectionIntervalMonths),
       nextInspectionDate: req.body.nextInspectionDate ?? item.nextInspectionDate ?? null,
+      maintenanceIntervalMonths: req.body.maintenanceIntervalMonths == null
+        ? item.maintenanceIntervalMonths ?? null : number(req.body.maintenanceIntervalMonths),
+      nextMaintenanceDate: req.body.nextMaintenanceDate ?? item.nextMaintenanceDate ?? null,
+      reservationApprovalRequired: req.body.reservationApprovalRequired == null
+        ? item.reservationApprovalRequired === true : req.body.reservationApprovalRequired === true,
       id: item.id, inventoryNumber: item.inventoryNumber, issuedQuantity: item.issuedQuantity,
       archived: false, updatedAt: new Date().toISOString(),
     });

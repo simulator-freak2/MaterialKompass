@@ -1,6 +1,6 @@
 {
   "name": "materialkompass-backend",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "REST backend for MaterialKompass",
   "main": "server.js",
   "engines": {
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.7",
+    "@simplewebauthn/server": "^13.3.3",
     "@tesseract.js-data/deu": "^1.0.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",

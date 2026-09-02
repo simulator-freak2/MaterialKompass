@@ -31,7 +31,8 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
       );
       if (mounted) {
         setState(() {
-          message = response.object['message']?.toString() ??
+          message =
+              response.object['message']?.toString() ??
               response.object['error']?.toString();
         });
       }
@@ -51,7 +52,8 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
       );
       if (mounted) {
         setState(() {
-          message = response.object['message']?.toString() ??
+          message =
+              response.object['message']?.toString() ??
               response.object['error']?.toString();
         });
       }
@@ -71,43 +73,56 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('MaterialKompass')),
-      body: Center(
-          child: Card(
-              child: SizedBox(
-                  width: 430,
-                  child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Text(
-                            widget.action == 'verify-email'
-                                ? 'E-Mail bestätigen'
-                                : 'Passwort zurücksetzen',
-                            style: Theme.of(context).textTheme.headlineSmall),
-                        const SizedBox(height: 16),
-                        if (widget.action == 'password-reset')
-                          TextField(
-                              controller: password,
-                              obscureText: true,
-                              decoration: const InputDecoration(
-                                  labelText: 'Neues Passwort',
-                                  helperText:
-                                      'Mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl und Sonderzeichen')),
-                        if (message != null)
-                          Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              child:
-                                  Text(message!, textAlign: TextAlign.center)),
-                        if (loading)
-                          const CircularProgressIndicator()
-                        else if (widget.action == 'password-reset')
-                          FilledButton(
-                              onPressed: reset,
-                              child: const Text('Passwort speichern')),
-                        TextButton(
-                            onPressed: () => Navigator.of(context)
-                                .pushReplacement(MaterialPageRoute(
-                                    builder: (_) => const LoginPage())),
-                            child: const Text('Zur Anmeldung')),
-                      ]))))));
+    appBar: AppBar(title: const Text('MaterialKompass')),
+    body: Center(
+      child: Card(
+        child: SizedBox(
+          width: 430,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.action == 'verify-email'
+                      ? 'E-Mail bestätigen'
+                      : 'Passwort zurücksetzen',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 16),
+                if (widget.action == 'password-reset')
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Neues Passwort',
+                      helperText:
+                          'Mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl und Sonderzeichen',
+                    ),
+                  ),
+                if (message != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(message!, textAlign: TextAlign.center),
+                  ),
+                if (loading)
+                  const CircularProgressIndicator()
+                else if (widget.action == 'password-reset')
+                  FilledButton(
+                    onPressed: reset,
+                    child: const Text('Passwort speichern'),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(builder: (_) => const LoginPage()),
+                  ),
+                  child: const Text('Zur Anmeldung'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }

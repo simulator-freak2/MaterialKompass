@@ -26,6 +26,24 @@ async function jsonRequest(url, token, method = 'GET', body) {
   return { response, data: response.headers.get('content-type')?.includes('json') ? await response.json() : null };
 }
 
+function offerInput(request, totals, { shipping = 0, discount = 0, custom = [] } = {}) {
+  const items = request.items.map((item, index) => ({
+    requestItemId: item.id,
+    offered: totals[index] != null,
+    grossTotal: totals[index] ?? 0,
+  }));
+  const components = [
+    { kind: 'shipping', label: 'Versandkosten', operation: 'add', grossAmount: shipping },
+    { kind: 'discount', label: 'Rabatt', operation: 'subtract', grossAmount: discount },
+    ...custom,
+  ];
+  const positionTotal = totals.reduce((sum, value) => sum + (value ?? 0), 0);
+  const componentTotal = components.reduce((sum, entry) => (
+    sum + (entry.operation === 'subtract' ? -entry.grossAmount : entry.grossAmount)
+  ), 0);
+  return { items, components, documentGrossTotal: positionTotal + componentTotal };
+}
+
 async function createApprovers(baseUrl, admin, login) {
   for (const user of [
     { name: 'Vera Vorsitz', username: 'vorsitz', email: 'vorsitz@test.local', password: 'Testpasswort123!', roles: ['Vorsitz'] },
@@ -224,8 +242,12 @@ test('procurement supports offer selection, split workflow, receipts and invento
       city: 'Hannover', country: 'Deutschland',
     });
     assert.equal(supplier.response.status, 201);
-    const cheap = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', { supplierId: 'supplier-1', grossTotal: 48, shippingGross: 0 });
-    const expensive = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', { supplierId: supplier.data.id, grossTotal: 50, shippingGross: 5 });
+    const cheap = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', {
+      supplierId: 'supplier-1', ...offerInput(created.data, [48]),
+    });
+    const expensive = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', {
+      supplierId: supplier.data.id, ...offerInput(created.data, [50], { shipping: 5 }),
+    });
     assert.equal(cheap.response.status, 201);
     const noReason = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/select-offer`, material, 'POST', { offerId: expensive.data.id });
     assert.equal(noReason.response.status, 400);
@@ -281,6 +303,94 @@ test('procurement supports offer selection, split workflow, receipts and invento
   } finally { server.close(); }
 });
 
+test('offers require reconciled line totals and can be safely corrected before ordering', async () => {
+  const { server, baseUrl, login, admin } = await start();
+  try {
+    const material = await login('materialwart@materialkompass.local', 'Material123!');
+    const created = await jsonRequest(`${baseUrl}/api/procurement`, material, 'POST', {
+      title: 'Mehrteiliges Angebot', reason: 'Ersatzbedarf', requestedBudgetGross: 200,
+      items: [
+        { name: 'Position A', categoryId: '02', quantity: 2, unit: 'Stück' },
+        { name: 'Position B', categoryId: '02', quantity: 1, unit: 'Stück' },
+      ],
+    });
+    await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/submit`, material, 'POST', {});
+
+    const input = offerInput(created.data, [100, null], {
+      shipping: 10,
+      discount: 5,
+      custom: [{ kind: 'custom', label: 'Verpackung', operation: 'add', grossAmount: 2 }],
+    });
+    const mismatch = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', {
+      supplierId: 'supplier-1', ...input, documentGrossTotal: 108,
+    });
+    assert.equal(mismatch.response.status, 400);
+    assert.match(mismatch.data.error, /weicht/);
+
+    const createdOffer = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', {
+      supplierId: 'supplier-1', offerNumber: 'K-100', ...input,
+    });
+    assert.equal(createdOffer.response.status, 201);
+    assert.equal(createdOffer.data.positionsGrossTotal, 100);
+    assert.equal(createdOffer.data.calculatedGrossTotal, 107);
+    assert.equal(createdOffer.data.items[1].offered, false);
+    await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/select-offer`, material, 'POST', {
+      offerId: createdOffer.data.id,
+    });
+
+    const correctedInput = offerInput(created.data, [100, null], {
+      shipping: 10,
+      discount: -5,
+      custom: [{ kind: 'custom', label: 'Verpackung', operation: 'add', grossAmount: 2 }],
+    });
+    const corrected = await jsonRequest(
+      `${baseUrl}/api/procurement/${created.data.id}/offers/${createdOffer.data.id}`,
+      material,
+      'PUT',
+      {
+        supplierId: 'supplier-1', offerNumber: 'K-100-korrigiert',
+        expectedUpdatedAt: createdOffer.data.updatedAt, ...correctedInput,
+      },
+    );
+    assert.equal(corrected.response.status, 200);
+    assert.equal(corrected.data.selectedOfferId, null);
+    assert.equal(corrected.data.offers[0].calculatedGrossTotal, 117);
+    assert.equal(corrected.data.history.at(-1).action, 'Angebot bearbeitet');
+    assert.equal(corrected.data.history.at(-1).details.selectionCleared, true);
+
+    const stale = await jsonRequest(
+      `${baseUrl}/api/procurement/${created.data.id}/offers/${createdOffer.data.id}`,
+      material,
+      'PUT',
+      { supplierId: 'supplier-1', expectedUpdatedAt: createdOffer.data.updatedAt, ...correctedInput },
+    );
+    assert.equal(stale.response.status, 409);
+    assert.match(stale.data.error, /zwischenzeitlich/);
+
+    await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/select-offer`, material, 'POST', {
+      offerId: createdOffer.data.id,
+    });
+    await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/approval`, admin, 'POST', {
+      decision: 'approve', role: 'Vorsitz', approvedBudgetGross: 200,
+    });
+    const order = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/orders`, material, 'POST', {
+      supplierId: 'supplier-1', shippingGross: 10,
+      items: [{ requestItemId: created.data.items[0].id, quantity: 2, grossTotal: 100 }],
+    });
+    assert.equal(order.response.status, 201);
+    assert.equal(order.data.offerId, createdOffer.data.id);
+
+    const locked = await jsonRequest(
+      `${baseUrl}/api/procurement/${created.data.id}/offers/${createdOffer.data.id}`,
+      material,
+      'PUT',
+      { supplierId: 'supplier-1', expectedUpdatedAt: corrected.data.offers[0].updatedAt, ...correctedInput },
+    );
+    assert.equal(locked.response.status, 409);
+    assert.match(locked.data.error, /Bestellung verwendet/);
+  } finally { server.close(); }
+});
+
 test('order uses the gross line total without multiplying it by quantity', async () => {
   const { server, baseUrl, login, admin } = await start();
   try {
@@ -295,7 +405,7 @@ test('order uses the gross line total without multiplying it by quantity', async
     });
     assert.equal(approved.data.status, 'Genehmigt');
     await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', {
-      supplierId: 'supplier-1', grossTotal: 432.50, shippingGross: 0,
+      supplierId: 'supplier-1', ...offerInput(created.data, [432.50]),
     });
 
     const ordered = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/orders`, material, 'POST', {

@@ -1,10 +1,6 @@
 import 'dart:io';
 
-Future<void> sendRawLabel(
-  String host,
-  int port,
-  List<int> bytes,
-) async {
+Future<void> sendRawLabel(String host, int port, List<int> bytes) async {
   final socket = await Socket.connect(
     host,
     port,

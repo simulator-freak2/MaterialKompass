@@ -1,9 +1,10 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../widgets/keyboard_dropdown_button_form_field.dart';
 
 class CategoriesPage extends StatefulWidget {
   final String token;
@@ -41,16 +42,20 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   List<Map<String, dynamic>> get _mainCategories => _categories
-      .where((category) =>
-          category['parentId'] == null ||
-          category['parentId'].toString().isEmpty)
+      .where(
+        (category) =>
+            category['parentId'] == null ||
+            category['parentId'].toString().isEmpty,
+      )
       .toList();
 
   bool _isWardrobeCategory(String? parentId, bool useInWardrobe) {
     if (parentId == null) return useInWardrobe;
-    return _mainCategories.any((category) =>
-        category['id']?.toString() == parentId &&
-        category['useInWardrobe'] == true);
+    return _mainCategories.any(
+      (category) =>
+          category['id']?.toString() == parentId &&
+          category['useInWardrobe'] == true,
+    );
   }
 
   List<String> _sizesFromText(String value) => value
@@ -70,8 +75,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
       setState(() {
         _categories = response.statusCode == 200
             ? (jsonDecode(response.body) as List)
-                .map((item) => Map<String, dynamic>.from(item as Map))
-                .toList()
+                  .map((item) => Map<String, dynamic>.from(item as Map))
+                  .toList()
             : [];
         _loading = false;
         if (_parentId != null &&
@@ -145,8 +150,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
       parentId: _parentId,
       useInWardrobe: _parentId == null && _useInWardrobe,
       sizes: _sizesFromText(_sizesController.text),
-      inspectionIntervalMonths:
-          int.tryParse(_inspectionIntervalController.text.trim()),
+      inspectionIntervalMonths: int.tryParse(
+        _inspectionIntervalController.text.trim(),
+      ),
       requiresPsageInspection: _parentId != null && _requiresPsageInspection,
     );
     if (!mounted) return;
@@ -164,7 +170,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
       _showMessage('Kategorie wurde angelegt.');
     } else {
       _showMessage(
-          'Kategorie konnte nicht angelegt werden. ID und Name müssen eindeutig sein.');
+        'Kategorie konnte nicht angelegt werden. ID und Name müssen eindeutig sein.',
+      );
     }
   }
 
@@ -182,8 +189,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
     final inspectionIntervalController = TextEditingController(
       text: category['inspectionIntervalMonths']?.toString() ?? '',
     );
-    final hasChildren =
-        _categories.any((entry) => entry['parentId']?.toString() == id);
+    final hasChildren = _categories.any(
+      (entry) => entry['parentId']?.toString() == id,
+    );
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -203,7 +211,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 DropdownButtonFormField<String?>(
                   initialValue: parentId,
                   decoration: const InputDecoration(
-                      labelText: 'Übergeordnete Hauptkategorie'),
+                    labelText: 'Übergeordnete Hauptkategorie',
+                  ),
                   items: [
                     const DropdownMenuItem<String?>(
                       value: null,
@@ -216,19 +225,20 @@ class _CategoriesPageState extends State<CategoriesPage> {
                             (entry) => DropdownMenuItem<String?>(
                               value: entry['id']?.toString(),
                               child: Text(
-                                  entry['name']?.toString() ?? 'Unbenannt'),
+                                entry['name']?.toString() ?? 'Unbenannt',
+                              ),
                             ),
                           ),
                   ],
                   onChanged: hasChildren
                       ? null
                       : (value) => setDialogState(() {
-                            parentId = value;
-                            if (value != null) useInWardrobe = false;
-                            if (!_isWardrobeCategory(parentId, useInWardrobe)) {
-                              requiresPsageInspection = false;
-                            }
-                          }),
+                          parentId = value;
+                          if (value != null) useInWardrobe = false;
+                          if (!_isWardrobeCategory(parentId, useInWardrobe)) {
+                            requiresPsageInspection = false;
+                          }
+                        }),
                 ),
                 if (parentId == null)
                   CheckboxListTile(
@@ -263,7 +273,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       title: const Text('Prüfung nur durch Sachkundige PSAgE'),
                       value: requiresPsageInspection,
                       onChanged: (value) => setDialogState(
-                          () => requiresPsageInspection = value ?? false),
+                        () => requiresPsageInspection = value ?? false,
+                      ),
                     ),
                 ],
               ],
@@ -280,8 +291,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 'parentId': parentId,
                 'useInWardrobe': useInWardrobe,
                 'sizes': _sizesFromText(sizesController.text),
-                'inspectionIntervalMonths':
-                    int.tryParse(inspectionIntervalController.text.trim()),
+                'inspectionIntervalMonths': int.tryParse(
+                  inspectionIntervalController.text.trim(),
+                ),
                 'requiresPsageInspection': requiresPsageInspection,
               }),
               child: const Text('Speichern'),
@@ -329,14 +341,16 @@ class _CategoriesPageState extends State<CategoriesPage> {
       _showMessage('Kategorie wurde gelöscht.');
     } else {
       _showMessage(
-          'Kategorien mit Unterkategorien oder verwendete Kategorien können nicht gelöscht werden.');
+        'Kategorien mit Unterkategorien oder verwendete Kategorien können nicht gelöscht werden.',
+      );
     }
   }
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget _categoryActions(Map<String, dynamic> category) {
@@ -391,12 +405,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           TextField(
                             controller: _idController,
                             decoration: const InputDecoration(
-                                labelText: 'Kategorie-ID'),
+                              labelText: 'Kategorie-ID',
+                            ),
                           ),
                           TextField(
                             controller: _nameController,
-                            decoration:
-                                const InputDecoration(labelText: 'Name'),
+                            decoration: const InputDecoration(
+                              labelText: 'Name',
+                            ),
                           ),
                         ];
                         if (constraints.maxWidth < 600) {
@@ -422,7 +438,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       key: ValueKey(_parentId),
                       initialValue: _parentId,
                       decoration: const InputDecoration(
-                          labelText: 'Übergeordnete Hauptkategorie'),
+                        labelText: 'Übergeordnete Hauptkategorie',
+                      ),
                       items: [
                         const DropdownMenuItem<String?>(
                           value: null,
@@ -432,7 +449,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           (category) => DropdownMenuItem<String?>(
                             value: category['id']?.toString(),
                             child: Text(
-                                category['name']?.toString() ?? 'Unbenannt'),
+                              category['name']?.toString() ?? 'Unbenannt',
+                            ),
                           ),
                         ),
                       ],
@@ -449,7 +467,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('In Kleiderkammer nutzen'),
                         subtitle: const Text(
-                            'Diese Hauptkategorie und ihre Unterkategorien stehen in der Kleiderkammer zur Auswahl.'),
+                          'Diese Hauptkategorie und ihre Unterkategorien stehen in der Kleiderkammer zur Auswahl.',
+                        ),
                         value: _useInWardrobe,
                         onChanged: (value) => setState(() {
                           _useInWardrobe = value ?? false;
@@ -479,13 +498,16 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       if (_parentId != null)
                         CheckboxListTile(
                           contentPadding: EdgeInsets.zero,
-                          title:
-                              const Text('Prüfung nur durch Sachkundige PSAgE'),
+                          title: const Text(
+                            'Prüfung nur durch Sachkundige PSAgE',
+                          ),
                           subtitle: const Text(
-                              'Prüfungen dieser Unterkategorie werden serverseitig auf die PSAgE-Rolle beschränkt.'),
+                            'Prüfungen dieser Unterkategorie werden serverseitig auf die PSAgE-Rolle beschränkt.',
+                          ),
                           value: _requiresPsageInspection,
                           onChanged: (value) => setState(
-                              () => _requiresPsageInspection = value ?? false),
+                            () => _requiresPsageInspection = value ?? false,
+                          ),
                         ),
                     ],
                     const SizedBox(height: 12),
@@ -535,7 +557,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
-                            '${category['name']?.toString() ?? 'Unbenannt'}  ($id)'),
+                          '${category['name']?.toString() ?? 'Unbenannt'}  ($id)',
+                        ),
                         if (category['useInWardrobe'] == true)
                           const Chip(
                             avatar: Icon(Icons.checkroom, size: 18),
@@ -545,7 +568,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           Chip(
                             avatar: const Icon(Icons.event_repeat, size: 18),
                             label: Text(
-                                '${category['inspectionIntervalMonths']} Monate'),
+                              '${category['inspectionIntervalMonths']} Monate',
+                            ),
                           ),
                       ],
                     ),
@@ -553,21 +577,27 @@ class _CategoriesPageState extends State<CategoriesPage> {
                     children: children
                         .map(
                           (child) => ListTile(
-                            contentPadding:
-                                const EdgeInsets.only(left: 32, right: 16),
+                            contentPadding: const EdgeInsets.only(
+                              left: 32,
+                              right: 16,
+                            ),
                             leading: const Icon(Icons.subdirectory_arrow_right),
                             title: Wrap(
                               spacing: 8,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Text(
-                                    '${child['name']?.toString() ?? 'Unbenannt'}  (${child['id']})'),
+                                  '${child['name']?.toString() ?? 'Unbenannt'}  (${child['id']})',
+                                ),
                                 if (child['inspectionIntervalMonths'] != null)
                                   Chip(
-                                    avatar: const Icon(Icons.event_repeat,
-                                        size: 18),
+                                    avatar: const Icon(
+                                      Icons.event_repeat,
+                                      size: 18,
+                                    ),
                                     label: Text(
-                                        '${child['inspectionIntervalMonths']} Monate'),
+                                      '${child['inspectionIntervalMonths']} Monate',
+                                    ),
                                   ),
                                 if (child['requiresPsageInspection'] == true)
                                   const Chip(
@@ -577,10 +607,13 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                 if ((child['sizes'] as List? ?? const [])
                                     .isNotEmpty)
                                   Chip(
-                                    avatar:
-                                        const Icon(Icons.straighten, size: 18),
+                                    avatar: const Icon(
+                                      Icons.straighten,
+                                      size: 18,
+                                    ),
                                     label: Text(
-                                        '${(child['sizes'] as List).length} Größen'),
+                                      '${(child['sizes'] as List).length} Größen',
+                                    ),
                                   ),
                               ],
                             ),

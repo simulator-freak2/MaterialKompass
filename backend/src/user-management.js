@@ -36,6 +36,7 @@ function publicUser(user) {
     mfaEnabledAt,
     mfaLastVerifiedAt,
     mfaVersion,
+    passkeyCount,
     ...safe
   } = user;
   return {
@@ -49,7 +50,10 @@ function publicUser(user) {
       recoveryCodesRemaining: mfaSecretEncrypted
         ? (mfaRecoveryCodeHashes || []).length
         : 0,
+      strongAuthenticationConfigured:
+        Boolean(mfaSecretEncrypted && user.mfaEnabledAt) || Number(passkeyCount || 0) > 0,
     },
+    passkeys: { count: Number(passkeyCount || 0) },
     verificationResendAvailableAt:
       user.emailVerifiedAt ? null : verificationExpiresAt || null,
   };
