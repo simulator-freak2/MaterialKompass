@@ -1,5 +1,6 @@
 const permissions = [
   'offline.access',
+  'organizations.write',
   'users.read', 'users.write',
   'roles.read',
   'locations.read', 'locations.write',

@@ -427,6 +427,12 @@ Für Passkeys muss anschließend
 `backend/src/db/migrations/20260830_user_passkeys.sql` ausgeführt werden. Die Migration
 speichert nur öffentliche Schlüssel, zufällige Credential-IDs, Zähler und technische
 Metadaten; private Passkey-Schlüssel werden nie an MaterialKompass übertragen.
+Für die getrennte Berechtigung zum Anlegen von Organisationen und Unterorganisationen
+muss außerdem `backend/src/db/migrations/20260925_organization_management_permission.sql`
+ausgeführt werden.
+Anschließend kann `node src/scripts/grant-organization-management.js` die Konten
+`nils.wiedenhaus` und `admin` idempotent als Organisations- und Plattformadministratoren
+freischalten. Das Backend muss während dieses einmaligen Laufs gestoppt sein.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 

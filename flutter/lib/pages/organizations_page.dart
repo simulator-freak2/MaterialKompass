@@ -374,8 +374,14 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           final permissions = (user['permissions'] as List? ?? const [])
               .map((entry) => entry.toString())
               .toSet();
+          final roles = (user['roles'] as List? ?? const [])
+              .map((entry) => entry.toString())
+              .toSet();
           final canManage = permissions.contains('users.write');
           final platformAdmin = user['platformAdmin'] == true;
+          final canCreateOrganizationStructure =
+              roles.contains('Admin') &&
+              permissions.contains('organizations.write');
           final ordered = _orderedUnits(units);
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -386,13 +392,13 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    if (platformAdmin)
+                    if (platformAdmin && canCreateOrganizationStructure)
                       FilledButton.icon(
                         onPressed: _createOrganization,
                         icon: const Icon(Icons.add_business_outlined),
                         label: const Text('Organisation anlegen'),
                       ),
-                    if (canManage && units.isNotEmpty)
+                    if (canCreateOrganizationStructure && units.isNotEmpty)
                       FilledButton.icon(
                         onPressed: () => _createUnit(units),
                         icon: const Icon(Icons.account_tree_outlined),

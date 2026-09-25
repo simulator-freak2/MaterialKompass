@@ -353,6 +353,9 @@ function registerTenancyRoutes({
   const membershipFor = (userId, organizationId) => memberships.find((entry) =>
     entry.userId === userId && entry.organizationId === organizationId && entry.status === 'active'
   );
+  const canCreateOrganizationStructure = (req) =>
+    req.user?.roles?.includes('Admin')
+      && req.user?.permissions?.includes('organizations.write');
 
   app.get('/api/organizations', authMiddleware, (req, res) => {
     const allowed = new Set(memberships
@@ -362,8 +365,10 @@ function registerTenancyRoutes({
   });
 
   app.post('/api/organizations', authMiddleware, async (req, res) => {
-    if (!req.identity?.platformAdmin) {
-      return res.status(403).json({ error: 'Nur die Plattformadministration darf Organisationen anlegen.' });
+    if (!req.identity?.platformAdmin || !canCreateOrganizationStructure(req)) {
+      return res.status(403).json({
+        error: 'Nur Plattformadministratoren mit der Berechtigung organizations.write dürfen Organisationen anlegen.',
+      });
     }
     const name = text(req.body.name);
     const shortName = text(req.body.shortName, 24).toUpperCase();
@@ -405,7 +410,12 @@ function registerTenancyRoutes({
     ));
   });
 
-  app.post('/api/organization-units', authMiddleware, requirePermission('users.write'), async (req, res) => {
+  app.post('/api/organization-units', authMiddleware, async (req, res) => {
+    if (!canCreateOrganizationStructure(req)) {
+      return res.status(403).json({
+        error: 'Nur Organisationsadministratoren mit der Berechtigung organizations.write dürfen Unterorganisationen anlegen.',
+      });
+    }
     const name = text(req.body.name);
     const type = text(req.body.type, 80);
     const parentId = text(req.body.parentId, 64) || req.tenant.unitId;

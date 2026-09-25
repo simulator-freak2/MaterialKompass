@@ -92,8 +92,8 @@ function tenantData() {
   return data;
 }
 
-async function start() {
-  const app = createApp({ data: tenantData(), skipEmailVerification: true });
+async function start(data = tenantData()) {
+  const app = createApp({ data, skipEmailVerification: true });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -145,6 +145,75 @@ test('unit-scoped memberships see central and own categories but not sibling dat
     assert.ok(!categories.data.some((entry) => entry.id === 'A-SIBLING-CATEGORY'));
   } finally {
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('only admins with organization permission create organizations and suborganizations', async () => {
+  const authorized = await start();
+  try {
+    const token = await login(authorized.baseUrl, 'admin', 'MaterialKompass2026!');
+    const organization = await request(authorized.baseUrl, '/api/organizations', {
+      token,
+      method: 'POST',
+      body: { name: 'Organisation C', shortName: 'C' },
+    });
+    assert.equal(organization.response.status, 201);
+
+    const unit = await request(authorized.baseUrl, '/api/organization-units', {
+      token,
+      method: 'POST',
+      body: { name: 'A-Unterorganisation', type: 'Ortsgruppe', parentId: 'unit-a' },
+    });
+    assert.equal(unit.response.status, 201);
+    assert.equal(unit.data.parentId, 'unit-a');
+  } finally {
+    await new Promise((resolve) => authorized.server.close(resolve));
+  }
+
+  const nonAdminData = tenantData();
+  nonAdminData.roles.push({
+    id: 'role-organization-creator',
+    name: 'Organisationsstruktur-Ersteller',
+    permissions: ['organizations.write'],
+  });
+  nonAdminData.memberships.find((entry) =>
+    entry.id === 'membership-warden-a'
+  ).scopes[0].roles = ['Organisationsstruktur-Ersteller'];
+  const nonAdmin = await start(nonAdminData);
+  try {
+    const token = await login(nonAdmin.baseUrl, 'materialwart', 'Material123!');
+    const result = await request(nonAdmin.baseUrl, '/api/organization-units', {
+      token,
+      method: 'POST',
+      body: { name: 'Nicht erlaubt', type: 'Ortsgruppe', parentId: 'unit-a-child' },
+    });
+    assert.equal(result.response.status, 403);
+  } finally {
+    await new Promise((resolve) => nonAdmin.server.close(resolve));
+  }
+
+  const missingPermissionData = tenantData();
+  missingPermissionData.roles.find((role) => role.name === 'Admin').permissions =
+    missingPermissionData.roles.find((role) => role.name === 'Admin').permissions
+      .filter((permission) => permission !== 'organizations.write');
+  const missingPermission = await start(missingPermissionData);
+  try {
+    const token = await login(missingPermission.baseUrl, 'admin', 'MaterialKompass2026!');
+    const organization = await request(missingPermission.baseUrl, '/api/organizations', {
+      token,
+      method: 'POST',
+      body: { name: 'Nicht erlaubt', shortName: 'NE' },
+    });
+    assert.equal(organization.response.status, 403);
+
+    const unit = await request(missingPermission.baseUrl, '/api/organization-units', {
+      token,
+      method: 'POST',
+      body: { name: 'Nicht erlaubt', type: 'Ortsgruppe', parentId: 'unit-a' },
+    });
+    assert.equal(unit.response.status, 403);
+  } finally {
+    await new Promise((resolve) => missingPermission.server.close(resolve));
   }
 });
 
