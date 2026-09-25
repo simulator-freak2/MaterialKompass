@@ -83,6 +83,45 @@ void main() {
     expect(checkpoint?['locationIds'], ['loc-1', 'loc-2']);
   });
 
+  test('offline issue fails closed for safety-blocked material', () async {
+    final uri = Uri.parse(
+      'https://example.invalid/api/material?archived=false',
+    );
+    await OfflineStore.instance.cacheResponse(
+      'user-1:device-1',
+      uri,
+      200,
+      jsonEncode([
+        {
+          'id': 'material-critical',
+          'safetyCritical': true,
+          'safetyStatus': {
+            'blocked': true,
+            'reasons': ['Der Prüftermin ist überschritten.'],
+          },
+        },
+      ]),
+    );
+
+    await expectLater(
+      OfflineStore.instance.enqueue(
+        subject: 'user-1:device-1',
+        method: 'POST',
+        uri: Uri.parse(
+          'https://example.invalid/api/material/transactions/bulk',
+        ),
+        body: jsonEncode({
+          'action': 'issue',
+          'items': [
+            {'materialId': 'material-critical', 'quantity': 1},
+          ],
+        }),
+      ),
+      throwsA(isA<OfflineSafetyException>()),
+    );
+    expect(await OfflineStore.instance.commands(), isEmpty);
+  });
+
   test('cache manifest removes expired snapshots without readAll', () async {
     final uri = Uri.parse('https://example.invalid/api/material');
     await OfflineStore.instance.cacheResponse(

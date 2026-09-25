@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -12,7 +11,8 @@ import '../constants.dart';
 import '../services/app_http_client.dart';
 import '../services/authenticated_api_client.dart';
 import '../services/debouncer.dart';
-import '../services/file_save_mime_type.dart';
+import '../services/document_output_service.dart';
+import '../services/download_service.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
@@ -75,6 +75,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
   String itemType = 'individual', status = 'Lagernd', unit = 'Stück';
   String? categoryCode, subcategoryCode, locationId, stockId;
   bool reservationApprovalRequired = false;
+  bool safetyCritical = false;
 
   @override
   void initState() {
@@ -99,6 +100,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         'nextInspectionDate',
         'maintenanceIntervalMonths',
         'nextMaintenanceDate',
+        'safetyInstructions',
       ])
         name: TextEditingController(
           text: name == 'quantity' && value(name).isEmpty
@@ -123,6 +125,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         ? null
         : value('stockStructureId');
     reservationApprovalRequired = item['reservationApprovalRequired'] == true;
+    safetyCritical = item['safetyCritical'] == true;
   }
 
   @override
@@ -367,6 +370,27 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                         setState(() => reservationApprovalRequired = value),
                   ),
                 ),
+                SizedBox(
+                  width: 704,
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.health_and_safety_outlined),
+                    title: const Text('Sicherheitskritisches Material'),
+                    subtitle: const Text(
+                      'Die Ausgabe bleibt gesperrt, bis eine bestandene Prüfung und gültige Prüf- sowie Wartungstermine nachgewiesen sind.',
+                    ),
+                    value: safetyCritical,
+                    onChanged: (value) =>
+                        setState(() => safetyCritical = value),
+                  ),
+                ),
+                if (safetyCritical)
+                  _text(
+                    'safetyInstructions',
+                    'Sicherheits- und Nutzungshinweise',
+                    wide: true,
+                    lines: 3,
+                  ),
                 _text('description', 'Beschreibung', wide: true, lines: 3),
                 _text('notes', 'Notizen', wide: true, lines: 3),
               ],
@@ -418,6 +442,8 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         fields['nextMaintenanceDate']!.text,
       ),
       'reservationApprovalRequired': reservationApprovalRequired,
+      'safetyCritical': safetyCritical,
+      'safetyInstructions': fields['safetyInstructions']!.text.trim(),
     });
   }
 }
@@ -659,6 +685,7 @@ class _InventoryPageState extends State<InventoryPage> {
           stocks: stocks,
           canWrite: can('inventory.write'),
           canReportDefect: can('defects.write'),
+          canPrintDefectTemplate: can('defects.read'),
           canPrint: canPrintLabels,
         ),
       );
@@ -670,6 +697,8 @@ class _InventoryPageState extends State<InventoryPage> {
         await _addDefect(fresh);
       } else if (action == 'print') {
         await _printItems([Map<String, dynamic>.from(fresh as Map)]);
+      } else if (action == 'print-defect-template') {
+        await _printDefectTemplate(fresh);
       } else if (action?.startsWith('print-defect:') == true) {
         await _printDefect(action!.substring('print-defect:'.length));
       } else {
@@ -800,16 +829,33 @@ class _InventoryPageState extends State<InventoryPage> {
   Future<void> _printDefect(String defectId) async {
     final data = await _request('/api/defects/$defectId/print');
     if (data is! Map) return;
-    final fileName = data['fileName']?.toString() ?? 'maengelmeldung.pdf';
-    final dot = fileName.lastIndexOf('.');
-    await FileSaver.instance.saveFile(
-      name: dot > 0 ? fileName.substring(0, dot) : fileName,
-      bytes: base64Decode(data['fileBase64'].toString()),
-      fileExtension: dot > 0 ? fileName.substring(dot + 1) : 'pdf',
-      mimeType: MimeType.custom,
-      customMimeType: data['mimeType']?.toString() ?? 'application/pdf',
+    try {
+      await DocumentOutputService.instance.printPdfPayload(data);
+    } on DownloadException catch (error) {
+      if (mounted) _message(error.message);
+    }
+  }
+
+  Future<void> _printDefectTemplate(Map<String, dynamic> item) async {
+    final inventoryNumber = item['inventoryNumber']?.toString().trim() ?? '';
+    if (inventoryNumber.isEmpty) {
+      _message('Für diesen Artikel fehlt eine Inventarnummer.');
+      return;
+    }
+    final data = await _request(
+      '/api/defect-report-template?entityType=MaterialItem'
+      '&entityId=${Uri.encodeQueryComponent(item['id'].toString())}',
     );
-    if (mounted) _message('$fileName wurde zum Drucken erstellt.');
+    if (data is! Map) return;
+    if (data['inventoryNumber']?.toString() != inventoryNumber) {
+      _message('Die vorbefüllte Vorlage benötigt eine Onlineverbindung.');
+      return;
+    }
+    try {
+      await DocumentOutputService.instance.printPdfPayload(data);
+    } on DownloadException catch (error) {
+      if (mounted) _message(error.message);
+    }
   }
 
   Future<void> _archive(Map<String, dynamic> item) async {
@@ -872,9 +918,13 @@ class _InventoryPageState extends State<InventoryPage> {
         builder: (context, update) {
           final query = materialSearch.text.trim().toLowerCase();
           final availableItems = items.where((item) {
+            final safetyStatus = item['safetyStatus'];
+            final safetyBlocked =
+                safetyStatus is Map && safetyStatus['blocked'] == true;
             final eligible = action == 'issue'
                 ? (num.tryParse(item['availableQuantity'].toString()) ?? 0) >
                           0 &&
+                      !safetyBlocked &&
                       ![
                         'Defekt',
                         'In Reparatur',
@@ -1357,15 +1407,12 @@ class _InventoryPageState extends State<InventoryPage> {
       '/api/material/export/table?format=$format&archived=$archived',
     );
     if (data == null) return;
-    final fileName = data['fileName'].toString();
-    await FileSaver.instance.saveFile(
-      name: fileName.substring(0, fileName.length - format.length - 1),
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: format,
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType(format),
-    );
-    _message('Export wurde erstellt.');
+    try {
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      _message('${saved.fileName} wurde erstellt.');
+    } on DownloadException catch (error) {
+      _message(error.message);
+    }
   }
 
   Widget _filter(
@@ -1774,6 +1821,8 @@ class _InventoryPageState extends State<InventoryPage> {
                 Text(
                   'Nächste Prüfung: ${_formatDate(item['nextInspectionDate'])}',
                 ),
+                if (item['safetyCritical'] == true)
+                  _SafetyStatusNotice(item: item, compact: true),
               ],
             ),
             trailing: Row(
@@ -1847,6 +1896,95 @@ class _InventoryPageState extends State<InventoryPage> {
           ),
         );
       },
+    );
+  }
+}
+
+class _SafetyStatusNotice extends StatelessWidget {
+  const _SafetyStatusNotice({required this.item, this.compact = false});
+
+  final Map<String, dynamic> item;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final rawStatus = item['safetyStatus'];
+    final status = rawStatus is Map ? rawStatus : const <String, dynamic>{};
+    final blocked = status['blocked'] != false;
+    final reasons =
+        (status['reasons'] as List?)
+            ?.map((entry) => entry.toString())
+            .where((entry) => entry.isNotEmpty)
+            .toList() ??
+        const <String>[];
+    final label = blocked
+        ? 'Sicherheitsfreigabe gesperrt'
+        : 'Sicherheitsfreigabe gültig';
+    final details = reasons.isEmpty ? label : '$label: ${reasons.join(' ')}';
+    final color = blocked ? const Color(0xFF9A3412) : const Color(0xFF166534);
+
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Semantics(
+          label: details,
+          child: Tooltip(
+            message: details,
+            child: Chip(
+              avatar: Icon(
+                blocked
+                    ? Icons.warning_amber_rounded
+                    : Icons.verified_user_outlined,
+                color: color,
+                size: 18,
+              ),
+              label: Text(label, style: TextStyle(color: color)),
+              side: BorderSide(color: color),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Semantics(
+      container: true,
+      label: details,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              blocked
+                  ? Icons.warning_amber_rounded
+                  : Icons.verified_user_outlined,
+              color: color,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                  ),
+                  if (reasons.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(reasons.join('\n'), style: TextStyle(color: color)),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1930,7 +2068,18 @@ class _InventoryTableSource extends DataTableSource {
             '${item['availableQuantity']}/${item['quantity']} ${item['unit']}',
           ),
         ),
-        DataCell(Chip(label: Text(item['status']?.toString() ?? '-'))),
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Chip(label: Text(item['status']?.toString() ?? '-')),
+              if (item['safetyCritical'] == true) ...[
+                const SizedBox(width: 6),
+                _SafetyStatusNotice(item: item, compact: true),
+              ],
+            ],
+          ),
+        ),
         DataCell(Text(item['department']?.toString() ?? '-')),
         DataCell(Text(formatDate(item['nextInspectionDate']))),
         DataCell(
@@ -1992,6 +2141,7 @@ class InventoryDetailDialog extends StatelessWidget {
   final List<Map<String, dynamic>> categories, locations, stocks;
   final bool canWrite;
   final bool canReportDefect;
+  final bool canPrintDefectTemplate;
   final bool canPrint;
 
   const InventoryDetailDialog({
@@ -2001,6 +2151,7 @@ class InventoryDetailDialog extends StatelessWidget {
     required this.stocks,
     required this.canWrite,
     required this.canReportDefect,
+    required this.canPrintDefectTemplate,
     required this.canPrint,
     super.key,
   });
@@ -2049,6 +2200,16 @@ class InventoryDetailDialog extends StatelessWidget {
             icon: const Icon(Icons.close),
           ),
           actions: [
+            if (canPrintDefectTemplate &&
+                (item['inventoryNumber']?.toString().trim().isNotEmpty ??
+                    false))
+              TextButton.icon(
+                onPressed: () =>
+                    Navigator.pop(context, 'print-defect-template'),
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Mängelbericht'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+              ),
             if (canPrint)
               TextButton.icon(
                 onPressed: () => Navigator.pop(context, 'print'),
@@ -2110,6 +2271,10 @@ class InventoryDetailDialog extends StatelessWidget {
                           ),
                           _line('Status', item['status']),
                           _line(
+                            'Sicherheitskritisch',
+                            item['safetyCritical'] == true ? 'Ja' : 'Nein',
+                          ),
+                          _line(
                             'Bestand',
                             '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}',
                           ),
@@ -2128,6 +2293,14 @@ class InventoryDetailDialog extends StatelessWidget {
                             'Nächste Prüfung',
                             _formatDate(item['nextInspectionDate']),
                           ),
+                          if (item['safetyCritical'] == true) ...[
+                            const SizedBox(height: 12),
+                            _SafetyStatusNotice(item: item),
+                            _line(
+                              'Sicherheitshinweise',
+                              item['safetyInstructions'],
+                            ),
+                          ],
                           _line('Beschreibung', item['description']),
                           _line('Notizen', item['notes']),
                         ],

@@ -1317,6 +1317,36 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Mängel & Prüfungen',
+    title: 'Mängelbericht drucken oder herunterladen',
+    summary:
+        'Leere und mit Inventarnummer vorbereitete PDF-Formulare sicher ausgeben.',
+    icon: Icons.print_outlined,
+    readingMinutes: 3,
+    audience: 'Für alle Rollen mit Zugriff auf Mängelberichte',
+    prerequisite:
+        'Für die vorbefüllte Variante muss der Artikel eine Inventarnummer besitzen und die App online sein.',
+    steps: [
+      'Öffne „Mängel“ und wähle oben das Druckersymbol für die Mängelbericht-Vorlage.',
+      'Wähle „Leer drucken“, wenn das Formular vollständig von Hand ausgefüllt werden soll.',
+      'Wähle „Mit Inventarnummer drucken“ und anschließend Material oder Kleidung. Ausschließlich die Inventarnummer wird eingetragen; Kontakt, Datum und sämtliche Mängelfelder bleiben leer.',
+      'Bestätige Drucker, Papierformat und weitere Einstellungen im System-Druckdialog von Web, Windows, Linux, Android, iOS oder macOS.',
+      'Nutze die getrennten Aktionen „Herunterladen“, wenn die PDF stattdessen als Datei gespeichert werden soll.',
+      'Eine vorbefüllte Vorlage lässt sich außerdem direkt am Artikel in Inventar oder Kleiderkammer drucken. Bereits erfasste Mängel besitzen einen eigenen Druckbefehl für die vollständige Meldung.',
+    ],
+    tip:
+        'Die leere Vorlage steht in installierten Apps auch offline bereit. Für eine garantiert richtige Vorbefüllung wird eine Onlineverbindung verlangt.',
+    keywords: [
+      'mängelbericht',
+      'vorlage',
+      'drucken',
+      'pdf',
+      'inventarnummer',
+      'herunterladen',
+      'offline',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Mängel & Prüfungen',
     title: 'Mangel zuweisen und Frist verfolgen',
     summary:
         'Meldungen einem Konto oder einer externen Person verbindlich zuordnen.',
@@ -1523,6 +1553,34 @@ const _articles = [
             'Aufgeklapptes Beispielgerät in der MaterialKompass-Dienstgeräteverwaltung mit Aktionen für System-QR-Code, NFC-Karten, Offline-QR-Code, TOTP, Aktivierungsreset und Sperrung.',
         afterStep: 1,
       ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Dienstgeräte & Offline',
+    title: 'Download-Ordner festlegen',
+    summary: 'Das lokale Ziel für Exporte, Anhänge und Dokumente auswählen.',
+    icon: Icons.folder_outlined,
+    readingMinutes: 3,
+    audience: 'Für Nutzer installierter Apps',
+    prerequisite:
+        'Die Einstellung ist in den nativen Apps für Windows, Linux, Android, iOS und macOS verfügbar.',
+    steps: [
+      'Öffne auf dem Dashboard über das Ordnersymbol „Download-Ordner festlegen“.',
+      'Wähle einen vorhandenen Ordner, auf den die App schreiben darf. Die Auswahl wird nur auf diesem Gerät gespeichert und nicht mit dem Nutzerkonto synchronisiert.',
+      'Manuelle Exporte, Dokumente, Anhänge und heruntergeladene PDF-Berichte verwenden anschließend dieses Ziel. Gleichnamige Dateien erhalten automatisch eine laufende Ergänzung und werden nicht still überschrieben.',
+      'Wenn das Betriebssystem den Zugriff entzieht oder der Ordner nicht mehr erreichbar ist, wähle ihn bei der nächsten Ausgabe erneut aus. Die App wechselt nicht unbemerkt auf ein anderes Ziel.',
+      'Wähle „Systemstandard“, um die eigene Einstellung zu entfernen. Die App verwendet danach wieder den plattformeigenen Speicherort.',
+    ],
+    tip:
+        'Unter iOS muss der Speicherort bei jeder Datei zusätzlich im Systemdialog bestätigt werden. Im Web legt ausschließlich der Browser den Download-Ordner fest. Automatische Programmupdates bleiben immer im geschützten temporären Updateverzeichnis.',
+    keywords: [
+      'download',
+      'ordner',
+      'speichern',
+      'export',
+      'anhang',
+      'datei',
+      'systemstandard',
     ],
   ),
   _GuideArticle(

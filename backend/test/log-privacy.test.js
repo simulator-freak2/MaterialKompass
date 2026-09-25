@@ -30,9 +30,17 @@ test('dashboard only returns activity from permitted areas', async () => {
   const users = structuredClone(seedData.users);
   const restrictedUser = users.find((user) => user.id === 'user-materialwart');
   restrictedUser.permissions = ['dashboard.read', 'inventory.read'];
-  restrictedUser.roles = ['Nutzer'];
+  restrictedUser.roles = ['Inventarleser'];
+  const roles = [
+    ...structuredClone(seedData.roles),
+    {
+      id: 'role-inventarleser',
+      name: 'Inventarleser',
+      permissions: ['dashboard.read', 'inventory.read'],
+    },
+  ];
   const { server, baseUrl } = await start({
-    userData: { users, roles: seedData.roles },
+    userData: { users, roles },
   });
 
   try {

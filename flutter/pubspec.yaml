@@ -20,6 +20,7 @@ dependencies:
   package_info_plus: ^10.2.1
   path_provider: ^2.1.5
   passkeys: ^2.22.3
+  printing: ^5.15.0
   shared_preferences: ^2.5.3
 
 dev_dependencies:

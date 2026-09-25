@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:materialkompass/main.dart';
 import 'package:materialkompass/pages/categories_page.dart';
@@ -25,6 +26,23 @@ void main() {
     expect(find.text('Bestätigungs-E-Mail erneut senden'), findsOneWidget);
     expect(find.text('App herunterladen'), findsNothing);
     expect(find.textContaining('herunterladen'), findsNothing);
+  });
+
+  testWidgets('Login meets automated accessibility guidelines', (
+    WidgetTester tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final semantics = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(const MaterialKompassApp());
+      await tester.pump();
+
+      await expectLater(tester, meetsGuideline(textContrastGuideline));
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    } finally {
+      semantics.dispose();
+    }
   });
 
   testWidgets('Dashboard is usable on a narrow phone screen', (
@@ -427,6 +445,7 @@ void main() {
     );
 
     expect(find.text('Material anlegen'), findsOneWidget);
+    expect(find.text('Sicherheitskritisches Material'), findsOneWidget);
     expect(find.text('Bezeichnung *'), findsOneWidget);
     expect(find.text('Inventarnummer (optional)'), findsOneWidget);
     expect(find.text('Einzelartikel'), findsOneWidget);

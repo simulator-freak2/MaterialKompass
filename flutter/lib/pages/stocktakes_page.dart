@@ -1,14 +1,14 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../camera_scan_support.dart';
 import '../constants.dart';
-import '../services/file_save_mime_type.dart';
+import '../services/document_output_service.dart';
+import '../services/download_service.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 
 class StocktakesPage extends StatefulWidget {
@@ -797,15 +797,11 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
       '/api/stocktake-email-imports/${email['id']}/attachments/${attachment['id']}',
     );
     if (data == null) return;
-    final fileName = data['fileName'].toString();
-    final extension = fileName.contains('.') ? fileName.split('.').last : 'pdf';
-    await FileSaver.instance.saveFile(
-      name: fileName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: extension,
-      mimeType: MimeType.custom,
-      customMimeType: data['mimeType']?.toString() ?? fileMimeType(extension),
-    );
+    try {
+      await DocumentOutputService.instance.savePayload(data);
+    } on DownloadException catch (error) {
+      message(error.message, error: true);
+    }
   }
 
   Future<void> _markEmailProcessed(Map<String, dynamic> email) async {
@@ -1222,14 +1218,12 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
       '/api/stocktakes/${widget.stocktakeId}/export?format=$format&blank=$blank&differences=$differences',
     );
     if (data == null) return;
-    await FileSaver.instance.saveFile(
-      name: data['fileName'].toString().replaceFirst(RegExp(r'\.[^.]+$'), ''),
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: format,
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType(format),
-    );
-    message('Datei wurde erstellt.');
+    try {
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      message('${saved.fileName} wurde erstellt.');
+    } on DownloadException catch (error) {
+      message(error.message, error: true);
+    }
   }
 
   Future<void> _import() async {

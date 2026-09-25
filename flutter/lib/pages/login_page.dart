@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../services/passkey_service.dart';
+import '../widgets/password_login_form.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
 import 'dashboard_page.dart';
@@ -394,173 +395,138 @@ class _LoginPageState extends State<LoginPage> {
                   child: Container(
                     width: 380,
                     padding: const EdgeInsets.all(24),
-                    child: AutofillGroup(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Image.asset(
-                            'assets/branding/materialkompass_logo_mit_schriftzug.png',
-                            height: 92,
-                            fit: BoxFit.contain,
-                            filterQuality: FilterQuality.high,
-                            semanticLabel: 'MaterialKompass',
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          'assets/branding/materialkompass_logo_mit_schriftzug.png',
+                          height: 92,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                          semanticLabel: 'MaterialKompass',
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'MaterialKompass',
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Interne Materialverwaltung',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'MaterialKompass',
-                            style: Theme.of(context).textTheme.headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Interne Materialverwaltung',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: emailController,
-                            autofillHints: const [AutofillHints.username],
-                            autocorrect: false,
-                            enableSuggestions: false,
-                            keyboardType: TextInputType.emailAddress,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'Nutzername oder E-Mail',
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: passwordController,
-                            obscureText: true,
-                            autofillHints: const [AutofillHints.password],
-                            autocorrect: false,
-                            enableSuggestions: false,
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: (_) {
-                              if (!loading) login();
-                            },
-                            decoration: const InputDecoration(
-                              labelText: 'Passwort',
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          ElevatedButton(
-                            onPressed: loading ? null : login,
-                            child: loading
-                                ? CircularProgressIndicator(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onPrimary,
-                                  )
-                                : const Text('Anmelden'),
-                          ),
-                          if (PasskeyService.platformSupported) ...[
-                            const SizedBox(height: 8),
-                            FilledButton.tonalIcon(
-                              onPressed: loading ? null : loginWithPasskey,
-                              icon: const Icon(Icons.key_outlined),
-                              label: const Text('Mit Passkey anmelden'),
-                            ),
-                          ],
-                          TextButton(
-                            onPressed: loading ? null : requestPasswordReset,
-                            child: const Text('Passwort vergessen?'),
-                          ),
-                          TextButton(
-                            onPressed: loading ? null : resendEmailVerification,
-                            child: const Text(
-                              'Bestätigungs-E-Mail erneut senden',
-                            ),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: loading ? null : loginWithQrCode,
-                            icon: const Icon(Icons.qr_code_scanner),
-                            label: const Text('Mit QR-Code anmelden'),
-                          ),
-                          if (!kIsWeb) ...[
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              onPressed: loading
-                                  ? null
-                                  : () => Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            const ServiceDeviceActivationPage(),
-                                      ),
-                                    ),
-                              icon: const Icon(Icons.devices_other),
-                              label: const Text(
-                                'Dienstliches Gerät aktivieren',
-                              ),
-                            ),
-                          ],
-                          if (kIsWeb) ...[
-                            const Divider(height: 32),
-                            const Text(
-                              'App herunterladen',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              downloadsLoading
-                                  ? 'Verfügbarkeit wird geprüft …'
-                                  : 'Für Windows, macOS, Linux, Android und iOS',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              alignment: WrapAlignment.center,
-                              spacing: 12,
-                              runSpacing: 8,
-                              children: downloads.map((download) {
-                                final platform =
-                                    download['platform']?.toString() ?? '';
-                                final available = download['available'] == true;
-                                return OutlinedButton.icon(
-                                  onPressed: available
-                                      ? () => downloadApp(download)
-                                      : null,
-                                  icon: Icon(_downloadIcon(platform)),
-                                  label: Text(
-                                    available
-                                        ? '${download['label']} herunterladen'
-                                        : '${download['label']} nicht verfügbar',
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ],
-                          const Divider(height: 32),
-                          Wrap(
-                            alignment: WrapAlignment.center,
-                            children: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => const LegalPage(),
-                                  ),
-                                ),
-                                child: const Text('Anbieterangaben'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const LegalPage(initialTab: 1),
-                                  ),
-                                ),
-                                child: const Text('Datenschutz'),
-                              ),
-                            ],
+                        ),
+                        const SizedBox(height: 16),
+                        PasswordLoginForm(
+                          usernameController: emailController,
+                          passwordController: passwordController,
+                          loading: loading,
+                          onSubmitted: login,
+                        ),
+                        if (PasskeyService.platformSupported) ...[
+                          const SizedBox(height: 8),
+                          FilledButton.tonalIcon(
+                            onPressed: loading ? null : loginWithPasskey,
+                            icon: const Icon(Icons.key_outlined),
+                            label: const Text('Mit Passkey anmelden'),
                           ),
                         ],
-                      ),
+                        TextButton(
+                          onPressed: loading ? null : requestPasswordReset,
+                          child: const Text('Passwort vergessen?'),
+                        ),
+                        TextButton(
+                          onPressed: loading ? null : resendEmailVerification,
+                          child: const Text(
+                            'Bestätigungs-E-Mail erneut senden',
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: loading ? null : loginWithQrCode,
+                          icon: const Icon(Icons.qr_code_scanner),
+                          label: const Text('Mit QR-Code anmelden'),
+                        ),
+                        if (!kIsWeb) ...[
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: loading
+                                ? null
+                                : () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const ServiceDeviceActivationPage(),
+                                    ),
+                                  ),
+                            icon: const Icon(Icons.devices_other),
+                            label: const Text('Dienstliches Gerät aktivieren'),
+                          ),
+                        ],
+                        if (kIsWeb) ...[
+                          const Divider(height: 32),
+                          const Text(
+                            'App herunterladen',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            downloadsLoading
+                                ? 'Verfügbarkeit wird geprüft …'
+                                : 'Für Windows, macOS, Linux, Android und iOS',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 12,
+                            runSpacing: 8,
+                            children: downloads.map((download) {
+                              final platform =
+                                  download['platform']?.toString() ?? '';
+                              final available = download['available'] == true;
+                              return OutlinedButton.icon(
+                                onPressed: available
+                                    ? () => downloadApp(download)
+                                    : null,
+                                icon: Icon(_downloadIcon(platform)),
+                                label: Text(
+                                  available
+                                      ? '${download['label']} herunterladen'
+                                      : '${download['label']} nicht verfügbar',
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                        const Divider(height: 32),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const LegalPage(),
+                                ),
+                              ),
+                              child: const Text('Anbieterangaben'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const LegalPage(initialTab: 1),
+                                ),
+                              ),
+                              child: const Text('Datenschutz'),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),

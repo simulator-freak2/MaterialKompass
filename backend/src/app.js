@@ -46,6 +46,19 @@ const { legalInformation } = require('./legal-config');
 const { inspectZipArchive, neutralizeSpreadsheetCell } = require('./security-utils');
 const { configurePersistence } = require('./persistence-coordinator');
 const { createRateLimiter } = require('./request-rate-limiter');
+const { registerDataBackupRoutes } = require('./data-backup');
+const {
+  normalizeTenancyData,
+  wrapTenantCollections,
+  contextForMembership,
+  currentTenant,
+  runWithTenant,
+  runAsSystem,
+  rawCollection,
+  DEFAULT_ORGANIZATION_ID,
+  DEFAULT_UNIT_ID,
+  registerTenancyRoutes,
+} = require('./tenancy');
 const {
   StorageValidationError,
   buildingInput,
@@ -92,6 +105,8 @@ const MAX_AUDIT_RECORDS = 100_000;
 const MAX_EXPORT_RECORDS = 10_000;
 const DEFAULT_JSON_BODY_LIMIT = '1mb';
 const LARGE_JSON_BODY_LIMIT = '12mb';
+const BACKUP_JSON_BODY_LIMIT = '128mb';
+const BACKUP_IMPORT_ROUTE = '/api/system/backup/import';
 const LARGE_BODY_ROUTES = [
   /^\/api\/clothing\/import$/,
   /^\/api\/material\/import$/,
@@ -100,6 +115,7 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/defects\/[^/]+\/images$/,
 ];
 const PERSISTED_COLLECTIONS = Object.freeze([
+  'organizations', 'organizationUnits', 'memberships',
   'permissions', 'departments', 'locations', 'shelves', 'storageLevels',
   'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
@@ -196,7 +212,13 @@ function createApp(options = {}) {
   const largeJsonParser = express.json({
     limit: process.env.LARGE_JSON_BODY_LIMIT || LARGE_JSON_BODY_LIMIT,
   });
+  const backupJsonParser = express.json({
+    limit: process.env.BACKUP_JSON_BODY_LIMIT || BACKUP_JSON_BODY_LIMIT,
+  });
   app.use((req, res, next) => {
+    // The potentially large backup body is parsed on the route only after
+    // authentication, so anonymous requests cannot force a 128 MB JSON parse.
+    if (req.path === BACKUP_IMPORT_ROUTE) return next();
     const allowsLargeBody = LARGE_BODY_ROUTES.some((pattern) => pattern.test(req.path));
     return (allowsLargeBody ? largeJsonParser : standardJsonParser)(req, res, next);
   });
@@ -210,21 +232,24 @@ function createApp(options = {}) {
   });
   app.use((req, res, next) => {
     if (!req.body || typeof req.body !== 'object') return next();
+    const backupImport = req.path === BACKUP_IMPORT_ROUTE;
+    const maximumNodes = backupImport ? 1_000_000 : 10_000;
+    const maximumArrayLength = backupImport ? MAX_PRIMARY_RECORDS : 2_000;
     const stack = [{ value: req.body, depth: 0, key: '' }];
     let nodes = 0;
     while (stack.length) {
       const { value, depth, key } = stack.pop();
       nodes += 1;
-      if (nodes > 10_000 || depth > 20) {
+      if (nodes > maximumNodes || depth > 20) {
         return res.status(413).json({ error: 'Der Request ist zu tief oder zu komplex.' });
       }
       if (typeof value === 'string') {
-        const maximum = key === 'fileBase64' ? 12_000_000 : 10_000;
+        const maximum = key === 'fileBase64' || backupImport ? 128_000_000 : 10_000;
         if (value.length > maximum) {
           return res.status(413).json({ error: `Das Feld ${key || '(unbekannt)'} ist zu groß.` });
         }
       } else if (Array.isArray(value)) {
-        if (value.length > 2_000) {
+        if (value.length > maximumArrayLength) {
           return res.status(413).json({ error: 'Eine Liste enthält zu viele Einträge.' });
         }
         value.forEach((entry) => stack.push({ value: entry, depth: depth + 1, key }));
@@ -244,18 +269,28 @@ function createApp(options = {}) {
     appData.users = structuredClone(options.userData.users);
     appData.roles = structuredClone(options.userData.roles);
     appData.passkeys = structuredClone(options.userData.passkeys || []);
+    if (options.userData.organizations) {
+      appData.organizations = structuredClone(options.userData.organizations);
+      appData.organizationUnits = structuredClone(options.userData.organizationUnits || []);
+      appData.memberships = structuredClone(options.userData.memberships || []);
+    }
   } else if (process.env.NODE_ENV === 'production') {
     // Demo accounts have documented development passwords and must never be
     // exposed by a production instance that runs without a database.
     appData.users = appData.users.filter((user) => user.roles?.includes('Admin'));
   }
+  const tenancyData = normalizeTenancyData(appData);
+  ensureStorageHierarchy(appData);
+  wrapTenantCollections(appData);
+  app.locals.appData = appData;
   const roles = appData.roles;
   const permissions = appData.permissions;
   const users = appData.users;
   const departments = (appData.departments ||= []);
-  const {
-    locations, shelves, storageLevels, positions: stockStructures,
-  } = ensureStorageHierarchy(appData);
+  const locations = appData.locations;
+  const shelves = appData.shelves;
+  const storageLevels = appData.storageLevels;
+  const stockStructures = appData.stockStructures;
   const categories = appData.categories;
   const materials = appData.materials;
   const deletedMaterials = (appData.deletedMaterials ||= []);
@@ -287,6 +322,28 @@ function createApp(options = {}) {
   const stocktakes = (appData.stocktakes ||= []);
   const stocktakeEmailImports = (appData.stocktakeEmailImports ||= []);
   const procurementEmailImports = (appData.procurementEmailImports ||= []);
+  const organizations = tenancyData.organizations;
+  const organizationUnits = tenancyData.organizationUnits;
+  const memberships = tenancyData.memberships;
+  app.locals.runAsSystem = runAsSystem;
+  app.locals.runInOrganization = (organizationId, unitId, callback) => {
+    const organization = organizations.find((entry) =>
+      entry.id === organizationId && entry.status === 'active'
+    );
+    const unit = organizationUnits.find((entry) =>
+      entry.id === unitId && entry.organizationId === organizationId && entry.status === 'active'
+    ) || organizationUnits.find((entry) =>
+      entry.organizationId === organizationId && entry.parentId === null && entry.status === 'active'
+    );
+    if (!organization || !unit) throw new Error('Organisation für Hintergrundprozess nicht gefunden.');
+    return runWithTenant({
+      organizationId,
+      unitId: unit.id,
+      allowedUnitIds: new Set([unit.id]),
+      roles: [], permissions: [], departmentIds: [], membershipId: null,
+      organizationAdmin: false, system: false,
+    }, callback);
+  };
   const defaultDownloadsDirectory = path.resolve(__dirname, '..', 'downloads');
   const downloadSources = options.downloads || {
     windows: {
@@ -340,20 +397,22 @@ function createApp(options = {}) {
   }
 
   async function applyDataRetentionPolicy() {
-    const auditDays = Number(process.env.RETENTION_AUDIT_DAYS || 1095);
-    const exportDays = Number(process.env.RETENTION_EXPORT_LOG_DAYS || 365);
-    const notificationDays = Number(process.env.RETENTION_NOTIFICATION_DAYS || 365);
-    const qrDays = Number(process.env.RETENTION_EXPIRED_QR_DAYS || 30);
-    removeOlderThan(auditLogs, ['timestamp', 'createdAt'], auditDays);
-    removeOlderThan(exportLogs, ['createdAt', 'timestamp'], exportDays);
-    removeOlderThan(notifications, ['createdAt', 'timestamp'], notificationDays);
-    const expiredCutoff = Date.now() - qrDays * 24 * 60 * 60 * 1000;
-    for (let index = qrLoginCredentials.length - 1; index >= 0; index -= 1) {
-      const expiry = new Date(qrLoginCredentials[index].expiresAt || 0).getTime();
-      if (Number.isFinite(expiry) && expiry > 0 && expiry < expiredCutoff) {
-        qrLoginCredentials.splice(index, 1);
+    return runAsSystem(() => {
+      const auditDays = Number(process.env.RETENTION_AUDIT_DAYS || 1095);
+      const exportDays = Number(process.env.RETENTION_EXPORT_LOG_DAYS || 365);
+      const notificationDays = Number(process.env.RETENTION_NOTIFICATION_DAYS || 365);
+      const qrDays = Number(process.env.RETENTION_EXPIRED_QR_DAYS || 30);
+      removeOlderThan(auditLogs, ['timestamp', 'createdAt'], auditDays);
+      removeOlderThan(exportLogs, ['createdAt', 'timestamp'], exportDays);
+      removeOlderThan(notifications, ['createdAt', 'timestamp'], notificationDays);
+      const expiredCutoff = Date.now() - qrDays * 24 * 60 * 60 * 1000;
+      for (let index = qrLoginCredentials.length - 1; index >= 0; index -= 1) {
+        const expiry = new Date(qrLoginCredentials[index].expiresAt || 0).getTime();
+        if (Number.isFinite(expiry) && expiry > 0 && expiry < expiredCutoff) {
+          qrLoginCredentials.splice(index, 1);
+        }
       }
-    }
+    });
   }
   app.locals.applyDataRetentionPolicy = applyDataRetentionPolicy;
 
@@ -439,15 +498,54 @@ function createApp(options = {}) {
   });
 
   function securityVersion(user) {
+    const identity = user?.__identity || user;
     return createHash('sha256').update(JSON.stringify([
-      user.passwordHash, user.active, user.emailVerifiedAt, user.roles, user.permissions,
-      user.mfaVersion || 0, user.mfaRequired === true, Boolean(user.mfaEnabledAt),
-      Number(user.passkeyCount || 0),
+      identity.passwordHash, identity.active, identity.emailVerifiedAt,
+      identity.mfaVersion || 0, identity.mfaRequired === true, Boolean(identity.mfaEnabledAt),
+      Number(identity.passkeyCount || 0),
     ])).digest('base64url').slice(0, 22);
   }
 
+  function defaultTenantContext(user, requestedOrganizationId, requestedUnitId) {
+    const membership = memberships.find((entry) => entry.userId === user.id
+      && entry.status === 'active'
+      && (!requestedOrganizationId || entry.organizationId === requestedOrganizationId));
+    return contextForMembership({
+      membership,
+      units: organizationUnits,
+      roles,
+      activeUnitId: requestedUnitId,
+    });
+  }
+
+  function sessionUser(identity, tenant) {
+    return new Proxy(identity, {
+      get(target, property) {
+        if (property === '__identity') return target;
+        if (property === 'roles') return tenant.roles;
+        if (property === 'permissions') return tenant.permissions;
+        if (property === 'departmentIds') return tenant.departmentIds;
+        return target[property];
+      },
+      set(target, property, value) {
+        target[property] = value;
+        return true;
+      },
+    });
+  }
+
   function createToken(user, context = {}) {
-    const payload = { sub: user.id, sv: securityVersion(user) };
+    const activeTenant = currentTenant()
+      || (context.organizationId ? {
+        organizationId: context.organizationId,
+        unitId: context.unitId,
+      } : defaultTenantContext(user.__identity || user));
+    const payload = {
+      sub: user.id,
+      sv: securityVersion(user),
+      oid: activeTenant?.organizationId,
+      ouid: activeTenant?.unitId,
+    };
     if (context.mfaSetupRequired) payload.ms = true;
     if (context.deviceId) {
       const device = serviceDevices.find((entry) => entry.id === context.deviceId);
@@ -483,7 +581,8 @@ function createApp(options = {}) {
       req.sessionType = payload.st || 'normal';
       req.mfaSetupRequired = payload.ms === true;
       req.device = payload.did
-        ? serviceDevices.find((entry) => entry.id === payload.did) || null
+        ? rawCollection(serviceDevices).find((entry) => entry.id === payload.did
+          && entry.organizationId === payload.oid) || null
         : null;
       if (payload.did) {
         if (!req.device || !req.device.active || payload.dsv !== req.device.securityVersion
@@ -492,6 +591,14 @@ function createApp(options = {}) {
         }
       }
       if (req.sessionType === DEVICE_SESSION) {
+        const deviceTenant = {
+          organizationId: req.device.organizationId,
+          unitId: req.device.unitId,
+          allowedUnitIds: new Set([req.device.unitId]),
+          roles: [], permissions: [], departmentIds: [],
+          membershipId: null, organizationAdmin: false, system: false,
+        };
+        req.tenant = deviceTenant;
         req.user = {
           id: `device-system:${req.device.id}`,
           username: `Gerät ${req.device.name}`,
@@ -502,17 +609,25 @@ function createApp(options = {}) {
           active: true,
           emailVerifiedAt: req.device.activatedAt,
         };
-        return next();
+        return runWithTenant(deviceTenant, next);
       }
-      req.user = users.find((u) => u.id === payload.sub) || null;
-      if (!req.user) {
+      const identity = users.find((u) => u.id === payload.sub) || null;
+      if (!identity) {
         return res.status(401).json({ error: 'Unknown user' });
       }
-      if (!req.user.active) return res.status(403).json({ error: 'Account deaktiviert.' });
-      if (!req.user.emailVerifiedAt) return res.status(403).json({ error: 'E-Mail-Adresse noch nicht bestätigt.' });
-      if (payload.sv !== securityVersion(req.user)) {
+      if (!identity.active) return res.status(403).json({ error: 'Account deaktiviert.' });
+      if (!identity.emailVerifiedAt) return res.status(403).json({ error: 'E-Mail-Adresse noch nicht bestätigt.' });
+      if (payload.sv !== securityVersion(identity)) {
         return res.status(401).json({ error: 'Invalid token' });
       }
+      const tenant = defaultTenantContext(identity, payload.oid, payload.ouid);
+      if (!tenant || !organizations.some((entry) =>
+        entry.id === tenant.organizationId && entry.status === 'active')) {
+        return res.status(403).json({ error: 'Die Organisationszuordnung ist nicht aktiv.' });
+      }
+      req.identity = identity;
+      req.tenant = tenant;
+      req.user = sessionUser(identity, tenant);
       if (req.sessionType !== 'normal' && req.sessionType !== PERSONAL_DEVICE_SESSION) {
         return res.status(401).json({ error: 'Invalid token' });
       }
@@ -525,7 +640,7 @@ function createApp(options = {}) {
           mfaSetupRequired: true,
         });
       }
-      next();
+      return runWithTenant(tenant, next);
     } catch (error) {
       return res.status(401).json({ error: 'Invalid token' });
     }
@@ -673,8 +788,23 @@ function createApp(options = {}) {
     );
     const publicActor = matchedUser?.username
       || (String(actor).includes('@') ? 'unbekannt' : actor);
-    auditLogs.push({
+    const activeTenant = currentTenant();
+    const actorMembership = matchedUser && memberships.find((entry) =>
+      entry.userId === matchedUser.id && entry.status === 'active'
+    );
+    const organizationId = activeTenant?.organizationId
+      || actorMembership?.organizationId
+      || organizations[0]?.id
+      || DEFAULT_ORGANIZATION_ID;
+    const unitId = activeTenant?.unitId
+      || actorMembership?.defaultUnitId
+      || organizationUnits.find((entry) => entry.organizationId === organizationId
+        && entry.parentId === null)?.id
+      || DEFAULT_UNIT_ID;
+    rawCollection(auditLogs).push({
       id: `audit-${randomUUID()}`,
+      organizationId,
+      unitId,
       timestamp: new Date().toISOString(),
       actor: publicActor,
       action,
@@ -685,6 +815,29 @@ function createApp(options = {}) {
       auditLogs.splice(0, auditLogs.length - MAX_AUDIT_RECORDS);
     }
   }
+
+  registerTenancyRoutes({
+    app,
+    organizations,
+    units: organizationUnits,
+    memberships,
+    users,
+    roles,
+    authMiddleware,
+    requirePermission,
+    logEvent,
+    deleteOrganizationData: async (organizationId, unitId) => {
+      for (const name of PERSISTED_COLLECTIONS) {
+        const collection = rawCollection(appData[name]);
+        if (!Array.isArray(collection)) continue;
+        for (let index = collection.length - 1; index >= 0; index -= 1) {
+          if (collection[index]?.organizationId === organizationId
+            && collection[index]?.unitId === unitId) collection.splice(index, 1);
+        }
+      }
+      await app.locals.persistData();
+    },
+  });
 
   const activityAreas = Object.freeze({
     Location: { permission: 'locations.read', label: 'Lagerorte' },
@@ -1069,7 +1222,8 @@ function createApp(options = {}) {
   });
 
   const userManagement = registerUserRoutes({
-    app, users, roles, permissions, departments, authMiddleware, requirePermission, logEvent,
+    app, users, roles, permissions, departments, memberships, organizationUnits,
+    authMiddleware, requirePermission, logEvent,
     departmentReferences: procurementRequests,
     authRateLimit,
     skipEmailVerification: options.skipEmailVerification === true,
@@ -1137,6 +1291,25 @@ function createApp(options = {}) {
           || (process.env.NODE_ENV === 'production' ? '' : '0'.repeat(64)),
       }),
     authRateLimit,
+  });
+
+  registerDataBackupRoutes({
+    app,
+    appData,
+    collectionNames: PERSISTED_COLLECTIONS,
+    applicationVersion: version,
+    authMiddleware,
+    importBodyParser: backupJsonParser,
+    dataStore: options.dataStore,
+    persistData: () => app.locals.persistData(),
+    verifyReauthentication: async (user, body) => {
+      if (!await bcrypt.compare(String(body.currentPassword || ''), user.passwordHash)) {
+        return false;
+      }
+      if (!user.mfaEnabledAt) return true;
+      const verification = await userMfa.verifyUserCode(user, body.mfaCode);
+      return verification.valid === true;
+    },
   });
 
   app.get('/health', (req, res) => res.json({
@@ -1317,10 +1490,49 @@ function createApp(options = {}) {
     logEvent,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
     userMfa,
+    tenantForUser: (user, organizationId, unitId) =>
+      defaultTenantContext(user.__identity || user, organizationId, unitId),
   });
 
   app.get('/api/auth/me', authMiddleware, (req, res) => {
-    res.json({ user: publicUser(req.user) });
+    const organization = organizations.find((entry) => entry.id === req.tenant.organizationId);
+    const unit = organizationUnits.find((entry) => entry.id === req.tenant.unitId);
+    res.json({
+      user: publicUser(req.user),
+      context: {
+        organization: organization ? {
+          id: organization.id,
+          name: organization.name,
+          shortName: organization.shortName,
+          branding: organization.branding || {},
+        } : null,
+        unit: unit ? {
+          id: unit.id, name: unit.name, type: unit.type, parentId: unit.parentId,
+        } : null,
+      },
+    });
+  });
+
+  app.post('/api/auth/context', authMiddleware, (req, res) => {
+    const identity = req.identity || req.user.__identity || req.user;
+    const tenant = defaultTenantContext(
+      identity,
+      String(req.body.organizationId || ''),
+      String(req.body.unitId || ''),
+    );
+    if (!tenant) return res.status(403).json({ error: 'Auf diesen Organisationsbereich besteht kein Zugriff.' });
+    const organization = organizations.find((entry) =>
+      entry.id === tenant.organizationId && entry.status === 'active'
+    );
+    if (!organization) return res.status(403).json({ error: 'Die Organisation ist nicht aktiv.' });
+    return runWithTenant(tenant, () => res.json({
+      token: createToken(identity, {
+        organizationId: tenant.organizationId,
+        unitId: tenant.unitId,
+      }),
+      expiresIn: 3600,
+      user: publicUser(sessionUser(identity, tenant)),
+    }));
   });
 
   const stocktakeReferences = (field, id) => stocktakes.some((stocktake) => {
@@ -1711,7 +1923,15 @@ function createApp(options = {}) {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(id)) {
       return res.status(400).json({ error: 'invalid category id' });
     }
-    if (categories.some((category) => category.id.toLowerCase() === id.toLowerCase())) {
+    const scope = req.body.scope === 'unit' || req.body.scope === 'organization'
+      ? req.body.scope
+      : (req.tenant.organizationAdmin ? 'organization' : 'unit');
+    if (scope === 'organization' && !req.tenant.organizationAdmin) {
+      return res.status(403).json({ error: 'Zentrale Kategorien dürfen nur Organisationsadministratoren anlegen.' });
+    }
+    if (rawCollection(categories).some((category) =>
+      category.organizationId === req.tenant.organizationId
+      && category.id.toLowerCase() === id.toLowerCase())) {
       return res.status(409).json({ error: 'category id already exists' });
     }
     const parent = parentId ? categories.find((category) => category.id === parentId) : null;
@@ -1728,6 +1948,8 @@ function createApp(options = {}) {
       id,
       name,
       parentId,
+      scope,
+      unitId: scope === 'unit' ? req.tenant.unitId : null,
       useInWardrobe: parentId ? false : req.body.useInWardrobe === true,
       ...categorySettings(
         req.body,
@@ -1745,6 +1967,9 @@ function createApp(options = {}) {
     const category = categories.find((entry) => entry.id === req.params.id);
     if (!category) {
       return res.status(404).json({ error: 'Category not found' });
+    }
+    if (category.scope !== 'unit' && !req.tenant.organizationAdmin) {
+      return res.status(403).json({ error: 'Zentrale Kategorien dürfen nur Organisationsadministratoren ändern.' });
     }
     const name = String(req.body.name || '').trim();
     const parentId = String(req.body.parentId || '').trim() || null;
@@ -1795,6 +2020,9 @@ function createApp(options = {}) {
     const index = categories.findIndex((entry) => entry.id === req.params.id);
     if (index === -1) {
       return res.status(404).json({ error: 'Category not found' });
+    }
+    if (categories[index].scope !== 'unit' && !req.tenant.organizationAdmin) {
+      return res.status(403).json({ error: 'Zentrale Kategorien dürfen nur Organisationsadministratoren löschen.' });
     }
     if (categories.some((entry) => entry.parentId === req.params.id)) {
       return res.status(409).json({ error: 'Category has subcategories' });
@@ -2453,6 +2681,8 @@ function createApp(options = {}) {
     securityVersion,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
     userMfa,
+    tenantForUser: (user, organizationId, unitId) =>
+      defaultTenantContext(user.__identity || user, organizationId, unitId),
   });
 
   registerProcurementRoutes({

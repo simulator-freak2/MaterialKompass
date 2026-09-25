@@ -10,6 +10,7 @@ import '../services/app_http_client.dart';
 import '../services/offline_http.dart' as offline_transport;
 import '../services/offline_session_service.dart';
 import '../services/offline_store.dart';
+import '../widgets/download_folder_dialog.dart';
 import '../widgets/stat_card.dart';
 import 'categories_page.dart' deferred as categories_page;
 import 'defects_page.dart' deferred as defects_page;
@@ -47,26 +48,27 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage>
     with WidgetsBindingObserver {
   late Future<Map<String, dynamic>> _dashboardFuture;
+  late String _token;
   Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
+    _token = widget.token;
     WidgetsBinding.instance.addObserver(this);
     unawaited(OfflineStore.instance.restoreStatus());
     _dashboardFuture = _loadDashboard();
     _syncTimer = Timer.periodic(const Duration(minutes: 1), (_) => _sync());
   }
 
-  Future<void> _sync() => offline_transport.flush(
-    headers: {'Authorization': 'Bearer ${widget.token}'},
-  );
+  Future<void> _sync() =>
+      offline_transport.flush(headers: {'Authorization': 'Bearer $_token'});
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_sync());
-      unawaited(OfflineSessionService.prepare(widget.token));
+      unawaited(OfflineSessionService.prepare(_token));
     }
   }
 
@@ -82,8 +84,9 @@ class _DashboardPageState extends State<DashboardPage>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.token != widget.token ||
         oldWidget.dashboardLoader != widget.dashboardLoader) {
+      _token = widget.token;
       _dashboardFuture = _loadDashboard();
-      unawaited(OfflineSessionService.prepare(widget.token));
+      unawaited(OfflineSessionService.prepare(_token));
     }
   }
 
@@ -95,25 +98,27 @@ class _DashboardPageState extends State<DashboardPage>
     final responses = await Future.wait([
       AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/dashboard'),
-        headers: {'Authorization': 'Bearer ${widget.token}'},
+        headers: {'Authorization': 'Bearer $_token'},
       ),
       AppHttpClient.get(
         Uri.parse('$apiBaseUrl/api/auth/me'),
-        headers: {'Authorization': 'Bearer ${widget.token}'},
+        headers: {'Authorization': 'Bearer $_token'},
       ),
     ]);
     if (responses.any((response) => response.statusCode != 200)) {
       throw Exception('Failed to load dashboard');
     }
     final dashboard = jsonDecode(responses[0].body) as Map<String, dynamic>;
-    dashboard['currentUser'] = jsonDecode(responses[1].body)['user'];
+    final me = jsonDecode(responses[1].body) as Map<String, dynamic>;
+    dashboard['currentUser'] = me['user'];
+    dashboard['context'] = me['context'];
     return dashboard;
   }
 
   Future<void> _logout(BuildContext context) async {
     final store = OfflineStore.instance;
     final subject = store.subjectFromHeaders({
-      'Authorization': 'Bearer ${widget.token}',
+      'Authorization': 'Bearer $_token',
     });
     final pending = (await store.commands())
         .where((entry) => entry.subject == subject)
@@ -187,6 +192,135 @@ class _DashboardPageState extends State<DashboardPage>
     await future;
   }
 
+  Future<void> _showOrganizationContext() async {
+    final store = OfflineStore.instance;
+    final currentSubject = store.subjectFromHeaders({
+      'Authorization': 'Bearer $_token',
+    });
+    final pending = (await store.commands())
+        .where((entry) => entry.subject == currentSubject)
+        .length;
+    if (!mounted) return;
+    if (pending > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Synchronisieren oder verwerfen Sie zuerst die ausstehenden Änderungen.',
+          ),
+        ),
+      );
+      return;
+    }
+    try {
+      final headers = {'Authorization': 'Bearer $_token'};
+      final responses = await Future.wait([
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/organizations'),
+          headers: headers,
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/organization-units'),
+          headers: headers,
+        ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/auth/me'),
+          headers: headers,
+        ),
+      ]);
+      if (responses.any((response) => response.statusCode != 200)) {
+        throw Exception('Organisationsbereiche konnten nicht geladen werden.');
+      }
+      final organizations = (jsonDecode(responses[0].body) as List)
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .toList();
+      final units = (jsonDecode(responses[1].body) as List)
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .toList();
+      final me = Map<String, dynamic>.from(
+        jsonDecode(responses[2].body) as Map,
+      );
+      final activeContext = Map<String, dynamic>.from(
+        me['context'] as Map? ?? const {},
+      );
+      final activeOrganization = Map<String, dynamic>.from(
+        activeContext['organization'] as Map? ?? const {},
+      );
+      if (!mounted) return;
+      final selection = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Organisation und Einheit wechseln'),
+          content: SizedBox(
+            width: 560,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final organization in organizations) ...[
+                  ListTile(
+                    leading: const Icon(Icons.corporate_fare_outlined),
+                    title: Text(organization['name']?.toString() ?? ''),
+                    subtitle: Text(
+                      organization['id'] == activeOrganization['id']
+                          ? 'Aktive Organisation'
+                          : 'Zur Standard-Einheit wechseln',
+                    ),
+                    onTap: () => Navigator.pop(dialogContext, {
+                      'organizationId': organization['id'].toString(),
+                    }),
+                  ),
+                  if (organization['id'] == activeOrganization['id'])
+                    for (final unit in units)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 24),
+                        child: ListTile(
+                          leading: const Icon(Icons.account_tree_outlined),
+                          title: Text(unit['name']?.toString() ?? ''),
+                          subtitle: Text(unit['type']?.toString() ?? ''),
+                          onTap: () => Navigator.pop(dialogContext, {
+                            'organizationId': organization['id'].toString(),
+                            'unitId': unit['id'].toString(),
+                          }),
+                        ),
+                      ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+          ],
+        ),
+      );
+      if (selection == null || !mounted) return;
+      final response = await AppHttpClient.post(
+        Uri.parse('$apiBaseUrl/api/auth/context'),
+        headers: {...headers, 'Content-Type': 'application/json'},
+        body: jsonEncode(selection),
+      );
+      final result = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode != 200 || result['token'] == null) {
+        throw Exception(
+          result['error']?.toString() ??
+              'Der Bereich konnte nicht gewechselt werden.',
+        );
+      }
+      _token = result['token'].toString();
+      await OfflineSessionService.prepare(_token);
+      if (!mounted) return;
+      setState(() => _dashboardFuture = _loadDashboard());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    }
+  }
+
   Future<void> _loadAndOpen(
     Future<void> Function() loadLibrary,
     Widget Function() pageBuilder,
@@ -224,7 +358,7 @@ class _DashboardPageState extends State<DashboardPage>
 
   Future<void> _showOfflineStatus() async {
     final store = OfflineStore.instance;
-    final headers = {'Authorization': 'Bearer ${widget.token}'};
+    final headers = {'Authorization': 'Bearer $_token'};
     final subject = store.subjectFromHeaders(headers);
     final commands = (await store.commands())
         .where((entry) => entry.subject == subject)
@@ -301,7 +435,7 @@ class _DashboardPageState extends State<DashboardPage>
     final settings = await store.settings();
     final response = await AppHttpClient.get(
       Uri.parse('$apiBaseUrl/api/locations'),
-      headers: {'Authorization': 'Bearer ${widget.token}'},
+      headers: {'Authorization': 'Bearer $_token'},
     );
     final locations = response.statusCode == 200
         ? (jsonDecode(response.body) as List)
@@ -397,10 +531,7 @@ class _DashboardPageState extends State<DashboardPage>
       'largeFileBytes': largeFileMb * 1024 * 1024,
       'locationIds': selected.toList(),
     });
-    await OfflineSessionService.prepare(
-      widget.token,
-      locationIds: selected.toList(),
-    );
+    await OfflineSessionService.prepare(_token, locationIds: selected.toList());
   }
 
   String _formatActivityTime(Object? value) {
@@ -475,6 +606,17 @@ class _DashboardPageState extends State<DashboardPage>
               tooltip: 'Offline-Einstellungen',
               onPressed: _showOfflineSettings,
             ),
+          if (!kIsWeb)
+            IconButton(
+              icon: const Icon(Icons.folder_outlined),
+              tooltip: 'Download-Ordner festlegen',
+              onPressed: () => showDownloadFolderDialog(context),
+            ),
+          IconButton(
+            icon: const Icon(Icons.corporate_fare_outlined),
+            tooltip: 'Organisation oder Einheit wechseln',
+            onPressed: _showOrganizationContext,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Aktualisieren',
@@ -486,7 +628,7 @@ class _DashboardPageState extends State<DashboardPage>
             onPressed: () => _loadAndOpen(
               profile_page.loadLibrary,
               () => profile_page.ProfilePage(
-                token: widget.token,
+                token: _token,
                 onAccountDeleted: () => _logout(context),
               ),
             ),
@@ -542,6 +684,15 @@ class _DashboardPageState extends State<DashboardPage>
           final currentUser = Map<String, dynamic>.from(
             data['currentUser'] as Map? ?? const {},
           );
+          final activeContext = Map<String, dynamic>.from(
+            data['context'] as Map? ?? const {},
+          );
+          final activeOrganization = Map<String, dynamic>.from(
+            activeContext['organization'] as Map? ?? const {},
+          );
+          final activeUnit = Map<String, dynamic>.from(
+            activeContext['unit'] as Map? ?? const {},
+          );
           final permissions = (currentUser['permissions'] as List? ?? const [])
               .map((permission) => permission.toString())
               .toSet();
@@ -594,7 +745,7 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () => _loadAndOpen(
                       inventory_page.loadLibrary,
                       () => inventory_page.InventoryPage(
-                        token: widget.token,
+                        token: _token,
                         onLogout: () => _logout(context),
                       ),
                     ),
@@ -607,7 +758,7 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () => _loadAndOpen(
                       wardrobe_page.loadLibrary,
                       () => wardrobe_page.WardrobePage(
-                        token: widget.token,
+                        token: _token,
                         onLogout: () => _logout(context),
                       ),
                     ),
@@ -621,7 +772,7 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () => _loadAndOpen(
                       stocktakes_page.loadLibrary,
                       () => stocktakes_page.StocktakesPage(
-                        token: widget.token,
+                        token: _token,
                         onLogout: () => _logout(context),
                       ),
                     ),
@@ -633,7 +784,7 @@ class _DashboardPageState extends State<DashboardPage>
                     description: 'Mängel und E-Mail-Meldungen bearbeiten',
                     onTap: () => _loadAndOpen(
                       defects_page.loadLibrary,
-                      () => defects_page.DefectsPage(token: widget.token),
+                      () => defects_page.DefectsPage(token: _token),
                     ),
                   ),
                 if (can('procurement.read'))
@@ -644,7 +795,7 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () => _loadAndOpen(
                       procurement_page.loadLibrary,
                       () => procurement_page.ProcurementPage(
-                        token: widget.token,
+                        token: _token,
                         onLogout: () => _logout(context),
                       ),
                     ),
@@ -656,7 +807,7 @@ class _DashboardPageState extends State<DashboardPage>
                     description: 'Materialstruktur einsehen',
                     onTap: () => _loadAndOpen(
                       categories_page.loadLibrary,
-                      () => categories_page.CategoriesPage(token: widget.token),
+                      () => categories_page.CategoriesPage(token: _token),
                     ),
                   ),
                 if (can('locations.read'))
@@ -666,7 +817,7 @@ class _DashboardPageState extends State<DashboardPage>
                     description: 'Lager und Lagerplätze öffnen',
                     onTap: () => _loadAndOpen(
                       locations_page.loadLibrary,
-                      () => locations_page.LocationsPage(token: widget.token),
+                      () => locations_page.LocationsPage(token: _token),
                     ),
                   ),
                 if (can('users.read') && can('roles.read'))
@@ -676,7 +827,7 @@ class _DashboardPageState extends State<DashboardPage>
                     description: 'Konten, Rollen und Fachbereiche',
                     onTap: () => _loadAndOpen(
                       users_page.loadLibrary,
-                      () => users_page.UsersPage(token: widget.token),
+                      () => users_page.UsersPage(token: _token),
                     ),
                   ),
               ];
@@ -824,6 +975,25 @@ class _DashboardPageState extends State<DashboardPage>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                Card(
+                                  child: ListTile(
+                                    leading: const Icon(
+                                      Icons.corporate_fare_outlined,
+                                      semanticLabel: 'Organisationsbereich',
+                                    ),
+                                    title: Text(
+                                      activeOrganization['name']?.toString() ??
+                                          'Organisation',
+                                    ),
+                                    subtitle: Text(
+                                      '${activeUnit['type'] ?? 'Einheit'} · '
+                                      '${activeUnit['name'] ?? 'Standardbereich'}',
+                                    ),
+                                    trailing: const Icon(Icons.swap_horiz),
+                                    onTap: _showOrganizationContext,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
                                 _WelcomeCard(
                                   name: currentUser['name']?.toString(),
                                   roles: roles,

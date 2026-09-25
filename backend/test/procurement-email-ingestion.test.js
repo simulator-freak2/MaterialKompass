@@ -53,8 +53,12 @@ test('email offer appears in the procurement inbox and can be imported', async (
       method: 'POST', headers, body: '{}',
     });
 
-    const ingested = await app.locals.procurementEmailService.ingestSource(
-      mailWithOffer(created.number), { mailbox: 'INBOX', uid: 7 },
+    const ingested = await app.locals.runInOrganization(
+      'org-default',
+      'unit-default-root',
+      () => app.locals.procurementEmailService.ingestSource(
+        mailWithOffer(created.number), { mailbox: 'INBOX', uid: 7 },
+      ),
     );
     assert.equal(ingested.entry.requestId, created.id);
     assert.equal(ingested.entry.supplierId, 'supplier-1');

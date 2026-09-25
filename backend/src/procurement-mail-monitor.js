@@ -1,6 +1,8 @@
 const { ImapFlow } = require('imapflow');
 
-function createProcurementMailMonitor({ store, service, persistData = async () => {}, clientFactory, env = process.env, logger = console } = {}) {
+function createProcurementMailMonitor({ store, service, persistData = async () => {},
+  runInContext = (callback) => callback(), clientFactory, env = process.env,
+  logger = console } = {}) {
   if (!store || !service) throw new Error('Store und Dienst sind für den Angebots-Mail-Eingang erforderlich.');
   const mailbox = env.PROCUREMENT_IMAP_MAILBOX || 'INBOX';
   const processedMailbox = env.PROCUREMENT_IMAP_PROCESSED_MAILBOX || 'Verarbeitet';
@@ -27,8 +29,9 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
 
   async function runOnce() {
     if (running || !env.PROCUREMENT_IMAP_HOST) return false;
-    running = true; const connection = client();
-    try {
+    return runInContext(async () => {
+      running = true; const connection = client();
+      try {
       await connection.connect(); const selected = await connection.mailboxOpen(mailbox);
       let state = await store.getMailboxProcessingState(mailboxKey);
       const uidValidity = String(selected.uidValidity);
@@ -52,11 +55,12 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
           state.lastUid = message.uid; await store.saveMailboxProcessingState(state);
         }
       }
-      await persistData(); return true;
-    } finally {
-      if (connection.usable) await connection.logout().catch(() => connection.close());
-      running = false;
-    }
+        await persistData(); return true;
+      } finally {
+        if (connection.usable) await connection.logout().catch(() => connection.close());
+        running = false;
+      }
+    });
   }
 
   function start() {

@@ -6,6 +6,7 @@ const { inventoryNumberInUse, nextInventoryNumber } = require('./inventory-numbe
 const {
   fileMagic, inspectZipArchive, neutralizeSpreadsheetCell, validBase64,
 } = require('./security-utils');
+const { assessMaterialSafety } = require('./material-safety');
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAX_IMPORT_ROWS = 1000;
 const MAX_BULK_ITEMS = 500;
@@ -25,6 +26,7 @@ const IMPORT_ALIASES = {
   baujahr: 'manufacturingYear',
   beschreibung: 'description', notizen: 'notes', fachbereich: 'department',
   prufintervallmonate: 'inspectionIntervalMonths', nachsterpruftermin: 'nextInspectionDate',
+  sicherheitskritisch: 'safetyCritical', sicherheitshinweise: 'safetyInstructions',
 };
 
 function normalizeHeader(value) {
@@ -89,6 +91,7 @@ function registerInventoryRoutes({
   function responseItem(item) {
     return {
       ...item,
+      safetyStatus: assessMaterialSafety(item),
       availableQuantity: number(item.quantity) - number(item.issuedQuantity),
       movements: materialMovements.filter((entry) => entry.materialId === item.id).slice().reverse(),
       inspections: materialInspections.filter((entry) => entry.materialId === item.id).slice().reverse(),
@@ -141,6 +144,8 @@ function registerInventoryRoutes({
       maintenanceIntervalMonths: req.body.maintenanceIntervalMonths ? number(req.body.maintenanceIntervalMonths) : null,
       nextMaintenanceDate: req.body.nextMaintenanceDate || null,
       reservationApprovalRequired: req.body.reservationApprovalRequired === true,
+      safetyCritical: req.body.safetyCritical === true,
+      safetyInstructions: String(req.body.safetyInstructions || '').trim().slice(0, 2_000),
       archived: false, createdAt: new Date().toISOString(),
     };
     materials.push(item);
@@ -181,6 +186,11 @@ function registerInventoryRoutes({
       nextMaintenanceDate: req.body.nextMaintenanceDate ?? item.nextMaintenanceDate ?? null,
       reservationApprovalRequired: req.body.reservationApprovalRequired == null
         ? item.reservationApprovalRequired === true : req.body.reservationApprovalRequired === true,
+      safetyCritical: req.body.safetyCritical == null
+        ? item.safetyCritical === true : req.body.safetyCritical === true,
+      safetyInstructions: String(
+        req.body.safetyInstructions ?? item.safetyInstructions ?? '',
+      ).trim().slice(0, 2_000),
       id: item.id, inventoryNumber: item.inventoryNumber, issuedQuantity: item.issuedQuantity,
       archived: false, updatedAt: new Date().toISOString(),
     });
@@ -240,15 +250,17 @@ function registerInventoryRoutes({
     const checked = entries.map((entry) => {
       const item = materials.find((candidate) => candidate.id === entry.materialId);
       const quantity = number(entry.quantity, 0);
+      const safety = action === 'issue' && item ? assessMaterialSafety(item) : null;
       let error = null;
       if (!item || item.archived) error = 'not_found';
       else if (quantity <= 0) error = 'invalid_quantity';
+      else if (safety?.blocked) error = 'safety_blocked';
       else if (action === 'issue' && ['Defekt', 'In Reparatur', 'Ausgesondert', 'Verloren'].includes(item.status)) error = 'invalid_status';
       else if (action === 'issue' && quantity > number(item.quantity) - number(item.issuedQuantity)) error = 'insufficient_stock';
       else if (action === 'return' && quantity > number(item.issuedQuantity)) error = 'too_much_returned';
-      return { item, quantity, error };
+      return { item, quantity, error, safetyReasons: safety?.reasons || [] };
     });
-    if (checked.some((entry) => entry.error)) return res.status(409).json({ error: 'Die Sammelbuchung wurde nicht durchgeführt.', details: checked.filter((entry) => entry.error).map((entry) => ({ materialId: entry.item?.id, error: entry.error })) });
+    if (checked.some((entry) => entry.error)) return res.status(409).json({ error: 'Die Sammelbuchung wurde nicht durchgeführt.', details: checked.filter((entry) => entry.error).map((entry) => ({ materialId: entry.item?.id, error: entry.error, reasons: entry.error === 'safety_blocked' ? entry.safetyReasons : undefined })) });
     const created = checked.map(({ item, quantity }) => {
       item.issuedQuantity = number(item.issuedQuantity) + (action === 'issue' ? quantity : -quantity);
       item.status = defectManagement?.hasOpenDefect('MaterialItem', item.id)
@@ -289,7 +301,7 @@ function registerInventoryRoutes({
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
     if (!req.body.inspectionDate || !String(req.body.inspector || '').trim() || !['Bestanden', 'Mangel', 'Nicht bestanden'].includes(result)) return res.status(400).json({ error: 'Datum, Prüfer und gültiges Ergebnis sind erforderlich.' });
     const inspection = { id: nextId('inspection', materialInspections), materialId: item.id, inspectionDate: req.body.inspectionDate, inspector: String(req.body.inspector).trim(), result, notes: String(req.body.notes || '').trim(), nextInspectionDate: req.body.nextInspectionDate || null, createdAt: new Date().toISOString() };
-    materialInspections.push(inspection); item.lastInspectionDate = inspection.inspectionDate; item.nextInspectionDate = inspection.nextInspectionDate;
+    materialInspections.push(inspection); item.lastInspectionDate = inspection.inspectionDate; item.lastInspectionResult = result; item.nextInspectionDate = inspection.nextInspectionDate;
     if (result === 'Mangel' || result === 'Nicht bestanden') {
       defectManagement?.createFromInspection({
         entityType: 'MaterialItem', entityId: item.id, inspectionId: inspection.id,
@@ -369,7 +381,10 @@ function registerInventoryRoutes({
     rows.forEach((row, index) => {
       const values = validate(row); const requested = String(row.inventoryNumber || '').trim();
       if (values.error || (requested && inventoryNumberInUse(inventoryEntries(), requested))) { skippedRows.push({ row: index + 2, reason: values.error || 'Inventarnummer existiert bereits' }); return; }
-      const item = { ...row, ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: requested || inventoryNumber(values.categoryCode, values.subcategoryCode), unit: row.unit || 'Stück', issuedQuantity: 0, archived: false, createdAt: new Date().toISOString() };
+      const safetyCritical = ['ja', 'true', '1', 'yes'].includes(
+        String(row.safetyCritical || '').trim().toLowerCase(),
+      );
+      const item = { ...row, ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: requested || inventoryNumber(values.categoryCode, values.subcategoryCode), unit: row.unit || 'Stück', issuedQuantity: 0, safetyCritical, safetyInstructions: String(row.safetyInstructions || '').trim().slice(0, 2_000), archived: false, createdAt: new Date().toISOString() };
       materials.push(item); imported.push(item);
     });
     logEvent('import', 'MaterialItem', { imported: imported.length, skipped: skippedRows.length }, req.user.username);
@@ -379,7 +394,7 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
       .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');

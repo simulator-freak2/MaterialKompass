@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 
@@ -9,7 +8,8 @@ import '../constants.dart';
 import '../services/app_http_client.dart';
 import '../services/authenticated_api_client.dart';
 import '../services/debouncer.dart';
-import '../services/file_save_mime_type.dart';
+import '../services/document_output_service.dart';
+import '../services/download_service.dart';
 import '../services/label_print_service.dart';
 import '../widgets/address_input.dart';
 import '../widgets/date_input_field.dart';
@@ -702,15 +702,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
   Future<void> _export(String format) async {
     final data = await _request('/api/procurement/export/$format');
     if (data == null) return;
-    final fileName = data['fileName'].toString();
-    await FileSaver.instance.saveFile(
-      name: fileName.substring(0, fileName.length - format.length - 1),
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: format,
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType(format),
-    );
-    _message('$fileName wurde erstellt.');
+    try {
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      _message('${saved.fileName} wurde erstellt.');
+    } on DownloadException catch (error) {
+      _message(error.message, error: true);
+    }
   }
 
   Future<void> _downloadDocument(
@@ -721,19 +718,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
       '/api/procurement/${request['id']}/documents/${document['id']}',
     );
     if (data == null) return;
-    final fileName = data['fileName'].toString();
-    final extension = fileName.contains('.') ? fileName.split('.').last : 'bin';
-    final baseName = fileName.endsWith('.$extension')
-        ? fileName.substring(0, fileName.length - extension.length - 1)
-        : fileName;
-    await FileSaver.instance.saveFile(
-      name: baseName,
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: extension,
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType(extension),
-    );
-    _message('$fileName wurde gespeichert.');
+    try {
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      _message('${saved.fileName} wurde gespeichert.');
+    } on DownloadException catch (error) {
+      _message(error.message, error: true);
+    }
   }
 
   Future<void> _printDetail(Map<String, dynamic> request, String type) async {
@@ -741,15 +731,11 @@ class _ProcurementPageState extends State<ProcurementPage> {
       '/api/procurement/${request['id']}/print/$type',
     );
     if (data == null) return;
-    final fileName = data['fileName'].toString();
-    await FileSaver.instance.saveFile(
-      name: fileName.substring(0, fileName.length - 4),
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: 'pdf',
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType('pdf'),
-    );
-    _message('$fileName wurde erstellt.');
+    try {
+      await DocumentOutputService.instance.printPdfPayload(data);
+    } on DownloadException catch (error) {
+      _message(error.message, error: true);
+    }
   }
 
   Future<void> _downloadEmailAttachment(
@@ -760,18 +746,11 @@ class _ProcurementPageState extends State<ProcurementPage> {
       '/api/procurement-email-inbox/${email['id']}/attachments/${attachment['id']}',
     );
     if (data == null) return;
-    final fileName = data['fileName'].toString();
-    final extension = fileName.contains('.') ? fileName.split('.').last : 'bin';
-    final baseName = fileName.endsWith('.$extension')
-        ? fileName.substring(0, fileName.length - extension.length - 1)
-        : fileName;
-    await FileSaver.instance.saveFile(
-      name: baseName,
-      bytes: base64Decode(data['fileBase64']),
-      fileExtension: extension,
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType(extension),
-    );
+    try {
+      await DocumentOutputService.instance.savePayload(data);
+    } on DownloadException catch (error) {
+      _message(error.message, error: true);
+    }
   }
 
   Future<void> _processEmailOffer(Map<String, dynamic> email) async {

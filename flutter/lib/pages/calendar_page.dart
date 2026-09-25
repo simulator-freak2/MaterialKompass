@@ -1,9 +1,8 @@
-import 'dart:convert';
-
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 
 import '../services/authenticated_api_client.dart';
+import '../services/document_output_service.dart';
+import '../services/download_service.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 
 enum CalendarViewMode { month, week, list }
@@ -297,16 +296,11 @@ class _CalendarPageState extends State<CalendarPage> {
       final data = Map<String, dynamic>.from(
         await api.request('/api/calendar/export?$query') as Map,
       );
-      final fileName = data['fileName'].toString();
-      await FileSaver.instance.saveFile(
-        name: fileName.replaceFirst(RegExp(r'\.ics$'), ''),
-        bytes: base64Decode(data['fileBase64'].toString()),
-        fileExtension: 'ics',
-        mimeType: MimeType.custom,
-        customMimeType: 'text/calendar;charset=utf-8',
-      );
-      if (mounted) _message('$fileName wurde exportiert.');
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      if (mounted) _message('${saved.fileName} wurde exportiert.');
     } on AuthenticatedApiException catch (error) {
+      if (mounted) _message(error.message, error: true);
+    } on DownloadException catch (error) {
       if (mounted) _message(error.message, error: true);
     }
   }

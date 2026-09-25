@@ -5,6 +5,15 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+class OfflineSafetyException implements Exception {
+  const OfflineSafetyException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class OfflineStatus {
   const OfflineStatus({
     this.offline = false,
@@ -128,7 +137,10 @@ class OfflineStore {
           utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
         );
         if (payload is Map) {
-          return '${payload['sub'] ?? 'unknown'}:${payload['did'] ?? 'personal'}';
+          return '${payload['oid'] ?? 'unknown-organization'}:'
+              '${payload['ouid'] ?? 'unknown-unit'}:'
+              '${payload['sub'] ?? 'unknown'}:'
+              '${payload['did'] ?? 'personal'}';
         }
       }
     } catch (_) {
@@ -324,6 +336,8 @@ class OfflineStore {
     required Uri uri,
     required String? body,
   }) async {
+    final safetyConflict = await _safetyConflict(subject, uri, body);
+    if (safetyConflict != null) throw OfflineSafetyException(safetyConflict);
     final queued = await commands();
     final command = OfflineCommand(
       id: newCommandId(),
@@ -338,6 +352,46 @@ class OfflineStore {
     await _applyOptimistic(command);
     status.value = status.value.copyWith(offline: true);
     return command;
+  }
+
+  Future<String?> _safetyConflict(String subject, Uri uri, String? body) async {
+    if (uri.path != '/api/material/transactions/bulk' || body == null) {
+      return null;
+    }
+    Map<String, dynamic> values;
+    try {
+      values = Map<String, dynamic>.from(jsonDecode(body) as Map);
+    } catch (_) {
+      return null;
+    }
+    if (values['action'] != 'issue') return null;
+    final requestedIds = (values['items'] as List? ?? const [])
+        .whereType<Map>()
+        .map((entry) => entry['materialId']?.toString())
+        .whereType<String>()
+        .toSet();
+    final materials = await _cachedList(
+      subject,
+      uri,
+      '/api/material?archived=false',
+    );
+    for (final rawItem in materials.whereType<Map>()) {
+      if (!requestedIds.contains(rawItem['id']?.toString())) continue;
+      final rawStatus = rawItem['safetyStatus'];
+      final status = rawStatus is Map ? rawStatus : const <String, dynamic>{};
+      if (rawItem['safetyCritical'] == true && status['blocked'] != false) {
+        final reasons =
+            (status['reasons'] as List?)
+                ?.map((entry) => entry.toString())
+                .where((entry) => entry.isNotEmpty)
+                .join(' ') ??
+            '';
+        return reasons.isEmpty
+            ? 'Sicherheitskritisches Material kann offline ohne gültige Freigabe nicht ausgegeben werden.'
+            : 'Sicherheitskritisches Material ist gesperrt: $reasons';
+      }
+    }
+    return null;
   }
 
   Future<List<dynamic>> _cachedList(

@@ -516,15 +516,13 @@ function registerDefectManagement({
       const headers = Object.keys(rows[0] || { Mangelnummer: '' });
       buffer = Buffer.from(`\uFEFF${headers.map(csvCell).join(';')}\r\n${rows.map((row) => headers.map((header) => csvCell(row[header])).join(';')).join('\r\n')}`, 'utf8');
       fileName = `maengel-${date}.csv`; mimeType = 'text/csv';
-    } else if (format === 'pdf') {
+    } else if (format === 'pdf' || format === 'print') {
       buffer = createSimplePdf('MaterialKompass - Mängelbericht', rows.map((row) =>
         `${row.Mangelnummer} | ${row.Priorität} | ${row.Status} | ${row.Artikel} | ${row.Titel}`));
-      fileName = `maengel-${date}.pdf`; mimeType = 'application/pdf';
-    } else {
-      const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-      const headers = Object.keys(rows[0] || { Mangelnummer: '' });
-      const html = `<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Mängelliste</title><style>body{font:12px Arial}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px;text-align:left}@media print{button{display:none}}</style></head><body><button onclick="print()">Drucken</button><h1>Mängelliste</h1><table><thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${headers.map((h) => `<td>${escapeHtml(row[h])}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
-      buffer = Buffer.from(html, 'utf8'); fileName = `maengel-druckansicht-${date}.html`; mimeType = 'text/html';
+      fileName = format === 'print'
+        ? `maengel-druckansicht-${date}.pdf`
+        : `maengel-${date}.pdf`;
+      mimeType = 'application/pdf';
     }
     logEvent('export', 'DefectReport', { format, itemCount: rows.length }, req.user.username);
     return res.json({ fileName, mimeType, fileBase64: buffer.toString('base64') });

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -10,6 +9,8 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../services/app_http_client.dart';
+import '../services/document_output_service.dart';
+import '../services/download_service.dart';
 import '../services/label_print_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
@@ -64,6 +65,7 @@ class _WardrobePageState extends State<WardrobePage> {
   List<Map<String, dynamic>> _currentClothing = [];
   bool _isTransferringTable = false;
   Set<String> _roles = {};
+  Set<String> _permissions = {};
 
   bool get _canPrintLabels =>
       LabelPrintService.instance.supported && userMayPrintLabels(_roles);
@@ -134,6 +136,9 @@ class _WardrobePageState extends State<WardrobePage> {
         _roles = ((user['roles'] as List?) ?? const [])
             .map((value) => value.toString())
             .toSet();
+        _permissions = ((user['permissions'] as List?) ?? const [])
+            .map((value) => value.toString())
+            .toSet();
       });
     } catch (_) {}
   }
@@ -194,19 +199,65 @@ class _WardrobePageState extends State<WardrobePage> {
       return;
     }
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final fileName = data['fileName']?.toString() ?? 'maengelmeldung.pdf';
-    final dot = fileName.lastIndexOf('.');
-    await FileSaver.instance.saveFile(
-      name: dot > 0 ? fileName.substring(0, dot) : fileName,
-      bytes: base64Decode(data['fileBase64'].toString()),
-      fileExtension: dot > 0 ? fileName.substring(dot + 1) : 'pdf',
-      mimeType: MimeType.custom,
-      customMimeType: data['mimeType']?.toString() ?? 'application/pdf',
-    );
-    if (mounted) {
+    try {
+      await DocumentOutputService.instance.printPdfPayload(data);
+    } on DownloadException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<void> _printDefectTemplate(Map<String, dynamic> item) async {
+    final inventoryNumber = item['inventoryNumber']?.toString().trim() ?? '';
+    if (inventoryNumber.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$fileName wurde zum Drucken erstellt.')),
+        const SnackBar(
+          content: Text('Für dieses Kleidungsstück fehlt eine Inventarnummer.'),
+        ),
       );
+      return;
+    }
+    final response = await AppHttpClient.get(
+      Uri.parse(
+        '$apiBaseUrl/api/defect-report-template?entityType=ClothingItem'
+        '&entityId=${Uri.encodeQueryComponent(item['id'].toString())}',
+      ),
+      headers: {'Authorization': 'Bearer ${widget.token}'},
+    );
+    if (response.statusCode != 200) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Die Mängelbericht-Vorlage ist nicht verfügbar.'),
+          ),
+        );
+      }
+      return;
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (data['inventoryNumber']?.toString() != inventoryNumber) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Die vorbefüllte Vorlage benötigt eine Onlineverbindung.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    try {
+      await DocumentOutputService.instance.printPdfPayload(data);
+    } on DownloadException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
     }
   }
 
@@ -436,23 +487,11 @@ class _WardrobePageState extends State<WardrobePage> {
         );
       }
 
-      final fileName = data['fileName']?.toString() ?? 'kleiderkammer.$format';
-      final nameWithoutExtension = fileName.endsWith('.$format')
-          ? fileName.substring(0, fileName.length - format.length - 1)
-          : fileName;
-      await FileSaver.instance.saveFile(
-        name: nameWithoutExtension,
-        bytes: base64Decode(data['fileBase64'] as String),
-        fileExtension: format,
-        mimeType: MimeType.custom,
-        customMimeType: format == 'ods'
-            ? 'application/vnd.oasis.opendocument.spreadsheet'
-            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      );
+      final saved = await DocumentOutputService.instance.savePayload(data);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('$fileName wurde exportiert.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${saved.fileName} wurde exportiert.')),
+      );
     } catch (error) {
       if (!mounted) return;
       final message = error.toString().replaceFirst('Exception: ', '');
@@ -2401,6 +2440,23 @@ class _WardrobePageState extends State<WardrobePage> {
                                             tooltip: 'Etikett drucken',
                                             icon: const Icon(
                                               Icons.print_outlined,
+                                            ),
+                                          ),
+                                        if (_permissions.contains(
+                                              'defects.read',
+                                            ) &&
+                                            (item['inventoryNumber']
+                                                    ?.toString()
+                                                    .trim()
+                                                    .isNotEmpty ??
+                                                false))
+                                          IconButton(
+                                            onPressed: () =>
+                                                _printDefectTemplate(item),
+                                            tooltip:
+                                                'Mängelbericht mit Inventarnummer drucken',
+                                            icon: const Icon(
+                                              Icons.picture_as_pdf_outlined,
                                             ),
                                           ),
                                         if ((item['defects'] as List?)
