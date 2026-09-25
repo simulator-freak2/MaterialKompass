@@ -82,6 +82,7 @@ void main() {
                 'permissions': [
                   'users.read',
                   'roles.read',
+                  'organizations.write',
                   'locations.read',
                   'categories.read',
                   'inventory.read',
@@ -136,6 +137,7 @@ void main() {
     );
     expect(find.text('Schnellzugriff'), findsOneWidget);
     expect(find.text('Nutzerverwaltung'), findsOneWidget);
+    expect(find.text('Organisationen'), findsOneWidget);
     expect(find.text('Mängel'), findsOneWidget);
     expect(find.byIcon(Icons.checkroom), findsWidgets);
 
@@ -195,6 +197,7 @@ void main() {
     expect(find.text('Kleiderkammer'), findsNothing);
     expect(find.text('Beschaffung'), findsNothing);
     expect(find.text('Nutzerverwaltung'), findsNothing);
+    expect(find.text('Organisationen'), findsNothing);
     expect(find.text('Kleidung'), findsNothing);
     expect(find.text('Freigaben offen'), findsNothing);
     expect(find.text('Material defekt'), findsOneWidget);

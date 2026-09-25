@@ -18,6 +18,7 @@ import 'login_page.dart';
 import 'inventory_page.dart' deferred as inventory_page;
 import 'knowledge_base_page.dart' deferred as knowledge_base_page;
 import 'locations_page.dart' deferred as locations_page;
+import 'organizations_page.dart' deferred as organizations_page;
 import 'procurement_page.dart' deferred as procurement_page;
 import 'profile_page.dart' deferred as profile_page;
 import 'stocktakes_page.dart' deferred as stocktakes_page;
@@ -828,6 +829,16 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () => _loadAndOpen(
                       users_page.loadLibrary,
                       () => users_page.UsersPage(token: _token),
+                    ),
+                  ),
+                if (roles.contains('Admin') && can('organizations.write'))
+                  _DashboardAction(
+                    icon: Icons.account_tree_outlined,
+                    label: 'Organisationen',
+                    description: 'Organisationen und Einheiten verwalten',
+                    onTap: () => _loadAndOpen(
+                      organizations_page.loadLibrary,
+                      () => organizations_page.OrganizationsPage(token: _token),
                     ),
                   ),
               ];
