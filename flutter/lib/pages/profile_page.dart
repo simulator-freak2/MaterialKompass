@@ -1,12 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
-import '../services/file_save_mime_type.dart';
 import '../services/api_client.dart';
+import '../services/download_service.dart';
 import '../services/passkey_service.dart';
 import 'legal_page.dart';
 
@@ -469,14 +468,17 @@ class _ProfilePageState extends State<ProfilePage> {
       message(data['error']?.toString() ?? 'Datenkopie fehlgeschlagen.');
       return;
     }
-    await FileSaver.instance.saveFile(
-      name: 'materialkompass-datenkopie',
-      bytes: response.bodyBytes,
-      fileExtension: 'json',
-      mimeType: MimeType.custom,
-      customMimeType: fileMimeType('json'),
-    );
-    message('Ihre maschinenlesbare Datenkopie wurde gespeichert.');
+    try {
+      final saved = await DownloadService.instance.save(
+        name: 'materialkompass-datenkopie',
+        bytes: response.bodyBytes,
+        fileExtension: 'json',
+        mimeType: 'application/json',
+      );
+      message('${saved.fileName} wurde gespeichert.');
+    } on DownloadException catch (error) {
+      message(error.message);
+    }
   }
 
   Future<void> createQrLogin() async {

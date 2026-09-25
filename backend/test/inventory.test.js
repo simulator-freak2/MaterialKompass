@@ -86,6 +86,73 @@ test('inventory creates quantity items and tracks issue and return', async () =>
   }
 });
 
+test('safety-critical material fails closed until a valid inspection is recorded', async () => {
+  const { server, baseUrl, token } = await serverAndToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+  try {
+    const createdResponse = await fetch(`${baseUrl}/api/material`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Sicherheitsleine',
+        categoryCode: '02',
+        subcategoryCode: '02-02',
+        locationId: 'loc-1',
+        status: 'Lagernd',
+        itemType: 'individual',
+        safetyCritical: true,
+        safetyInstructions: 'Nur nach Sichtprüfung ausgeben.',
+        inspectionIntervalMonths: 12,
+        nextInspectionDate: '2099-12-31',
+      }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const item = await createdResponse.json();
+    assert.equal(item.safetyStatus.blocked, true);
+    assert.match(item.safetyStatus.reasons.join(' '), /nicht nachgewiesen/);
+
+    const blockedIssue = await fetch(`${baseUrl}/api/material/transactions/bulk`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'issue',
+        recipient: 'Einsatz',
+        items: [{ materialId: item.id, quantity: 1 }],
+      }),
+    });
+    assert.equal(blockedIssue.status, 409);
+    assert.equal((await blockedIssue.json()).details[0].error, 'safety_blocked');
+
+    const inspection = await fetch(`${baseUrl}/api/material/${item.id}/inspections`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        inspectionDate: '2026-09-11',
+        inspector: 'Sachkundige Person',
+        result: 'Bestanden',
+        nextInspectionDate: '2099-12-31',
+      }),
+    });
+    assert.equal(inspection.status, 201);
+
+    const issued = await fetch(`${baseUrl}/api/material/transactions/bulk`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'issue',
+        recipient: 'Einsatz',
+        items: [{ materialId: item.id, quantity: 1 }],
+      }),
+    });
+    assert.equal(issued.status, 201);
+  } finally {
+    server.close();
+  }
+});
+
 test('inventory bulk operations are atomic and archive is reversible', async () => {
   const { server, baseUrl, token } = await serverAndToken();
   const headers = {

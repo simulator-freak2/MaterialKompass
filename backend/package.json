@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80",
+    "test:performance": "node --test --test-concurrency=1 quality/performance-budget.js"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.7",
@@ -20,17 +22,19 @@
     "express": "^5.2.1",
     "imapflow": "^1.7.2",
     "jsonwebtoken": "^9.0.1",
-    "mailparser": "^3.9.15",
+    "mailparser": "^3.9.24",
     "mariadb": "^3.4.5",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.0.7",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.2.108",
     "sanitize-html": "^2.17.7",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "tesseract.js": "^7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "overrides": {
-    "deepmerge-ts": "8.0.1"
+    "body-parser": "2.3.0",
+    "deepmerge-ts": "8.0.1",
+    "qs": "6.16.0"
   }
 }

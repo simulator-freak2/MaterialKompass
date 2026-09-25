@@ -7,6 +7,7 @@ CREATE TABLE users (
   roles JSON NOT NULL,
   department_ids JSON NOT NULL,
   permissions JSON NOT NULL,
+  platform_admin TINYINT(1) NOT NULL DEFAULT 0,
   active TINYINT(1) DEFAULT 1,
   failed_login_attempts INT DEFAULT 0,
   locked_until DATETIME NULL,
@@ -58,8 +59,10 @@ CREATE TABLE user_passkeys (
 
 CREATE TABLE roles (
   id VARCHAR(64) PRIMARY KEY,
-  name VARCHAR(100) UNIQUE NOT NULL,
-  permissions JSON NOT NULL
+  organization_id VARCHAR(64) NULL,
+  name VARCHAR(100) NOT NULL,
+  permissions JSON NOT NULL,
+  UNIQUE KEY uq_roles_organization_name (organization_id, name)
 );
 
 CREATE TABLE permissions (
@@ -494,10 +497,13 @@ CREATE TABLE export_logs (
 -- und Rollen verbleiben wegen ihrer Login-/Eindeutigkeitsanforderungen in den
 -- normalisierten Tabellen oben.
 CREATE TABLE application_collections (
-  name VARCHAR(64) PRIMARY KEY,
+  organization_id VARCHAR(64) NOT NULL,
+  name VARCHAR(64) NOT NULL,
   data_json LONGTEXT NOT NULL,
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
     ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (organization_id, name),
+  INDEX idx_application_collections_name (name),
   CHECK (JSON_VALID(data_json))
 );
 

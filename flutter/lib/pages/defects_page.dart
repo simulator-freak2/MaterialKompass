@@ -1,13 +1,13 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
 
 import '../services/authenticated_api_client.dart';
 import '../services/debouncer.dart';
-import '../services/file_save_mime_type.dart';
+import '../services/document_output_service.dart';
+import '../services/download_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 
@@ -107,8 +107,13 @@ class _DefectsPageState extends State<DefectsPage> {
     }
   }
 
-  void _message(String value) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
+  void _message(String value, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -350,62 +355,33 @@ class _DefectsPageState extends State<DefectsPage> {
   Future<void> _export(String format) async {
     final data = await _request('/api/defects/export?format=$format');
     if (data is! Map) return;
-    final fileName = data['fileName'].toString();
-    final dot = fileName.lastIndexOf('.');
-    await FileSaver.instance.saveFile(
-      name: dot > 0 ? fileName.substring(0, dot) : fileName,
-      bytes: base64Decode(data['fileBase64'].toString()),
-      fileExtension: dot > 0 ? fileName.substring(dot + 1) : format,
-      mimeType: MimeType.custom,
-      customMimeType: data['mimeType']?.toString() ?? fileMimeType(format),
-    );
-    if (mounted) _message('$fileName wurde erstellt.');
+    try {
+      if (format == 'print') {
+        await DocumentOutputService.instance.printPdfPayload(data);
+        return;
+      }
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      if (mounted) _message('${saved.fileName} wurde erstellt.');
+    } on DownloadException catch (error) {
+      if (mounted) _message(error.message, error: true);
+    }
   }
 
   Future<void> _saveDownloadPayload(Map data) async {
-    final fileName = data['fileName'].toString();
-    final dot = fileName.lastIndexOf('.');
-    await FileSaver.instance.saveFile(
-      name: dot > 0 ? fileName.substring(0, dot) : fileName,
-      bytes: base64Decode(data['fileBase64'].toString()),
-      fileExtension: dot > 0 ? fileName.substring(dot + 1) : 'bin',
-      mimeType: MimeType.custom,
-      customMimeType:
-          data['mimeType']?.toString() ?? 'application/octet-stream',
-    );
-    if (mounted) _message('$fileName wurde heruntergeladen.');
+    try {
+      final saved = await DocumentOutputService.instance.savePayload(data);
+      if (mounted) _message('${saved.fileName} wurde heruntergeladen.');
+    } on DownloadException catch (error) {
+      if (mounted) _message(error.message, error: true);
+    }
   }
 
-  Future<void> _downloadTemplate() async {
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Mängelbericht herunterladen'),
-        content: const Text(
-          'Die Vorlage kann leer oder mit Inventarnummer und Kontaktdaten vorbefüllt erstellt werden.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen'),
-          ),
-          OutlinedButton(
-            onPressed: () => Navigator.pop(context, 'blank'),
-            child: const Text('Leere Vorlage'),
-          ),
-          FilledButton(
-            onPressed: _items.isEmpty
-                ? null
-                : () => Navigator.pop(context, 'prefilled'),
-            child: const Text('Vorbefüllt'),
-          ),
-        ],
-      ),
-    );
-    if (choice == null) return;
-    if (!mounted) return;
+  Future<Map<dynamic, dynamic>?> _loadTemplate({
+    required bool prefilled,
+  }) async {
     String path = '/api/defect-report-template';
-    if (choice == 'prefilled') {
+    String? expectedInventoryNumber;
+    if (prefilled) {
       final selected = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (context) => AlertDialog(
@@ -413,29 +389,34 @@ class _DefectsPageState extends State<DefectsPage> {
           content: SizedBox(
             width: 560,
             height: 420,
-            child: ListView(
-              children:
-                  ([..._items]..sort(
-                        (left, right) => left['inventoryNumber']
-                            .toString()
-                            .compareTo(right['inventoryNumber'].toString()),
-                      ))
-                      .map(
-                        (item) => ListTile(
-                          leading: Icon(
-                            item['entityType'] == 'MaterialItem'
-                                ? Icons.inventory_2_outlined
-                                : Icons.checkroom_outlined,
-                          ),
-                          title: Text(item['name']?.toString() ?? ''),
-                          subtitle: Text(
-                            item['inventoryNumber']?.toString() ?? '',
-                          ),
-                          onTap: () => Navigator.pop(context, item),
-                        ),
-                      )
-                      .toList(),
-            ),
+            child: _items.isEmpty
+                ? const Center(
+                    child: Text('Keine passenden Artikel vorhanden.'),
+                  )
+                : ListView(
+                    children:
+                        ([..._items]..sort(
+                              (left, right) =>
+                                  left['inventoryNumber'].toString().compareTo(
+                                    right['inventoryNumber'].toString(),
+                                  ),
+                            ))
+                            .map(
+                              (item) => ListTile(
+                                leading: Icon(
+                                  item['entityType'] == 'MaterialItem'
+                                      ? Icons.inventory_2_outlined
+                                      : Icons.checkroom_outlined,
+                                ),
+                                title: Text(item['name']?.toString() ?? ''),
+                                subtitle: Text(
+                                  item['inventoryNumber']?.toString() ?? '',
+                                ),
+                                onTap: () => Navigator.pop(context, item),
+                              ),
+                            )
+                            .toList(),
+                  ),
           ),
           actions: [
             TextButton(
@@ -445,13 +426,86 @@ class _DefectsPageState extends State<DefectsPage> {
           ],
         ),
       );
-      if (selected == null) return;
+      if (selected == null) return null;
+      expectedInventoryNumber = selected['inventoryNumber']?.toString();
       path =
           '/api/defect-report-template?entityType=${Uri.encodeQueryComponent(selected['entityType'].toString())}'
           '&entityId=${Uri.encodeQueryComponent(selected['id'].toString())}';
     }
     final data = await _request(path);
-    if (data is Map) await _saveDownloadPayload(data);
+    if (data is! Map) return null;
+    if (prefilled &&
+        data['inventoryNumber']?.toString() != expectedInventoryNumber) {
+      _message(
+        'Die vorbefüllte Vorlage benötigt eine Onlineverbindung.',
+        error: true,
+      );
+      return null;
+    }
+    return data;
+  }
+
+  Future<void> _useTemplate({
+    required bool prefilled,
+    required bool print,
+  }) async {
+    final data = await _loadTemplate(prefilled: prefilled);
+    if (data == null) return;
+    try {
+      if (print) {
+        await DocumentOutputService.instance.printPdfPayload(data);
+      } else {
+        await _saveDownloadPayload(data);
+      }
+    } on DownloadException catch (error) {
+      if (mounted) _message(error.message, error: true);
+    }
+  }
+
+  Future<void> _showTemplateActions() async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mängelbericht-Vorlage'),
+        content: const Text(
+          'Die vorbefüllte Variante enthält ausschließlich die Inventarnummer. '
+          'Alle übrigen Felder bleiben leer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context, 'download-blank'),
+            child: const Text('Leer herunterladen'),
+          ),
+          OutlinedButton(
+            onPressed: _items.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'download-prefilled'),
+            child: const Text('Mit Inventarnummer herunterladen'),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: () => Navigator.pop(context, 'print-blank'),
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Leer drucken'),
+          ),
+          FilledButton.icon(
+            onPressed: _items.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'print-prefilled'),
+            icon: const Icon(Icons.print),
+            label: const Text('Mit Inventarnummer drucken'),
+          ),
+        ],
+      ),
+    );
+    if (action == null) return;
+    await _useTemplate(
+      prefilled: action.endsWith('prefilled'),
+      print: action.startsWith('print'),
+    );
   }
 
   Future<void> _showNotifications() async {
@@ -913,7 +967,12 @@ class _DefectsPageState extends State<DefectsPage> {
     final detail = _selectedDetail;
     if (detail == null) return;
     final data = await _request('/api/defects/${detail['id']}/print');
-    if (data is Map) await _saveDownloadPayload(data);
+    if (data is! Map) return;
+    try {
+      await DocumentOutputService.instance.printPdfPayload(data);
+    } on DownloadException catch (error) {
+      if (mounted) _message(error.message, error: true);
+    }
   }
 
   Future<void> _addSelectedComment(String value) async {
@@ -1460,7 +1519,12 @@ class _DefectsPageState extends State<DefectsPage> {
 
           Future<void> printReport() async {
             final data = await _request('/api/defects/${detail['id']}/print');
-            if (data is Map) await _saveDownloadPayload(data);
+            if (data is! Map) return;
+            try {
+              await DocumentOutputService.instance.printPdfPayload(data);
+            } on DownloadException catch (error) {
+              if (mounted) _message(error.message, error: true);
+            }
           }
 
           Future<void> addComment() async {
@@ -2466,6 +2530,11 @@ class _DefectsPageState extends State<DefectsPage> {
               PopupMenuItem(value: 'print', child: Text('Druckansicht')),
             ],
           ),
+          IconButton(
+            onPressed: _showTemplateActions,
+            tooltip: 'Mängelbericht-Vorlage drucken oder herunterladen',
+            icon: const Icon(Icons.print_outlined),
+          ),
           Badge(
             isLabelVisible: unread > 0,
             label: Text('$unread'),
@@ -2717,10 +2786,10 @@ class _DefectsPageState extends State<DefectsPage> {
           TextButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              _downloadTemplate();
+              _showTemplateActions();
             },
             icon: const Icon(Icons.picture_as_pdf_outlined),
-            label: const Text('Vorlage herunterladen'),
+            label: const Text('Vorlage drucken oder herunterladen'),
           ),
           FilledButton.icon(
             onPressed: () {

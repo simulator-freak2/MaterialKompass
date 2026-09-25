@@ -38,6 +38,7 @@ Anfragen im HTTP-Header `Authorization: Bearer …`.
 | Daten speichern | `backend/src/persistence-coordinator.js`, `backend/src/db/user-store.js` |
 | HTTP-Transport der App | `flutter/lib/services/app_http_client.dart` |
 | Authentifizierte JSON-Anfragen | `flutter/lib/services/authenticated_api_client.dart` |
+| Downloads und Systemdruck | `flutter/lib/services/download_service_*.dart`, `flutter/lib/services/document_output_service.dart` |
 | Request-Limits | `backend/src/request-rate-limiter.js` |
 
 ## Backend-Ablauf
@@ -79,6 +80,19 @@ Die Netzwerkschicht hat drei bewusst getrennte Ebenen:
   Fachänderungen werden mit eindeutiger Befehls-ID offline vorgemerkt.
 - `authenticated_api_client.dart`: ergänzt JWT, JSON-Konvertierung und
   einheitliche, deutschsprachige Fehler für angemeldete Fachseiten.
+
+Dateiausgaben laufen unabhängig von der Fachseite über zwei weitere Ebenen:
+
+- `download_service_*.dart` trennt Web und native Dateisysteme, speichert die lokale
+  Ordnerauswahl, bereinigt Dateinamen, verhindert stilles Überschreiben und schreibt
+  konfigurierte native Ziele zunächst in eine temporäre Datei.
+- `document_output_service.dart` dekodiert begrenzte Base64-Antworten einmalig,
+  validiert Dateityp und PDF-Signatur und übergibt dieselben Bytes entweder an den
+  Download-Service oder an den System-Druckdialog.
+
+Der Pfad ist eine lokale Geräteeinstellung und gehört deshalb weder ins JWT noch in
+die Serverdatenbank. Updateinstaller umgehen die Nutzereinstellung bewusst und bleiben
+im getrennten, prüfsummenkontrollierten Updatepfad.
 
 Bei aktivierter Konto-2-FA liefert der erste Faktor kein Anwendungs-JWT, sondern eine
 fünf Minuten gültige, serverseitig einmal verwendbare Challenge. Erst TOTP oder ein

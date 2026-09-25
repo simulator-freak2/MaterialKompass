@@ -36,10 +36,10 @@ test('saveUser converts every timestamp before sending it to MariaDB', async () 
   });
 
   assert.equal(poolOptions.timezone, 'Z');
-  assert.equal(queryValues[11], '2026-01-01 00:00:00');
-  assert.equal(queryValues[28], '2026-01-01 00:00:00');
-  assert.equal(queryValues[9], null);
+  assert.equal(queryValues[12], '2026-01-01 00:00:00');
+  assert.equal(queryValues[29], '2026-01-01 00:00:00');
   assert.equal(queryValues[10], null);
+  assert.equal(queryValues[11], null);
   await store.close();
 });
 
@@ -120,6 +120,52 @@ test('application collections save only changed values in one transaction', asyn
     calls.slice(callCount).filter((entry) => entry?.sql?.includes('INSERT INTO application_collections')).length,
     1,
   );
+});
+
+test('complete backup replacement is written in one database transaction', async () => {
+  const calls = [];
+  const connection = {
+    async beginTransaction() { calls.push('begin'); },
+    async query(sql, values) { calls.push({ kind: 'query', sql, values }); },
+    async batch(sql, values) { calls.push({ kind: 'batch', sql, values }); },
+    async commit() { calls.push('commit'); },
+    async rollback() { calls.push('rollback'); },
+    release() { calls.push('release'); },
+  };
+  const database = {
+    createPool() {
+      return {
+        async getConnection() { return connection; },
+        async end() {},
+      };
+    },
+  };
+  const store = createUserStore(database);
+  await store.replaceBackupData({
+    users: [{
+      id: 'user-admin', name: 'Admin', username: 'admin', email: 'admin@example.org',
+      passwordHash: 'stored-password-hash', roles: ['Admin'], permissions: [],
+      departmentIds: [], active: true, createdAt: '2026-01-01T00:00:00.000Z',
+    }],
+    roles: [{ id: 'role-admin', name: 'Admin', permissions: ['users.write'] }],
+    passkeys: [],
+    collections: {
+      organizations: [{ id: 'org-1' }],
+      locations: [{ id: 'loc-1', organizationId: 'org-1' }],
+    },
+  });
+
+  assert.equal(calls[0], 'begin');
+  assert.ok(calls.some((entry) => entry.sql === 'DELETE FROM application_collections'));
+  assert.ok(calls.some((entry) =>
+    entry.kind === 'batch' && entry.sql.includes('(id, organization_id, name, permissions)')));
+  const collectionBatch = calls.find((entry) =>
+    entry.kind === 'batch' && entry.sql.includes('INSERT INTO application_collections'));
+  assert.deepEqual(collectionBatch.values.map((entry) => entry.slice(0, 2)), [
+    ['__platform__', 'organizations'],
+    ['org-1', 'locations'],
+  ]);
+  assert.deepEqual(calls.slice(-2), ['commit', 'release']);
 });
 
 test('process lock prevents concurrent snapshot-based backend instances', async () => {

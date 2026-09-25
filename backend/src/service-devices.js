@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
+const { currentTenant, runWithTenant } = require('./tenancy');
 const {
   base32Encode,
   hash,
@@ -48,6 +49,7 @@ function registerServiceDeviceRoutes({
   jwtSecret, qrLoginCredentials = [], securityVersion,
   saveUser = async () => {},
   userMfa,
+  tenantForUser = () => null,
 }) {
   const encryptionKey = crypto.createHash('sha256').update(jwtSecret).digest();
   const nextId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
@@ -90,7 +92,10 @@ function registerServiceDeviceRoutes({
   }
 
   function findDevice(id) {
-    return devicesById.get(String(id || ''));
+    const device = devicesById.get(String(id || ''));
+    const tenant = currentTenant();
+    if (tenant && !tenant.system && device?.organizationId !== tenant.organizationId) return null;
+    return device;
   }
 
   function findActivatedDevice(credential) {
@@ -112,7 +117,7 @@ function registerServiceDeviceRoutes({
     return user?.active && user.emailVerifiedAt && user.roles?.includes('Admin');
   }
 
-  async function authenticateAdmin(identifier, password) {
+  async function authenticateAdmin(identifier, password, organizationId, unitId) {
     const user = findUser(identifier);
     const supplied = typeof password === 'string' ? password : '';
     const withinBcryptLimit = Buffer.byteLength(supplied, 'utf8') <= 72;
@@ -122,9 +127,14 @@ function registerServiceDeviceRoutes({
         ? user.passwordHash
         : DUMMY_PASSWORD_HASH,
     );
-    return withinBcryptLimit && passwordMatches && isAdmin(user) ? user : null;
+    if (!withinBcryptLimit || !passwordMatches || !user) return null;
+    const tenant = tenantForUser(user, organizationId, unitId);
+    return tenant?.roles?.includes('Admin') ? { user, tenant } : null;
   }
   function clientIp(req) { return String(req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, ''); }
+  function userInOrganization(user, organizationId, unitId) {
+    return user?.active && Boolean(tenantForUser(user, organizationId, unitId));
+  }
   function updateClientInfo(device, req) {
     device.lastSeenAt = nowIso();
     device.lastClientPlatform = String(req.body?.clientPlatform || req.get('X-Client-Platform') || device.lastClientPlatform || '').slice(0, 80);
@@ -155,12 +165,17 @@ function registerServiceDeviceRoutes({
       return { error: 'Name, Inventarnummer oder Raum ist zu lang.' };
     }
     if (macAddress && !/^([0-9A-F]{2}[:-]){5}[0-9A-F]{2}$/.test(macAddress)) return { error: 'Die MAC-Adresse ist ungültig.' };
-    if (devices.some((entry) => entry.id !== existing.id && entry.inventoryNumber === inventoryNumber)) return { error: 'Die Geräte-Inventarnummer ist bereits vergeben.' };
+    const tenant = currentTenant();
+    if (devices.some((entry) => entry.id !== existing.id
+      && (!tenant || entry.organizationId === tenant.organizationId)
+      && entry.inventoryNumber === inventoryNumber)) return { error: 'Die Geräte-Inventarnummer ist bereits vergeben.' };
     if (allowedDepartmentIds.some((id) => !departments.some((entry) => entry.id === id))) return { error: 'Ein Fachbereich ist ungültig.' };
     if (allowedNetworks.some((entry) => !validNetworkRule(entry))) return { error: 'Eine IP-Adresse oder ein CIDR-Netz ist ungültig.' };
-    if (allowedOfflineUserIds.some((id) => !users.some((entry) => entry.id === id && entry.active))) return { error: 'Eine Offline-Benutzerfreigabe ist ungültig.' };
+    if (allowedOfflineUserIds.some((id) => !users.some((entry) => entry.id === id
+      && userInOrganization(entry, currentTenant()?.organizationId, currentTenant()?.unitId)))) return { error: 'Eine Offline-Benutzerfreigabe ist ungültig.' };
     if (responsibleUserId
-        && !users.some((entry) => entry.id === responsibleUserId && entry.active)) {
+        && !users.some((entry) => entry.id === responsibleUserId
+          && userInOrganization(entry, currentTenant()?.organizationId, currentTenant()?.unitId))) {
       return { error: 'Die verantwortliche Person ist ungültig.' };
     }
     if (body.systemMfa !== undefined && !validMfaModes.includes(body.systemMfa)) {
@@ -235,7 +250,8 @@ function registerServiceDeviceRoutes({
   }
 
   app.get('/api/service-devices', authMiddleware, requirePermission('users.write'), (_req, res) => {
-    res.json(devices.map(publicDevice));
+    const organizationId = currentTenant()?.organizationId;
+    res.json(devices.filter((entry) => entry.organizationId === organizationId).map(publicDevice));
   });
 
   app.post('/api/service-devices', authMiddleware, requirePermission('users.write'), async (req, res) => {
@@ -244,6 +260,7 @@ function registerServiceDeviceRoutes({
     if (!passwordIsValid(req.body.systemPassword)) return res.status(400).json({ error: 'Das Gerätepasswort muss mindestens 12 Zeichen sowie Groß-/Kleinbuchstaben, Zahl und Sonderzeichen enthalten.' });
     const device = {
       id: nextId('device'), ...values, systemPasswordHash: await bcrypt.hash(req.body.systemPassword, 12),
+      organizationId: req.tenant.organizationId, unitId: req.tenant.unitId,
       credentialHash: null, securityVersion: 1, loginCredentials: [], secondFactors: [], personalNfcCredentials: [], offlineQrCredentials: [],
       failedLoginAttempts: 0, lockedUntil: null, createdAt: nowIso(), createdBy: req.user.id,
       activatedAt: null, activatedBy: null, lastSeenAt: null,
@@ -327,7 +344,8 @@ function registerServiceDeviceRoutes({
 
   app.post('/api/service-devices/:id/personal-nfc', authMiddleware, requirePermission('users.write'), (req, res) => {
     const device = findDevice(req.params.id); if (!device) return res.status(404).json({ error: 'Gerät nicht gefunden.' });
-    const user = users.find((entry) => entry.id === req.body.userId && entry.active);
+    const user = users.find((entry) => entry.id === req.body.userId
+      && userInOrganization(entry, req.tenant.organizationId, req.tenant.unitId));
     const credential = String(req.body.credential || '').trim();
     if (!user || credential.length < 8) return res.status(400).json({ error: 'Aktiver Benutzer und gültiges NFC-Credential sind erforderlich.' });
     device.personalNfcCredentials ||= [];
@@ -345,7 +363,8 @@ function registerServiceDeviceRoutes({
 
   app.post('/api/service-devices/:id/offline-qr', authMiddleware, requirePermission('users.write'), (req, res) => {
     const device = findDevice(req.params.id); if (!device) return res.status(404).json({ error: 'Gerät nicht gefunden.' });
-    const user = users.find((entry) => entry.id === req.body.userId && entry.active);
+    const user = users.find((entry) => entry.id === req.body.userId
+      && userInOrganization(entry, req.tenant.organizationId, req.tenant.unitId));
     if (!user || !(device.allowedOfflineUserIds || []).includes(user.id)) {
       return res.status(400).json({ error: 'Der Benutzer ist für dieses Gerät nicht offline freigegeben.' });
     }
@@ -371,26 +390,38 @@ function registerServiceDeviceRoutes({
   });
 
   app.post('/api/service-devices/activation/options', authRateLimit, async (req, res) => {
-    const user = await authenticateAdmin(req.body.identifier, req.body.password);
-    if (!user) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
-    return res.json(devices.filter((entry) => entry.active).map(publicDevice));
+    const authenticated = await authenticateAdmin(
+      req.body.identifier, req.body.password, req.body.organizationId, req.body.unitId,
+    );
+    if (!authenticated) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
+    return runWithTenant(authenticated.tenant, () => res.json(devices
+      .filter((entry) => entry.active
+        && entry.organizationId === authenticated.tenant.organizationId)
+      .map(publicDevice)));
   });
 
   app.post('/api/service-devices/activate', authRateLimit, async (req, res) => {
-    const user = await authenticateAdmin(req.body.identifier, req.body.password);
-    if (!user) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
+    const authenticated = await authenticateAdmin(
+      req.body.identifier, req.body.password, req.body.organizationId, req.body.unitId,
+    );
+    if (!authenticated) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
     if (!NATIVE_CLIENT_PLATFORMS.has(String(req.body.clientPlatform || '').toLowerCase())) {
       return res.status(400).json({
         error: 'Dienstgeräte können nur in einer installierten App aktiviert werden.',
       });
     }
-    const device = findDevice(req.body.deviceId); if (!device?.active) return res.status(404).json({ error: 'Aktives Gerät nicht gefunden.' });
+    const device = devicesById.get(String(req.body.deviceId || ''));
+    if (!device?.active || device.organizationId !== authenticated.tenant.organizationId) {
+      return res.status(404).json({ error: 'Aktives Gerät nicht gefunden.' });
+    }
     const credential = crypto.randomBytes(48).toString('base64url');
     replaceDeviceCredential(device, credential);
     device.securityVersion += 1;
-    device.activatedAt = nowIso(); device.activatedBy = user.id; updateClientInfo(device, req);
-    logEvent('activate', 'ServiceDevice', { id: device.id }, user.username);
-    return res.json({ device: publicDevice(device), deviceCredential: credential });
+    device.activatedAt = nowIso(); device.activatedBy = authenticated.user.id; updateClientInfo(device, req);
+    return runWithTenant(authenticated.tenant, () => {
+      logEvent('activate', 'ServiceDevice', { id: device.id }, authenticated.user.username);
+      return res.json({ device: publicDevice(device), deviceCredential: credential });
+    });
   });
 
   app.post('/api/service-devices/status', authRateLimit, (req, res) => {
@@ -400,13 +431,17 @@ function registerServiceDeviceRoutes({
   });
 
   app.post('/api/service-devices/deactivate-client', authRateLimit, async (req, res) => {
-    const user = await authenticateAdmin(req.body.identifier, req.body.password);
     const device = findActivatedDevice(req.body.deviceCredential);
-    if (!user || !device) return res.status(401).json({ error: 'Administrative Bestätigung fehlgeschlagen.' });
+    const authenticated = device && await authenticateAdmin(
+      req.body.identifier, req.body.password, device.organizationId, device.unitId,
+    );
+    if (!authenticated || !device) return res.status(401).json({ error: 'Administrative Bestätigung fehlgeschlagen.' });
     replaceDeviceCredential(device);
     device.activatedAt = null; device.activatedBy = null; device.securityVersion += 1;
-    logEvent('deactivate_client', 'ServiceDevice', { id: device.id }, user.username);
-    return res.json({ success: true });
+    return runWithTenant(authenticated.tenant, () => {
+      logEvent('deactivate_client', 'ServiceDevice', { id: device.id }, authenticated.user.username);
+      return res.json({ success: true });
+    });
   });
 
   app.post('/api/service-devices/login/system', authRateLimit, async (req, res) => {
@@ -427,7 +462,13 @@ function registerServiceDeviceRoutes({
     }
     successfulLogin(device, 'Systemzugang', method); updateClientInfo(device, req);
     const systemUser = { id: `device-system:${device.id}`, username: `Gerät ${device.name}`, name: 'Systemzugang', email: '', roles: [], permissions: [], active: true, emailVerifiedAt: nowIso() };
-    const token = createToken(systemUser, { deviceId: device.id, sessionType: DEVICE_SESSION, expiresIn: SYSTEM_TOKEN_TTL_SECONDS });
+    const token = createToken(systemUser, {
+      deviceId: device.id,
+      sessionType: DEVICE_SESSION,
+      expiresIn: SYSTEM_TOKEN_TTL_SECONDS,
+      organizationId: device.organizationId,
+      unitId: device.unitId,
+    });
     logEvent('login', 'ServiceDevice', { id: device.id, method }, systemUser.username);
     return res.json({
       token, expiresIn: SYSTEM_TOKEN_TTL_SECONDS, device: publicDevice(device), sessionType: DEVICE_SESSION,
@@ -449,9 +490,12 @@ function registerServiceDeviceRoutes({
     ) && passwordWithinLimit && Boolean(user);
     const qrValue = String(req.body.qrCredential || '');
     if (!valid && qrValue.startsWith('mkqr:v1:')) {
-      const index = qrLoginCredentials.findIndex((entry) => safeHashEqual(entry.credentialHash, qrValue));
+      const index = qrLoginCredentials.findIndex((entry) =>
+        entry.organizationId === device.organizationId
+        && safeHashEqual(entry.credentialHash, qrValue));
       const credential = qrLoginCredentials[index];
-      const qrUser = credential && users.find((entry) => entry.id === credential.userId);
+      const qrUser = credential && users.find((entry) => entry.id === credential.userId
+        && userInOrganization(entry, device.organizationId, device.unitId));
       const expired = credential?.expiresAt && Date.parse(credential.expiresAt) <= Date.now();
       if (credential && qrUser && !expired && credential.securityVersion === securityVersion(qrUser)) {
         user = qrUser; valid = true; method = 'personal-qr';
@@ -461,7 +505,8 @@ function registerServiceDeviceRoutes({
     if (!valid && qrValue.startsWith(OFFLINE_QR_PREFIX)) {
       const credential = (device.offlineQrCredentials || [])
         .find((entry) => entry.active !== false && safeHashEqual(entry.credentialHash, qrValue));
-      const qrUser = credential && users.find((entry) => entry.id === credential.userId);
+      const qrUser = credential && users.find((entry) => entry.id === credential.userId
+        && userInOrganization(entry, device.organizationId, device.unitId));
       if (qrUser && (device.allowedOfflineUserIds || []).includes(qrUser.id)) {
         user = qrUser; valid = true; method = 'personal-offline-qr';
       }
@@ -469,7 +514,8 @@ function registerServiceDeviceRoutes({
     const nfcValue = String(req.body.nfcLoginCredential || '');
     if (!valid && nfcValue) {
       const credential = (device.personalNfcCredentials || []).find((entry) => entry.active !== false && safeHashEqual(entry.credentialHash, nfcValue));
-      const nfcUser = credential && users.find((entry) => entry.id === credential.userId);
+      const nfcUser = credential && users.find((entry) => entry.id === credential.userId
+        && userInOrganization(entry, device.organizationId, device.unitId));
       if (nfcUser) { user = nfcUser; valid = true; method = 'personal-nfc'; }
     }
     if (!valid || !user?.active || !user.emailVerifiedAt || !await verifySecondFactor(device, device.personalMfa, req.body)
@@ -477,6 +523,10 @@ function registerServiceDeviceRoutes({
           && String(req.body.nfcLoginCredential || '') === String(req.body.nfcCredential || ''))) {
       // The IP limiter throttles guesses without allowing an attacker to lock
       // a known personal account globally from a shared service device.
+      return res.status(401).json({ error: 'Persönliche Anmeldung fehlgeschlagen.' });
+    }
+    const personalTenant = tenantForUser(user, device.organizationId, device.unitId);
+    if (!personalTenant) {
       return res.status(401).json({ error: 'Persönliche Anmeldung fehlgeschlagen.' });
     }
     if (qrIndexToConsume >= 0) qrLoginCredentials.splice(qrIndexToConsume, 1);
@@ -492,21 +542,25 @@ function registerServiceDeviceRoutes({
       verifiedUser.lockedUntil = null;
       verifiedUser.lastLoginAt = nowIso();
       await saveUser(verifiedUser);
-      const token = createToken(verifiedUser, {
-        deviceId: device.id,
-        sessionType: PERSONAL_DEVICE_SESSION,
-      });
-      logEvent('login', 'ServiceDevice', {
-        id: device.id, userId: verifiedUser.id, method,
-      }, verifiedUser.username);
-      return response.json({
-        token,
-        expiresIn: 3600,
-        user: publicUser(verifiedUser),
-        device: publicDevice(device),
-        sessionType: PERSONAL_DEVICE_SESSION,
-        offlineLease: method === 'personal-offline-qr'
-          ? offlineLease(device, verifiedUser, qrValue, PERSONAL_DEVICE_SESSION) : null,
+      return runWithTenant(personalTenant, () => {
+        const token = createToken(verifiedUser, {
+          deviceId: device.id,
+          sessionType: PERSONAL_DEVICE_SESSION,
+          organizationId: device.organizationId,
+          unitId: personalTenant.unitId,
+        });
+        logEvent('login', 'ServiceDevice', {
+          id: device.id, userId: verifiedUser.id, method,
+        }, verifiedUser.username);
+        return response.json({
+          token,
+          expiresIn: 3600,
+          user: publicUser(verifiedUser),
+          device: publicDevice(device),
+          sessionType: PERSONAL_DEVICE_SESSION,
+          offlineLease: method === 'personal-offline-qr'
+            ? offlineLease(device, verifiedUser, qrValue, PERSONAL_DEVICE_SESSION) : null,
+        });
       });
     };
     if (userMfa?.mfaEnabled(user)) {

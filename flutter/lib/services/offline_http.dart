@@ -239,12 +239,22 @@ Future<Response> _enqueueWrite(
   String? body,
 ) async {
   final subject = OfflineStore.instance.subjectFromHeaders(headers);
-  final command = await OfflineStore.instance.enqueue(
-    subject: subject,
-    method: method,
-    uri: url,
-    body: body,
-  );
+  late final OfflineCommand command;
+  try {
+    command = await OfflineStore.instance.enqueue(
+      subject: subject,
+      method: method,
+      uri: url,
+      body: body,
+    );
+  } on OfflineSafetyException catch (error) {
+    return base.Response(
+      jsonEncode({'error': error.message, 'code': 'safety_blocked'}),
+      409,
+      headers: const {'content-type': 'application/json'},
+      request: base.Request(method, url),
+    );
+  }
   return base.Response(
     jsonEncode({'offlineQueued': true, 'commandId': command.id}),
     method == 'POST' ? 201 : 200,

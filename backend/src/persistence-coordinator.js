@@ -1,3 +1,5 @@
+const { rawCollection } = require('./tenancy');
+
 function configurePersistence({
   app,
   appData,
@@ -24,7 +26,7 @@ function configurePersistence({
         // Capture when the queued write starts. Concurrent mutations are
         // coalesced into the next cycle, retaining at most one full snapshot.
         const snapshot = structuredClone(Object.fromEntries(
-          collectionNames.map((name) => [name, appData[name] || []]),
+          collectionNames.map((name) => [name, rawCollection(appData[name] || [])]),
         ));
         await dataStore.saveCollections(snapshot);
         currentWaiters.forEach(({ resolve }) => resolve());

@@ -14,6 +14,7 @@ function createDefectMailMonitor({
   service,
   defectReports,
   persistData = async () => {},
+  runInContext = (callback) => callback(),
   clientFactory,
   env = process.env,
   logger = console,
@@ -157,18 +158,20 @@ function createDefectMailMonitor({
 
   async function runOnce() {
     if (running || !env.DEFECT_IMAP_HOST) return false;
-    running = true;
-    const client = createClient();
-    try {
-      await client.connect();
-      const selected = await client.mailboxOpen(mailbox);
-      await ingestMessages(client, selected);
-      await deleteArchivedMessages(client);
-      return true;
-    } finally {
-      if (client.usable) await client.logout().catch(() => client.close());
-      running = false;
-    }
+    return runInContext(async () => {
+      running = true;
+      const client = createClient();
+      try {
+        await client.connect();
+        const selected = await client.mailboxOpen(mailbox);
+        await ingestMessages(client, selected);
+        await deleteArchivedMessages(client);
+        return true;
+      } finally {
+        if (client.usable) await client.logout().catch(() => client.close());
+        running = false;
+      }
+    });
   }
 
   function start() {

@@ -23,7 +23,8 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm test
+      - run: npm run test:coverage
+      - run: npm run test:performance
       - run: npm audit --omit=dev --audit-level=high
 
   mailbox-provisioner:
@@ -49,4 +50,22 @@ jobs:
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
-      - run: flutter test
+      - run: flutter test --coverage
+      - run: node ../tool/check_lcov.js coverage/lcov.info 26.5
+      - run: flutter build web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-coverage
+          path: flutter/coverage/lcov.info
+
+  repository-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tool/secret_scan.js
+      - run: sh -n ops/backup-mariadb.sh
+      - run: sh -n ops/restore-test.sh
+      - run: docker compose --env-file backend/.env.example config --quiet

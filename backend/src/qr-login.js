@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { currentTenant, runWithTenant } = require('./tenancy');
 
 const QR_LOGIN_TTL_MS = 10 * 60 * 1000;
 const QR_PREFIX = 'mkqr:v1:';
@@ -29,6 +30,7 @@ function safeEqual(left, right) {
 function registerQrLoginRoutes({
   app, users, credentials, authMiddleware, requirePermission, authRateLimit,
   createToken, securityVersion, publicUser, logEvent, saveUser = async () => {}, userMfa,
+  tenantForUser = () => null,
 }) {
   function removeExpired() {
     const now = Date.now();
@@ -77,8 +79,10 @@ function registerQrLoginRoutes({
 
   function listFor(userId) {
     removeExpired();
+    const organizationId = currentTenant()?.organizationId;
     return credentials
-      .filter((entry) => entry.userId === userId)
+      .filter((entry) => entry.userId === userId
+        && (!organizationId || entry.organizationId === organizationId))
       .map(publicCredential)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
@@ -93,6 +97,8 @@ function registerQrLoginRoutes({
       : new Date(createdAt.getTime() + requestedValidity.ttlMs);
     credentials.push({
       id: crypto.randomUUID(),
+      organizationId: currentTenant()?.organizationId,
+      unitId: currentTenant()?.unitId,
       userId: user.id,
       title,
       credentialHash: hashCredential(qrValue),
@@ -127,8 +133,10 @@ function registerQrLoginRoutes({
   }
 
   function revoke(userId, credentialId, actor) {
+    const organizationId = currentTenant()?.organizationId;
     const index = credentials.findIndex(
-      (entry) => entry.id === credentialId && entry.userId === userId,
+      (entry) => entry.id === credentialId && entry.userId === userId
+        && (!organizationId || entry.organizationId === organizationId),
     );
     if (index < 0) return false;
     const [credential] = credentials.splice(index, 1);
@@ -164,7 +172,10 @@ function registerQrLoginRoutes({
 
   app.delete('/api/auth/qr-credentials/me', authMiddleware, (req, res) => {
     for (let index = credentials.length - 1; index >= 0; index -= 1) {
-      if (credentials[index].userId === req.user.id) credentials.splice(index, 1);
+      if (credentials[index].userId === req.user.id
+        && credentials[index].organizationId === req.tenant.organizationId) {
+        credentials.splice(index, 1);
+      }
     }
     logEvent('qr_login_revoked', 'User', { id: req.user.id }, req.user.username);
     res.status(204).end();
@@ -176,7 +187,9 @@ function registerQrLoginRoutes({
     requirePermission('users.write'),
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
-      if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+      if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
+        return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+      }
       return res.json(listFor(user.id));
     },
   );
@@ -187,7 +200,9 @@ function registerQrLoginRoutes({
     requirePermission('users.write'),
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
-      if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+      if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
+        return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+      }
       if (!user.active || !user.emailVerifiedAt) {
         return res.status(409).json({ error: 'QR-Anmeldung ist nur für aktive, bestätigte Konten möglich.' });
       }
@@ -207,7 +222,9 @@ function registerQrLoginRoutes({
     requirePermission('users.write'),
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
-      if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+      if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
+        return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+      }
       if (!revoke(user.id, req.params.credentialId, req.user)) {
         return res.status(404).json({ error: 'Anmeldecode nicht gefunden.' });
       }
@@ -231,18 +248,27 @@ function registerQrLoginRoutes({
     // verbraucht, damit parallele Anmeldungen sie nicht mehrfach nutzen können.
     if (oneTime) credentials.splice(index, 1);
     const user = users.find((entry) => entry.id === credential.userId);
+    const tenant = user && tenantForUser(
+      user, credential.organizationId, credential.unitId,
+    );
     if (!user || !user.active || !user.emailVerifiedAt
-        || credential.securityVersion !== securityVersion(user)) {
+        || !tenant || credential.securityVersion !== securityVersion(user)) {
       if (!oneTime) credentials.splice(index, 1);
       return res.status(401).json({ error: 'QR-Code ist ungültig oder abgelaufen.' });
     }
     const finishLogin = async (verifiedUser, response) => {
       verifiedUser.lastLoginAt = new Date().toISOString();
       await saveUser(verifiedUser);
-      logEvent('qr_login', 'User', { id: verifiedUser.id }, verifiedUser.username);
-      req.persistenceRequired = true;
-      return response.json({
-        token: createToken(verifiedUser), expiresIn: 3600, user: publicUser(verifiedUser),
+      return runWithTenant(tenant, () => {
+        logEvent('qr_login', 'User', { id: verifiedUser.id }, verifiedUser.username);
+        req.persistenceRequired = true;
+        return response.json({
+          token: createToken(verifiedUser, {
+            organizationId: tenant.organizationId, unitId: tenant.unitId,
+          }),
+          expiresIn: 3600,
+          user: publicUser(verifiedUser),
+        });
       });
     };
     if (userMfa?.mfaEnabled(user)) {

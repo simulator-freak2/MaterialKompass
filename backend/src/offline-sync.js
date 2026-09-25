@@ -5,6 +5,8 @@ const {
   randomBytes,
   randomUUID,
 } = require('node:crypto');
+const { assessMaterialSafety } = require('./material-safety');
+const { currentTenant } = require('./tenancy');
 
 const OFFLINE_LEASE_DAYS = 7;
 const MAX_COMMAND_RESULTS = 10_000;
@@ -24,7 +26,25 @@ function registerOfflineSync({
   jwtSecret,
   offlineMfaEligible = () => true,
 }) {
-  const state = () => (syncState[0] ||= { revision: 0, updatedAt: null });
+  const state = () => {
+    const tenant = currentTenant();
+    if (!tenant?.organizationId) {
+      throw new Error('Offline-Synchronisation erfordert einen Organisationskontext.');
+    }
+    let entry = syncState.find((candidate) =>
+      candidate.organizationId === tenant.organizationId
+    );
+    if (!entry) {
+      entry = {
+        organizationId: tenant.organizationId,
+        unitId: tenant.unitId,
+        revision: 0,
+        updatedAt: null,
+      };
+      syncState.push(entry);
+    }
+    return entry;
+  };
   const nowIso = () => new Date().toISOString();
   const resultsByKey = new Map(commandResults.map((entry) => [entry.key, entry]));
   const clientsById = new Map(clients.map((entry) => [entry.id, entry]));
@@ -81,7 +101,7 @@ function registerOfflineSync({
     // guessed command id from becoming an authentication bypass and keeps
     // deduplication stable when the same user receives a refreshed JWT.
     return authMiddleware(req, res, () => {
-      const identity = `${req.user.id}:${req.device?.id || 'personal'}`;
+      const identity = `${req.tenant.organizationId}:${req.user.id}:${req.device?.id || 'personal'}`;
       const key = `${createHash('sha256').update(identity).digest('base64url')}:${commandId}`;
       const stored = resultsByKey.get(key);
       if (stored) {
@@ -93,6 +113,8 @@ function registerOfflineSync({
         if (res.statusCode >= 200 && res.statusCode < 300) {
           const result = {
             key,
+            organizationId: req.tenant.organizationId,
+            unitId: req.tenant.unitId,
             commandId,
             statusCode: res.statusCode,
             bodyEncrypted: encryptResult(body),
@@ -116,7 +138,9 @@ function registerOfflineSync({
 
   app.use((req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
-        || req.path.startsWith('/api/offline/')) return next();
+        || req.path.startsWith('/api/offline/')
+        || req.path.startsWith('/api/auth/')
+        || req.path.startsWith('/api/service-devices/')) return next();
     let bumped = false;
     const bumpOnce = () => {
       if (!bumped && res.statusCode >= 200 && res.statusCode < 300) {
@@ -172,6 +196,7 @@ function registerOfflineSync({
       ? (data.materials || []).filter((entry) => !entry.archived && include(entry)).map((entry) => ({
         ...entry,
         availableQuantity: Number(entry.quantity || 0) - Number(entry.issuedQuantity || 0),
+        safetyStatus: assessMaterialSafety(entry),
       })) : [];
     const clothingItems = hasPermission(req.user, 'clothing.read') || req.sessionType === deviceSession
       ? (data.clothingItems || []).filter((entry) => !entry.archived && include(entry)) : [];
@@ -211,6 +236,7 @@ function registerOfflineSync({
     const id = String(req.get('X-Offline-Client-Id') || '');
     const client = clientsById.get(id);
     return client?.active
+      && client.organizationId === req.tenant.organizationId
       && client.userId === req.user.id
       && Date.parse(client.leaseExpiresAt) > Date.now()
       ? client
@@ -229,6 +255,8 @@ function registerOfflineSync({
     }
     const expiresAt = new Date(Date.now() + OFFLINE_LEASE_DAYS * 86_400_000).toISOString();
     const values = {
+      organizationId: req.tenant.organizationId,
+      unitId: req.tenant.unitId,
       userId: req.user.id,
       serviceDeviceId: req.device?.id || null,
       name: String(req.body.name || 'MaterialKompass').trim().slice(0, 120),
@@ -287,12 +315,15 @@ function registerOfflineSync({
   });
 
   app.get('/api/offline/clients', authMiddleware, requirePermission('users.write'), (_req, res) => {
-    res.json(clients);
+    const organizationId = currentTenant()?.organizationId;
+    res.json(clients.filter((entry) => entry.organizationId === organizationId));
   });
 
   app.post('/api/offline/clients/:id/revoke', authMiddleware, requirePermission('users.write'), (req, res) => {
     const client = clientsById.get(req.params.id);
-    if (!client) return res.status(404).json({ error: 'Offlinegerät nicht gefunden.' });
+    if (!client || client.organizationId !== req.tenant.organizationId) {
+      return res.status(404).json({ error: 'Offlinegerät nicht gefunden.' });
+    }
     client.active = false;
     client.revokedAt = nowIso();
     return res.json(client);

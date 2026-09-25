@@ -1,6 +1,6 @@
 # Performance- und Kompatibilitätsbericht
 
-Stand: 30. August 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
+Stand: 6. September 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
 als Release-Build beziehungsweise frischer Node-Prozess auf der lokalen
 Windows-Entwicklungsumgebung durchgeführt.
 Sie dienen als reproduzierbare Vergleichswerte, nicht als Garantie für jede
@@ -20,6 +20,11 @@ Der vollständige Web-Ausgabeordner ist 44.618.052 Bytes groß. Darin liegen meh
 alternative Flutter-Renderer; ein Browser lädt nicht alle Varianten. 876.887 Bytes
 Fachcode sind in verzögerte Chunks aufgeteilt und werden erst beim Öffnen des jeweiligen
 Bereichs benötigt.
+
+Nach Ergänzung des plattformübergreifenden Systemdrucks wurde der Web-Release-Build am
+6. September erneut gemessen: `main.dart.js` umfasst 3.701.872 Bytes und der vollständige
+Ausgabeordner 46.160.409 Bytes. Die rund 1,2 % größere Hauptdatei ist der Preis für die
+Web-Druckbrücke; PDF- und Fachoberflächen bleiben weiterhin verzögert geladen.
 
 ## Umgesetzte Maßnahmen
 
@@ -62,22 +67,31 @@ Bereichs benötigt.
   Laufzeitabhängigkeit auf der Loginseite.
 - Eine ungenutzte Flutter-Abhängigkeit und ein ungenutztes Laufzeit-Asset wurden entfernt;
   das sichtbare Login-Logo wird in einer zur Anzeige passenden Auflösung erzeugt.
+- Eine gemeinsame Ausgabeschicht ersetzt 14 voneinander getrennte Speichervorgänge.
+  PDF-Daten werden nur einmal dekodiert und direkt an Download oder Systemdruck
+  weitergereicht. Dateigröße, Base64, MIME-Typ, PDF-Signatur und Dateiname werden vor
+  der Ausgabe begrenzt beziehungsweise geprüft.
+- Konfigurierte native Download-Ziele werden mit temporärer Datei und abschließendem
+  Umbenennen beschrieben. Namenskonflikte überschreiben keine bestehenden Daten.
+  Programmupdates verbleiben im separaten, prüfsummenkontrollierten Updatepfad.
 
 ## Prüfstatus
 
-- `flutter analyze`: keine Fehler oder Warnungen in der Passkey-Umsetzung; 19 bereits
-  bestehende Stilhinweise in anderen Fachseiten bleiben sichtbar
-- Flutter-Tests: 42 von 42 bestanden
-- Windows-Release-Build: bestanden; native Passkey-/Windows-Hello-Pluginintegration
-  kompiliert (die Größenangabe 34.338.252 Bytes stammt aus der Messung vom 16. August)
-- Web-Release-Build: bestanden; selbst gehostete Passkey-Brücke, Prüfsumme und eigener
-  Service Worker im erzeugten Build geprüft
-- Android: Java-/Flutter-/Plugin-Kompilierung erreicht. Ein Release-Build benötigt den
-  absichtlich nicht versionierten Betreiber-Signierschlüssel. Der Debug-Build wurde auf
-  dieser Maschine beim nativen Merge durch nur 0,62 GB freien Platz auf Laufwerk C:
-  verhindert; ein alternativer Gradle-Cache auf E: konnte seine Distribution wegen des
-  lokalen Downloadstillstands nicht initialisieren.
-- Backend-Tests: 129 von 129 bestanden; `npm audit --omit=dev` meldet 0 Schwachstellen
+- `flutter analyze`: keine Fehler oder Warnungen
+- Flutter-Tests: 55 von 55 bestanden, einschließlich Vorlagenauswahl sowie Dateinamen-,
+  Base64- und MIME-Prüfungen
+- Windows-Release-Build: bestanden; native Passkey-, Datei- und Druckintegration
+  kompiliert
+- Web-Release-Build: bestanden; Web-Druckbrücke und getrennte Browserdownloads
+  kompiliert
+- Android: Der Debug-Build konnte auf dieser Maschine nicht starten, weil die benötigte
+  Gradle-8.14-Distribution trotz Netzwerkfreigabe bei 0 Byte stehen blieb. Der temporäre
+  alternative Gradle-Cache wurde danach entfernt. Ein Release-Build benötigt zusätzlich
+  den absichtlich nicht versionierten Betreiber-Signierschlüssel.
+- macOS, Linux und iOS: Plattformcode und Pluginregistrierung sind erzeugt; native Builds
+  benötigen weiterhin den jeweiligen Betriebssystem-Runner beziehungsweise die Apple-
+  Signierumgebung. macOS besitzt die erforderliche Druckberechtigung in Debug und Release.
+- Backend-Tests: 135 von 135 bestanden
 
 ## Betriebsgrenzen
 

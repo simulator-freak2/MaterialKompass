@@ -1090,14 +1090,13 @@ function registerDefectEmailRoutes({
     }
     const buffer = await defectReportTemplate().generateDefectReportPdf({
       inventoryNumber,
-      contactName: inventoryNumber ? req.user.name || req.user.username : '',
-      contactEmail: inventoryNumber ? req.user.email : '',
     });
     return res.json({
       fileName: inventoryNumber
         ? `maengelbericht-${inventoryNumber}.pdf`
         : 'maengelbericht-vorlage.pdf',
       mimeType: 'application/pdf',
+      inventoryNumber,
       fileBase64: buffer.toString('base64'),
     });
   });

@@ -74,11 +74,20 @@ function accountFieldsAreValid({ name = '', username, email }) {
     && EMAIL_PATTERN.test(normalize(email));
 }
 
-function permissionsForRoles(roleNames, roles) {
-  return [...new Set(roleNames.flatMap((name) => roles.find((role) => role.name === name)?.permissions || []))];
+function permissionsForRoles(roleNames, roles, organizationId = null) {
+  return [...new Set(roleNames.flatMap((name) => roles.find((role) =>
+    role.name === name && (!role.organizationId || role.organizationId === organizationId)
+  )?.permissions || []))];
 }
 
-function registerUserRoutes({ app, users, roles, permissions, departments = [], departmentReferences = [], authMiddleware, requirePermission, logEvent, authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false, onTokenIssued, userStore, accountMailSender = sendAccountMail, dataSubjectExporter, onBeforeUserDelete, now = Date.now, defaultMailMessageFor = () => null, verifyMfaCode = async () => ({ valid: true }) }) {
+function registerUserRoutes({ app, users, roles, permissions, departments = [],
+  memberships = [], organizationUnits = [], departmentReferences = [],
+  authMiddleware, requirePermission, logEvent,
+  authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false,
+  onTokenIssued, userStore, accountMailSender = sendAccountMail,
+  dataSubjectExporter, onBeforeUserDelete, now = Date.now,
+  defaultMailMessageFor = () => null,
+  verifyMfaCode = async () => ({ valid: true }) }) {
   const appBaseUrl = process.env.APP_BASE_URL || 'https://materialkompass.org';
   const saveUser = (user) => userStore?.saveUser(user) || Promise.resolve();
   const deleteStoredUser = (id) => userStore?.deleteUser(id) || Promise.resolve();
@@ -96,8 +105,47 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     return users.find((user) => normalize(user.email) === key || normalize(user.username) === key);
   }
 
-  function roleNamesAreValid(names) {
-    return Array.isArray(names) && names.length > 0 && names.every((name) => roles.some((role) => role.name === name));
+  function organizationMembership(userId, organizationId) {
+    return memberships.find((entry) => entry.userId === userId
+      && entry.organizationId === organizationId && entry.status === 'active');
+  }
+
+  function usersForRequest(req) {
+    if (!req?.tenant?.organizationId) return users;
+    const ids = new Set(memberships.filter((entry) =>
+      entry.organizationId === req.tenant.organizationId && entry.status === 'active'
+    ).map((entry) => entry.userId));
+    return users.filter((entry) => ids.has(entry.id));
+  }
+
+  function membershipRoles(membership, fallback = []) {
+    return [...new Set((membership?.scopes || []).flatMap((scope) => scope.roles || fallback))];
+  }
+
+  function membershipDepartments(membership, fallback = []) {
+    return [...new Set((membership?.scopes || []).flatMap((scope) =>
+      scope.departmentIds || fallback
+    ))];
+  }
+
+  function publicUserForRequest(user, req) {
+    const membership = organizationMembership(user.id, req?.tenant?.organizationId);
+    if (!membership) return publicUser(user);
+    const tenantUser = {
+      ...user,
+      roles: membershipRoles(membership, user.roles),
+      departmentIds: membershipDepartments(membership, user.departmentIds),
+    };
+    tenantUser.permissions = permissionsForRoles(
+      tenantUser.roles, roles, req?.tenant?.organizationId
+    );
+    return { ...publicUser(tenantUser), membershipId: membership.id };
+  }
+
+  function roleNamesAreValid(names, organizationId = null) {
+    return Array.isArray(names) && names.length > 0 && names.every((name) =>
+      roles.some((role) => role.name === name
+        && (!role.organizationId || role.organizationId === organizationId)));
   }
 
   function departmentIdsAreValid(ids) {
@@ -113,9 +161,17 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     return null;
   }
 
-  function isLastAdmin(user) {
-    return user.roles?.includes('Admin')
-      && users.filter((entry) => entry.active && entry.roles?.includes('Admin')).length <= 1;
+  function isLastAdmin(user, organizationId = null) {
+    if (!organizationId) {
+      return user.roles?.includes('Admin')
+        && users.filter((entry) => entry.active && entry.roles?.includes('Admin')).length <= 1;
+    }
+    const membership = organizationMembership(user.id, organizationId);
+    if (!membershipRoles(membership).includes('Admin')) return false;
+    const activeAdmins = memberships.filter((entry) => entry.organizationId === organizationId
+      && entry.status === 'active' && membershipRoles(entry).includes('Admin'))
+      .filter((entry) => users.find((candidate) => candidate.id === entry.userId)?.active);
+    return activeAdmins.length <= 1;
   }
 
   function validateMailMessage(value) {
@@ -255,18 +311,26 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     return res.status(204).end();
   });
 
-  app.get('/api/roles', authMiddleware, requirePermission('roles.read'), (_req, res) => res.json(roles));
+  app.get('/api/roles', authMiddleware, requirePermission('roles.read'), (req, res) =>
+    res.json(roles.filter((role) =>
+      !role.organizationId || role.organizationId === req.tenant.organizationId
+    )));
 
   app.post('/api/roles', authMiddleware, requirePermission('users.write'), async (req, res) => {
     const name = String(req.body.name || '').trim();
     const selectedPermissions = req.body.permissions;
-    if (!name || roles.some((role) => normalize(role.name) === normalize(name))) {
+    if (!name || roles.some((role) =>
+      role.organizationId === req.tenant.organizationId
+      && normalize(role.name) === normalize(name))) {
       return res.status(409).json({ error: 'Rollenname fehlt oder ist bereits vergeben.' });
     }
     if (!Array.isArray(selectedPermissions) || selectedPermissions.some((item) => !permissions.includes(item))) {
       return res.status(400).json({ error: 'Ungültige Berechtigungen.' });
     }
-    const role = { id: nextId('role', roles), name, permissions: [...new Set(selectedPermissions)] };
+    const role = {
+      id: nextId('role', roles), organizationId: req.tenant.organizationId,
+      name, permissions: [...new Set(selectedPermissions)],
+    };
     roles.push(role);
     await saveRole(role);
     logEvent('create', 'Role', { id: role.id }, req.user.username);
@@ -274,14 +338,17 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   });
 
   app.put('/api/roles/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const role = roles.find((entry) => entry.id === req.params.id);
+    const role = roles.find((entry) => entry.id === req.params.id
+      && entry.organizationId === req.tenant.organizationId);
     if (!role) return res.status(404).json({ error: 'Rolle nicht gefunden.' });
     if (role.name === 'Admin' && req.body.name && req.body.name !== 'Admin') {
       return res.status(400).json({ error: 'Die Systemrolle Admin kann nicht umbenannt werden.' });
     }
     const name = String(req.body.name ?? role.name).trim();
     const selectedPermissions = req.body.permissions ?? role.permissions;
-    if (!name || roles.some((entry) => entry.id !== role.id && normalize(entry.name) === normalize(name))) {
+    if (!name || roles.some((entry) => entry.id !== role.id
+      && entry.organizationId === req.tenant.organizationId
+      && normalize(entry.name) === normalize(name))) {
       return res.status(409).json({ error: 'Rollenname ist bereits vergeben.' });
     }
     if (!Array.isArray(selectedPermissions) || selectedPermissions.some((item) => !permissions.includes(item))) {
@@ -290,9 +357,15 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     const oldName = role.name;
     role.name = name;
     role.permissions = [...new Set(selectedPermissions)];
-    users.forEach((user) => {
-      user.roles = user.roles.map((entry) => entry === oldName ? name : entry);
-      user.permissions = permissionsForRoles(user.roles, roles);
+    memberships.filter((entry) => entry.organizationId === req.tenant.organizationId)
+      .forEach((membership) => membership.scopes.forEach((scope) => {
+        scope.roles = (scope.roles || []).map((entry) => entry === oldName ? name : entry);
+      }));
+    usersForRequest(req).forEach((user) => {
+      if (user.roles?.includes(oldName)) {
+        user.roles = user.roles.map((entry) => entry === oldName ? name : entry);
+        user.permissions = permissionsForRoles(user.roles, roles, req.tenant.organizationId);
+      }
     });
     await saveRole(role);
     await Promise.all(users.map(saveUser));
@@ -301,10 +374,13 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   });
 
   app.delete('/api/roles/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const index = roles.findIndex((entry) => entry.id === req.params.id);
+    const index = roles.findIndex((entry) => entry.id === req.params.id
+      && entry.organizationId === req.tenant.organizationId);
     if (index < 0) return res.status(404).json({ error: 'Rolle nicht gefunden.' });
     const role = roles[index];
-    if (role.name === 'Admin' || users.some((user) => user.roles.includes(role.name))) {
+    if (role.name === 'Admin' || memberships.some((membership) =>
+      membership.organizationId === req.tenant.organizationId
+      && membershipRoles(membership).includes(role.name))) {
       return res.status(409).json({ error: 'Systemrollen oder verwendete Rollen können nicht gelöscht werden.' });
     }
     roles.splice(index, 1);
@@ -316,11 +392,14 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   app.get('/api/users', authMiddleware, requirePermission('users.read'), async (req, res) => {
     await applyRetentionPolicy();
     const search = normalize(req.query.search);
-    const result = search ? users.filter((user) => [user.name, user.username, user.email]
-      .some((value) => normalize(value).includes(search))) : users;
+    const organizationUsers = usersForRequest(req);
+    const result = search ? organizationUsers.filter((user) =>
+      [user.name, user.username, user.email]
+        .some((value) => normalize(value).includes(search))) : organizationUsers;
     const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
-    return res.json(result.slice(offset, offset + limit).map(publicUser));
+    return res.json(result.slice(offset, offset + limit)
+      .map((user) => publicUserForRequest(user, req)));
   });
 
   app.post('/api/users', authMiddleware, requirePermission('users.write'), async (req, res) => {
@@ -335,7 +414,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (findUser(username) || findUser(email)) return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
     const hasStartPassword = typeof password === 'string' && password.length > 0;
     if (hasStartPassword && !passwordIsValid(password)) return res.status(400).json({ error: 'Das Passwort muss mindestens 12 Zeichen sowie Groß-/Kleinbuchstaben, Zahl und Sonderzeichen enthalten.' });
-    if (!roleNamesAreValid(roleNames)) return res.status(400).json({ error: 'Mindestens eine gültige Rolle ist erforderlich.' });
+    if (!roleNamesAreValid(roleNames, req.tenant?.organizationId)) return res.status(400).json({ error: 'Mindestens eine gültige Rolle ist erforderlich.' });
     const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
     if (departmentError) return res.status(400).json({ error: departmentError });
     const mailMessage = requestedMessage(req.body.mailMessage, 'user-create');
@@ -344,7 +423,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       id: nextId('user', users), name: String(name || '').trim(), username: String(username).trim(),
       email: normalize(email), passwordHash: await bcrypt.hash(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: roleNames,
       departmentIds: [...new Set(departmentIds)],
-      permissions: permissionsForRoles(roleNames, roles), active: req.body.active !== false,
+      permissions: permissionsForRoles(roleNames, roles, req.tenant?.organizationId), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
       createdAt: new Date().toISOString(), lastLoginAt: null,
       mfaRequired,
@@ -354,37 +433,69 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       mfaRecoveryCodeHashes: [], mfaVersion: 0,
     };
     users.push(user);
+    if (req.tenant?.organizationId) {
+      memberships.push({
+        id: nextId('membership', memberships),
+        userId: user.id,
+        organizationId: req.tenant.organizationId,
+        status: 'active',
+        defaultUnitId: req.tenant.unitId,
+        scopes: [{
+          unitId: req.tenant.unitId,
+          includeDescendants: req.body.includeDescendants === true,
+          roles: [...new Set(roleNames)],
+          departmentIds: [...new Set(departmentIds)],
+        }],
+        createdAt: new Date().toISOString(),
+      });
+    }
     if (!skipEmailVerification) await issueVerification(user, mailMessage.value);
     if (!hasStartPassword) await issuePasswordReset(user, mailMessage.value);
     await saveUser(user);
     logEvent('create', 'User', { id: user.id }, req.user.username);
-    return res.status(201).json(publicUser(user));
+    return res.status(201).json(publicUserForRequest(user, req));
   });
 
   app.put('/api/users/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const user = users.find((entry) => entry.id === req.params.id);
+    const user = usersForRequest(req).find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
+    const membership = organizationMembership(user.id, req.tenant?.organizationId);
     const email = normalize(req.body.email ?? user.email);
     const username = String(req.body.username ?? user.username).trim();
-    const roleNames = req.body.roles ?? user.roles;
-    const departmentIds = req.body.departmentIds ?? user.departmentIds ?? [];
+    const roleNames = req.body.roles ?? membershipRoles(membership, user.roles);
+    const departmentIds = req.body.departmentIds
+      ?? membershipDepartments(membership, user.departmentIds ?? []);
     if (!accountFieldsAreValid({ name: req.body.name ?? user.name, username, email })) {
       return res.status(400).json({ error: 'Ungültige Nutzerdaten.' });
     }
     if (users.some((entry) => entry.id !== user.id && (normalize(entry.email) === email || normalize(entry.username) === normalize(username)))) {
       return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
     }
-    if (!roleNamesAreValid(roleNames)) return res.status(400).json({ error: 'Ungültige Rolle.' });
+    if (!roleNamesAreValid(roleNames, req.tenant?.organizationId)) return res.status(400).json({ error: 'Ungültige Rolle.' });
     const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
     if (departmentError) return res.status(400).json({ error: departmentError });
     const nextActive = req.body.active ?? user.active;
-    if ((!nextActive || !roleNames.includes('Admin')) && isLastAdmin(user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht deaktiviert oder herabgestuft werden.' });
+    if ((!nextActive || !roleNames.includes('Admin'))
+      && isLastAdmin(user, req.tenant?.organizationId)) {
+      return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht deaktiviert oder herabgestuft werden.' });
+    }
     if (req.body.password && !passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
     const emailChanged = email !== normalize(user.email);
     const mfaPolicyChanged = typeof req.body.mfaRequired === 'boolean'
       && req.body.mfaRequired !== user.mfaRequired;
-    Object.assign(user, { name: String(req.body.name ?? user.name ?? '').trim(), username, email, roles: roleNames, departmentIds: [...new Set(departmentIds)], active: nextActive });
-    user.permissions = permissionsForRoles(roleNames, roles);
+    Object.assign(user, {
+      name: String(req.body.name ?? user.name ?? '').trim(), username, email, active: nextActive,
+    });
+    if (membership) {
+      const scope = membership.scopes.find((entry) => entry.unitId === req.tenant.unitId)
+        || membership.scopes[0];
+      scope.roles = [...new Set(roleNames)];
+      scope.departmentIds = [...new Set(departmentIds)];
+    } else {
+      user.roles = roleNames;
+      user.departmentIds = [...new Set(departmentIds)];
+      user.permissions = permissionsForRoles(roleNames, roles, req.tenant?.organizationId);
+    }
     if (req.body.password) {
       user.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
@@ -408,11 +519,11 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (nextActive) { user.deactivatedAt = null; user.deactivationReason = null; user.scheduledDeletionAt = null; }
     await saveUser(user);
     logEvent('update', 'User', { id: user.id }, req.user.username);
-    return res.json(publicUser(user));
+    return res.json(publicUserForRequest(user, req));
   });
 
   app.post('/api/users/:id/password-reset', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const user = users.find((entry) => entry.id === req.params.id);
+    const user = usersForRequest(req).find((entry) => entry.id === req.params.id);
     const mailMessage = requestedMessage(req.body.mailMessage, 'password-reset');
     if (mailMessage.error) return res.status(400).json({ error: mailMessage.error });
     if (user) { await issuePasswordReset(user, mailMessage.value); await saveUser(user); logEvent('password_reset_requested', 'User', { id: user.id }, req.user.username); }
@@ -420,7 +531,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   });
 
   app.post('/api/users/:id/verification/resend', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const user = users.find((entry) => entry.id === req.params.id);
+    const user = usersForRequest(req).find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     if (!user.active) return res.status(409).json({ error: 'Der Account ist deaktiviert.' });
     if (user.emailVerifiedAt) return res.status(409).json({ error: 'Die E-Mail-Adresse ist bereits bestätigt.' });
@@ -441,7 +552,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
     if (!req.user.roles?.includes('Admin')) {
       return res.status(403).json({ error: 'Diese Aktion ist nur für Admins verfügbar.' });
     }
-    const user = users.find((entry) => entry.id === req.params.id);
+    const user = usersForRequest(req).find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     if (user.emailVerifiedAt) {
       return res.status(409).json({ error: 'Die E-Mail-Adresse ist bereits bestätigt.' });
@@ -455,10 +566,23 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
   });
 
   app.delete('/api/users/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const index = users.findIndex((entry) => entry.id === req.params.id);
+    const organizationUsers = usersForRequest(req);
+    const selected = organizationUsers.find((entry) => entry.id === req.params.id);
+    const index = selected ? users.findIndex((entry) => entry.id === selected.id) : -1;
     if (index < 0) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
-    if (isLastAdmin(users[index])) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht gelöscht werden.' });
+    if (isLastAdmin(users[index], req.tenant?.organizationId)) return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht gelöscht werden.' });
+    const membershipIndex = memberships.findIndex((entry) => entry.userId === selected.id
+      && entry.organizationId === req.tenant?.organizationId);
+    if (membershipIndex >= 0 && memberships.filter((entry) =>
+      entry.userId === selected.id && entry.status === 'active').length > 1) {
+      memberships.splice(membershipIndex, 1);
+      logEvent('membership_delete', 'User', { id: selected.id }, req.user.username);
+      return res.status(204).end();
+    }
     const [deleted] = users.splice(index, 1);
+    for (let membershipIndex = memberships.length - 1; membershipIndex >= 0; membershipIndex -= 1) {
+      if (memberships[membershipIndex].userId === deleted.id) memberships.splice(membershipIndex, 1);
+    }
     await onBeforeUserDelete?.(deleted);
     await deleteStoredUser(deleted.id);
     logEvent('delete', 'User', { id: deleted.id }, req.user.username);
@@ -509,7 +633,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [], 
       const mfaVerification = await verifyMfaCode(req.user, req.body.mfaCode);
       if (!mfaVerification?.valid) return res.status(403).json({ error: 'Der 2-FA-Code ist ungültig.' });
     }
-    if (isLastAdmin(req.user)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
+    if (isLastAdmin(req.user, req.tenant?.organizationId)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
     await onBeforeUserDelete?.(req.user);
     users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);
     await deleteStoredUser(req.user.id);

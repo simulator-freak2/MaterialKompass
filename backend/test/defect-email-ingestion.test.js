@@ -133,6 +133,14 @@ async function login(baseUrl) {
   return (await response.json()).token;
 }
 
+function ingestInDefaultOrganization(app, source, sourceInfo) {
+  return app.locals.runInOrganization(
+    'org-default',
+    'unit-default-root',
+    () => app.locals.defectEmailService.ingestSource(source, sourceInfo),
+  );
+}
+
 test('digital email report is recognized, created and keeps report plus email body', async () => {
   const data = structuredClone(seedData);
   const materialUser = createMaterialUser();
@@ -144,7 +152,7 @@ test('digital email report is recognized, created and keeps report plus email bo
     },
   });
   const reportPdf = await filledReportPdf();
-  const result = await app.locals.defectEmailService.ingestSource(mailWithAttachment(reportPdf), {
+  const result = await ingestInDefaultOrganization(app, mailWithAttachment(reportPdf), {
     mailbox: 'INBOX',
     uid: 23,
     uidValidity: '10',
@@ -189,7 +197,8 @@ test('digital email report is recognized, created and keeps report plus email bo
 
 test('legacy report checkbox names are recognized', async () => {
   const app = createApp();
-  const result = await app.locals.defectEmailService.ingestSource(
+  const result = await ingestInDefaultOrganization(
+    app,
     mailWithAttachment(await legacyFilledReportPdf()),
     { mailbox: 'INBOX', uid: 26, uidValidity: '10' },
   );
@@ -217,6 +226,7 @@ test('template download supports blank and item-prefilled variants', async () =>
     const blankResponse = await fetch(`${baseUrl}/api/defect-report-template`, { headers });
     assert.equal(blankResponse.status, 200);
     const blank = await blankResponse.json();
+    assert.equal(blank.inventoryNumber, '');
     const blankPdf = await PDFDocument.load(Buffer.from(blank.fileBase64, 'base64'));
     assert.equal(blankPdf.getForm().getTextField('Inventarnummer').getText() || '', '');
 
@@ -226,10 +236,13 @@ test('template download supports blank and item-prefilled variants', async () =>
     );
     assert.equal(filledResponse.status, 200);
     const filled = await filledResponse.json();
+    assert.equal(filled.inventoryNumber, '10050035-02-02-001');
     const filledPdf = await PDFDocument.load(Buffer.from(filled.fileBase64, 'base64'));
     assert.equal(filledPdf.getForm().getTextField('Inventarnummer').getText(), '10050035-02-02-001');
-    assert.equal(filledPdf.getForm().getTextField('Name').getText(), 'Mara Materialwart');
-    assert.equal(filledPdf.getForm().getTextField('E-Mailadresse').getText(), 'mara@example.org');
+    assert.equal(filledPdf.getForm().getTextField('Name').getText() || '', '');
+    assert.equal(filledPdf.getForm().getTextField('E-Mailadresse').getText() || '', '');
+    assert.equal(filledPdf.getForm().getTextField('Telefonnummer').getText() || '', '');
+    assert.equal(filledPdf.getForm().getTextField('Datum derFeststellung').getText() || '', '');
   } finally {
     server.close();
     await app.locals.defectEmailService.stop();
@@ -245,7 +258,8 @@ test('incomplete report waits for review and can be completed through the queue 
     },
   });
   const incomplete = await filledReportPdf({ description: '' });
-  const result = await app.locals.defectEmailService.ingestSource(
+  const result = await ingestInDefaultOrganization(
+    app,
     mailWithAttachment(incomplete),
     { mailbox: 'INBOX', uid: 25, uidValidity: '10' },
   );
@@ -291,7 +305,7 @@ test('locally rendered scans are recognized as report pages rather than damage p
   const app = createApp();
   const reportPdf = await filledReportPdf();
   const pages = await renderPdfPages(reportPdf);
-  const result = await app.locals.defectEmailService.ingestSource(mailWithImages(pages), {
+  const result = await ingestInDefaultOrganization(app, mailWithImages(pages), {
     mailbox: 'INBOX',
     uid: 24,
     uidValidity: '10',
@@ -323,7 +337,8 @@ test('image-only scan PDFs are OCRed and prefill the review fields', async () =>
       height: embedded.height,
     });
   }
-  const result = await app.locals.defectEmailService.ingestSource(
+  const result = await ingestInDefaultOrganization(
+    app,
     mailWithAttachment(Buffer.from(await scan.save({ useObjectStreams: false }))),
     { mailbox: 'INBOX', uid: 27, uidValidity: '10' },
   );

@@ -1,13 +1,16 @@
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/download_service.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/service_devices_admin_panel.dart';
+import 'login_page.dart';
 
 class UsersPage extends StatefulWidget {
   final String token;
@@ -28,6 +31,7 @@ class _UsersPageState extends State<UsersPage> {
   String scannerEmailDomain = 'materialkompass.org';
   bool isAdmin = false;
   bool loading = true;
+  bool backupTransferRunning = false;
 
   Map<String, String> get headers => {
     'Authorization': 'Bearer ${widget.token}',
@@ -553,6 +557,263 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<Map<String, String>?> _backupCredentials({
+    required String title,
+    required String actionLabel,
+    bool requireConfirmation = false,
+  }) async {
+    final password = TextEditingController();
+    final mfaCode = TextEditingController();
+    final confirmation = TextEditingController();
+    try {
+      return await showDialog<Map<String, String>>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 540,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    requireConfirmation
+                        ? 'Der vorhandene Datenbestand wird vollständig ersetzt. Dieser Vorgang kann nur mit einer zuvor exportierten Gesamtdatensicherung rückgängig gemacht werden.'
+                        : 'Die Datei enthält den vollständigen Datenbestand einschließlich Konten und Anmeldedaten. Bewahre sie geschützt auf.',
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Aktuelles Admin-Passwort',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: mfaCode,
+                    decoration: const InputDecoration(
+                      labelText: '2-FA-Code (falls aktiviert)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (requireConfirmation) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: confirmation,
+                      decoration: const InputDecoration(
+                        labelText:
+                            'Zur Bestätigung „ALLE DATEN ERSETZEN“ eingeben',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed:
+                    password.text.isEmpty ||
+                        (requireConfirmation &&
+                            confirmation.text != 'ALLE DATEN ERSETZEN')
+                    ? null
+                    : () => Navigator.pop(dialogContext, {
+                        'currentPassword': password.text,
+                        'mfaCode': mfaCode.text.trim(),
+                        if (requireConfirmation)
+                          'confirmation': confirmation.text,
+                      }),
+                child: Text(actionLabel),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      password.dispose();
+      mfaCode.dispose();
+      confirmation.dispose();
+    }
+  }
+
+  String _responseError(http.Response response, String fallback) {
+    try {
+      final data = jsonDecode(response.body);
+      if (data is Map && data['error'] != null) return data['error'].toString();
+    } on FormatException {
+      // Use the stable fallback for non-JSON proxy or server responses.
+    }
+    return fallback;
+  }
+
+  Future<void> exportCompleteBackup() async {
+    final credentials = await _backupCredentials(
+      title: 'Gesamtdatensicherung exportieren',
+      actionLabel: 'Exportieren',
+    );
+    if (credentials == null || !mounted) return;
+    setState(() => backupTransferRunning = true);
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/system/backup/export'),
+        headers: headers,
+        body: jsonEncode(credentials),
+      );
+      if (response.statusCode != 200) {
+        _message(
+          _responseError(
+            response,
+            'Die Sicherung konnte nicht erstellt werden.',
+          ),
+        );
+        return;
+      }
+      final now = DateTime.now();
+      final date =
+          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final saved = await DownloadService.instance.save(
+        name: 'materialkompass-backup-$date',
+        bytes: response.bodyBytes,
+        fileExtension: 'json',
+        mimeType: 'application/json',
+      );
+      if (mounted) _message('${saved.fileName} wurde exportiert.');
+    } catch (error) {
+      if (mounted) _message('Export fehlgeschlagen: $error');
+    } finally {
+      if (mounted) setState(() => backupTransferRunning = false);
+    }
+  }
+
+  Future<void> importCompleteBackup() async {
+    final file = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    if (file == null || !mounted) return;
+    final fileLength = await file.length();
+    if (fileLength <= 0 || fileLength > maxDownloadBytes) {
+      _message(
+        'Die Sicherungsdatei ist leer, nicht lesbar oder größer als 128 MB.',
+      );
+      return;
+    }
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty || bytes.length > maxDownloadBytes) {
+      _message(
+        'Die Sicherungsdatei ist leer, nicht lesbar oder größer als 128 MB.',
+      );
+      return;
+    }
+    late final Map<String, dynamic> backup;
+    try {
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) throw const FormatException();
+      backup = Map<String, dynamic>.from(decoded);
+    } on FormatException {
+      _message('Die ausgewählte Datei enthält keine gültige JSON-Sicherung.');
+      return;
+    }
+    if (backup['format'] != 'MaterialKompass Gesamtdatensicherung' ||
+        backup['schemaVersion'] != 1) {
+      _message('Die Datei ist keine unterstützte MaterialKompass-Sicherung.');
+      return;
+    }
+    final credentials = await _backupCredentials(
+      title: 'Gesamtdatensicherung importieren',
+      actionLabel: 'Daten ersetzen',
+      requireConfirmation: true,
+    );
+    if (credentials == null || !mounted) return;
+    setState(() => backupTransferRunning = true);
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/system/backup/import'),
+        headers: headers,
+        body: jsonEncode({...credentials, 'backup': backup}),
+      );
+      if (response.statusCode != 200) {
+        _message(
+          _responseError(
+            response,
+            'Die Sicherung konnte nicht importiert werden.',
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      _message('Alle Daten wurden importiert. Bitte melde dich erneut an.');
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+        (route) => false,
+      );
+    } catch (error) {
+      if (mounted) _message('Import fehlgeschlagen: $error');
+    } finally {
+      if (mounted) setState(() => backupTransferRunning = false);
+    }
+  }
+
+  Widget backupTab() => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Gesamtdatensicherung',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Exportiert beziehungsweise importiert alle MaterialKompass-Daten: Inventar, Kleidung, Mängel, Beschaffung, Kalender, Dokumente, Protokolle, Einstellungen sowie Nutzer, Rollen und Passkeys.',
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Die JSON-Datei enthält vertrauliche Daten und sollte verschlüsselt oder an einem geschützten Ort aufbewahrt werden.',
+              ),
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.icon(
+                    onPressed: backupTransferRunning
+                        ? null
+                        : exportCompleteBackup,
+                    icon: const Icon(Icons.download),
+                    label: const Text('Alle Daten exportieren'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: backupTransferRunning
+                        ? null
+                        : importCompleteBackup,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Alle Daten importieren'),
+                  ),
+                  if (backupTransferRunning) const CircularProgressIndicator(),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+
   List<String> get allPermissions {
     final allPermissions =
         roles
@@ -1045,7 +1306,7 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: isAdmin ? 6 : 3,
+    length: isAdmin ? 7 : 3,
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Nutzerverwaltung'),
@@ -1063,6 +1324,11 @@ class _UsersPageState extends State<UsersPage> {
               ),
             if (isAdmin)
               const Tab(text: 'Dienstgeräte', icon: Icon(Icons.devices_other)),
+            if (isAdmin)
+              const Tab(
+                text: 'Datensicherung',
+                icon: Icon(Icons.settings_backup_restore),
+              ),
           ],
         ),
       ),
@@ -1333,6 +1599,7 @@ class _UsersPageState extends State<UsersPage> {
                     users: users,
                     departments: departments,
                   ),
+                if (isAdmin) backupTab(),
               ],
             ),
     ),

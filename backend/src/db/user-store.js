@@ -1,5 +1,11 @@
 const mariadb = require('mariadb');
 const crypto = require('node:crypto');
+const { DEFAULT_ORGANIZATION_ID } = require('../tenancy');
+
+const PLATFORM_COLLECTIONS = new Set([
+  'organizations', 'organizationUnits', 'memberships', 'permissions',
+]);
+const PLATFORM_SCOPE = '__platform__';
 
 function parseJson(value, fallback = []) {
   if (Array.isArray(value)) return value;
@@ -64,10 +70,13 @@ function createUserStore(database = mariadb) {
 
     async initialize() {
       await pool.query(`CREATE TABLE IF NOT EXISTS application_collections (
-        name VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL,
+        name VARCHAR(64) NOT NULL,
         data_json LONGTEXT NOT NULL,
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
           ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (organization_id, name),
+        INDEX idx_application_collections_name (name),
         CHECK (JSON_VALID(data_json))
       )`);
       await pool.query(`CREATE TABLE IF NOT EXISTS mailbox_processing_state (
@@ -111,6 +120,7 @@ function createUserStore(database = mariadb) {
         users: userRows.map((row) => ({
           id: row.id, name: row.name, username: row.username, email: row.email,
           passwordHash: row.password_hash, roles: parseJson(row.roles),
+          platformAdmin: Boolean(row.platform_admin),
           departmentIds: parseJson(row.department_ids),
           permissions: parseJson(row.permissions), active: Boolean(row.active),
           failedLoginAttempts: Number(row.failed_login_attempts || 0), lockedUntil: iso(row.locked_until),
@@ -126,7 +136,12 @@ function createUserStore(database = mariadb) {
           deactivatedAt: iso(row.deactivated_at), deactivationReason: row.deactivation_reason,
           scheduledDeletionAt: iso(row.scheduled_deletion_at), createdAt: iso(row.created_at),
         })),
-        roles: roleRows.map((row) => ({ id: row.id, name: row.name, permissions: parseJson(row.permissions) })),
+        roles: roleRows.map((row) => ({
+          id: row.id,
+          organizationId: row.organization_id || null,
+          name: row.name,
+          permissions: parseJson(row.permissions),
+        })),
         passkeys: passkeyRows.map((row) => ({
           id: row.id,
           userId: row.user_id,
@@ -145,8 +160,9 @@ function createUserStore(database = mariadb) {
     },
 
     async saveUser(user) {
+      user = user?.__identity || user;
       await pool.query(`INSERT INTO users (
-        id, name, username, email, password_hash, roles, permissions, active,
+        id, name, username, email, password_hash, roles, permissions, platform_admin, active,
         failed_login_attempts, locked_until, last_login_at, email_verified_at,
         verification_token_hash, verification_expires_at, password_reset_token_hash,
         password_reset_expires_at, mfa_required, mfa_secret_encrypted,
@@ -154,10 +170,10 @@ function createUserStore(database = mariadb) {
         mfa_recovery_code_hashes, mfa_enabled_at,
         mfa_last_verified_at, mfa_grace_ends_at, mfa_version,
         deactivated_at, deactivation_reason, scheduled_deletion_at, created_at, department_ids
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
         password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
-        permissions=VALUES(permissions),
+        permissions=VALUES(permissions), platform_admin=VALUES(platform_admin),
         active=VALUES(active), failed_login_attempts=VALUES(failed_login_attempts),
         locked_until=VALUES(locked_until), last_login_at=VALUES(last_login_at),
         email_verified_at=VALUES(email_verified_at), verification_token_hash=VALUES(verification_token_hash),
@@ -172,7 +188,8 @@ function createUserStore(database = mariadb) {
         deactivated_at=VALUES(deactivated_at),
         deactivation_reason=VALUES(deactivation_reason), scheduled_deletion_at=VALUES(scheduled_deletion_at)`, [
         user.id, user.name, user.username, user.email, user.passwordHash,
-        JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []), user.active ? 1 : 0,
+        JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
+        user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
         user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
         sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
         user.passwordResetTokenHash || null, sqlDateTime(user.passwordResetExpiresAt),
@@ -252,39 +269,160 @@ function createUserStore(database = mariadb) {
       ]);
     },
     async saveRole(role) {
-      await pool.query(`INSERT INTO roles (id, name, permissions) VALUES (?, ?, ?)
-        ON DUPLICATE KEY UPDATE name=VALUES(name), permissions=VALUES(permissions)`,
-      [role.id, role.name, JSON.stringify(role.permissions || [])]);
+      await pool.query(`INSERT INTO roles (id, organization_id, name, permissions)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE organization_id=VALUES(organization_id),
+          name=VALUES(name), permissions=VALUES(permissions)`,
+      [role.id, role.organizationId || null, role.name, JSON.stringify(role.permissions || [])]);
     },
     async deleteRole(id) { await pool.query('DELETE FROM roles WHERE id = ?', [id]); },
     async loadCollections() {
-      const rows = await pool.query('SELECT name, data_json FROM application_collections');
-      return Object.fromEntries(rows.map((row) => {
+      const rows = await pool.query(
+        'SELECT name, organization_id, data_json FROM application_collections',
+      );
+      const collections = {};
+      rows.forEach((row) => {
         const data = parseJson(row.data_json);
-        serializedCollections.set(row.name, JSON.stringify(data));
-        return [row.name, data];
-      }));
+        const scope = row.organization_id || DEFAULT_ORGANIZATION_ID;
+        serializedCollections.set(`${scope}:${row.name}`, JSON.stringify(data));
+        collections[row.name] ||= [];
+        collections[row.name].push(...data);
+      });
+      return collections;
     },
     async saveCollections(collections) {
       // Most requests touch one domain collection plus the audit log. Avoid
       // rewriting every JSON collection on every mutation while retaining the
       // existing atomic snapshot semantics for the collections that changed.
-      const entries = Object.entries(collections)
-        .map(([name, data]) => [name, JSON.stringify(data)])
-        .filter(([name, serialized]) => serializedCollections.get(name) !== serialized);
+      const partitions = [];
+      for (const [name, data] of Object.entries(collections)) {
+        if (PLATFORM_COLLECTIONS.has(name)) {
+          partitions.push([PLATFORM_SCOPE, name, JSON.stringify(data)]);
+          continue;
+        }
+        const grouped = new Map();
+        for (const entry of data) {
+          const organizationId = entry?.organizationId || DEFAULT_ORGANIZATION_ID;
+          if (!grouped.has(organizationId)) grouped.set(organizationId, []);
+          grouped.get(organizationId).push(entry);
+        }
+        if (grouped.size === 0) grouped.set(DEFAULT_ORGANIZATION_ID, []);
+        grouped.forEach((values, organizationId) => {
+          partitions.push([organizationId, name, JSON.stringify(values)]);
+        });
+      }
+      const entries = partitions.filter(([organizationId, name, serialized]) =>
+        serializedCollections.get(`${organizationId}:${name}`) !== serialized
+      );
       if (entries.length === 0) return;
       let connection;
       try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        for (const [name, serialized] of entries) {
-          await connection.query(`INSERT INTO application_collections (name, data_json)
-            VALUES (?, ?) ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)`,
-          [name, serialized]);
+        for (const [organizationId, name, serialized] of entries) {
+          await connection.query(`INSERT INTO application_collections
+            (organization_id, name, data_json) VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)`,
+          [organizationId, name, serialized]);
         }
         await connection.commit();
-        entries.forEach(([name, serialized]) => {
-          serializedCollections.set(name, serialized);
+        entries.forEach(([organizationId, name, serialized]) => {
+          serializedCollections.set(`${organizationId}:${name}`, serialized);
+        });
+      } catch (error) {
+        if (connection) await connection.rollback();
+        throw error;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    async replaceBackupData({ users, roles, passkeys, collections }) {
+      let connection;
+      const serialized = [];
+      for (const [name, data] of Object.entries(collections)) {
+        if (PLATFORM_COLLECTIONS.has(name)) {
+          serialized.push([PLATFORM_SCOPE, name, JSON.stringify(data)]);
+          continue;
+        }
+        const grouped = new Map();
+        for (const entry of data) {
+          const organizationId = entry?.organizationId || DEFAULT_ORGANIZATION_ID;
+          if (!grouped.has(organizationId)) grouped.set(organizationId, []);
+          grouped.get(organizationId).push(entry);
+        }
+        if (grouped.size === 0) grouped.set(DEFAULT_ORGANIZATION_ID, []);
+        grouped.forEach((values, organizationId) => {
+          serialized.push([organizationId, name, JSON.stringify(values)]);
+        });
+      }
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        await connection.query('DELETE FROM user_passkeys');
+        await connection.query('DELETE FROM users');
+        await connection.query('DELETE FROM roles');
+        await connection.query('DELETE FROM application_collections');
+
+        if (roles.length > 0) {
+          await connection.batch(
+            'INSERT INTO roles (id, organization_id, name, permissions) VALUES (?, ?, ?, ?)',
+            roles.map((role) => [
+              role.id, role.organizationId || null, role.name,
+              JSON.stringify(role.permissions || []),
+            ]),
+          );
+        }
+        if (users.length > 0) {
+          await connection.batch(`INSERT INTO users (
+            id, name, username, email, password_hash, roles, permissions, active,
+            failed_login_attempts, locked_until, last_login_at, email_verified_at,
+            verification_token_hash, verification_expires_at, password_reset_token_hash,
+            password_reset_expires_at, mfa_required, mfa_secret_encrypted,
+            mfa_pending_secret_encrypted, mfa_pending_secret_expires_at,
+            mfa_recovery_code_hashes, mfa_enabled_at, mfa_last_verified_at,
+            mfa_grace_ends_at, mfa_version, deactivated_at, deactivation_reason,
+            scheduled_deletion_at, created_at, department_ids
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          users.map((user) => [
+            user.id, user.name || '', user.username, user.email, user.passwordHash,
+            JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []), user.active ? 1 : 0,
+            user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
+            sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null,
+            sqlDateTime(user.verificationExpiresAt), user.passwordResetTokenHash || null,
+            sqlDateTime(user.passwordResetExpiresAt), user.mfaRequired ? 1 : 0,
+            user.mfaSecretEncrypted || null, user.mfaPendingSecretEncrypted || null,
+            sqlDateTime(user.mfaPendingSecretExpiresAt), JSON.stringify(user.mfaRecoveryCodeHashes || []),
+            sqlDateTime(user.mfaEnabledAt), sqlDateTime(user.mfaLastVerifiedAt),
+            sqlDateTime(user.mfaGraceEndsAt), Number(user.mfaVersion || 0),
+            sqlDateTime(user.deactivatedAt), user.deactivationReason || null,
+            sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt || new Date()),
+            JSON.stringify(user.departmentIds || []),
+          ]));
+        }
+        if (passkeys.length > 0) {
+          await connection.batch(`INSERT INTO user_passkeys (
+            id, user_id, user_handle, credential_id, credential_id_hash, public_key,
+            signature_counter, transports, device_type, backed_up, name, created_at, last_used_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          passkeys.map((passkey) => [
+            passkey.id, passkey.userId, passkey.userHandle, passkey.credentialId,
+            crypto.createHash('sha256').update(passkey.credentialId).digest(),
+            Buffer.from(passkey.publicKey, 'base64url'), Number(passkey.counter || 0),
+            JSON.stringify(passkey.transports || []), passkey.deviceType,
+            passkey.backedUp ? 1 : 0, passkey.name, sqlDateTime(passkey.createdAt),
+            sqlDateTime(passkey.lastUsedAt),
+          ]));
+        }
+        if (serialized.length > 0) {
+          await connection.batch(
+            'INSERT INTO application_collections (organization_id, name, data_json) VALUES (?, ?, ?)',
+            serialized,
+          );
+        }
+        await connection.commit();
+        serializedCollections.clear();
+        serialized.forEach(([organizationId, name, data]) => {
+          serializedCollections.set(`${organizationId}:${name}`, data);
         });
       } catch (error) {
         if (connection) await connection.rollback();

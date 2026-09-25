@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { assessMaterialSafety } = require('./material-safety');
 
 const ACTIVE_RESERVATION_STATUSES = new Set(['Ausstehend', 'Freigegeben']);
 const ACTIVE_MAINTENANCE_STATUSES = new Set(['Geplant', 'In Arbeit']);
@@ -75,6 +76,8 @@ function registerCalendarRoutes({
       reservationApprovalRequired: item.reservationApprovalRequired === true,
       nextInspectionDate: item.nextInspectionDate || null,
       nextMaintenanceDate: item.nextMaintenanceDate || null,
+      safetyCritical: item.safetyCritical === true,
+      safetyStatus: assessMaterialSafety(item),
     };
   }
 
@@ -139,6 +142,10 @@ function registerCalendarRoutes({
   }
 
   function unavailableReason(item) {
+    const safety = assessMaterialSafety(item);
+    if (safety.blocked) {
+      return `„${item.inventoryNumber}“ ist aus Sicherheitsgründen gesperrt: ${safety.reasons.join(' ')}`;
+    }
     if (['Defekt', 'In Reparatur', 'Ausgesondert', 'Verloren'].includes(item.status)) {
       return `„${item.inventoryNumber}“ ist wegen des Status „${item.status}“ nicht reservierbar.`;
     }

@@ -288,6 +288,14 @@ test('defects enforce role scope, create notifications and support every export'
       assert.equal(response.status, 200, format);
       const exported = await response.json();
       assert.ok(Buffer.from(exported.fileBase64, 'base64').length > 20, format);
+      if (format === 'print') {
+        assert.equal(exported.mimeType, 'application/pdf');
+        assert.match(exported.fileName, /\.pdf$/);
+        assert.equal(
+          Buffer.from(exported.fileBase64, 'base64').subarray(0, 5).toString(),
+          '%PDF-',
+        );
+      }
     }
     const printResponse = await fetch(`${baseUrl}/api/defects/${defect.id}/print`, {
       headers: headers(materialToken),

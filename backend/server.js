@@ -53,18 +53,24 @@ async function start() {
     data.passkeys = userData.passkeys || [];
 
     const app = createApp({ userStore: store, userData, data, dataStore: store });
-    await app.locals.applyUserRetentionPolicy();
-    await app.locals.applyDefectRetentionPolicy();
-    await app.locals.applyDefectEmailRetentionPolicy();
-    await app.locals.applyDataRetentionPolicy();
+    await app.locals.runAsSystem(async () => {
+      await app.locals.applyUserRetentionPolicy();
+      await app.locals.applyDefectRetentionPolicy();
+      await app.locals.applyDefectEmailRetentionPolicy();
+      await app.locals.applyDataRetentionPolicy();
+      await app.locals.purgeExpiredOrganizationUnits();
+    });
     await app.locals.persistData();
     console.log(`Alle Anwendungsdaten aus MariaDB geladen (${userData.users.length} Accounts).`);
 
     const retentionTimer = setInterval(() => {
-      app.locals.applyUserRetentionPolicy()
-        .then(() => app.locals.applyDefectRetentionPolicy())
-        .then(() => app.locals.applyDefectEmailRetentionPolicy())
-        .then(() => app.locals.applyDataRetentionPolicy())
+      app.locals.runAsSystem(async () => {
+        await app.locals.applyUserRetentionPolicy();
+        await app.locals.applyDefectRetentionPolicy();
+        await app.locals.applyDefectEmailRetentionPolicy();
+        await app.locals.applyDataRetentionPolicy();
+        await app.locals.purgeExpiredOrganizationUnits();
+      })
         .then(() => app.locals.persistData())
         .catch((error) => console.error('Aufbewahrungsregel fehlgeschlagen:', error));
     }, 24 * 60 * 60 * 1000);
@@ -73,23 +79,31 @@ async function start() {
     const server = app.listen(config.port, config.host, () => {
       console.log(`MaterialKompass backend listening on http://${config.host}:${config.port}`);
     });
+    const mailboxContext = (prefix) => (callback) => app.locals.runInOrganization(
+      process.env[`${prefix}_ORGANIZATION_ID`] || 'org-default',
+      process.env[`${prefix}_UNIT_ID`] || 'unit-default-root',
+      callback,
+    );
     const defectMailMonitor = createDefectMailMonitor({
       store,
       service: app.locals.defectEmailService,
       defectReports: app.locals.defectReports,
       persistData: () => app.locals.persistData(),
+      runInContext: mailboxContext('DEFECT_IMAP'),
     });
     defectMailMonitor.start();
     const stocktakeMailMonitor = createStocktakeMailMonitor({
       store,
       service: app.locals.stocktakeEmailService,
       persistData: () => app.locals.persistData(),
+      runInContext: mailboxContext('INVENTORY_IMAP'),
     });
     stocktakeMailMonitor.start();
     const procurementMailMonitor = createProcurementMailMonitor({
       store,
       service: app.locals.procurementEmailService,
       persistData: () => app.locals.persistData(),
+      runInContext: mailboxContext('PROCUREMENT_IMAP'),
     });
     procurementMailMonitor.start();
     let shuttingDown = false;

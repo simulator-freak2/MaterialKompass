@@ -105,6 +105,8 @@ function ensureStorageHierarchy(data) {
       locationId: position.locationId,
       name: requiredText(position.name || 'Regal', 'Bezeichnung'),
       code: shelfCode,
+      organizationId: position.organizationId,
+      unitId: position.unitId,
     });
     storageLevels.push({
       id: levelId,
@@ -112,6 +114,8 @@ function ensureStorageHierarchy(data) {
       shelfId,
       name: 'Ebene 1',
       code: 'E1',
+      organizationId: position.organizationId,
+      unitId: position.unitId,
     });
     const legacyCode = String(position.code || position.section || '').trim();
     position.shelfId = shelfId;

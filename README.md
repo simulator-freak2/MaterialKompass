@@ -215,9 +215,13 @@ Inventar und Kleidung besitzen einen gemeinsamen, rollenbasierten Mängelworkflo
 - Mängel können zusätzlich an `maengel@materialkompass.org` gemeldet werden. Ein
   PDF-, PNG- oder JPEG-Bericht wird lokal ausgewertet, Schadensbilder werden
   automatisch getrennt und der E-Mail-Text wird als Kommentar übernommen
-- Die Anwendung stellt eine leere sowie eine mit Inventarnummer und Kontaktdaten
-  vorbefüllte PDF-Vorlage bereit. Unvollständige oder unsichere Scans landen in
-  einer Prüfwarteschlange für berechtigte Nutzer
+- Die Anwendung stellt eine leere sowie eine ausschließlich mit der Inventarnummer
+  vorbefüllte PDF-Vorlage bereit. Beide Varianten lassen sich unter Web, Windows,
+  Linux, Android, iOS und macOS über den Systemdialog direkt drucken oder getrennt
+  herunterladen. Die leere Vorlage bleibt in nativen Apps offline verfügbar; die
+  vorbefüllte Variante benötigt zur sicheren Artikelprüfung eine Onlineverbindung.
+  Unvollständige oder unsichere Scans landen in einer Prüfwarteschlange für
+  berechtigte Nutzer
 - Verknüpfungen zu Prüfungen, Reparaturen, Beschaffungen und Aussonderungen sowie
   Kennzeichnung von Wiederholungen und Duplikaten
 - Betroffene Artikel können direkt in der Mängelbearbeitung mit oder ohne
@@ -506,6 +510,26 @@ den Installer in ein temporäres Verzeichnis, prüft Größe und SHA-256 und sta
 System-Installer. iOS-Updates werden wegen der Apple-Signatur- und Store-Vorgaben über
 den gewählten Apple-Verteilungskanal ausgeliefert.
 
+### Drucken und Download-Ordner
+
+PDF-Druckbefehle öffnen den plattformeigenen Druckdialog. Im Mängelbereich stehen
+eine leere und eine ausschließlich mit Inventarnummer vorbefüllte Berichtsvorlage
+zur Verfügung. Vorbefüllte Berichte können zusätzlich direkt am Material- oder
+Kleidungsartikel gestartet werden. Bereits erfasste Mängel drucken die vollständige
+Meldung. Drucken und Herunterladen sind getrennte Aktionen; ein Druck erzeugt daher
+nicht automatisch eine dauerhafte lokale Kopie.
+
+Windows, Linux, Android, iOS und macOS zeigen im Dashboard die lokale Einstellung
+„Download-Ordner festlegen“. Sie gilt geräteweit für manuelle Exporte, Dokumente,
+Anhänge und heruntergeladene Berichte. Der Client prüft Schreibzugriff und Dateidaten,
+bereinigt vom Server gelieferte Dateinamen, begrenzt Downloads auf 128 MB und vergibt
+bei Namenskonflikten einen freien Namen, statt bestehende Dateien still zu
+überschreiben. Ein nicht mehr erreichbares Ziel muss ausdrücklich neu gewählt werden.
+Unter iOS bestätigt der Nutzer jede Datei zusätzlich im Systemdialog. Die Webversion
+besitzt keine lokale Ordnereinstellung, da dort der Browser das Downloadziel verwaltet.
+Automatische Clientupdates verwenden unabhängig davon ausschließlich das temporäre,
+prüfsummenkontrollierte Updateverzeichnis.
+
 ### Scanner-E-Mail-Adressen
 
 Administratoren können in der Nutzerverwaltung unter „Scanner-E-Mails“ echte
@@ -666,6 +690,13 @@ veröffentlicht werden; der CI-Prüf-Build ist nicht installierbar.
 Der Workflow `.github/workflows/quality.yml` führt bei Pull Requests und Änderungen
 am Hauptbranch Backend- und Flutter-Tests, Flutter-Analyse, Formatprüfung,
 Provisioner-Tests und den npm-Sicherheitsaudit aus.
+
+Die projektspezifischen Qualitätsanforderungen und Freigabekriterien stehen in
+[`QUALITY_ISO_25010.md`](QUALITY_ISO_25010.md). Das Bedrohungsmodell liegt in
+[`THREAT_MODEL.md`](THREAT_MODEL.md), Betriebs-, Alarmierungs- und Restore-Abläufe in
+[`OPERATIONS.md`](OPERATIONS.md). `ops/restore-test.sh <dump.sql.gz>` validiert eine
+Sicherung in einer strikt getrennten Testdatenbank; der wöchentliche Securityworkflow
+erzeugt außerdem CodeQL-Ergebnisse und Komponentenverzeichnisse.
 
 ### Etikettendruck
 

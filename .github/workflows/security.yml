@@ -1,0 +1,68 @@
+name: Sicherheit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (JavaScript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  component-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: npm ci
+        working-directory: backend
+      - name: CycloneDX-SBOM für das Backend erzeugen
+        run: npm sbom --omit=dev --sbom-format=cyclonedx > ../backend-sbom.cdx.json
+        working-directory: backend
+      - name: Flutter-Komponenteninventar erzeugen
+        run: |
+          flutter pub get
+          flutter pub deps --json > ../flutter-components.json
+        working-directory: flutter
+      - uses: actions/upload-artifact@v4
+        with:
+          name: component-inventory
+          path: |
+            backend-sbom.cdx.json
+            flutter-components.json

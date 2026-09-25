@@ -127,4 +127,31 @@ void main() {
     expect(find.text('M-2026-0001 · Druckminderer undicht'), findsNWidgets(2));
     expect(find.text('Weiter: Behoben'), findsOneWidget);
   });
+
+  testWidgets('offers blank and inventory-prefilled report output', (
+    tester,
+  ) async {
+    setViewport(tester, const Size(1200, 900));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefectsPage(token: 'test', request: request),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byTooltip('Mängelbericht-Vorlage drucken oder herunterladen'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mängelbericht-Vorlage'), findsOneWidget);
+    expect(find.text('Leer drucken'), findsOneWidget);
+    expect(find.text('Mit Inventarnummer drucken'), findsOneWidget);
+    expect(find.text('Leer herunterladen'), findsOneWidget);
+    expect(find.text('Mit Inventarnummer herunterladen'), findsOneWidget);
+    expect(
+      find.textContaining('ausschließlich die Inventarnummer'),
+      findsOneWidget,
+    );
+  });
 }
