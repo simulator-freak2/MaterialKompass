@@ -168,6 +168,42 @@ test('complete backup replacement is written in one database transaction', async
   assert.deepEqual(calls.slice(-2), ['commit', 'release']);
 });
 
+test('selected collection replacement removes old organization partitions atomically', async () => {
+  const calls = [];
+  const connection = {
+    async beginTransaction() { calls.push('begin'); },
+    async query(sql, values) { calls.push({ kind: 'query', sql, values }); },
+    async batch(sql, values) { calls.push({ kind: 'batch', sql, values }); },
+    async commit() { calls.push('commit'); },
+    async rollback() { calls.push('rollback'); },
+    release() { calls.push('release'); },
+  };
+  const database = {
+    createPool() {
+      return {
+        async getConnection() { return connection; },
+        async end() {},
+      };
+    },
+  };
+  const store = createUserStore(database);
+  await store.replaceCollections({
+    materials: [{ id: 'material-1', organizationId: 'org-target' }],
+    categories: [],
+  });
+
+  assert.equal(calls[0], 'begin');
+  const deletion = calls.find((entry) =>
+    entry.kind === 'query' && entry.sql.startsWith('DELETE FROM application_collections'));
+  assert.deepEqual(deletion.values, ['materials', 'categories']);
+  const insertion = calls.find((entry) => entry.kind === 'batch');
+  assert.deepEqual(insertion.values.map((entry) => entry.slice(0, 2)), [
+    ['org-target', 'materials'],
+    ['org-default', 'categories'],
+  ]);
+  assert.deepEqual(calls.slice(-2), ['commit', 'release']);
+});
+
 test('process lock prevents concurrent snapshot-based backend instances', async () => {
   const calls = [];
   const connection = {

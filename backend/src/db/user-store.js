@@ -336,6 +336,63 @@ function createUserStore(database = mariadb) {
         if (connection) connection.release();
       }
     },
+    async replaceCollections(collections) {
+      // Administrative migrations may move records between organizations.
+      // Replacing the affected collection partitions is required in that
+      // case; an upsert alone would leave the old source partition behind.
+      const names = Object.keys(collections);
+      if (names.length === 0) return;
+      const partitions = [];
+      for (const [name, data] of Object.entries(collections)) {
+        if (!Array.isArray(data)) {
+          throw new TypeError(`Die Sammlung ${name} muss ein Array sein.`);
+        }
+        if (PLATFORM_COLLECTIONS.has(name)) {
+          partitions.push([PLATFORM_SCOPE, name, JSON.stringify(data)]);
+          continue;
+        }
+        const grouped = new Map();
+        for (const entry of data) {
+          const organizationId = entry?.organizationId || DEFAULT_ORGANIZATION_ID;
+          if (!grouped.has(organizationId)) grouped.set(organizationId, []);
+          grouped.get(organizationId).push(entry);
+        }
+        if (grouped.size === 0) grouped.set(DEFAULT_ORGANIZATION_ID, []);
+        grouped.forEach((values, organizationId) => {
+          partitions.push([organizationId, name, JSON.stringify(values)]);
+        });
+      }
+
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const placeholders = names.map(() => '?').join(', ');
+        await connection.query(
+          `DELETE FROM application_collections WHERE name IN (${placeholders})`,
+          names,
+        );
+        if (partitions.length > 0) {
+          await connection.batch(
+            'INSERT INTO application_collections (organization_id, name, data_json) VALUES (?, ?, ?)',
+            partitions,
+          );
+        }
+        await connection.commit();
+        for (const key of serializedCollections.keys()) {
+          const separator = key.indexOf(':');
+          if (names.includes(key.slice(separator + 1))) serializedCollections.delete(key);
+        }
+        partitions.forEach(([organizationId, name, serialized]) => {
+          serializedCollections.set(`${organizationId}:${name}`, serialized);
+        });
+      } catch (error) {
+        if (connection) await connection.rollback();
+        throw error;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
     async replaceBackupData({ users, roles, passkeys, collections }) {
       let connection;
       const serialized = [];

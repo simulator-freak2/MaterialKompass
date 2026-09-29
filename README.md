@@ -444,6 +444,25 @@ Fachsammlungen liegen, ist dafür keine zusätzliche SQL-Migration erforderlich.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
+Alle vorhandenen Inventar-, Kleidungs-, Lager-, Mängel-, Beschaffungs- und
+Kategoriedaten einschließlich ihrer abhängigen Datensätze können kontrolliert in eine
+Unterorganisation verschoben werden. Das Skript arbeitet standardmäßig als Vorschau,
+prüft Eindeutigkeitskonflikte und schreibt mit `--apply` alle betroffenen
+Snapshot-Partitionen in einer Transaktion neu. Das Backend muss dabei gestoppt sein:
+
+```bash
+docker compose stop backend
+docker compose run --rm --no-deps backend \
+  node src/scripts/move-all-data-to-organization-unit.js
+docker compose run --rm --no-deps backend \
+  node src/scripts/move-all-data-to-organization-unit.js --apply
+docker compose up -d backend
+```
+
+Das Standardziel ist die aktive Unterorganisation **Jugend Ingelheim am Rhein** mit
+der EDV-Nummer `10050035`. Abweichende Ziele müssen gleichzeitig über
+`--target-name="..."` und `--target-edv=...` angegeben werden.
+
 ### Flutter
 
 Der Client benötigt Flutter 3.35 oder neuer und Dart 3.9 oder neuer.
