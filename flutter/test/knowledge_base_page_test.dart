@@ -52,7 +52,7 @@ void main() {
     await tester.tap(find.text('Zwei-Faktor-Authentifizierung einrichten'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Stand 1.4.2'), findsOneWidget);
+    expect(find.text('Stand 1.4.3'), findsOneWidget);
     expect(find.text('Für alle persönlichen Konten'), findsOneWidget);
     expect(find.text('Bevor du beginnst'), findsOneWidget);
     expect(find.byType(Image), findsWidgets);

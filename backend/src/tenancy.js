@@ -6,6 +6,7 @@ const DEFAULT_UNIT_ID = 'unit-default-root';
 const ORGANIZATION_RETENTION_DAYS = 730;
 const RAW_COLLECTION = Symbol('materialkompass.rawTenantCollection');
 const tenantStorage = new AsyncLocalStorage();
+const EDV_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9._/-]{0,31}$/;
 
 const UNIT_SCOPED_COLLECTIONS = new Set([
   'departments', 'locations', 'shelves', 'storageLevels', 'stockStructures',
@@ -32,15 +33,35 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeEdvNumber(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function nextLegacyEdvNumber(prefix, used, startAt = 1) {
+  let number = startAt;
+  let candidate;
+  do {
+    candidate = `${prefix}-${String(number).padStart(6, '0')}`;
+    number += 1;
+  } while (used.has(candidate));
+  used.add(candidate);
+  return candidate;
+}
+
 function normalizeTenancyData(data) {
   const organizations = (data.organizations ||= []);
   const organizationUnits = (data.organizationUnits ||= []);
   const memberships = (data.memberships ||= []);
+  const configuredEdvNumber = normalizeEdvNumber(
+    process.env.GLIEDERUNGSNUMMER || '10050035'
+  );
   if (organizations.length === 0) {
     organizations.push({
       id: DEFAULT_ORGANIZATION_ID,
       name: 'Organisation',
       shortName: 'ORG',
+      edvNumber: EDV_NUMBER_PATTERN.test(configuredEdvNumber)
+        ? configuredEdvNumber : 'ORG-000001',
       status: 'active',
       branding: {},
       createdAt: nowIso(),
@@ -55,6 +76,7 @@ function normalizeTenancyData(data) {
       parentId: null,
       name: organizations[0].name,
       type: 'Organisation',
+      edvNumber: organizations[0].edvNumber,
       status: 'active',
       createdAt: nowIso(),
       archivedAt: null,
@@ -65,6 +87,35 @@ function normalizeTenancyData(data) {
   const defaultUnit = organizationUnits.find((unit) =>
     unit.organizationId === defaultOrganization.id && unit.parentId === null
   ) || organizationUnits[0];
+  const usedEdvNumbers = new Set();
+  for (const [index, organization] of organizations.entries()) {
+    const edvNumber = normalizeEdvNumber(
+      organization.edvNumber || (index === 0 ? configuredEdvNumber : '')
+    );
+    if (EDV_NUMBER_PATTERN.test(edvNumber) && !usedEdvNumbers.has(edvNumber)) {
+      organization.edvNumber = edvNumber;
+      usedEdvNumbers.add(edvNumber);
+    } else {
+      organization.edvNumber = nextLegacyEdvNumber('ORG', usedEdvNumbers);
+    }
+  }
+  for (const unit of organizationUnits) {
+    unit.dataIsolation = 'strict';
+    const organization = organizations.find((entry) => entry.id === unit.organizationId);
+    if (unit.parentId === null && organization) {
+      // The root unit represents the organization itself and therefore shares
+      // its EDV number. Child units always receive a separate number.
+      unit.edvNumber = organization.edvNumber;
+      continue;
+    }
+    const edvNumber = normalizeEdvNumber(unit.edvNumber);
+    if (EDV_NUMBER_PATTERN.test(edvNumber) && !usedEdvNumbers.has(edvNumber)) {
+      unit.edvNumber = edvNumber;
+      usedEdvNumbers.add(edvNumber);
+    } else {
+      unit.edvNumber = nextLegacyEdvNumber('UNIT', usedEdvNumbers);
+    }
+  }
   for (const user of data.users || []) {
     if (!memberships.some((entry) =>
       entry.userId === user.id && entry.organizationId === defaultOrganization.id
@@ -83,6 +134,38 @@ function normalizeTenancyData(data) {
         }],
         createdAt: user.createdAt || nowIso(),
       });
+    }
+  }
+  // Older memberships could inherit one scope into all descendants. Convert
+  // that inheritance once into independent, explicit scopes. From this point
+  // on, changing one unit never changes or exposes another unit implicitly.
+  for (const membership of memberships) {
+    const explicitScopes = new Map();
+    for (const scope of membership.scopes || []) {
+      const unitIds = scope.includeDescendants
+        ? descendantsOf(organizationUnits, membership.organizationId, scope.unitId)
+        : new Set([scope.unitId]);
+      for (const unitId of unitIds) {
+        const unit = organizationUnits.find((entry) => entry.id === unitId
+          && entry.organizationId === membership.organizationId
+          && entry.status !== 'purged');
+        if (!unit) continue;
+        const current = explicitScopes.get(unitId) || {
+          unitId,
+          includeDescendants: false,
+          roles: [],
+          departmentIds: [],
+        };
+        current.roles = [...new Set([...current.roles, ...(scope.roles || [])])];
+        current.departmentIds = [...new Set([
+          ...current.departmentIds, ...(scope.departmentIds || []),
+        ])];
+        explicitScopes.set(unitId, current);
+      }
+    }
+    membership.scopes = [...explicitScopes.values()];
+    if (!membership.scopes.some((scope) => scope.unitId === membership.defaultUnitId)) {
+      membership.defaultUnitId = membership.scopes[0]?.unitId || null;
     }
   }
   for (const name of ORGANIZATION_SCOPED_COLLECTIONS) {
@@ -132,20 +215,16 @@ function contextForMembership({ membership, units, roles, activeUnitId }) {
     || organizationUnits.find((unit) => unit.id === membership.defaultUnitId)
     || organizationUnits.find((unit) => unit.parentId === null);
   if (!requestedUnit) return null;
-  const allowedUnitIds = new Set();
+  const allowedUnitIds = new Set([requestedUnit.id]);
   const effectiveRoleNames = new Set();
   const departmentIds = new Set();
   for (const scope of membership.scopes || []) {
-    const covered = scope.includeDescendants
-      ? descendantsOf(organizationUnits, membership.organizationId, scope.unitId)
-      : new Set([scope.unitId]);
-    covered.forEach((id) => allowedUnitIds.add(id));
-    if (covered.has(requestedUnit.id)) {
+    if (scope.unitId === requestedUnit.id) {
       (scope.roles || []).forEach((role) => effectiveRoleNames.add(role));
       (scope.departmentIds || []).forEach((id) => departmentIds.add(id));
     }
   }
-  if (!allowedUnitIds.has(requestedUnit.id)) return null;
+  if (effectiveRoleNames.size === 0) return null;
   const roleNames = [...effectiveRoleNames];
   return {
     organizationId: membership.organizationId,
@@ -336,6 +415,7 @@ function publicOrganization(organization) {
     id: organization.id,
     name: organization.name,
     shortName: organization.shortName,
+    edvNumber: organization.edvNumber,
     status: organization.status,
     branding: organization.branding || {},
     archivedAt: organization.archivedAt || null,
@@ -350,9 +430,24 @@ function registerTenancyRoutes({
   deleteUnit = async () => {}, deleteOrganizationData = async () => {},
 }) {
   const text = (value, maximum = 160) => String(value || '').trim().slice(0, maximum);
+  const edvNumber = (value) => normalizeEdvNumber(value).slice(0, 32);
+  const edvNumberInUse = (value, { ignoreOrganizationId = null, ignoreUnitId = null } = {}) => {
+    const normalized = edvNumber(value);
+    return organizations.some((entry) => entry.id !== ignoreOrganizationId
+      && entry.status !== 'purged' && edvNumber(entry.edvNumber) === normalized)
+      || units.some((entry) => entry.id !== ignoreUnitId && entry.parentId !== null
+        && entry.status !== 'purged' && edvNumber(entry.edvNumber) === normalized);
+  };
   const membershipFor = (userId, organizationId) => memberships.find((entry) =>
     entry.userId === userId && entry.organizationId === organizationId && entry.status === 'active'
   );
+  const unitIdsForPermission = (req, permission) => {
+    const membership = membershipFor(req.user.id, req.tenant.organizationId);
+    return new Set((membership?.scopes || [])
+      .filter((scope) => (scope.roles || []).includes('Admin')
+        || rolePermissions(roles, membership.organizationId, scope.roles).includes(permission))
+      .map((scope) => scope.unitId));
+  };
   const canCreateOrganizationStructure = (req) =>
     req.user?.roles?.includes('Admin')
       && req.user?.permissions?.includes('organizations.write');
@@ -372,21 +467,31 @@ function registerTenancyRoutes({
     }
     const name = text(req.body.name);
     const shortName = text(req.body.shortName, 24).toUpperCase();
-    if (!name || !shortName) return res.status(400).json({ error: 'Name und Kurzname sind erforderlich.' });
+    const organizationEdvNumber = edvNumber(req.body.edvNumber);
+    if (!name || !shortName || !organizationEdvNumber) {
+      return res.status(400).json({ error: 'Name, Kurzname und EDV-Nummer sind erforderlich.' });
+    }
+    if (!EDV_NUMBER_PATTERN.test(organizationEdvNumber)) {
+      return res.status(400).json({ error: 'Die EDV-Nummer darf nur Buchstaben, Ziffern, Punkt, Schrägstrich, Unterstrich und Bindestrich enthalten.' });
+    }
+    if (edvNumberInUse(organizationEdvNumber)) {
+      return res.status(409).json({ error: 'Die EDV-Nummer wird bereits verwendet.' });
+    }
     if (organizations.some((entry) => entry.status !== 'purged'
       && (entry.name.toLocaleLowerCase('de') === name.toLocaleLowerCase('de')
         || entry.shortName.toLocaleLowerCase('de') === shortName.toLocaleLowerCase('de')))) {
       return res.status(409).json({ error: 'Name oder Kurzname wird bereits verwendet.' });
     }
     const organization = {
-      id: randomUUID(), name, shortName, status: 'active',
+      id: randomUUID(), name, shortName, edvNumber: organizationEdvNumber, status: 'active',
       branding: req.body.branding && typeof req.body.branding === 'object' ? req.body.branding : {},
       createdAt: nowIso(), archivedAt: null, purgeAfter: null,
     };
     const root = {
       id: randomUUID(), organizationId: organization.id, parentId: null,
-      name, type: 'Organisation', status: 'active', createdAt: nowIso(),
-      archivedAt: null, purgeAfter: null,
+      name, type: 'Organisation', edvNumber: organizationEdvNumber,
+      status: 'active', createdAt: nowIso(),
+      archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
     };
     organizations.push(organization);
     units.push(root);
@@ -404,7 +509,8 @@ function registerTenancyRoutes({
   });
 
   app.get('/api/organization-units', authMiddleware, (req, res) => {
-    const allowed = req.tenant.allowedUnitIds || new Set();
+    const membership = membershipFor(req.user.id, req.tenant.organizationId);
+    const allowed = new Set((membership?.scopes || []).map((scope) => scope.unitId));
     return res.json(units.filter((entry) =>
       entry.organizationId === req.tenant.organizationId && allowed.has(entry.id)
     ));
@@ -418,26 +524,50 @@ function registerTenancyRoutes({
     }
     const name = text(req.body.name);
     const type = text(req.body.type, 80);
+    const unitEdvNumber = edvNumber(req.body.edvNumber);
     const parentId = text(req.body.parentId, 64) || req.tenant.unitId;
-    if (!name || !type) return res.status(400).json({ error: 'Name und Einheitstyp sind erforderlich.' });
+    if (!name || !type || !unitEdvNumber) {
+      return res.status(400).json({ error: 'Name, Einheitstyp und EDV-Nummer sind erforderlich.' });
+    }
+    if (!EDV_NUMBER_PATTERN.test(unitEdvNumber)) {
+      return res.status(400).json({ error: 'Die EDV-Nummer ist ungültig.' });
+    }
+    if (edvNumberInUse(unitEdvNumber)) {
+      return res.status(409).json({ error: 'Die EDV-Nummer wird bereits verwendet.' });
+    }
     if (!validateUnitTree(units, req.tenant.organizationId, parentId)) {
       return res.status(400).json({ error: 'Die übergeordnete Einheit ist ungültig.' });
     }
-    if (!req.tenant.allowedUnitIds.has(parentId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!unitIdsForPermission(req, 'organizations.write').has(parentId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const unit = {
       id: randomUUID(), organizationId: req.tenant.organizationId, parentId,
-      name, type, status: 'active', createdAt: nowIso(), archivedAt: null, purgeAfter: null,
+      name, type, edvNumber: unitEdvNumber, status: 'active', createdAt: nowIso(),
+      archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
     };
     units.push(unit);
+    const creatorMembership = membershipFor(req.user.id, req.tenant.organizationId);
+    if (creatorMembership && !(creatorMembership.scopes || []).some((scope) =>
+      scope.unitId === unit.id)) {
+      creatorMembership.scopes.push({
+        unitId: unit.id,
+        includeDescendants: false,
+        roles: ['Admin'],
+        departmentIds: [],
+      });
+      await persistMembership(creatorMembership);
+    }
     await persistUnit(unit);
     logEvent('create', 'OrganizationUnit', { id: unit.id, parentId }, req.user.username);
     return res.status(201).json(unit);
   });
 
   app.put('/api/organization-units/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    const manageableUnitIds = unitIdsForPermission(req, 'users.write');
     const unit = units.find((entry) => entry.id === req.params.id
       && entry.organizationId === req.tenant.organizationId
-      && req.tenant.allowedUnitIds.has(entry.id));
+      && manageableUnitIds.has(entry.id));
     if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
     const parentId = req.body.parentId === undefined ? unit.parentId : text(req.body.parentId, 64) || null;
     if (unit.parentId === null && parentId !== null) {
@@ -446,20 +576,39 @@ function registerTenancyRoutes({
     if (!validateUnitTree(units, unit.organizationId, parentId, unit.id)) {
       return res.status(400).json({ error: 'Die Hierarchie würde ungültig oder zyklisch.' });
     }
+    const nextEdvNumber = edvNumber(req.body.edvNumber ?? unit.edvNumber);
+    if (!EDV_NUMBER_PATTERN.test(nextEdvNumber)) {
+      return res.status(400).json({ error: 'Die EDV-Nummer ist ungültig.' });
+    }
+    if (edvNumberInUse(nextEdvNumber, {
+      ignoreOrganizationId: unit.parentId === null ? unit.organizationId : null,
+      ignoreUnitId: unit.id,
+    })) {
+      return res.status(409).json({ error: 'Die EDV-Nummer wird bereits verwendet.' });
+    }
     Object.assign(unit, {
       name: text(req.body.name ?? unit.name),
       type: text(req.body.type ?? unit.type, 80),
+      edvNumber: nextEdvNumber,
       parentId,
     });
+    if (unit.parentId === null) {
+      const organization = organizations.find((entry) => entry.id === unit.organizationId);
+      if (organization) {
+        organization.edvNumber = nextEdvNumber;
+        await persistOrganization(organization);
+      }
+    }
     await persistUnit(unit);
     logEvent('update', 'OrganizationUnit', { id: unit.id }, req.user.username);
     return res.json(unit);
   });
 
   app.post('/api/organization-units/:id/archive', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    const manageableUnitIds = unitIdsForPermission(req, 'users.write');
     const unit = units.find((entry) => entry.id === req.params.id
       && entry.organizationId === req.tenant.organizationId
-      && req.tenant.allowedUnitIds.has(entry.id));
+      && manageableUnitIds.has(entry.id));
     if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
     if (unit.parentId === null) return res.status(409).json({ error: 'Die Wurzeleinheit kann nicht archiviert werden.' });
     const descendants = descendantsOf(units, unit.organizationId, unit.id);
@@ -484,13 +633,14 @@ function registerTenancyRoutes({
   });
 
   app.post('/api/organization-units/:id/transfer', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    const manageableUnitIds = unitIdsForPermission(req, 'users.write');
     const source = units.find((entry) => entry.id === req.params.id
       && entry.organizationId === req.tenant.organizationId
-      && req.tenant.allowedUnitIds.has(entry.id));
+      && manageableUnitIds.has(entry.id));
     const targetId = text(req.body.targetUnitId, 64);
     const target = units.find((entry) => entry.id === targetId
       && entry.organizationId === req.tenant.organizationId
-      && entry.status === 'active' && req.tenant.allowedUnitIds.has(entry.id));
+      && entry.status === 'active' && manageableUnitIds.has(entry.id));
     if (!source || !target) {
       return res.status(404).json({ error: 'Quell- oder Zieleinheit nicht gefunden.' });
     }

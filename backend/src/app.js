@@ -1504,10 +1504,13 @@ function createApp(options = {}) {
           id: organization.id,
           name: organization.name,
           shortName: organization.shortName,
+          edvNumber: organization.edvNumber,
           branding: organization.branding || {},
         } : null,
         unit: unit ? {
           id: unit.id, name: unit.name, type: unit.type, parentId: unit.parentId,
+          edvNumber: unit.edvNumber,
+          dataIsolation: unit.dataIsolation || 'strict',
         } : null,
       },
     });

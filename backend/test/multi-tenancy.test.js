@@ -19,14 +19,14 @@ async function request(baseUrl, path, { token, method = 'GET', body } = {}) {
 function tenantData() {
   const data = structuredClone(seedData);
   data.organizations = [
-    { id: 'org-a', name: 'Organisation A', shortName: 'A', status: 'active', branding: {} },
-    { id: 'org-b', name: 'Organisation B', shortName: 'B', status: 'active', branding: {} },
+    { id: 'org-a', name: 'Organisation A', shortName: 'A', edvNumber: '10000001', status: 'active', branding: {} },
+    { id: 'org-b', name: 'Organisation B', shortName: 'B', edvNumber: '10000002', status: 'active', branding: {} },
   ];
   data.organizationUnits = [
-    { id: 'unit-a', organizationId: 'org-a', parentId: null, name: 'A', type: 'Organisation', status: 'active' },
-    { id: 'unit-a-child', organizationId: 'org-a', parentId: 'unit-a', name: 'A-Ortsgruppe', type: 'Ortsgruppe', status: 'active' },
-    { id: 'unit-a-sibling', organizationId: 'org-a', parentId: 'unit-a', name: 'A-Kreis', type: 'Kreis', status: 'active' },
-    { id: 'unit-b', organizationId: 'org-b', parentId: null, name: 'B', type: 'Organisation', status: 'active' },
+    { id: 'unit-a', organizationId: 'org-a', parentId: null, name: 'A', type: 'Organisation', edvNumber: '10000001', status: 'active' },
+    { id: 'unit-a-child', organizationId: 'org-a', parentId: 'unit-a', name: 'A-Ortsgruppe', type: 'Ortsgruppe', edvNumber: '10000101', status: 'active' },
+    { id: 'unit-a-sibling', organizationId: 'org-a', parentId: 'unit-a', name: 'A-Kreis', type: 'Kreis', edvNumber: '10000102', status: 'active' },
+    { id: 'unit-b', organizationId: 'org-b', parentId: null, name: 'B', type: 'Organisation', edvNumber: '10000002', status: 'active' },
   ];
   data.memberships = [
     {
@@ -115,8 +115,20 @@ test('organization context prevents cross-tenant reads and guessed foreign IDs',
     const listA = await request(baseUrl, '/api/material', { token: tokenA });
     assert.equal(listA.response.status, 200);
     assert.ok(listA.data.some((entry) => entry.id === 'material-1'));
+    assert.ok(!listA.data.some((entry) => entry.id === 'material-a-child'));
     assert.ok(!listA.data.some((entry) => entry.id === 'material-b'));
     assert.equal((await request(baseUrl, '/api/material/material-b', { token: tokenA })).response.status, 404);
+
+    const switchedChild = await request(baseUrl, '/api/auth/context', {
+      token: tokenA,
+      method: 'POST',
+      body: { organizationId: 'org-a', unitId: 'unit-a-child' },
+    });
+    assert.equal(switchedChild.response.status, 200);
+    const childMaterials = await request(baseUrl, '/api/material', {
+      token: switchedChild.data.token,
+    });
+    assert.deepEqual(childMaterials.data.map((entry) => entry.id), ['material-a-child']);
 
     const switched = await request(baseUrl, '/api/auth/context', {
       token: tokenA,
@@ -155,17 +167,50 @@ test('only admins with organization permission create organizations and suborgan
     const organization = await request(authorized.baseUrl, '/api/organizations', {
       token,
       method: 'POST',
-      body: { name: 'Organisation C', shortName: 'C' },
+      body: { name: 'Organisation C', shortName: 'C', edvNumber: '10000003' },
     });
     assert.equal(organization.response.status, 201);
+    assert.equal(organization.data.edvNumber, '10000003');
 
     const unit = await request(authorized.baseUrl, '/api/organization-units', {
       token,
       method: 'POST',
-      body: { name: 'A-Unterorganisation', type: 'Ortsgruppe', parentId: 'unit-a' },
+      body: {
+        name: 'A-Unterorganisation', type: 'Ortsgruppe',
+        parentId: 'unit-a', edvNumber: '10000103',
+      },
     });
     assert.equal(unit.response.status, 201);
     assert.equal(unit.data.parentId, 'unit-a');
+    assert.equal(unit.data.edvNumber, '10000103');
+    assert.equal(unit.data.dataIsolation, 'strict');
+
+    const creatorCanEnter = await request(authorized.baseUrl, '/api/auth/context', {
+      token,
+      method: 'POST',
+      body: { organizationId: 'org-a', unitId: unit.data.id },
+    });
+    assert.equal(creatorCanEnter.response.status, 200);
+
+    const materialwartToken = await login(
+      authorized.baseUrl, 'materialwart', 'Material123!'
+    );
+    const otherUnitIsBlocked = await request(authorized.baseUrl, '/api/auth/context', {
+      token: materialwartToken,
+      method: 'POST',
+      body: { organizationId: 'org-a', unitId: unit.data.id },
+    });
+    assert.equal(otherUnitIsBlocked.response.status, 403);
+
+    const duplicateEdvNumber = await request(authorized.baseUrl, '/api/organization-units', {
+      token,
+      method: 'POST',
+      body: {
+        name: 'Doppelte EDV', type: 'Ortsgruppe',
+        parentId: 'unit-a', edvNumber: '10000103',
+      },
+    });
+    assert.equal(duplicateEdvNumber.response.status, 409);
   } finally {
     await new Promise((resolve) => authorized.server.close(resolve));
   }
@@ -238,6 +283,148 @@ test('units require transfer before archive and receive a two-year purge deadlin
     assert.equal(archived.response.status, 200);
     const retentionDays = (Date.parse(archived.data.purgeAfter) - Date.now()) / 86_400_000;
     assert.ok(retentionDays > 729 && retentionDays <= 730.1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('users receive independent rights per organization and organization unit', async () => {
+  const { server, baseUrl } = await start();
+  try {
+    const adminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const users = await request(baseUrl, '/api/users?search=materialwart', {
+      token: adminToken,
+    });
+    const materialwart = users.data[0];
+    const changed = await request(baseUrl, `/api/users/${materialwart.id}`, {
+      token: adminToken,
+      method: 'PUT',
+      body: {
+        ...materialwart,
+        defaultUnitId: 'unit-a-child',
+        scopes: [
+          {
+            unitId: 'unit-a-child', includeDescendants: false,
+            roles: ['Materialwart'], departmentIds: [],
+          },
+          {
+            unitId: 'unit-a-sibling', includeDescendants: false,
+            roles: ['Nutzer'], departmentIds: [],
+          },
+        ],
+      },
+    });
+    assert.equal(changed.response.status, 200);
+    assert.deepEqual(
+      changed.data.organizationAccess.scopes.map((scope) => scope.roles),
+      [['Materialwart'], ['Nutzer']],
+    );
+
+    const materialwartToken = await login(baseUrl, 'materialwart', 'Material123!');
+    const siblingContext = await request(baseUrl, '/api/auth/context', {
+      token: materialwartToken,
+      method: 'POST',
+      body: { organizationId: 'org-a', unitId: 'unit-a-sibling' },
+    });
+    assert.equal(siblingContext.response.status, 200);
+    assert.deepEqual(siblingContext.data.user.roles, ['Nutzer']);
+
+    const organizationB = await request(baseUrl, '/api/auth/context', {
+      token: adminToken,
+      method: 'POST',
+      body: { organizationId: 'org-b', unitId: 'unit-b' },
+    });
+    assert.equal(organizationB.response.status, 200);
+    const assigned = await request(baseUrl, '/api/users/memberships', {
+      token: organizationB.data.token,
+      method: 'POST',
+      body: {
+        identifier: 'materialwart',
+        defaultUnitId: 'unit-b',
+        scopes: [{
+          unitId: 'unit-b', includeDescendants: false,
+          roles: ['Nutzer'], departmentIds: [],
+        }],
+      },
+    });
+    assert.equal(assigned.response.status, 201);
+
+    const switchedOrganization = await request(baseUrl, '/api/auth/context', {
+      token: materialwartToken,
+      method: 'POST',
+      body: { organizationId: 'org-b', unitId: 'unit-b' },
+    });
+    assert.equal(switchedOrganization.response.status, 200);
+    assert.deepEqual(switchedOrganization.data.user.roles, ['Nutzer']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('unit administrators cannot read or overwrite access rights of sibling units', async () => {
+  const { server, baseUrl } = await start();
+  try {
+    const rootAdminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const users = await request(baseUrl, '/api/users?search=materialwart', {
+      token: rootAdminToken,
+    });
+    const materialwart = users.data[0];
+    const configured = await request(baseUrl, `/api/users/${materialwart.id}`, {
+      token: rootAdminToken,
+      method: 'PUT',
+      body: {
+        ...materialwart,
+        defaultUnitId: 'unit-a-child',
+        scopes: [
+          {
+            unitId: 'unit-a-child', includeDescendants: false,
+            roles: ['Admin'], departmentIds: [],
+          },
+          {
+            unitId: 'unit-a-sibling', includeDescendants: false,
+            roles: ['Nutzer'], departmentIds: [],
+          },
+        ],
+      },
+    });
+    assert.equal(configured.response.status, 200);
+
+    const unitAdminToken = await login(baseUrl, 'materialwart', 'Material123!');
+    const visibleUsers = await request(baseUrl, '/api/users', { token: unitAdminToken });
+    assert.deepEqual(
+      visibleUsers.data.map((entry) => entry.id),
+      ['user-admin', materialwart.id],
+    );
+    assert.ok(visibleUsers.data.every((entry) =>
+      entry.organizationAccess.scopes.every((scope) => scope.unitId === 'unit-a-child')));
+    const visibleMaterialwart = visibleUsers.data.find((entry) =>
+      entry.id === materialwart.id);
+    assert.deepEqual(
+      visibleMaterialwart.organizationAccess.scopes.map((scope) => scope.unitId),
+      ['unit-a-child'],
+    );
+
+    const updated = await request(baseUrl, `/api/users/${materialwart.id}`, {
+      token: unitAdminToken,
+      method: 'PUT',
+      body: {
+        ...visibleMaterialwart,
+        defaultUnitId: 'unit-a-child',
+        scopes: [{
+          unitId: 'unit-a-child', includeDescendants: false,
+          roles: ['Admin'], departmentIds: [],
+        }],
+      },
+    });
+    assert.equal(updated.response.status, 200);
+
+    const rootView = await request(baseUrl, '/api/users?search=materialwart', {
+      token: rootAdminToken,
+    });
+    assert.deepEqual(
+      rootView.data[0].organizationAccess.scopes.map((scope) => scope.unitId),
+      ['unit-a-sibling', 'unit-a-child'],
+    );
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

@@ -243,7 +243,19 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
-          body: UserDialog(user: null, roles: ['Admin', 'Nutzer']),
+          body: UserDialog(
+            user: null,
+            roles: ['Admin', 'Nutzer'],
+            currentUnitId: 'unit-root',
+            organizationUnits: [
+              {
+                'id': 'unit-root',
+                'name': 'Organisation',
+                'edvNumber': '10050035',
+                'status': 'active',
+              },
+            ],
+          ),
         ),
       ),
     );
@@ -252,7 +264,12 @@ void main() {
     expect(find.text('Name'), findsOneWidget);
     expect(find.text('Nutzername *'), findsOneWidget);
     expect(find.text('E-Mail *'), findsOneWidget);
+    expect(find.text('Freigaben je Organisationsebene'), findsOneWidget);
     expect(find.text('Admin'), findsOneWidget);
+    expect(
+      find.textContaining('strikt getrennter Datenbereich'),
+      findsOneWidget,
+    );
     expect(find.text('Account aktiv'), findsOneWidget);
   });
 

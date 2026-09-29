@@ -18,6 +18,9 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 - Kontobezogene TOTP-Zwei-Faktor-Authentifizierung mit administrativer Pflicht,
   Einrichtungsfrist und einmal verwendbaren Wiederherstellungscodes
 - Administratives Anlegen, Suchen, Bearbeiten, Deaktivieren und Löschen von Accounts
+- Strikt getrennte Datenbereiche und Nutzerfreigaben je Organisationsebene mit
+  eigenen Rollen und Fachbereichen; es gibt keine implizite Rechtevererbung
+- Eindeutige EDV-Nummern für Organisationen und Untergliederungen
 - Selbstverwaltung von E-Mail, Passwort und Account-Löschung
 - Automatische Sperre nach fünf Fehlversuchen und Sitzungsablauf nach 60 Minuten
 - DSGVO-Lebenszyklus: Deaktivierung nach 24, Löschung nach 36 Monaten ohne Login
@@ -433,6 +436,11 @@ ausgeführt werden.
 Anschließend kann `node src/scripts/grant-organization-management.js` die Konten
 `nils.wiedenhaus` und `admin` idempotent als Organisations- und Plattformadministratoren
 freischalten. Das Backend muss während dieses einmaligen Laufs gestoppt sein.
+Bestehende Organisationsdaten erhalten beim Start automatisch eindeutige EDV-Nummern;
+für die erste Organisation wird dabei `GLIEDERUNGSNUMMER` verwendet. Die fachlichen
+Werte können anschließend unter **Organisationen & Einheiten** angepasst werden. Da
+Organisationen, Einheiten und ihre Nutzerfreigaben in den transaktionalen
+Fachsammlungen liegen, ist dafür keine zusätzliche SQL-Migration erforderlich.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
@@ -643,7 +651,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.4.2
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.4.3
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -651,7 +659,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.4.2
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.4.3
 ```
 
 macOS wird auf einem Mac als DMG gebaut:

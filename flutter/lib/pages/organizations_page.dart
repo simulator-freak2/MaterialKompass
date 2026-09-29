@@ -56,6 +56,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
   Future<void> _createOrganization() async {
     final name = TextEditingController();
     final shortName = TextEditingController();
+    final edvNumber = TextEditingController();
     try {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -77,6 +78,15 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                   decoration: const InputDecoration(labelText: 'Kurzname'),
                   textCapitalization: TextCapitalization.characters,
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: edvNumber,
+                  decoration: const InputDecoration(
+                    labelText: 'EDV-Nummer *',
+                    helperText: 'Eindeutig, z. B. 10050035',
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                ),
               ],
             ),
           ),
@@ -96,7 +106,11 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       await _api.request(
         '/api/organizations',
         method: 'POST',
-        body: {'name': name.text, 'shortName': shortName.text},
+        body: {
+          'name': name.text,
+          'shortName': shortName.text,
+          'edvNumber': edvNumber.text,
+        },
       );
       await _refresh();
     } catch (error) {
@@ -104,12 +118,14 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     } finally {
       name.dispose();
       shortName.dispose();
+      edvNumber.dispose();
     }
   }
 
   Future<void> _createUnit(List<Map<String, dynamic>> units) async {
     final name = TextEditingController();
     final type = TextEditingController(text: 'Ortsgruppe');
+    final edvNumber = TextEditingController();
     var parentId = units
         .firstWhere(
           (entry) => entry['parentId'] == null,
@@ -138,6 +154,15 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                     decoration: const InputDecoration(
                       labelText: 'Typ, z. B. Landesverband oder Ortsgruppe',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: edvNumber,
+                    decoration: const InputDecoration(
+                      labelText: 'EDV-Nummer *',
+                      helperText: 'Eindeutig innerhalb aller Organisationen',
+                    ),
+                    textCapitalization: TextCapitalization.characters,
                   ),
                   const SizedBox(height: 12),
                   KeyboardDropdownButtonFormField<String>(
@@ -180,7 +205,12 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       await _api.request(
         '/api/organization-units',
         method: 'POST',
-        body: {'name': name.text, 'type': type.text, 'parentId': parentId},
+        body: {
+          'name': name.text,
+          'type': type.text,
+          'edvNumber': edvNumber.text,
+          'parentId': parentId,
+        },
       );
       await _refresh();
     } catch (error) {
@@ -188,12 +218,16 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     } finally {
       name.dispose();
       type.dispose();
+      edvNumber.dispose();
     }
   }
 
   Future<void> _editUnit(Map<String, dynamic> unit) async {
     final name = TextEditingController(text: unit['name']?.toString());
     final type = TextEditingController(text: unit['type']?.toString());
+    final edvNumber = TextEditingController(
+      text: unit['edvNumber']?.toString(),
+    );
     try {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -212,6 +246,12 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                 TextField(
                   controller: type,
                   decoration: const InputDecoration(labelText: 'Typ'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: edvNumber,
+                  decoration: const InputDecoration(labelText: 'EDV-Nummer *'),
+                  textCapitalization: TextCapitalization.characters,
                 ),
               ],
             ),
@@ -232,7 +272,11 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       await _api.request(
         '/api/organization-units/${unit['id']}',
         method: 'PUT',
-        body: {'name': name.text, 'type': type.text},
+        body: {
+          'name': name.text,
+          'type': type.text,
+          'edvNumber': edvNumber.text,
+        },
       );
       await _refresh();
     } catch (error) {
@@ -240,6 +284,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     } finally {
       name.dispose();
       type.dispose();
+      edvNumber.dispose();
     }
   }
 
@@ -418,7 +463,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                       leading: const Icon(Icons.corporate_fare_outlined),
                       title: Text(organization['name']?.toString() ?? ''),
                       subtitle: Text(
-                        organization['shortName']?.toString() ?? '',
+                        '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}',
                       ),
                     ),
                   ),
@@ -442,7 +487,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                         ),
                         title: Text(unit['name']?.toString() ?? ''),
                         subtitle: Text(
-                          '${unit['type'] ?? 'Einheit'} · ${unit['status'] ?? 'active'}',
+                          '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · Isolierter Datenbereich · ${unit['status'] ?? 'active'}',
                         ),
                         trailing: canManage && unit['status'] == 'active'
                             ? PopupMenuButton<String>(

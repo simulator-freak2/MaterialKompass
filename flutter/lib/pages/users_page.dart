@@ -25,6 +25,7 @@ class _UsersPageState extends State<UsersPage> {
   List<Map<String, dynamic>> users = [];
   List<Map<String, dynamic>> roles = [];
   List<Map<String, dynamic>> departments = [];
+  List<Map<String, dynamic>> organizationUnits = [];
   List<Map<String, dynamic>> scannerEmailAddresses = [];
   List<Map<String, dynamic>> mailTemplates = [];
   List<String> scannerEmailDestinations = [];
@@ -32,6 +33,7 @@ class _UsersPageState extends State<UsersPage> {
   bool isAdmin = false;
   bool loading = true;
   bool backupTransferRunning = false;
+  String? currentUnitId;
 
   Map<String, String> get headers => {
     'Authorization': 'Bearer ${widget.token}',
@@ -59,6 +61,11 @@ class _UsersPageState extends State<UsersPage> {
         headers: headers,
       ),
       http.get(Uri.parse('$apiBaseUrl/api/mail/templates'), headers: headers),
+      http.get(
+        Uri.parse('$apiBaseUrl/api/organization-units'),
+        headers: headers,
+      ),
+      http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: headers),
     ]);
     if (!mounted) return;
     if (responses.take(3).any((response) => response.statusCode != 200)) {
@@ -76,6 +83,20 @@ class _UsersPageState extends State<UsersPage> {
           .cast<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      if (responses[5].statusCode == 200) {
+        organizationUnits = (jsonDecode(responses[5].body) as List)
+            .cast<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .where((entry) => entry['status'] == 'active')
+            .toList();
+      }
+      if (responses[6].statusCode == 200) {
+        final me = Map<String, dynamic>.from(
+          jsonDecode(responses[6].body) as Map,
+        );
+        currentUnitId = ((me['context'] as Map?)?['unit'] as Map?)?['id']
+            ?.toString();
+      }
       isAdmin = responses[3].statusCode == 200;
       if (isAdmin) {
         final scannerData = Map<String, dynamic>.from(
@@ -136,6 +157,8 @@ class _UsersPageState extends State<UsersPage> {
         user: user,
         roles: roles.map((role) => role['name'].toString()).toList(),
         departments: departments,
+        organizationUnits: organizationUnits,
+        currentUnitId: currentUnitId,
         mailTemplates: mailTemplates,
       ),
     );
@@ -150,6 +173,28 @@ class _UsersPageState extends State<UsersPage> {
         user == null
             ? 'Nutzer wurde angelegt; E-Mails zur Bestätigung und Passwortvergabe wurden versendet.'
             : 'Nutzer wurde aktualisiert.',
+      );
+      await load();
+    }
+  }
+
+  Future<void> assignExistingUser() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => UserDialog(
+        user: null,
+        roles: roles.map((role) => role['name'].toString()).toList(),
+        departments: departments,
+        organizationUnits: organizationUnits,
+        currentUnitId: currentUnitId,
+        mailTemplates: const [],
+        membershipAssignment: true,
+      ),
+    );
+    if (result == null) return;
+    if (await _send('POST', '/api/users/memberships', result)) {
+      _message(
+        'Das bestehende Nutzerkonto wurde für diese Organisation freigegeben.',
       );
       await load();
     }
@@ -1360,6 +1405,12 @@ class _UsersPageState extends State<UsersPage> {
                             child: const Text('Suchen'),
                           ),
                           const SizedBox(width: 12),
+                          OutlinedButton.icon(
+                            onPressed: assignExistingUser,
+                            icon: const Icon(Icons.person_add_alt_1_outlined),
+                            label: const Text('Bestehenden freigeben'),
+                          ),
+                          const SizedBox(width: 12),
                           FilledButton.icon(
                             onPressed: () => editUser(),
                             icon: const Icon(Icons.person_add),
@@ -2298,16 +2349,34 @@ class MailboxCredentialsDialog extends StatelessWidget {
   );
 }
 
+class _AccessScopeDraft {
+  _AccessScopeDraft({
+    required this.unitId,
+    required this.roles,
+    required this.departmentIds,
+  });
+
+  String unitId;
+  final Set<String> roles;
+  final Set<String> departmentIds;
+}
+
 class UserDialog extends StatefulWidget {
   final Map<String, dynamic>? user;
   final List<String> roles;
   final List<Map<String, dynamic>> departments;
+  final List<Map<String, dynamic>> organizationUnits;
+  final String? currentUnitId;
   final List<Map<String, dynamic>> mailTemplates;
+  final bool membershipAssignment;
   const UserDialog({
     required this.user,
     required this.roles,
     this.departments = const [],
+    this.organizationUnits = const [],
+    this.currentUnitId,
     this.mailTemplates = const [],
+    this.membershipAssignment = false,
     super.key,
   });
   @override
@@ -2324,6 +2393,7 @@ class _UserDialogState extends State<UserDialog> {
   late final email = TextEditingController(
     text: widget.user?['email']?.toString(),
   );
+  final identifier = TextEditingController();
   final password = TextEditingController();
   final mailMessage = TextEditingController();
   String mailFormat = 'markdown';
@@ -2331,14 +2401,52 @@ class _UserDialogState extends State<UserDialog> {
   String? selectedTemplateId;
   late bool active = widget.user?['active'] != false;
   late bool mfaRequired = ((widget.user?['mfa'] as Map?)?['required'] == true);
-  late Set<String> selectedRoles =
-      ((widget.user?['roles'] as List?)?.map((e) => e.toString()).toSet()) ??
-      {'Nutzer'};
-  late Set<String> selectedDepartmentIds =
-      ((widget.user?['departmentIds'] as List?)
-          ?.map((e) => e.toString())
-          .toSet()) ??
-      {};
+  late List<_AccessScopeDraft> accessScopes;
+  late String? defaultUnitId;
+
+  bool get createsAccount =>
+      widget.user == null && !widget.membershipAssignment;
+
+  @override
+  void initState() {
+    super.initState();
+    final access = Map<String, dynamic>.from(
+      widget.user?['organizationAccess'] as Map? ?? const {},
+    );
+    final rawScopes = (access['scopes'] as List? ?? const []).cast<Map>();
+    accessScopes = rawScopes
+        .map(
+          (scope) => _AccessScopeDraft(
+            unitId: scope['unitId'].toString(),
+            roles: (scope['roles'] as List? ?? const [])
+                .map((entry) => entry.toString())
+                .toSet(),
+            departmentIds: (scope['departmentIds'] as List? ?? const [])
+                .map((entry) => entry.toString())
+                .toSet(),
+          ),
+        )
+        .toList();
+    if (accessScopes.isEmpty && widget.organizationUnits.isNotEmpty) {
+      final initialUnitId =
+          widget.currentUnitId ??
+          widget.organizationUnits.first['id'].toString();
+      accessScopes.add(
+        _AccessScopeDraft(
+          unitId: initialUnitId,
+          roles: ((widget.user?['roles'] as List?) ?? const ['Nutzer'])
+              .map((entry) => entry.toString())
+              .toSet(),
+          departmentIds: ((widget.user?['departmentIds'] as List?) ?? const [])
+              .map((entry) => entry.toString())
+              .toSet(),
+        ),
+      );
+    }
+    defaultUnitId =
+        access['defaultUnitId']?.toString() ??
+        (accessScopes.isEmpty ? null : accessScopes.first.unitId);
+  }
 
   List<Map<String, dynamic>> get availableTemplates => widget.mailTemplates
       .where(
@@ -2367,6 +2475,7 @@ class _UserDialogState extends State<UserDialog> {
     name.dispose();
     username.dispose();
     email.dispose();
+    identifier.dispose();
     password.dispose();
     mailMessage.dispose();
     super.dispose();
@@ -2374,26 +2483,44 @@ class _UserDialogState extends State<UserDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.user == null ? 'Nutzer anlegen' : 'Nutzer bearbeiten'),
+    title: Text(
+      widget.membershipAssignment
+          ? 'Bestehenden Nutzer freigeben'
+          : widget.user == null
+          ? 'Nutzer anlegen'
+          : 'Nutzer bearbeiten',
+    ),
     content: SizedBox(
-      width: 520,
+      width: 720,
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: name,
-              decoration: const InputDecoration(labelText: 'Name'),
-            ),
-            TextField(
-              controller: username,
-              decoration: const InputDecoration(labelText: 'Nutzername *'),
-            ),
-            TextField(
-              controller: email,
-              decoration: const InputDecoration(labelText: 'E-Mail *'),
-            ),
-            if (widget.user == null) ...[
+            if (widget.membershipAssignment)
+              TextField(
+                controller: identifier,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Nutzername oder E-Mail-Adresse *',
+                  helperText:
+                      'Das Konto muss bereits in MaterialKompass vorhanden sein.',
+                ),
+              )
+            else ...[
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              TextField(
+                controller: username,
+                decoration: const InputDecoration(labelText: 'Nutzername *'),
+              ),
+              TextField(
+                controller: email,
+                decoration: const InputDecoration(labelText: 'E-Mail *'),
+              ),
+            ],
+            if (createsAccount) ...[
               const SizedBox(height: 16),
               DropdownButtonFormField<String?>(
                 initialValue: selectedTemplateId,
@@ -2484,7 +2611,7 @@ class _UserDialogState extends State<UserDialog> {
                 ],
               ),
             ],
-            if (widget.user != null)
+            if (widget.user != null && !widget.membershipAssignment)
               TextField(
                 controller: password,
                 obscureText: true,
@@ -2494,73 +2621,197 @@ class _UserDialogState extends State<UserDialog> {
                       'Mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen',
                 ),
               ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'Rollen',
-                style: Theme.of(context).textTheme.titleSmall,
+                'Freigaben je Organisationsebene',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
-            ...widget.roles.map(
-              (role) => CheckboxListTile(
-                dense: true,
-                value: selectedRoles.contains(role),
-                title: Text(role),
-                onChanged: (value) => setState(() {
-                  if (value == true) {
-                    selectedRoles.add(role);
-                  } else {
-                    selectedRoles.remove(role);
-                  }
-                }),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Align(
+            const SizedBox(height: 4),
+            const Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'Geleitete Fachbereiche',
-                style: Theme.of(context).textTheme.titleSmall,
+                'Jede Einheit ist ein strikt getrennter Datenbereich und benötigt eine eigene Freigabe mit eigenen Rollen.',
               ),
             ),
-            if (widget.departments.isEmpty)
+            const SizedBox(height: 8),
+            if (widget.organizationUnits.isEmpty)
               const ListTile(
-                dense: true,
-                title: Text('Noch keine Fachbereiche angelegt.'),
-              )
-            else
-              ...widget.departments.map(
-                (department) => CheckboxListTile(
-                  dense: true,
-                  value: selectedDepartmentIds.contains(department['id']),
-                  title: Text(department['name'].toString()),
-                  subtitle: Text(department['code'].toString()),
-                  enabled: department['active'] != false,
-                  onChanged: (value) => setState(() {
-                    if (value == true) {
-                      selectedDepartmentIds.add(department['id'].toString());
-                    } else {
-                      selectedDepartmentIds.remove(department['id'].toString());
-                    }
-                  }),
+                leading: Icon(Icons.warning_amber_outlined),
+                title: Text(
+                  'Keine administrierbare Organisationseinheit gefunden.',
                 ),
               ),
-            SwitchListTile(
-              value: active,
-              title: const Text('Account aktiv'),
-              onChanged: (value) => setState(() => active = value),
-            ),
-            SwitchListTile(
-              value: mfaRequired,
-              title: const Text(
-                'Starke Anmeldung verpflichtend (Passkey oder 2-FA)',
+            for (var index = 0; index < accessScopes.length; index++)
+              Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: KeyboardDropdownButtonFormField<String>(
+                              key: ValueKey(
+                                'scope-$index-${accessScopes[index].unitId}',
+                              ),
+                              initialValue: accessScopes[index].unitId,
+                              decoration: const InputDecoration(
+                                labelText: 'Organisationseinheit',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: widget.organizationUnits
+                                  .map(
+                                    (unit) => DropdownMenuItem(
+                                      value: unit['id'].toString(),
+                                      child: Text(
+                                        '${unit['name']} · EDV ${unit['edvNumber'] ?? '–'}',
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) => setState(() {
+                                if (value == null) return;
+                                final oldId = accessScopes[index].unitId;
+                                accessScopes[index].unitId = value;
+                                if (defaultUnitId == oldId) {
+                                  defaultUnitId = value;
+                                }
+                              }),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Freigabe entfernen',
+                            onPressed: accessScopes.length <= 1
+                                ? null
+                                : () => setState(() {
+                                    final removed = accessScopes.removeAt(
+                                      index,
+                                    );
+                                    if (defaultUnitId == removed.unitId) {
+                                      defaultUnitId = accessScopes.first.unitId;
+                                    }
+                                  }),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ],
+                      ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: defaultUnitId == accessScopes[index].unitId,
+                        title: const Text('Standardeinheit nach der Anmeldung'),
+                        onChanged: (_) => setState(
+                          () => defaultUnitId = accessScopes[index].unitId,
+                        ),
+                      ),
+                      Text(
+                        'Rollen',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        children: widget.roles
+                            .map(
+                              (role) => FilterChip(
+                                label: Text(role),
+                                selected: accessScopes[index].roles.contains(
+                                  role,
+                                ),
+                                onSelected: (selected) => setState(() {
+                                  if (selected) {
+                                    accessScopes[index].roles.add(role);
+                                  } else {
+                                    accessScopes[index].roles.remove(role);
+                                  }
+                                }),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      if (widget.departments.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Geleitete Fachbereiche',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        Wrap(
+                          spacing: 8,
+                          children: widget.departments
+                              .where(
+                                (department) => department['active'] != false,
+                              )
+                              .map(
+                                (department) => FilterChip(
+                                  label: Text(department['name'].toString()),
+                                  selected: accessScopes[index].departmentIds
+                                      .contains(department['id'].toString()),
+                                  onSelected: (selected) => setState(() {
+                                    final id = department['id'].toString();
+                                    if (selected) {
+                                      accessScopes[index].departmentIds.add(id);
+                                    } else {
+                                      accessScopes[index].departmentIds.remove(
+                                        id,
+                                      );
+                                    }
+                                  }),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-              subtitle: const Text(
-                'Nicht eingerichtete Konten erhalten 14 Tage Einrichtungsfrist.',
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed:
+                    accessScopes.length >= widget.organizationUnits.length
+                    ? null
+                    : () => setState(() {
+                        final used = accessScopes
+                            .map((scope) => scope.unitId)
+                            .toSet();
+                        final available = widget.organizationUnits.where(
+                          (unit) => !used.contains(unit['id'].toString()),
+                        );
+                        if (available.isEmpty) return;
+                        accessScopes.add(
+                          _AccessScopeDraft(
+                            unitId: available.first['id'].toString(),
+                            roles: {'Nutzer'},
+                            departmentIds: {},
+                          ),
+                        );
+                      }),
+                icon: const Icon(Icons.add),
+                label: const Text('Weitere Ebene freigeben'),
               ),
-              onChanged: (value) => setState(() => mfaRequired = value),
             ),
+            if (!widget.membershipAssignment) ...[
+              SwitchListTile(
+                value: active,
+                title: const Text('Account aktiv'),
+                onChanged: (value) => setState(() => active = value),
+              ),
+              SwitchListTile(
+                value: mfaRequired,
+                title: const Text(
+                  'Starke Anmeldung verpflichtend (Passkey oder 2-FA)',
+                ),
+                subtitle: const Text(
+                  'Nicht eingerichtete Konten erhalten 14 Tage Einrichtungsfrist.',
+                ),
+                onChanged: (value) => setState(() => mfaRequired = value),
+              ),
+            ],
           ],
         ),
       ),
@@ -2572,19 +2823,50 @@ class _UserDialogState extends State<UserDialog> {
       ),
       FilledButton(
         onPressed: () {
+          final unitIds = accessScopes.map((scope) => scope.unitId).toList();
+          if (accessScopes.isEmpty ||
+              unitIds.toSet().length != unitIds.length ||
+              accessScopes.any((scope) => scope.roles.isEmpty)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Jede Ebene darf nur einmal vorkommen und benötigt mindestens eine Rolle.',
+                ),
+              ),
+            );
+            return;
+          }
+          final scopePayload = accessScopes
+              .map(
+                (scope) => {
+                  'unitId': scope.unitId,
+                  'includeDescendants': false,
+                  'roles': scope.roles.toList(),
+                  'departmentIds': scope.departmentIds.toList(),
+                },
+              )
+              .toList();
           final result = <String, dynamic>{
+            'scopes': scopePayload,
+            'defaultUnitId': defaultUnitId,
+          };
+          if (widget.membershipAssignment) {
+            if (identifier.text.trim().isEmpty) return;
+            result['identifier'] = identifier.text.trim();
+            Navigator.pop(context, result);
+            return;
+          }
+          result.addAll({
             'name': name.text,
             'username': username.text,
             'email': email.text,
-            'roles': selectedRoles.toList(),
-            'departmentIds': selectedDepartmentIds.toList(),
             'active': active,
             'mfaRequired': mfaRequired,
-          };
+          });
           if (password.text.isNotEmpty) {
             result['password'] = password.text;
           }
-          if (widget.user == null && mailMessage.text.trim().isNotEmpty) {
+          if (createsAccount && mailMessage.text.trim().isNotEmpty) {
             result['mailMessage'] = {
               'content': mailMessage.text.trim(),
               'format': mailFormat,

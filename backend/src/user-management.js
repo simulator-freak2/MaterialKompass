@@ -110,12 +110,36 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       && entry.organizationId === organizationId && entry.status === 'active');
   }
 
+  function unitIdsForPermission(req, permission) {
+    const result = new Set();
+    const actorMembership = memberships.find((entry) =>
+      entry.id === req?.tenant?.membershipId && entry.status === 'active');
+    for (const scope of actorMembership?.scopes || []) {
+      const roleNames = scope.roles || [];
+      const grantsPermission = roleNames.includes('Admin')
+        || permissionsForRoles(
+          roleNames, roles, actorMembership.organizationId
+        ).includes(permission);
+      if (!grantsPermission) continue;
+      result.add(scope.unitId);
+    }
+    return result;
+  }
+
   function usersForRequest(req) {
     if (!req?.tenant?.organizationId) return users;
+    const readableUnitIds = unitIdsForPermission(req, 'users.read');
     const ids = new Set(memberships.filter((entry) =>
       entry.organizationId === req.tenant.organizationId && entry.status === 'active'
+      && (entry.scopes || []).some((scope) => readableUnitIds.has(scope.unitId))
     ).map((entry) => entry.userId));
     return users.filter((entry) => ids.has(entry.id));
+  }
+
+  function manageableScopes(membership, req) {
+    const readableUnitIds = unitIdsForPermission(req, 'users.read');
+    return (membership?.scopes || []).filter((scope) =>
+      readableUnitIds.has(scope.unitId));
   }
 
   function membershipRoles(membership, fallback = []) {
@@ -131,15 +155,34 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
   function publicUserForRequest(user, req) {
     const membership = organizationMembership(user.id, req?.tenant?.organizationId);
     if (!membership) return publicUser(user);
+    const visibleScopes = manageableScopes(membership, req);
+    const visibleMembership = { ...membership, scopes: visibleScopes };
     const tenantUser = {
       ...user,
-      roles: membershipRoles(membership, user.roles),
-      departmentIds: membershipDepartments(membership, user.departmentIds),
+      roles: membershipRoles(visibleMembership, user.roles),
+      departmentIds: membershipDepartments(visibleMembership, user.departmentIds),
     };
     tenantUser.permissions = permissionsForRoles(
       tenantUser.roles, roles, req?.tenant?.organizationId
     );
-    return { ...publicUser(tenantUser), membershipId: membership.id };
+    return {
+      ...publicUser(tenantUser),
+      membershipId: membership.id,
+      organizationAccess: {
+        organizationId: membership.organizationId,
+        defaultUnitId: visibleScopes.some((scope) =>
+          scope.unitId === membership.defaultUnitId)
+          ? membership.defaultUnitId
+          : visibleScopes[0]?.unitId || null,
+        status: membership.status,
+        scopes: visibleScopes.map((scope) => ({
+          unitId: scope.unitId,
+          includeDescendants: scope.includeDescendants === true,
+          roles: [...(scope.roles || [])],
+          departmentIds: [...(scope.departmentIds || [])],
+        })),
+      },
+    };
   }
 
   function roleNamesAreValid(names, organizationId = null) {
@@ -159,6 +202,66 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       return 'Fachbereichsleiter benötigen mindestens einen zugewiesenen Fachbereich.';
     }
     return null;
+  }
+
+  function requestedScopes(req, fallbackRoles = ['Nutzer'], fallbackDepartmentIds = []) {
+    const writableUnitIds = unitIdsForPermission(req, 'users.write');
+    const requested = req.body.scopes;
+    if (requested === undefined) {
+      const roleNames = req.body.roles ?? fallbackRoles;
+      const departmentIds = req.body.departmentIds ?? fallbackDepartmentIds;
+      if (!roleNamesAreValid(roleNames, req.tenant.organizationId)) {
+        return { error: 'Mindestens eine gültige Rolle ist erforderlich.' };
+      }
+      const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
+      if (departmentError) return { error: departmentError };
+      return {
+        scopes: [{
+          unitId: req.tenant.unitId,
+          includeDescendants: false,
+          roles: roleNames,
+          departmentIds,
+        }],
+        defaultUnitId: req.tenant.unitId,
+      };
+    }
+    if (!Array.isArray(requested) || requested.length === 0) {
+      return { error: 'Mindestens ein Organisationsbereich ist erforderlich.' };
+    }
+    const result = [];
+    const seenUnitIds = new Set();
+    for (const candidate of requested) {
+      const unitId = String(candidate?.unitId || '');
+      const unit = organizationUnits.find((entry) => entry.id === unitId
+        && entry.organizationId === req.tenant.organizationId
+        && entry.status === 'active');
+      if (!unit || !writableUnitIds.has(unitId)) {
+        return { error: 'Mindestens eine Organisationseinheit ist ungültig oder nicht administrierbar.' };
+      }
+      if (seenUnitIds.has(unitId)) {
+        return { error: 'Jede Organisationseinheit darf nur einmal freigegeben werden.' };
+      }
+      seenUnitIds.add(unitId);
+      const roleNames = Array.isArray(candidate.roles) ? candidate.roles : [];
+      const departmentIds = Array.isArray(candidate.departmentIds)
+        ? candidate.departmentIds : [];
+      if (!roleNamesAreValid(roleNames, req.tenant.organizationId)) {
+        return { error: 'Jeder Organisationsbereich benötigt mindestens eine gültige Rolle.' };
+      }
+      const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
+      if (departmentError) return { error: departmentError };
+      result.push({
+        unitId,
+        includeDescendants: false,
+        roles: [...new Set(roleNames)],
+        departmentIds: [...new Set(departmentIds)],
+      });
+    }
+    const defaultUnitId = String(req.body.defaultUnitId || result[0].unitId);
+    if (!seenUnitIds.has(defaultUnitId)) {
+      return { error: 'Die Standardeinheit muss als eigener Organisationsbereich freigegeben sein.' };
+    }
+    return { scopes: result, defaultUnitId };
   }
 
   function isLastAdmin(user, organizationId = null) {
@@ -303,6 +406,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     const index = departments.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Fachbereich nicht gefunden.' });
     if (users.some((user) => user.departmentIds?.includes(req.params.id))
+      || memberships.some((membership) => (membership.scopes || []).some((scope) =>
+        scope.departmentIds?.includes(req.params.id)))
       || departmentReferences.some((entry) => entry.departmentId === req.params.id)) {
       return res.status(409).json({ error: 'Zugewiesene oder verwendete Fachbereiche können nicht gelöscht werden. Deaktivieren Sie den Fachbereich stattdessen.' });
     }
@@ -414,16 +519,17 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     if (findUser(username) || findUser(email)) return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
     const hasStartPassword = typeof password === 'string' && password.length > 0;
     if (hasStartPassword && !passwordIsValid(password)) return res.status(400).json({ error: 'Das Passwort muss mindestens 12 Zeichen sowie Groß-/Kleinbuchstaben, Zahl und Sonderzeichen enthalten.' });
-    if (!roleNamesAreValid(roleNames, req.tenant?.organizationId)) return res.status(400).json({ error: 'Mindestens eine gültige Rolle ist erforderlich.' });
-    const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
-    if (departmentError) return res.status(400).json({ error: departmentError });
+    const access = requestedScopes(req, roleNames, departmentIds);
+    if (access.error) return res.status(400).json({ error: access.error });
+    const allRoleNames = [...new Set(access.scopes.flatMap((scope) => scope.roles))];
+    const allDepartmentIds = [...new Set(access.scopes.flatMap((scope) => scope.departmentIds))];
     const mailMessage = requestedMessage(req.body.mailMessage, 'user-create');
     if (mailMessage.error) return res.status(400).json({ error: mailMessage.error });
     const user = {
       id: nextId('user', users), name: String(name || '').trim(), username: String(username).trim(),
-      email: normalize(email), passwordHash: await bcrypt.hash(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: roleNames,
-      departmentIds: [...new Set(departmentIds)],
-      permissions: permissionsForRoles(roleNames, roles, req.tenant?.organizationId), active: req.body.active !== false,
+      email: normalize(email), passwordHash: await bcrypt.hash(hasStartPassword ? password : crypto.randomBytes(32).toString('hex'), 12), roles: allRoleNames,
+      departmentIds: allDepartmentIds,
+      permissions: permissionsForRoles(allRoleNames, roles, req.tenant?.organizationId), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
       createdAt: new Date().toISOString(), lastLoginAt: null,
       mfaRequired,
@@ -439,13 +545,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
         userId: user.id,
         organizationId: req.tenant.organizationId,
         status: 'active',
-        defaultUnitId: req.tenant.unitId,
-        scopes: [{
-          unitId: req.tenant.unitId,
-          includeDescendants: req.body.includeDescendants === true,
-          roles: [...new Set(roleNames)],
-          departmentIds: [...new Set(departmentIds)],
-        }],
+        defaultUnitId: access.defaultUnitId,
+        scopes: access.scopes,
         createdAt: new Date().toISOString(),
       });
     }
@@ -453,6 +554,30 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     if (!hasStartPassword) await issuePasswordReset(user, mailMessage.value);
     await saveUser(user);
     logEvent('create', 'User', { id: user.id }, req.user.username);
+    return res.status(201).json(publicUserForRequest(user, req));
+  });
+
+  app.post('/api/users/memberships', authMiddleware, requirePermission('users.write'), (req, res) => {
+    const user = findUser(req.body.identifier);
+    if (!user) return res.status(404).json({ error: 'Nutzerkonto nicht gefunden.' });
+    if (organizationMembership(user.id, req.tenant.organizationId)) {
+      return res.status(409).json({ error: 'Das Nutzerkonto ist dieser Organisation bereits zugeordnet.' });
+    }
+    const access = requestedScopes(req);
+    if (access.error) return res.status(400).json({ error: access.error });
+    const membership = {
+      id: nextId('membership', memberships),
+      userId: user.id,
+      organizationId: req.tenant.organizationId,
+      status: 'active',
+      defaultUnitId: access.defaultUnitId,
+      scopes: access.scopes,
+      createdAt: new Date().toISOString(),
+    };
+    memberships.push(membership);
+    logEvent('membership_create', 'User', {
+      id: user.id, organizationId: membership.organizationId,
+    }, req.user.username);
     return res.status(201).json(publicUserForRequest(user, req));
   });
 
@@ -471,11 +596,37 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     if (users.some((entry) => entry.id !== user.id && (normalize(entry.email) === email || normalize(entry.username) === normalize(username)))) {
       return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben.' });
     }
-    if (!roleNamesAreValid(roleNames, req.tenant?.organizationId)) return res.status(400).json({ error: 'Ungültige Rolle.' });
-    const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
-    if (departmentError) return res.status(400).json({ error: departmentError });
+    let access;
+    if (req.body.scopes === undefined && membership) {
+      const scopes = (membership.scopes || []).map((scope) => ({
+        unitId: scope.unitId,
+        includeDescendants: scope.includeDescendants === true,
+        roles: [...(scope.roles || [])],
+        departmentIds: [...(scope.departmentIds || [])],
+      }));
+      const activeScope = scopes.find((scope) => scope.unitId === req.tenant.unitId)
+        || scopes[0];
+      if (activeScope) {
+        activeScope.roles = [...new Set(roleNames)];
+        activeScope.departmentIds = [...new Set(departmentIds)];
+      }
+      access = { scopes, defaultUnitId: membership.defaultUnitId || scopes[0]?.unitId };
+    } else {
+      access = requestedScopes(req, roleNames, departmentIds);
+      if (!access.error && membership) {
+        const writableUnitIds = unitIdsForPermission(req, 'users.write');
+        const unmanagedScopes = (membership.scopes || []).filter((scope) =>
+          !writableUnitIds.has(scope.unitId));
+        const keepExistingDefault = unmanagedScopes.some((scope) =>
+          scope.unitId === membership.defaultUnitId);
+        access.scopes = [...unmanagedScopes, ...access.scopes];
+        if (keepExistingDefault) access.defaultUnitId = membership.defaultUnitId;
+      }
+    }
+    if (access.error) return res.status(400).json({ error: access.error });
+    const nextRoleNames = [...new Set(access.scopes.flatMap((scope) => scope.roles))];
     const nextActive = req.body.active ?? user.active;
-    if ((!nextActive || !roleNames.includes('Admin'))
+    if ((!nextActive || !nextRoleNames.includes('Admin'))
       && isLastAdmin(user, req.tenant?.organizationId)) {
       return res.status(409).json({ error: 'Der letzte aktive Admin kann nicht deaktiviert oder herabgestuft werden.' });
     }
@@ -487,14 +638,12 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       name: String(req.body.name ?? user.name ?? '').trim(), username, email, active: nextActive,
     });
     if (membership) {
-      const scope = membership.scopes.find((entry) => entry.unitId === req.tenant.unitId)
-        || membership.scopes[0];
-      scope.roles = [...new Set(roleNames)];
-      scope.departmentIds = [...new Set(departmentIds)];
+      membership.scopes = access.scopes;
+      membership.defaultUnitId = access.defaultUnitId;
     } else {
-      user.roles = roleNames;
-      user.departmentIds = [...new Set(departmentIds)];
-      user.permissions = permissionsForRoles(roleNames, roles, req.tenant?.organizationId);
+      user.roles = nextRoleNames;
+      user.departmentIds = [...new Set(access.scopes.flatMap((scope) => scope.departmentIds))];
+      user.permissions = permissionsForRoles(nextRoleNames, roles, req.tenant?.organizationId);
     }
     if (req.body.password) {
       user.passwordHash = await bcrypt.hash(req.body.password, 12);

@@ -1,6 +1,6 @@
 {
   "name": "materialkompass-backend",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "REST backend for MaterialKompass",
   "main": "server.js",
   "engines": {

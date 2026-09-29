@@ -1,5 +1,5 @@
 name: materialkompass
-version: 1.4.2+7
+version: 1.4.3+8
 publish_to: 'none'
 description: MaterialKompass for DLRG material management.
 environment:

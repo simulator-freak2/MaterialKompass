@@ -607,7 +607,7 @@ class _ArticleView extends StatelessWidget {
                         const SizedBox(width: 18),
                         const Icon(Icons.verified_outlined, size: 17),
                         const SizedBox(width: 6),
-                        const Text('Stand 1.4.2'),
+                        const Text('Stand 1.4.3'),
                         const SizedBox(width: 18),
                         const Icon(Icons.groups_outlined, size: 17),
                         const SizedBox(width: 6),
