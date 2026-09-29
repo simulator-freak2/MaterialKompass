@@ -35,6 +35,10 @@ function fixture() {
       id: 'location-1', code: 'L1',
       organizationId: 'org-source', unitId: 'unit-source',
     }],
+    departments: [{
+      id: 'department-1', name: 'Technik', code: 'TECH', active: true,
+      organizationId: 'org-source', unitId: 'unit-source',
+    }],
     auditLogs: [],
   };
   for (const name of UNIT_COLLECTIONS) collections[name] ||= [];
@@ -51,7 +55,7 @@ test('argument parser defaults to a safe preview', () => {
 test('move plan assigns requested domains and categories to the target unit', () => {
   const plan = planMove(fixture());
   assert.equal(plan.target.id, 'unit-youth');
-  assert.equal(plan.changed, 4);
+  assert.equal(plan.changed, 5);
   assert.deepEqual(
     {
       organizationId: plan.updated.materials[0].organizationId,
@@ -60,6 +64,7 @@ test('move plan assigns requested domains and categories to the target unit', ()
     { organizationId: 'org-target', unitId: 'unit-youth' },
   );
   assert.equal(plan.updated.clothingItems[0].unitId, 'unit-youth');
+  assert.equal(plan.updated.departments[0].unitId, 'unit-youth');
   assert.deepEqual(
     {
       organizationId: plan.updated.categories[0].organizationId,

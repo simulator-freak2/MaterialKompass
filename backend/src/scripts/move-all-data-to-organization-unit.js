@@ -9,6 +9,7 @@ const DEFAULT_TARGET_EDV = '10050035';
 // together prevents orphaned movements, inspections, documents, shelves,
 // orders or receipts after the move.
 const UNIT_COLLECTIONS = Object.freeze([
+  'departments',
   'locations', 'shelves', 'storageLevels', 'stockStructures',
   'materials', 'deletedMaterials', 'materialMovements', 'materialInspections',
   'materialDocuments', 'reservations', 'maintenanceEvents',

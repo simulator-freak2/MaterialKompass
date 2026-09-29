@@ -444,9 +444,9 @@ Fachsammlungen liegen, ist dafür keine zusätzliche SQL-Migration erforderlich.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
-Alle vorhandenen Inventar-, Kleidungs-, Lager-, Mängel-, Beschaffungs- und
-Kategoriedaten einschließlich ihrer abhängigen Datensätze können kontrolliert in eine
-Unterorganisation verschoben werden. Das Skript arbeitet standardmäßig als Vorschau,
+Alle vorhandenen Inventar-, Kleidungs-, Lager-, Mängel-, Beschaffungs-, Fachbereichs-
+und Kategoriedaten einschließlich ihrer abhängigen Datensätze können kontrolliert in
+eine Unterorganisation verschoben werden. Das Skript arbeitet standardmäßig als Vorschau,
 prüft Eindeutigkeitskonflikte und schreibt mit `--apply` alle betroffenen
 Snapshot-Partitionen in einer Transaktion neu. Das Backend muss dabei gestoppt sein:
 
