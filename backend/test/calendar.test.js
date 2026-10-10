@@ -16,7 +16,16 @@ async function serverAndToken() {
       password: 'MaterialKompass2026!',
     }),
   });
-  return { server, baseUrl, token: (await login.json()).token };
+  return { app, server, baseUrl, token: (await login.json()).token };
+}
+
+function reservationBody(materialId, purpose = 'Termin') {
+  return {
+    purpose,
+    startAt: '2027-10-01T08:00:00.000Z',
+    endAt: '2027-10-01T12:00:00.000Z',
+    items: [{ materialId, quantity: 1 }],
+  };
 }
 
 test('reservations require approval per material and prevent overlaps', async () => {
@@ -156,6 +165,132 @@ test('calendar export returns a bounded ICS document', async () => {
     assert.match(body.fileName, /\.ics$/);
     assert.match(ics, /^BEGIN:VCALENDAR/);
     assert.match(ics, /END:VCALENDAR/);
+  } finally {
+    server.close();
+  }
+});
+
+test('only individual inventory can be reserved and concurrent requests cannot double book', async () => {
+  const { server, baseUrl, token } = await serverAndToken();
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  try {
+    const bulk = await fetch(`${baseUrl}/api/material`, {
+      method: 'POST', headers, body: JSON.stringify({
+        name: 'Verbrauchsmaterial', categoryCode: '02', subcategoryCode: '02-02',
+        locationId: 'loc-1', status: 'Lagernd', itemType: 'bulk', quantity: 25,
+      }),
+    });
+    assert.equal(bulk.status, 201);
+    const bulkItem = await bulk.json();
+    const rejected = await fetch(`${baseUrl}/api/reservations`, {
+      method: 'POST', headers, body: JSON.stringify(reservationBody(bulkItem.id)),
+    });
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error, /Mengenartikel/);
+
+    const requests = await Promise.all([
+      fetch(`${baseUrl}/api/reservations`, {
+        method: 'POST', headers, body: JSON.stringify(reservationBody('material-1', 'Parallel A')),
+      }),
+      fetch(`${baseUrl}/api/reservations`, {
+        method: 'POST', headers, body: JSON.stringify(reservationBody('material-1', 'Parallel B')),
+      }),
+    ]);
+    assert.deepEqual(requests.map((response) => response.status).sort(), [201, 409]);
+  } finally {
+    server.close();
+  }
+});
+
+test('calendar retention inherits organization settings and keeps active entries', async () => {
+  const { app, server, baseUrl, token } = await serverAndToken();
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  try {
+    const settings = await fetch(`${baseUrl}/api/calendar/settings`, {
+      method: 'PUT', headers, body: JSON.stringify({
+        scope: 'organization', retentionMonths: 1,
+      }),
+    });
+    assert.equal(settings.status, 200);
+    assert.equal((await settings.json()).effectiveRetentionMonths, 1);
+
+    await app.locals.runAsSystem(() => {
+      app.locals.appData.reservations.push({
+        id: 'reservation-old-terminal', organizationId: 'org-default',
+        unitId: 'unit-default-root', status: 'Abgeschlossen',
+        endAt: '2026-01-01T12:00:00.000Z', updatedAt: '2026-01-02T12:00:00.000Z',
+        items: [],
+      });
+      app.locals.appData.reservations.push({
+        id: 'reservation-old-active', organizationId: 'org-default',
+        unitId: 'unit-default-root', status: 'Freigegeben',
+        startAt: '2026-01-01T08:00:00.000Z', endAt: '2026-01-01T12:00:00.000Z',
+        updatedAt: '2026-01-02T12:00:00.000Z', items: [],
+      });
+    });
+    const result = await app.locals.applyCalendarRetentionPolicy(
+      Date.parse('2026-03-15T00:00:00.000Z'),
+    );
+    assert.equal(result.removedReservations, 1);
+    const ids = await app.locals.runAsSystem(() =>
+      app.locals.appData.reservations.map((entry) => entry.id));
+    assert.ok(!ids.includes('reservation-old-terminal'));
+    assert.ok(ids.includes('reservation-old-active'));
+  } finally {
+    server.close();
+  }
+});
+
+test('calendar includes visible vehicle reservations and maintenance', async () => {
+  const { server, baseUrl, token } = await serverAndToken();
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  try {
+    const vehicleResponse = await fetch(`${baseUrl}/api/vehicles`, {
+      method: 'POST', headers, body: JSON.stringify({
+        registrationNumber: 'MK-KAL 1',
+        vin: 'WVWZZZ1JZXWKAL001',
+        radioCallName: 'Pelikan Kalender 1',
+        type: 'Einsatzfahrzeug',
+      }),
+    });
+    assert.equal(vehicleResponse.status, 201);
+    const vehicle = await vehicleResponse.json();
+
+    const reservation = await fetch(`${baseUrl}/api/vehicle-reservations`, {
+      method: 'POST', headers, body: JSON.stringify({
+        vehicleId: vehicle.id,
+        startAt: '2027-09-10T08:00:00.000Z',
+        endAt: '2027-09-10T12:00:00.000Z',
+        title: 'Fahrdienst Kalender',
+        purpose: 'Kalenderübung',
+        destination: 'Badesee',
+        contact: 'Leitstelle',
+      }),
+    });
+    assert.equal(reservation.status, 201);
+
+    const maintenance = await fetch(`${baseUrl}/api/vehicles/${vehicle.id}/maintenance`, {
+      method: 'POST', headers, body: JSON.stringify({
+        type: 'Jahreswartung',
+        status: 'Geplant',
+        dueDate: '2027-09-12',
+        provider: 'Werkstatt Musterstadt',
+      }),
+    });
+    assert.equal(maintenance.status, 201);
+
+    const calendar = await fetch(
+      `${baseUrl}/api/calendar?from=2027-09-01T00%3A00%3A00.000Z&to=2027-10-01T00%3A00%3A00.000Z`,
+      { headers },
+    );
+    assert.equal(calendar.status, 200);
+    const events = (await calendar.json()).events;
+    const vehicleReservation = events.find((entry) => entry.kind === 'vehicle-reservation');
+    const vehicleMaintenance = events.find((entry) => entry.kind === 'vehicle-maintenance');
+    assert.equal(vehicleReservation.title, 'Fahrdienst Kalender');
+    assert.deepEqual(vehicleReservation.inventoryNumbers, ['MK-KAL 1']);
+    assert.equal(vehicleMaintenance.title, 'Jahreswartung');
+    assert.equal(vehicleMaintenance.allDay, true);
   } finally {
     server.close();
   }

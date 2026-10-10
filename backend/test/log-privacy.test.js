@@ -82,6 +82,9 @@ test('dashboard only returns activity from permitted areas', async () => {
     assert.equal('clothingCount' in dashboard.summary, false);
     assert.equal('openDefectCount' in dashboard.summary, false);
     assert.equal('procurementCount' in dashboard.summary, false);
+    assert.equal('pendingDefectEmailCount' in dashboard.summary, false);
+    assert.equal('pendingProcurementEmailCount' in dashboard.summary, false);
+    assert.equal('pendingStocktakeEmailCount' in dashboard.summary, false);
     assert.equal('pendingProcurementApprovals' in dashboard.summary, false);
   } finally {
     server.close();

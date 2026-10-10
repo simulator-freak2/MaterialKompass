@@ -122,16 +122,28 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     }
   }
 
-  Future<void> _createUnit(List<Map<String, dynamic>> units) async {
+  Future<void> _createUnit(
+    List<Map<String, dynamic>> units, {
+    String? initialParentId,
+  }) async {
     final name = TextEditingController();
     final type = TextEditingController(text: 'Ortsgruppe');
     final edvNumber = TextEditingController();
-    var parentId = units
-        .firstWhere(
-          (entry) => entry['parentId'] == null,
-          orElse: () => units.first,
-        )['id']
-        .toString();
+    final possibleParents = units
+        .where(
+          (entry) =>
+              entry['status'] == 'active' &&
+              entry['canManageStructure'] == true,
+        )
+        .toList();
+    var parentId =
+        initialParentId ??
+        possibleParents
+            .firstWhere(
+              (entry) => entry['parentId'] == null,
+              orElse: () => possibleParents.first,
+            )['id']
+            .toString();
     try {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -170,8 +182,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                     decoration: const InputDecoration(
                       labelText: 'Übergeordnete Einheit',
                     ),
-                    items: units
-                        .where((entry) => entry['status'] == 'active')
+                    items: possibleParents
                         .map(
                           (entry) => DropdownMenuItem(
                             value: entry['id'].toString(),
@@ -219,6 +230,125 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       name.dispose();
       type.dispose();
       edvNumber.dispose();
+    }
+  }
+
+  Set<String> _relatedUnitIds(
+    Map<String, dynamic> source,
+    List<Map<String, dynamic>> units,
+  ) {
+    final byId = {for (final unit in units) unit['id'].toString(): unit};
+    final result = <String>{};
+    final descendants = <String>{};
+    final descendantParents = <String>{source['id'].toString()};
+    var current = source;
+    while (current['parentId'] != null) {
+      final parentId = current['parentId'].toString();
+      final parent = byId[parentId];
+      if (parent == null || !result.add(parentId)) break;
+      current = parent;
+    }
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final unit in units) {
+        final parentId = unit['parentId']?.toString();
+        if (descendantParents.contains(parentId)) {
+          final id = unit['id'].toString();
+          if (descendants.add(id)) {
+            descendantParents.add(id);
+            changed = true;
+          }
+        }
+      }
+    }
+    result.addAll(descendants);
+    result.remove(source['id']?.toString());
+    return result;
+  }
+
+  Future<void> _editInventoryVisibility(
+    Map<String, dynamic> unit,
+    List<Map<String, dynamic>> units,
+  ) async {
+    final eligibleIds = _relatedUnitIds(unit, units);
+    final eligible = units
+        .where(
+          (entry) =>
+              eligibleIds.contains(entry['id']?.toString()) &&
+              entry['status'] == 'active',
+        )
+        .toList();
+    final selected = ((unit['inventoryVisibleToUnitIds'] as List?) ?? const [])
+        .map((entry) => entry.toString())
+        .where(eligibleIds.contains)
+        .toSet();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Inventar von ${unit['name']} freigeben'),
+          content: SizedBox(
+            width: 560,
+            child: eligible.isEmpty
+                ? const Text(
+                    'Für diese Einheit gibt es keine aktive über- oder '
+                    'untergeordnete Ebene.',
+                  )
+                : SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Ausgewählte Ebenen dürfen dieses Inventar ansehen. '
+                          'Änderungen bleiben ausschließlich in der '
+                          'inventarführenden Ebene möglich.',
+                        ),
+                        const SizedBox(height: 12),
+                        for (final target in eligible)
+                          CheckboxListTile(
+                            value: selected.contains(target['id'].toString()),
+                            title: Text(target['name']?.toString() ?? ''),
+                            subtitle: Text(
+                              target['type']?.toString() ?? 'Einheit',
+                            ),
+                            onChanged: (value) => setDialogState(() {
+                              final id = target['id'].toString();
+                              if (value == true) {
+                                selected.add(id);
+                              } else {
+                                selected.remove(id);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Freigaben speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _api.request(
+        '/api/organization-units/${unit['id']}/inventory-visibility',
+        method: 'PUT',
+        body: {'visibleToUnitIds': selected.toList()},
+      );
+      await _refresh();
+    } catch (error) {
+      _error(error);
     }
   }
 
@@ -295,7 +425,10 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     String? targetId;
     final targets = units
         .where(
-          (entry) => entry['id'] != unit['id'] && entry['status'] == 'active',
+          (entry) =>
+              entry['id'] != unit['id'] &&
+              entry['status'] == 'active' &&
+              entry['canManageUnit'] == true,
         )
         .toList();
     if (targets.isNotEmpty) targetId = targets.first['id'].toString();
@@ -422,7 +555,6 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           final roles = (user['roles'] as List? ?? const [])
               .map((entry) => entry.toString())
               .toSet();
-          final canManage = permissions.contains('users.write');
           final platformAdmin = user['platformAdmin'] == true;
           final canCreateOrganizationStructure =
               roles.contains('Admin') &&
@@ -487,23 +619,49 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                         ),
                         title: Text(unit['name']?.toString() ?? ''),
                         subtitle: Text(
-                          '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · Isolierter Datenbereich · ${unit['status'] ?? 'active'}',
+                          '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · '
+                          '${((unit['inventoryVisibleToUnitIds'] as List?) ?? const []).isEmpty ? 'Inventar nicht freigegeben' : 'Inventar für ${(unit['inventoryVisibleToUnitIds'] as List).length} Ebene(n) freigegeben'} · '
+                          '${unit['status'] ?? 'active'}',
                         ),
-                        trailing: canManage && unit['status'] == 'active'
+                        trailing:
+                            (unit['canManageUnit'] == true ||
+                                    unit['canManageStructure'] == true) &&
+                                unit['status'] == 'active'
                             ? PopupMenuButton<String>(
                                 tooltip: 'Aktionen für diese Einheit',
                                 onSelected: (action) {
+                                  if (action == 'create-child') {
+                                    _createUnit(
+                                      units,
+                                      initialParentId: unit['id'].toString(),
+                                    );
+                                  }
+                                  if (action == 'inventory-visibility') {
+                                    _editInventoryVisibility(unit, units);
+                                  }
                                   if (action == 'edit') _editUnit(unit);
                                   if (action == 'archive') {
                                     _transferAndArchive(unit, units);
                                   }
                                 },
                                 itemBuilder: (_) => [
-                                  const PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Bearbeiten'),
-                                  ),
-                                  if (unit['parentId'] != null)
+                                  if (unit['canManageStructure'] == true)
+                                    const PopupMenuItem(
+                                      value: 'create-child',
+                                      child: Text('Unterebene anlegen'),
+                                    ),
+                                  if (unit['canManageStructure'] == true)
+                                    const PopupMenuItem(
+                                      value: 'inventory-visibility',
+                                      child: Text('Inventar freigeben'),
+                                    ),
+                                  if (unit['canManageUnit'] == true)
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('Bearbeiten'),
+                                    ),
+                                  if (unit['canManageUnit'] == true &&
+                                      unit['parentId'] != null)
                                     const PopupMenuItem(
                                       value: 'archive',
                                       child: Text('Übertragen und archivieren'),

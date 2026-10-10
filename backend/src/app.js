@@ -5,14 +5,17 @@ const jwt = require('jsonwebtoken');
 const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
 const { registerCalendarRoutes } = require('./calendar');
+const { registerVehicleRoutes } = require('./vehicles');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
+  canAccessStocktakeEmail,
   createStocktakeEmailService,
   registerStocktakeEmailRoutes,
 } = require('./stocktake-email-ingestion');
 const { registerProcurementRoutes } = require('./procurement');
 const { registerAddressLookupRoutes } = require('./address-routes');
 const {
+  canAccessProcurementEmail,
   createProcurementEmailService,
   registerProcurementEmailRoutes,
 } = require('./procurement-email-ingestion');
@@ -55,6 +58,7 @@ const {
   runWithTenant,
   runAsSystem,
   rawCollection,
+  inventoryReadableUnitIds,
   DEFAULT_ORGANIZATION_ID,
   DEFAULT_UNIT_ID,
   registerTenancyRoutes,
@@ -120,6 +124,8 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'stockStructures', 'categories', 'materials',
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'reservations', 'maintenanceEvents',
+  'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
+  'vehicleLoadAssignments', 'vehicleLoadLists',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'procurementRequests', 'procurementOffers', 'procurementOrders',
@@ -299,6 +305,11 @@ function createApp(options = {}) {
   const materialDocuments = appData.materialDocuments;
   const reservations = (appData.reservations ||= []);
   const maintenanceEvents = (appData.maintenanceEvents ||= []);
+  const vehicles = (appData.vehicles ||= []);
+  const vehicleReservations = (appData.vehicleReservations ||= []);
+  const vehicleMaintenanceEvents = (appData.vehicleMaintenanceEvents ||= []);
+  const vehicleLoadAssignments = (appData.vehicleLoadAssignments ||= []);
+  const vehicleLoadLists = (appData.vehicleLoadLists ||= []);
   const clothingItems = appData.clothingItems;
   const clothingInspections = appData.clothingInspections || [];
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
@@ -739,8 +750,63 @@ function createApp(options = {}) {
     });
   });
 
+  const vehiclePermissions = [
+    'vehicles.read', 'vehicles.write', 'vehicles.share',
+    'vehicles.load.read', 'vehicles.load.manage', 'vehicles.print',
+    'vehicle_reservations.create', 'vehicle_reservations.manage',
+    'vehicle_reservations.operational_approve', 'vehicle_maintenance.manage',
+  ];
+  vehiclePermissions.forEach((permission) => {
+    if (!permissions.includes(permission)) permissions.push(permission);
+  });
+  const vehicleWardenPermissions = [
+    'calendar.read',
+    ...vehiclePermissions.filter((permission) =>
+      permission !== 'vehicle_reservations.operational_approve'),
+    'inventory.read', 'defects.read', 'defects.report',
+    'defects.edit', 'dashboard.read',
+  ];
+  if (!roles.some((role) => role.name === 'Fahrzeugwart')) {
+    roles.push({
+      id: 'role-fahrzeugwart', name: 'Fahrzeugwart', permissions: vehicleWardenPermissions,
+    });
+  }
+  const vehicleRolePermissions = {
+    Admin: vehiclePermissions,
+    Fahrzeugwart: vehicleWardenPermissions,
+    Nutzer: ['vehicles.read', 'vehicle_reservations.create'],
+    Materialwart: ['vehicles.read', 'vehicles.load.read', 'vehicles.load.manage', 'vehicles.print'],
+    Fachbereichsleiter: ['vehicles.read', 'vehicle_reservations.create', 'vehicle_reservations.manage'],
+    Vorsitz: ['vehicles.read', 'vehicle_reservations.create', 'vehicle_reservations.manage'],
+    'Technischer Leiter Einsatz': [
+      'vehicles.read', 'vehicle_reservations.create',
+      'vehicle_reservations.operational_approve',
+    ],
+  };
+  roles.forEach((role) => {
+    if (role.name === 'Fahrzeugwart') {
+      role.permissions = role.permissions.filter((permission) =>
+        permission !== 'vehicle_reservations.operational_approve');
+    }
+    (vehicleRolePermissions[role.name] || []).forEach((permission) => {
+      if (!role.permissions.includes(permission)) role.permissions.push(permission);
+    });
+  });
+  users.forEach((user) => {
+    if (user.roles.includes('Fahrzeugwart')
+        && !user.roles.some((role) => ['Admin', 'Technischer Leiter Einsatz'].includes(role))) {
+      user.permissions = user.permissions.filter((permission) =>
+        permission !== 'vehicle_reservations.operational_approve');
+    }
+    user.roles.flatMap((name) => vehicleRolePermissions[name] || []).forEach((permission) => {
+      if (!user.permissions.includes(permission)) user.permissions.push(permission);
+    });
+  });
+
   if (!permissions.includes('offline.access')) permissions.push('offline.access');
-  const offlineRoles = new Set(['Admin', 'Materialwart', 'Kleiderwart', 'Fachbereichsleiter']);
+  const offlineRoles = new Set([
+    'Admin', 'Materialwart', 'Kleiderwart', 'Fachbereichsleiter', 'Fahrzeugwart',
+  ]);
   roles.forEach((role) => {
     if (offlineRoles.has(role.name) && !role.permissions.includes('offline.access')) {
       role.permissions.push('offline.access');
@@ -855,6 +921,10 @@ function createApp(options = {}) {
     Stocktake: { permission: 'stocktakes.read', label: 'Inventuren' },
     Reservation: { permission: 'calendar.read', label: 'Kalender' },
     MaintenanceEvent: { permission: 'calendar.read', label: 'Kalender' },
+    Vehicle: { permission: 'vehicles.read', label: 'Fahrzeuge' },
+    VehicleReservation: { permission: 'vehicles.read', label: 'Fahrzeuge' },
+    VehicleMaintenance: { permission: 'vehicles.read', label: 'Fahrzeuge' },
+    VehicleLoad: { permission: 'vehicles.read', label: 'Fahrzeuge' },
     ExportLog: { permission: 'reports.read', label: 'Berichte' },
   });
 
@@ -895,6 +965,8 @@ function createApp(options = {}) {
       IssueTransaction: 'Kleidungsausgabe', DefectReport: 'Mangel',
       ProcurementRequest: 'Beschaffung', Stocktake: 'Inventur',
       Reservation: 'Reservierung', MaintenanceEvent: 'Wartung', ExportLog: 'Export',
+      Vehicle: 'Fahrzeug', VehicleReservation: 'Fahrzeugreservierung',
+      VehicleMaintenance: 'Fahrzeugwartung', VehicleLoad: 'Fahrzeugbeladung',
     };
 
     return {
@@ -1615,6 +1687,9 @@ function createApp(options = {}) {
   app.put('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const location = locations.find((entry) => entry.id === req.params.id);
     if (!location) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
+    if (location.vehicleId) {
+      return res.status(409).json({ error: 'Fahrzeug-Lagerorte werden in der Fahrzeugverwaltung gepflegt.' });
+    }
     const input = parseStorageInput(res, () => buildingInput(req.body, location));
     if (!input) return;
     if (locations.some((entry) => entry.id !== location.id
@@ -1631,6 +1706,9 @@ function createApp(options = {}) {
   app.delete('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = locations.findIndex((entry) => entry.id === req.params.id);
     if (index < 0) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
+    if (locations[index].vehicleId) {
+      return res.status(409).json({ error: 'Fahrzeug-Lagerorte können nicht separat gelöscht werden.' });
+    }
     const nestedStockIds = new Set(stockStructures
       .filter((entry) => entry.locationId === req.params.id)
       .map((entry) => entry.id));
@@ -2054,7 +2132,7 @@ function createApp(options = {}) {
 
   const defectManagement = registerDefectManagement({
     app, authMiddleware, requirePermission, hasPermission, defectReports,
-    materials, clothingItems, users, notifications, logEvent, nextId, XLSX,
+    materials, clothingItems, vehicles, users, notifications, logEvent, nextId, XLSX,
     categories, departments, procurementRequests, locations, stockStructures,
   });
   app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
@@ -2075,6 +2153,7 @@ function createApp(options = {}) {
     defectManagement,
     materials,
     clothingItems,
+    vehicles,
   });
   app.locals.defectEmailService = defectEmailService;
   app.locals.applyDefectEmailRetentionPolicy = defectEmailService.applyRetentionPolicy;
@@ -2083,15 +2162,41 @@ function createApp(options = {}) {
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
-    stockStructures, clothingItems, deletedClothingItems, logEvent, nextId, XLSX,
+    stockStructures, vehicleLoadAssignments, clothingItems, deletedClothingItems,
+    logEvent, nextId, XLSX,
     defectManagement,
+    withReadAccess: (req, callback) => runWithTenant({
+      ...req.tenant,
+      allowedUnitIds: inventoryReadableUnitIds(
+        organizationUnits, req.tenant.organizationId, req.tenant.unitId,
+      ),
+    }, callback),
+    unitName: (unitId) => organizationUnits.find((entry) => entry.id === unitId)?.name || null,
+    reservationShareCandidates: (req) => {
+      const source = organizationUnits.find((entry) => entry.id === req.tenant.unitId
+        && entry.organizationId === req.tenant.organizationId && entry.status === 'active');
+      const allowed = new Set(source?.inventoryVisibleToUnitIds || []);
+      return organizationUnits.filter((entry) => entry.organizationId === req.tenant.organizationId
+        && entry.status === 'active' && allowed.has(entry.id));
+    },
   });
 
   registerCalendarRoutes({
+    vehicles,
+    vehicleReservations,
+    vehicleMaintenanceEvents,
     app, authMiddleware, requirePermission, hasPermission, reservations,
     maintenanceEvents, materials, materialMovements, departments, locations, users,
-    logEvent, nextId, defectManagement,
+    logEvent, nextId, defectManagement, organizations, organizationUnits,
   });
+
+  const vehicleManagement = registerVehicleRoutes({
+    app, authMiddleware, requirePermission, hasPermission,
+    vehicles, vehicleReservations, vehicleMaintenanceEvents,
+    vehicleLoadAssignments, vehicleLoadLists, materials, materialMovements,
+    locations, organizations, organizationUnits, defectReports, logEvent, nextId,
+  });
+  app.locals.applyVehicleRetentionPolicy = vehicleManagement.applyVehicleRetentionPolicy;
 
   registerStocktakeRoutes({
     app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
@@ -2765,7 +2870,17 @@ function createApp(options = {}) {
     }
 
     if (hasPermission(req.user, 'procurement.read')) {
-      summary.procurementCount = procurementRequests.length;
+      Object.assign(summary, {
+        procurementCount: procurementRequests.length,
+        pendingProcurementEmailCount: procurementEmailImports.filter((item) =>
+          !['verarbeitet', 'verworfen'].includes(item.status)
+          && canAccessProcurementEmail(req.user, item, procurementRequests)).length,
+      });
+    }
+    if (hasPermission(req.user, 'stocktakes.read')) {
+      summary.pendingStocktakeEmailCount = stocktakeEmailImports.filter((item) =>
+        !['verarbeitet', 'verworfen'].includes(item.status)
+        && canAccessStocktakeEmail(req.user, item, stocktakes)).length;
     }
     if (hasPermission(req.user, 'calendar.read')) {
       const now = Date.now();
@@ -2782,6 +2897,24 @@ function createApp(options = {}) {
           ['Geplant', 'In Arbeit'].includes(entry.status)
           && new Date(entry.startAt).getTime() <= warning
           && new Date(entry.endAt).getTime() >= now).length;
+    }
+    if (hasPermission(req.user, 'vehicles.read')) {
+      const visibleVehicles = rawCollection(vehicles).filter((entry) =>
+        entry.organizationId === req.tenant.organizationId
+        && (entry.unitId === req.tenant.unitId
+          || entry.viewAllowedUnitIds?.includes(req.tenant.unitId)
+          || entry.reservationAllowedUnitIds?.includes(req.tenant.unitId)));
+      summary.vehicleCount = visibleVehicles.filter((entry) => !entry.archivedAt).length;
+      summary.blockedVehicleCount = visibleVehicles.filter((entry) =>
+        !entry.archivedAt && vehicleManagement.assessVehicleSafety(entry).blocked).length;
+      summary.pendingVehicleReservationCount = rawCollection(vehicleReservations).filter((entry) =>
+        entry.organizationId === req.tenant.organizationId
+        && ['Ausstehend', 'TLE-Freigabe ausstehend'].includes(entry.status)
+        && (entry.requesterUserId === req.user.id
+          || (hasPermission(req.user, 'vehicle_reservations.manage')
+            && visibleVehicles.some((vehicle) => vehicle.id === entry.vehicleId))
+          || (hasPermission(req.user, 'vehicle_reservations.operational_approve')
+            && entry.operationalApprovalRequired))).length;
     }
     if (hasPermission(req.user, 'procurement.approve')) {
       summary.pendingProcurementApprovals = procurementRequests.filter((item) => item.status === 'Beantragt').length;

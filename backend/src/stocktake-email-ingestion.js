@@ -87,17 +87,21 @@ function publicEntry(entry) {
   };
 }
 
+function canAccessStocktakeEmail(user, entry, stocktakes) {
+  if (user?.roles?.includes('Admin') || user?.roles?.includes('Jugendvorsitzender')
+      || user?.roles?.includes('Jugendvorsitz')) return true;
+  const stocktake = stocktakes.find((candidate) => candidate.id === entry.stocktakeId);
+  if (!stocktake) return false;
+  return (stocktake.entityTypes.includes('MaterialItem') && user?.roles?.includes('Materialwart'))
+    || (stocktake.entityTypes.includes('ClothingItem') && user?.roles?.includes('Kleiderwart'));
+}
+
 function registerStocktakeEmailRoutes({
   app, authMiddleware, requirePermission, stocktakeEmailImports, stocktakes,
   users, logEvent,
 }) {
-  function visible(req, entry) {
-    if (req.user.roles?.includes('Admin') || req.user.roles?.includes('Jugendvorsitzender') || req.user.roles?.includes('Jugendvorsitz')) return true;
-    const stocktake = stocktakes.find((candidate) => candidate.id === entry.stocktakeId);
-    if (!stocktake) return false;
-    return (stocktake.entityTypes.includes('MaterialItem') && req.user.roles?.includes('Materialwart'))
-      || (stocktake.entityTypes.includes('ClothingItem') && req.user.roles?.includes('Kleiderwart'));
-  }
+  const visible = (req, entry) =>
+    canAccessStocktakeEmail(req.user, entry, stocktakes);
 
   function find(req, res) {
     const entry = stocktakeEmailImports.find((candidate) => candidate.id === req.params.id);
@@ -133,6 +137,24 @@ function registerStocktakeEmailRoutes({
     logEvent('email-import', 'Stocktake', { id: entry.stocktakeId, emailImportId: entry.id }, req.user.username);
     res.json(publicEntry(entry));
   });
+
+  app.post('/api/stocktake-email-imports/:id/discard', authMiddleware, requirePermission('stocktakes.email.import'), (req, res) => {
+    const entry = find(req, res); if (!entry) return;
+    if (entry.status === 'verarbeitet' || entry.status === 'verworfen') {
+      return res.status(409).json({ error: 'Diese E-Mail wurde bereits abgeschlossen.' });
+    }
+    entry.status = 'verworfen'; entry.processedAt = new Date().toISOString();
+    entry.processedBy = req.user.username;
+    entry.problem = text(req.body.reason || 'Manuell verworfen', 1000);
+    logEvent('discard', 'StocktakeEmailImport', {
+      id: entry.id, stocktakeId: entry.stocktakeId, reason: entry.problem,
+    }, req.user.username);
+    return res.json(publicEntry(entry));
+  });
 }
 
-module.exports = { createStocktakeEmailService, registerStocktakeEmailRoutes };
+module.exports = {
+  canAccessStocktakeEmail,
+  createStocktakeEmailService,
+  registerStocktakeEmailRoutes,
+};

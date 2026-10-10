@@ -46,12 +46,14 @@ class InventoryPage extends StatefulWidget {
 class InventoryFormDialog extends StatefulWidget {
   final Map<String, dynamic>? item;
   final List<Map<String, dynamic>> categories, locations, stocks;
+  final List<Map<String, dynamic>> reservationShareCandidates;
 
   const InventoryFormDialog({
     this.item,
     required this.categories,
     required this.locations,
     required this.stocks,
+    required this.reservationShareCandidates,
     super.key,
   });
 
@@ -76,6 +78,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
   String? categoryCode, subcategoryCode, locationId, stockId;
   bool reservationApprovalRequired = false;
   bool safetyCritical = false;
+  final Set<String> reservationAllowedUnitIds = {};
 
   @override
   void initState() {
@@ -125,6 +128,11 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         ? null
         : value('stockStructureId');
     reservationApprovalRequired = item['reservationApprovalRequired'] == true;
+    reservationAllowedUnitIds.addAll(
+      (item['reservationAllowedUnitIds'] as List? ?? const []).map(
+        (entry) => entry.toString(),
+      ),
+    );
     safetyCritical = item['safetyCritical'] == true;
   }
 
@@ -290,6 +298,8 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                       itemType = value!;
                       if (itemType == 'individual') {
                         fields['quantity']!.text = '1';
+                      } else {
+                        reservationAllowedUnitIds.clear();
                       }
                     }),
                   ),
@@ -317,6 +327,45 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                     onChanged: (value) => unit = value!,
                   ),
                 ),
+                if (itemType == 'individual' &&
+                    widget.reservationShareCandidates.isNotEmpty)
+                  SizedBox(
+                    width: 704,
+                    child: Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Reservierung durch andere Organisationsebenen',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Nur ausgewählte Ebenen dürfen dieses Einzelstück reservieren. Die übergeordnete Inventarsichtbarkeit bleibt zusätzlich erforderlich.',
+                            ),
+                            ...widget.reservationShareCandidates.map((entry) {
+                              final id = entry['id'].toString();
+                              return CheckboxListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: reservationAllowedUnitIds.contains(id),
+                                title: Text(entry['name']?.toString() ?? id),
+                                onChanged: (value) => setState(() {
+                                  if (value == true) {
+                                    reservationAllowedUnitIds.add(id);
+                                  } else {
+                                    reservationAllowedUnitIds.remove(id);
+                                  }
+                                }),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 SizedBox(
                   width: 230,
                   child: DropdownButtonFormField<String>(
@@ -442,6 +491,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
         fields['nextMaintenanceDate']!.text,
       ),
       'reservationApprovalRequired': reservationApprovalRequired,
+      'reservationAllowedUnitIds': reservationAllowedUnitIds.toList(),
       'safetyCritical': safetyCritical,
       'safetyInstructions': fields['safetyInstructions']!.text.trim(),
     });
@@ -465,6 +515,7 @@ class _InventoryPageState extends State<InventoryPage> {
   List<Map<String, dynamic>> categories = [];
   List<Map<String, dynamic>> locations = [];
   List<Map<String, dynamic>> stocks = [];
+  List<Map<String, dynamic>> reservationShareCandidates = [];
   Set<String> permissions = {};
   Set<String> roles = {};
   final selected = <String>{};
@@ -523,6 +574,10 @@ class _InventoryPageState extends State<InventoryPage> {
           Uri.parse('$apiBaseUrl/api/auth/me'),
           headers: headers,
         ),
+        AppHttpClient.get(
+          Uri.parse('$apiBaseUrl/api/material/reservation-share-candidates'),
+          headers: headers,
+        ),
       ]);
       if (responses.any((response) => response.statusCode == 401)) {
         widget.onLogout?.call();
@@ -532,12 +587,46 @@ class _InventoryPageState extends State<InventoryPage> {
         throw Exception('Inventardaten konnten nicht geladen werden.');
       }
       final user = jsonDecode(responses[4].body)['user'];
+      final loadedItems = _list(responses[0]);
+      final loadedCategories = _list(responses[1]);
+      final loadedLocations = _list(responses[2]);
+      final loadedStocks = _list(responses[3]);
+      void addLookup(
+        List<Map<String, dynamic>> target,
+        dynamic id,
+        dynamic name,
+      ) {
+        final normalizedId = id?.toString() ?? '';
+        final normalizedName = name?.toString() ?? '';
+        if (normalizedId.isEmpty ||
+            normalizedName.isEmpty ||
+            target.any((entry) => entry['id']?.toString() == normalizedId)) {
+          return;
+        }
+        target.add({'id': normalizedId, 'name': normalizedName});
+      }
+
+      for (final item in loadedItems) {
+        addLookup(loadedCategories, item['categoryCode'], item['categoryName']);
+        addLookup(
+          loadedCategories,
+          item['subcategoryCode'],
+          item['subcategoryName'],
+        );
+        addLookup(loadedLocations, item['locationId'], item['locationName']);
+        addLookup(
+          loadedStocks,
+          item['stockStructureId'],
+          item['stockStructureName'],
+        );
+      }
       if (!mounted) return;
       setState(() {
-        items = _list(responses[0]);
-        categories = _list(responses[1]);
-        locations = _list(responses[2]);
-        stocks = _list(responses[3]);
+        items = loadedItems;
+        categories = loadedCategories;
+        locations = loadedLocations;
+        stocks = loadedStocks;
+        reservationShareCandidates = _list(responses[5]);
         permissions = ((user['permissions'] as List?) ?? const [])
             .map((value) => value.toString())
             .toSet();
@@ -633,6 +722,7 @@ class _InventoryPageState extends State<InventoryPage> {
         categories: categories,
         locations: locations,
         stocks: stocks,
+        reservationShareCandidates: reservationShareCandidates,
       ),
     );
     if (result == null) return;
@@ -683,8 +773,8 @@ class _InventoryPageState extends State<InventoryPage> {
           categories: categories,
           locations: locations,
           stocks: stocks,
-          canWrite: can('inventory.write'),
-          canReportDefect: can('defects.write'),
+          canWrite: can('inventory.write') && fresh['readOnly'] != true,
+          canReportDefect: can('defects.write') && fresh['readOnly'] != true,
           canPrintDefectTemplate: can('defects.read'),
           canPrint: canPrintLabels,
         ),
@@ -1793,11 +1883,13 @@ class _InventoryPageState extends State<InventoryPage> {
             onTap: () => _detail(item),
             leading: Checkbox(
               value: selected.contains(item['id']),
-              onChanged: (value) => setState(
-                () => value == true
-                    ? selected.add(item['id'].toString())
-                    : selected.remove(item['id']),
-              ),
+              onChanged: item['readOnly'] == true
+                  ? null
+                  : (value) => setState(
+                      () => value == true
+                          ? selected.add(item['id'].toString())
+                          : selected.remove(item['id']),
+                    ),
             ),
             title: Text(item['name']?.toString() ?? 'Unbenannt'),
             subtitle: Column(
@@ -1806,6 +1898,11 @@ class _InventoryPageState extends State<InventoryPage> {
                 Text(
                   'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}',
                 ),
+                if (item['readOnly'] == true)
+                  Text(
+                    'Nur Ansicht · freigegeben von ${item['sourceUnitName'] ?? 'anderer Ebene'}',
+                    style: TextStyle(color: Colors.blueGrey.shade700),
+                  ),
                 Text(
                   'Kategorie: ${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}',
                 ),
@@ -1853,7 +1950,9 @@ class _InventoryPageState extends State<InventoryPage> {
                           title: Text('Etikett drucken'),
                         ),
                       ),
-                    if (can('inventory.write') && !archived)
+                    if (can('inventory.write') &&
+                        !archived &&
+                        item['readOnly'] != true)
                       const PopupMenuItem(
                         value: 'edit',
                         child: ListTile(
@@ -1862,6 +1961,7 @@ class _InventoryPageState extends State<InventoryPage> {
                         ),
                       ),
                     if (can('inventory.archive') &&
+                        item['readOnly'] != true &&
                         (!archived ||
                             item['inventoryNumberReleasedAt'] == null))
                       PopupMenuItem(
@@ -1875,7 +1975,9 @@ class _InventoryPageState extends State<InventoryPage> {
                           ),
                         ),
                       ),
-                    if (can('inventory.archive') && archived)
+                    if (can('inventory.archive') &&
+                        archived &&
+                        item['readOnly'] != true)
                       PopupMenuItem(
                         value: 'delete',
                         child: ListTile(
@@ -2040,7 +2142,9 @@ class _InventoryTableSource extends DataTableSource {
         DataCell(
           Checkbox(
             value: isSelected,
-            onChanged: (value) => onSelectionChanged(item, value == true),
+            onChanged: item['readOnly'] == true
+                ? null
+                : (value) => onSelectionChanged(item, value == true),
           ),
         ),
         DataCell(
@@ -2048,7 +2152,18 @@ class _InventoryTableSource extends DataTableSource {
           onTap: () => onDetail(item),
         ),
         DataCell(
-          Text(item['name']?.toString() ?? '-'),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(item['name']?.toString() ?? '-'),
+              if (item['readOnly'] == true)
+                Text(
+                  'Nur Ansicht · ${item['sourceUnitName'] ?? 'andere Ebene'}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+            ],
+          ),
           onTap: () => onDetail(item),
         ),
         DataCell(
@@ -2096,13 +2211,14 @@ class _InventoryTableSource extends DataTableSource {
                   tooltip: 'Etikett drucken',
                   icon: const Icon(Icons.print_outlined),
                 ),
-              if (canWrite)
+              if (canWrite && item['readOnly'] != true)
                 IconButton(
                   onPressed: () => onEdit(item),
                   tooltip: 'Bearbeiten',
                   icon: const Icon(Icons.edit_outlined),
                 ),
               if (canArchive &&
+                  item['readOnly'] != true &&
                   (!archived || item['inventoryNumberReleasedAt'] == null))
                 IconButton(
                   onPressed: () => onArchive(item),
@@ -2111,7 +2227,7 @@ class _InventoryTableSource extends DataTableSource {
                     archived ? Icons.unarchive : Icons.archive_outlined,
                   ),
                 ),
-              if (canArchive && archived)
+              if (canArchive && archived && item['readOnly'] != true)
                 IconButton(
                   onPressed: () => onDelete(item),
                   tooltip: 'Endgültig löschen',
@@ -2261,6 +2377,11 @@ class InventoryDetailDialog extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           _line('Inventarnummer', item['inventoryNumber']),
+                          if (item['readOnly'] == true)
+                            _line(
+                              'Freigabe',
+                              'Nur Ansicht aus ${item['sourceUnitName'] ?? 'anderer Ebene'}',
+                            ),
                           _line(
                             'Kategorie',
                             '${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}',

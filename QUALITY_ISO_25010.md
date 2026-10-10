@@ -104,6 +104,32 @@ native Smoke-Tests nachgewiesen.
   sicherheitskritisch gelten und welche Prüf-/Wartungsintervalle rechtlich einschlägig
   sind.
 
+## Fahrzeugverwaltung
+
+Die Fahrzeugverwaltung konkretisiert die Qualitätsmatrix wie folgt:
+
+| Merkmal | Fahrzeugbezogene Umsetzung und Nachweis |
+| --- | --- |
+| Funktionale Eignung | Stammdaten, Freigaben, konfliktfreie Reservierung, optionale TLE-Zweitfreigabe, Ausgabe/Rückgabe, Wartung, Mängel, Ist-Beladung, versionierte Soll-Listen und PDF-Druck werden durch Integrationstests abgedeckt. |
+| Leistungseffizienz | Listen sind serverseitig begrenzt und gefiltert; Zuordnungen nutzen Indizes im Arbeitsspeicher. Binäre PDF-Daten werden nur am Druckendpunkt erzeugt. |
+| Kompatibilität | Fahrzeuge verwenden das bestehende Rollen-, Mandanten-, Inventar-, Mängel-, Aktivitäts-, Dashboard-, Lagerort- und Kalendersystem. |
+| Interaktionsfähigkeit | Suche, Archivfilter, responsive Arbeitsbereiche, Status- und Sicherheitshinweise sowie Widget- und Accessibility-Tests decken Desktop und schmale Ansichten ab. |
+| Zuverlässigkeit | Serverseitige Konfliktprüfungen verhindern Doppelreservierungen; schreibende Abläufe nutzen die atomare Persistenz und lehnen ungültige Zwischenzustände ab. |
+| Sicherheit | Besitzgrenzen, explizite Sicht-/Reservierungsfreigaben und granulare Rollenrechte werden kombiniert. Persönliche Reservierungsdetails sind im gemeinsamen Kalender nur für Anfragende und zuständige Entscheider sichtbar. |
+| Wartbarkeit | Fachlogik ist im Backendmodul `vehicles.js`, die Oberfläche in `vehicles_page.dart` und die Regressionstests in eigenen Testfällen gebündelt. |
+| Flexibilität | Fahrzeugarten, optionale Stammdaten, Fachpositionen und die organisationsweite TLE-Option erlauben Anpassungen ohne Änderung des Grundablaufs. |
+| Safety | Defekte, blockierende Wartungen und fehlende Freigaben verhindern die Ausgabe. Erlaubte Übersteuerungen benötigen eine dokumentierte Begründung. |
+
+Zusätzliche Abnahmekriterien sind:
+
+- Kennzeichen und Fahrgestellnummer sind Pflichtfelder und organisationsweit eindeutig.
+- Sicht- und Reservierungsfreigabe werden getrennt geprüft; fremde Organisationen erhalten keine Daten.
+- Beladene Mengen stehen nicht gleichzeitig als frei verfügbarer Bestand zur Verfügung.
+- Fahrzeuglagerorte sind gegen allgemeines Löschen und Zweckentfremden geschützt.
+- Drucklisten bilden Version, Soll, Ist und Abweichung reproduzierbar ab.
+- Außerdienstgestellte Fahrzeuge werden frühestens nach zehn Jahren entfernt; offene
+  Mängel oder Restbeladung verhindern die endgültige Löschung.
+
 ## Pflege
 
 Die Matrix wird bei Architektur-, Rollen-, Plattform- oder Betriebsänderungen sowie

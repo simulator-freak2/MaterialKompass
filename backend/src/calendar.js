@@ -1,5 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const { assessMaterialSafety } = require('./material-safety');
+const { currentTenant, rawCollection } = require('./tenancy');
 
 const ACTIVE_RESERVATION_STATUSES = new Set(['Ausstehend', 'Freigegeben']);
 const ACTIVE_MAINTENANCE_STATUSES = new Set(['Geplant', 'In Arbeit']);
@@ -10,8 +11,12 @@ const MAINTENANCE_STATUSES = new Set(['Geplant', 'In Arbeit', 'Abgeschlossen', '
 const MAX_RANGE_DAYS = 370;
 const MAX_EVENTS = 10_000;
 const MAX_ITEMS = 100;
+const MAX_RETENTION_MONTHS = 240;
 
 function registerCalendarRoutes({
+  vehicles = [],
+  vehicleReservations = [],
+  vehicleMaintenanceEvents = [],
   app,
   authMiddleware,
   requirePermission,
@@ -26,6 +31,8 @@ function registerCalendarRoutes({
   logEvent,
   nextId,
   defectManagement,
+  organizations,
+  organizationUnits,
 }) {
   const number = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -59,8 +66,64 @@ function registerCalendarRoutes({
     new Date(startAt).getTime() < to.getTime() && new Date(endAt).getTime() > from.getTime()
   );
 
-  function materialFor(id) {
-    return materials.find((entry) => entry.id === id && !entry.archived);
+  const allMaterials = () => rawCollection(materials);
+  const allReservations = () => rawCollection(reservations);
+  const allMaintenanceEvents = () => rawCollection(maintenanceEvents);
+  const allMaterialMovements = () => rawCollection(materialMovements);
+  const allLocations = () => rawCollection(locations);
+  const allVehicles = () => rawCollection(vehicles);
+  const allVehicleReservations = () => rawCollection(vehicleReservations);
+  const allVehicleMaintenanceEvents = () => rawCollection(vehicleMaintenanceEvents);
+
+  function vehicleAccessible(vehicle) {
+    const tenant = currentTenant();
+    return Boolean(vehicle && tenant && vehicle.organizationId === tenant.organizationId
+      && (vehicle.unitId === tenant.unitId
+        || vehicle.viewAllowedUnitIds?.includes(tenant.unitId)
+        || vehicle.reservationAllowedUnitIds?.includes(tenant.unitId)));
+  }
+
+  function visibleVehicles() {
+    return allVehicles().filter(vehicleAccessible);
+  }
+
+  function vehicleName(vehicle) {
+    return vehicle.radioCallName || vehicle.registrationNumber || 'Fahrzeug';
+  }
+
+  function sourceUnitFor(item) {
+    return organizationUnits.find((entry) => entry.id === item?.unitId
+      && entry.organizationId === item?.organizationId && entry.status === 'active');
+  }
+
+  function materialAccessible(item, { requireReservationGrant = false } = {}) {
+    const tenant = currentTenant();
+    if (!item || item.archived || !tenant || item.organizationId !== tenant.organizationId) return false;
+    if (item.unitId === tenant.unitId) return true;
+    const source = sourceUnitFor(item);
+    if (!source?.inventoryVisibleToUnitIds?.includes(tenant.unitId)) return false;
+    return !requireReservationGrant
+      || item.reservationAllowedUnitIds?.includes(tenant.unitId) === true;
+  }
+
+  function materialFor(id, options) {
+    const item = allMaterials().find((entry) => entry.id === id);
+    return materialAccessible(item, options) ? item : null;
+  }
+
+  function ownedMaterialFor(id) {
+    const tenant = currentTenant();
+    return allMaterials().find((entry) => entry.id === id && !entry.archived
+      && tenant && entry.organizationId === tenant.organizationId && entry.unitId === tenant.unitId);
+  }
+
+  function materialForReservationItem(reference) {
+    const tenant = currentTenant();
+    if (!tenant) return null;
+    const item = allMaterials().find((entry) => entry.id === reference.materialId
+      && entry.organizationId === tenant.organizationId
+      && (!reference.materialUnitId || entry.unitId === reference.materialUnitId));
+    return item && !item.archived ? item : null;
   }
 
   function publicMaterial(item) {
@@ -73,6 +136,9 @@ function registerCalendarRoutes({
       status: item.status,
       locationId: item.locationId,
       department: item.department || '',
+      sourceUnitId: item.unitId,
+      sourceUnitName: sourceUnitFor(item)?.name || '',
+      externalReservation: item.unitId !== currentTenant()?.unitId,
       reservationApprovalRequired: item.reservationApprovalRequired === true,
       nextInspectionDate: item.nextInspectionDate || null,
       nextMaintenanceDate: item.nextMaintenanceDate || null,
@@ -123,19 +189,27 @@ function registerCalendarRoutes({
     for (const raw of rawItems) {
       const materialId = String(raw?.materialId || '').trim();
       const quantity = number(raw?.quantity, 1);
-      const item = materialFor(materialId);
+      const item = materialFor(materialId, { requireReservationGrant: true });
       if (!item || !String(item.inventoryNumber || '').trim()) {
-        return { error: 'Reserviert werden kann nur aktives Material mit Inventarnummer.' };
+        return { error: 'Reserviert werden kann nur freigegebenes, aktives Einzelmaterial mit Inventarnummer.' };
       }
-      if (!Number.isInteger(quantity) || quantity < 1) {
-        return { error: 'Die reservierte Menge muss eine positive ganze Zahl sein.' };
+      if (item.itemType !== 'individual' || number(item.quantity) !== 1) {
+        return { error: `„${item.inventoryNumber}“ ist ein Mengenartikel und kann nicht reserviert werden.` };
+      }
+      if (quantity !== 1) {
+        return { error: 'Bei Einzelartikeln muss die reservierte Menge genau 1 betragen.' };
       }
       const existing = combined.get(materialId);
+      if (existing) return { error: 'Ein Einzelartikel darf nur einmal in einer Reservierung enthalten sein.' };
       combined.set(materialId, {
         materialId,
         inventoryNumber: item.inventoryNumber,
         materialName: item.name,
-        quantity: quantity + (existing?.quantity || 0),
+        materialUnitId: item.unitId,
+        materialOrganizationId: item.organizationId,
+        department: item.department || '',
+        locationId: item.locationId || null,
+        quantity: 1,
       });
     }
     return { items: [...combined.values()] };
@@ -153,7 +227,9 @@ function registerCalendarRoutes({
   }
 
   function reservedQuantity(materialId, from, to, ignoredReservationId = null) {
-    return reservations.reduce((sum, entry) => {
+    const tenant = currentTenant();
+    return allReservations().reduce((sum, entry) => {
+      if (!tenant || entry.organizationId !== tenant.organizationId) return sum;
       if (entry.id === ignoredReservationId || !ACTIVE_RESERVATION_STATUSES.has(entry.status)
           || !overlaps(entry.startAt, entry.endAt, from, to)) return sum;
       const item = entry.items.find((candidate) => candidate.materialId === materialId);
@@ -162,7 +238,10 @@ function registerCalendarRoutes({
   }
 
   function maintenanceConflict(materialId, from, to, ignoredMaintenanceId = null) {
-    return maintenanceEvents.some((entry) => entry.id !== ignoredMaintenanceId
+    const tenant = currentTenant();
+    return allMaintenanceEvents().some((entry) => tenant
+      && entry.organizationId === tenant.organizationId
+      && entry.id !== ignoredMaintenanceId
       && entry.materialId === materialId
       && ACTIVE_MAINTENANCE_STATUSES.has(entry.status)
       && overlaps(entry.startAt, entry.endAt, from, to));
@@ -170,7 +249,7 @@ function registerCalendarRoutes({
 
   function validateReservationAvailability(items, from, to, ignoredReservationId = null) {
     for (const requested of items) {
-      const item = materialFor(requested.materialId);
+      const item = materialFor(requested.materialId, { requireReservationGrant: true });
       if (!item) return 'Material nicht gefunden.';
       const blocked = unavailableReason(item);
       if (blocked) return blocked;
@@ -203,14 +282,14 @@ function registerCalendarRoutes({
       note,
       startAt: range.from.toISOString(),
       endAt: range.to.toISOString(),
-      allDay: body.allDay ?? existing?.allDay ?? false,
+      allDay: (body.allDay ?? existing?.allDay) === true,
       items: normalized.items,
     };
   }
 
   function maintenanceValues(body, existing = null) {
     const materialId = String(body.materialId ?? existing?.materialId ?? '').trim();
-    const item = materialFor(materialId);
+    const item = ownedMaterialFor(materialId);
     if (!item || !String(item.inventoryNumber || '').trim()) {
       return { error: 'Eine gültige Inventarnummer ist erforderlich.' };
     }
@@ -254,13 +333,17 @@ function registerCalendarRoutes({
 
   function calendarEvents(from, to, user) {
     const events = [];
+    const materialIndex = new Map(allMaterials().map((entry) => [entry.id, entry]));
     reservations.forEach((entry) => {
       if (overlaps(entry.startAt, entry.endAt, from, to)) {
-        const reservationMaterials = entry.items.map((item) => materialFor(item.materialId)).filter(Boolean);
+        const reservationMaterials = entry.items.map((item) => materialIndex.get(item.materialId)).filter(Boolean);
+        const canManage = mayManageReservation(user, entry);
+        const canEditOwn = mayChangeOwn(user, entry);
+        const maySeePersonalDetails = canManage || entry.requesterUserId === user.id;
         events.push({
           id: entry.id,
           kind: 'reservation',
-          title: entry.purpose,
+          title: maySeePersonalDetails ? entry.purpose : 'Reserviert',
           startAt: entry.startAt,
           endAt: entry.endAt,
           status: entry.status,
@@ -268,17 +351,17 @@ function registerCalendarRoutes({
           materialNames: entry.items.map((item) => item.materialName),
           locationIds: [...new Set(reservationMaterials.map((item) => item.locationId).filter(Boolean))],
           departments: [...new Set(reservationMaterials.map((item) => item.department).filter(Boolean))],
-          requesterName: entry.requesterName,
-          note: entry.note || '',
+          requesterName: maySeePersonalDetails ? entry.requesterName : null,
+          note: maySeePersonalDetails ? entry.note || '' : '',
           approvalRequired: entry.approvalRequired === true,
-          canManage: mayManageReservation(user, entry),
-          canEditOwn: mayChangeOwn(user, entry),
+          canManage,
+          canEditOwn,
         });
       }
     });
     maintenanceEvents.forEach((entry) => {
       if (overlaps(entry.startAt, entry.endAt, from, to)) {
-        const item = materialFor(entry.materialId);
+        const item = materialIndex.get(entry.materialId);
         events.push({
           ...entry,
           kind: 'maintenance',
@@ -288,7 +371,7 @@ function registerCalendarRoutes({
         });
       }
     });
-    materials.filter((item) => !item.archived && item.inventoryNumber).forEach((item) => {
+    allMaterials().filter((item) => materialAccessible(item) && item.inventoryNumber).forEach((item) => {
       for (const [kind, field, title] of [
         ['inspection', 'nextInspectionDate', 'Geplante Prüfung'],
         ['maintenance-due', 'nextMaintenanceDate', 'Geplante Wartung'],
@@ -314,19 +397,139 @@ function registerCalendarRoutes({
         }
       }
     });
+    const vehicleIndex = new Map(visibleVehicles().map((vehicle) => [vehicle.id, vehicle]));
+    const tenant = currentTenant();
+    allVehicleReservations().forEach((entry) => {
+      const vehicle = vehicleIndex.get(entry.vehicleId);
+      if (!vehicle || ['Abgelehnt', 'Storniert'].includes(entry.status)
+          || !overlaps(entry.startAt, entry.endAt, from, to)) return;
+      const mayManage = vehicle.unitId === tenant?.unitId
+        && hasPermission(user, 'vehicle_reservations.manage');
+      const mayApproveOperationally = entry.operationalApprovalRequired === true
+        && hasPermission(user, 'vehicle_reservations.operational_approve');
+      const maySeePersonalDetails = entry.requesterUserId === user.id
+        || mayManage || mayApproveOperationally;
+      events.push({
+        id: entry.id,
+        kind: 'vehicle-reservation',
+        title: maySeePersonalDetails ? entry.title || entry.purpose : 'Fahrzeug reserviert',
+        startAt: entry.startAt,
+        endAt: entry.endAt,
+        status: entry.status,
+        vehicleId: vehicle.id,
+        vehicleName: vehicleName(vehicle),
+        inventoryNumbers: [vehicle.registrationNumber],
+        materialNames: [vehicleName(vehicle)],
+        locationIds: [vehicle.parkingLocationId].filter(Boolean),
+        requesterName: maySeePersonalDetails ? entry.requesterName : null,
+        destination: maySeePersonalDetails ? entry.destination : null,
+        contact: maySeePersonalDetails ? entry.contact : null,
+        note: maySeePersonalDetails ? entry.note || '' : '',
+        approvalRequired: entry.operationalApprovalRequired === true,
+        readOnly: true,
+      });
+    });
+    allVehicleMaintenanceEvents().forEach((entry) => {
+      const vehicle = vehicleIndex.get(entry.vehicleId);
+      if (!vehicle || ['Abgeschlossen', 'Abgebrochen'].includes(entry.status)) return;
+      const startAt = entry.startAt || (entry.dueDate ? `${entry.dueDate}T00:00:00.000Z` : null);
+      if (!startAt) return;
+      const endAt = entry.endAt || (entry.dueDate ? `${entry.dueDate}T23:59:59.999Z` : startAt);
+      if (!overlaps(startAt, endAt, from, to)) return;
+      events.push({
+        id: entry.id,
+        kind: 'vehicle-maintenance',
+        title: entry.type || 'Fahrzeugwartung',
+        startAt,
+        endAt,
+        allDay: !entry.startAt,
+        status: entry.status,
+        vehicleId: vehicle.id,
+        vehicleName: vehicleName(vehicle),
+        inventoryNumbers: [vehicle.registrationNumber],
+        materialNames: [vehicleName(vehicle)],
+        locationIds: [vehicle.parkingLocationId].filter(Boolean),
+        responsible: entry.workshop || null,
+        description: entry.description || '',
+        readOnly: true,
+      });
+    });
     return events.sort((left, right) => left.startAt.localeCompare(right.startAt)).slice(0, MAX_EVENTS);
   }
+
+  function canOverrideMaintenanceConflict(user) {
+    return user?.roles?.some((role) => ['Admin', 'Materialwart'].includes(role));
+  }
+
+  function retentionMonthsFor(organizationId, unitId) {
+    const unit = organizationUnits.find((entry) => entry.id === unitId
+      && entry.organizationId === organizationId);
+    const organization = organizations.find((entry) => entry.id === organizationId);
+    return unit?.calendarRetentionMonths == null
+      ? Number(organization?.calendarRetentionMonths ?? 0)
+      : Number(unit.calendarRetentionMonths);
+  }
+
+  function terminalTimestamp(entry, maintenance = false) {
+    const terminal = maintenance
+      ? ['Abgeschlossen', 'Abgebrochen'].includes(entry.status)
+      : ['Abgelehnt', 'Storniert', 'Abgeschlossen'].includes(entry.status);
+    if (!terminal) return null;
+    const value = entry.returnedAt || entry.cancelledAt || entry.completedAt
+      || entry.updatedAt || entry.endAt;
+    const parsed = Date.parse(value || '');
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function cutoffForMonths(referenceTime, months) {
+    const cutoff = new Date(referenceTime);
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - months);
+    return cutoff.getTime();
+  }
+
+  async function applyCalendarRetentionPolicy(referenceTime = Date.now()) {
+    let removedReservations = 0;
+    let removedMaintenanceEvents = 0;
+    for (const [collection, maintenance] of [
+      [allReservations(), false], [allMaintenanceEvents(), true],
+    ]) {
+      for (let index = collection.length - 1; index >= 0; index -= 1) {
+        const entry = collection[index];
+        const months = retentionMonthsFor(entry.organizationId, entry.unitId);
+        const timestamp = terminalTimestamp(entry, maintenance);
+        if (months > 0 && timestamp != null
+            && timestamp < cutoffForMonths(referenceTime, months)) {
+          collection.splice(index, 1);
+          if (maintenance) removedMaintenanceEvents += 1;
+          else removedReservations += 1;
+        }
+      }
+    }
+    return { removedReservations, removedMaintenanceEvents };
+  }
+
+  app.locals.applyCalendarRetentionPolicy = applyCalendarRetentionPolicy;
 
   app.get('/api/calendar', authMiddleware, requirePermission('calendar.read'), (req, res) => {
     const range = parseRange(req.query);
     if (range.error) return res.status(400).json({ error: range.error });
+    const accessibleMaterials = allMaterials().filter((item) => materialAccessible(item));
+    const accessibleUnitIds = new Set([
+      ...accessibleMaterials.map((item) => item.unitId),
+      ...visibleVehicles().map((vehicle) => vehicle.unitId),
+    ]);
+    const accessibleLocations = allLocations().filter((entry) => entry.organizationId === req.tenant.organizationId
+      && accessibleUnitIds.has(entry.unitId));
     return res.json({
       from: range.from.toISOString(),
       to: range.to.toISOString(),
       events: calendarEvents(range.from, range.to, req.user),
       filterOptions: {
-        locations: locations.map((entry) => ({ id: entry.id, name: entry.name })),
-        departments: [...new Set(materials.map((entry) => entry.department).filter(Boolean))].sort(),
+        locations: accessibleLocations.map((entry) => ({ id: entry.id, name: entry.name })),
+        departments: [...new Set(accessibleMaterials.map((entry) => entry.department).filter(Boolean))].sort(),
+      },
+      capabilities: {
+        canOverrideMaintenanceConflict: canOverrideMaintenanceConflict(req.user),
       },
     });
   });
@@ -334,15 +537,81 @@ function registerCalendarRoutes({
   app.get('/api/calendar/materials', authMiddleware, requirePermission('calendar.read'), (req, res) => {
     const query = String(req.query.query || '').trim().toLowerCase().slice(0, 255);
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
-    const entries = materials.filter((item) => !item.archived && item.inventoryNumber
+    const entries = allMaterials().filter((item) => materialAccessible(item, { requireReservationGrant: true })
+      && item.itemType === 'individual' && number(item.quantity) === 1 && item.inventoryNumber
       && (!query || `${item.inventoryNumber} ${item.name}`.toLowerCase().includes(query)))
+      .sort((left, right) => String(left.inventoryNumber).localeCompare(String(right.inventoryNumber), 'de'))
       .slice(0, limit).map(publicMaterial);
     return res.json(entries);
+  });
+
+  app.get('/api/calendar/settings', authMiddleware, requirePermission('calendar.read'), (req, res) => {
+    const organization = organizations.find((entry) => entry.id === req.tenant.organizationId);
+    const unit = organizationUnits.find((entry) => entry.id === req.tenant.unitId
+      && entry.organizationId === req.tenant.organizationId);
+    if (!organization || !unit) return res.status(404).json({ error: 'Organisationskontext nicht gefunden.' });
+    return res.json({
+      organizationRetentionMonths: Number(organization.calendarRetentionMonths ?? 0),
+      unitRetentionMonths: unit.calendarRetentionMonths ?? null,
+      effectiveRetentionMonths: retentionMonthsFor(organization.id, unit.id),
+      canManage: req.user.roles?.includes('Admin')
+        && hasPermission(req.user, 'organizations.write'),
+    });
+  });
+
+  app.put('/api/calendar/settings', authMiddleware, requirePermission('organizations.write'), (req, res) => {
+    if (!req.user.roles?.includes('Admin')) {
+      return res.status(403).json({ error: 'Nur Administratoren dürfen die Kalenderaufbewahrung ändern.' });
+    }
+    const scope = String(req.body.scope || '').trim();
+    const rawMonths = req.body.retentionMonths;
+    if (!['organization', 'unit'].includes(scope)) {
+      return res.status(400).json({ error: 'Der Geltungsbereich muss Organisation oder Einheit sein.' });
+    }
+    if (scope === 'unit' && rawMonths == null) {
+      const unit = organizationUnits.find((entry) => entry.id === req.tenant.unitId
+        && entry.organizationId === req.tenant.organizationId);
+      if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+      unit.calendarRetentionMonths = null;
+    } else {
+      const months = Number(rawMonths);
+      if (!Number.isInteger(months) || months < 0 || months > MAX_RETENTION_MONTHS) {
+        return res.status(400).json({
+          error: `Die Aufbewahrung muss 0 (unbegrenzt) oder 1 bis ${MAX_RETENTION_MONTHS} Monate betragen.`,
+        });
+      }
+      if (scope === 'organization') {
+        const organization = organizations.find((entry) => entry.id === req.tenant.organizationId);
+        if (!organization) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+        organization.calendarRetentionMonths = months;
+      } else {
+        const unit = organizationUnits.find((entry) => entry.id === req.tenant.unitId
+          && entry.organizationId === req.tenant.organizationId);
+        if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+        unit.calendarRetentionMonths = months;
+      }
+    }
+    const result = {
+      organizationRetentionMonths: Number(organizations.find((entry) =>
+        entry.id === req.tenant.organizationId)?.calendarRetentionMonths ?? 0),
+      unitRetentionMonths: organizationUnits.find((entry) => entry.id === req.tenant.unitId
+        && entry.organizationId === req.tenant.organizationId)?.calendarRetentionMonths ?? null,
+      effectiveRetentionMonths: retentionMonthsFor(req.tenant.organizationId, req.tenant.unitId),
+      canManage: true,
+    };
+    logEvent('update', 'CalendarRetention', {
+      scope,
+      retentionMonths: scope === 'unit' ? result.unitRetentionMonths : result.organizationRetentionMonths,
+    }, req.user.username);
+    return res.json(result);
   });
 
   app.get('/api/reservations/:id', authMiddleware, requirePermission('calendar.read'), (req, res) => {
     const entry = reservations.find((candidate) => candidate.id === req.params.id);
     if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    if (entry.requesterUserId !== req.user.id && !mayManageReservation(req.user, entry)) {
+      return res.status(403).json({ error: 'Reservierungsdetails dürfen nur durch die anfragende oder verwaltende Person eingesehen werden.' });
+    }
     return res.json({
       ...publicReservation(entry),
       canManage: mayManageReservation(req.user, entry),
@@ -434,7 +703,9 @@ function registerCalendarRoutes({
     if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
     if (!mayManageReservation(req.user, entry)) return res.status(403).json({ error: 'Diese Reservierung darf nicht ausgegeben werden.' });
     if (entry.status !== 'Freigegeben') return res.status(409).json({ error: 'Nur freigegebene Reservierungen können ausgegeben werden.' });
-    const checked = entry.items.map((reserved) => ({ reserved, item: materialFor(reserved.materialId) }));
+    const checked = entry.items.map((reserved) => ({
+      reserved, item: materialForReservationItem(reserved),
+    }));
     if (checked.some(({ reserved, item }) => !item || unavailableReason(item)
       || number(item.quantity) - number(item.issuedQuantity) < reserved.quantity)) {
       return res.status(409).json({ error: 'Mindestens eine Materialposition ist nicht mehr verfügbar.' });
@@ -444,7 +715,9 @@ function registerCalendarRoutes({
       item.issuedQuantity = number(item.issuedQuantity) + reserved.quantity;
       item.status = 'Ausgegeben';
       const movement = {
-        id: nextId('movement', materialMovements),
+        id: `movement-${randomUUID()}`,
+        organizationId: item.organizationId,
+        unitId: item.unitId,
         materialId: item.id,
         action: 'issue',
         quantity: reserved.quantity,
@@ -455,7 +728,7 @@ function registerCalendarRoutes({
         actor: req.user.username,
         createdAt,
       };
-      materialMovements.push(movement);
+      allMaterialMovements().push(movement);
       return movement.id;
     });
     entry.status = 'Ausgegeben';
@@ -471,7 +744,9 @@ function registerCalendarRoutes({
     if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
     if (!mayManageReservation(req.user, entry)) return res.status(403).json({ error: 'Diese Reservierung darf nicht zurückgenommen werden.' });
     if (entry.status !== 'Ausgegeben') return res.status(409).json({ error: 'Nur ausgegebene Reservierungen können zurückgenommen werden.' });
-    const checked = entry.items.map((reserved) => ({ reserved, item: materialFor(reserved.materialId) }));
+    const checked = entry.items.map((reserved) => ({
+      reserved, item: materialForReservationItem(reserved),
+    }));
     if (checked.some(({ reserved, item }) => !item || number(item.issuedQuantity) < reserved.quantity)) {
       return res.status(409).json({ error: 'Die Rückgabe kann wegen eines inkonsistenten Bestands nicht gebucht werden.' });
     }
@@ -480,8 +755,10 @@ function registerCalendarRoutes({
       item.issuedQuantity = number(item.issuedQuantity) - reserved.quantity;
       item.status = defectManagement?.hasOpenDefect('MaterialItem', item.id)
         ? 'Defekt' : item.issuedQuantity > 0 ? 'Ausgegeben' : 'Lagernd';
-      materialMovements.push({
-        id: nextId('movement', materialMovements),
+      allMaterialMovements().push({
+        id: `movement-${randomUUID()}`,
+        organizationId: item.organizationId,
+        unitId: item.unitId,
         materialId: item.id,
         action: 'return',
         quantity: reserved.quantity,
@@ -510,6 +787,12 @@ function registerCalendarRoutes({
     const reserved = reservedQuantity(values.materialId, start, end);
     if (reserved > 0 && req.body.overrideConflict !== true) {
       return res.status(409).json({ error: 'Im gewählten Zeitraum besteht bereits eine Reservierung.' });
+    }
+    if (reserved > 0 && req.body.overrideConflict === true
+        && !canOverrideMaintenanceConflict(req.user)) {
+      return res.status(403).json({
+        error: 'Nur Administratoren oder Materialwarte dürfen einen Reservierungskonflikt übersteuern.',
+      });
     }
     if (maintenanceConflict(values.materialId, start, end)) return res.status(409).json({ error: 'Im gewählten Zeitraum besteht bereits eine Wartung.' });
     if (reserved > 0 && !String(req.body.overrideReason || '').trim()) {
@@ -540,6 +823,12 @@ function registerCalendarRoutes({
     if (reserved > 0 && req.body.overrideConflict !== true) {
       return res.status(409).json({ error: 'Im gewählten Zeitraum besteht bereits eine Reservierung.' });
     }
+    if (reserved > 0 && req.body.overrideConflict === true
+        && !canOverrideMaintenanceConflict(req.user)) {
+      return res.status(403).json({
+        error: 'Nur Administratoren oder Materialwarte dürfen einen Reservierungskonflikt übersteuern.',
+      });
+    }
     if (ACTIVE_MAINTENANCE_STATUSES.has(values.status)
         && maintenanceConflict(values.materialId, start, end, entry.id)) {
       return res.status(409).json({ error: 'Im gewählten Zeitraum besteht bereits eine Wartung.' });
@@ -547,17 +836,22 @@ function registerCalendarRoutes({
     if (reserved > 0 && !String(req.body.overrideReason || entry.overrideReason || '').trim()) {
       return res.status(400).json({ error: 'Für die Konfliktübersteuerung ist eine Begründung erforderlich.' });
     }
+    let nextMaintenanceDate;
+    if (values.status === 'Abgeschlossen' && req.body.nextMaintenanceDate != null) {
+      nextMaintenanceDate = String(req.body.nextMaintenanceDate || '').trim();
+      if (nextMaintenanceDate && !/^\d{4}-\d{2}-\d{2}$/.test(nextMaintenanceDate)) {
+        return res.status(400).json({ error: 'Der nächste Wartungstermin ist ungültig.' });
+      }
+    }
     Object.assign(entry, values, {
       overrideReason: reserved > 0
         ? String(req.body.overrideReason || entry.overrideReason).trim().slice(0, 1_000) : null,
       updatedAt: new Date().toISOString(),
       completedAt: values.status === 'Abgeschlossen' ? new Date().toISOString() : entry.completedAt || null,
     });
-    if (values.status === 'Abgeschlossen' && req.body.nextMaintenanceDate != null) {
-      const item = materialFor(values.materialId);
-      const date = String(req.body.nextMaintenanceDate || '').trim();
-      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Der nächste Wartungstermin ist ungültig.' });
-      item.nextMaintenanceDate = date || null;
+    if (nextMaintenanceDate !== undefined) {
+      const item = ownedMaterialFor(values.materialId);
+      item.nextMaintenanceDate = nextMaintenanceDate || null;
     }
     logEvent('update', 'MaintenanceEvent', { id: entry.id, status: entry.status }, req.user.username);
     return res.json(entry);

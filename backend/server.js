@@ -31,6 +31,13 @@ async function start() {
       userData.roles = structuredClone(seedData.roles);
       await Promise.all(userData.roles.map((role) => store.saveRole(role)));
     }
+    for (const seededRole of seedData.roles) {
+      if (userData.roles.some((role) => role.name === seededRole.name
+        && !role.organizationId)) continue;
+      const role = structuredClone(seededRole);
+      userData.roles.push(role);
+      await store.saveRole(role);
+    }
     if (userData.users.length === 0) {
       if (config.nodeEnv === 'production' && !process.env.INITIAL_ADMIN_PASSWORD) {
         throw new Error('INITIAL_ADMIN_PASSWORD muss für den ersten Produktivstart gesetzt sein.');
@@ -58,6 +65,8 @@ async function start() {
       await app.locals.applyDefectRetentionPolicy();
       await app.locals.applyDefectEmailRetentionPolicy();
       await app.locals.applyDataRetentionPolicy();
+      await app.locals.applyCalendarRetentionPolicy();
+      await app.locals.applyVehicleRetentionPolicy();
       await app.locals.purgeExpiredOrganizationUnits();
     });
     await app.locals.persistData();
@@ -69,6 +78,8 @@ async function start() {
         await app.locals.applyDefectRetentionPolicy();
         await app.locals.applyDefectEmailRetentionPolicy();
         await app.locals.applyDataRetentionPolicy();
+        await app.locals.applyCalendarRetentionPolicy();
+        await app.locals.applyVehicleRetentionPolicy();
         await app.locals.purgeExpiredOrganizationUnits();
       })
         .then(() => app.locals.persistData())

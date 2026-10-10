@@ -1012,6 +1012,7 @@ function registerDefectEmailRoutes({
   defectManagement,
   materials,
   clothingItems,
+  vehicles = [],
 }) {
   function canAccess(req, entry) {
     const entityType = entry.extractedData?.entityType;
@@ -1036,12 +1037,13 @@ function registerDefectEmailRoutes({
     const values = [
       ...materials.map((item) => ({ item, entityType: 'MaterialItem' })),
       ...clothingItems.map((item) => ({ item, entityType: 'ClothingItem' })),
+      ...vehicles.map((item) => ({ item, entityType: 'Vehicle' })),
     ].filter(({ entityType }) => defectManagement.canScope(req.user, entityType))
       .map(({ item, entityType }) => ({
         id: item.id,
         entityType,
-        inventoryNumber: item.inventoryNumber,
-        name: item.name,
+        inventoryNumber: item.inventoryNumber || item.registrationNumber,
+        name: item.name || item.radioCallName || item.registrationNumber,
         quantity: entityType === 'MaterialItem' ? Number(item.quantity || 1) : 1,
         status: item.status,
       }));
@@ -1078,6 +1080,7 @@ function registerDefectEmailRoutes({
       const candidates = [
         ...materials.map((item) => ({ item, entityType: 'MaterialItem' })),
         ...clothingItems.map((item) => ({ item, entityType: 'ClothingItem' })),
+        ...vehicles.map((item) => ({ item, entityType: 'Vehicle' })),
       ];
       const match = candidates.find(({ item, entityType }) =>
         item.id === req.query.entityId
@@ -1086,7 +1089,7 @@ function registerDefectEmailRoutes({
       if (!defectManagement.canScope(req.user, match.entityType)) {
         return res.status(403).json({ error: 'Für diesen Bereich fehlt die Berechtigung.' });
       }
-      inventoryNumber = match.item.inventoryNumber;
+      inventoryNumber = match.item.inventoryNumber || match.item.registrationNumber;
     }
     const buffer = await defectReportTemplate().generateDefectReportPdf({
       inventoryNumber,

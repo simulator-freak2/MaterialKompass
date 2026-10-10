@@ -18,6 +18,15 @@ function publicEntry(entry, includeSource = false) {
   return result;
 }
 
+function canAccessProcurementEmail(user, entry, procurementRequests) {
+  const userRoles = new Set(user?.roles || []);
+  const elevated = ['Admin', 'Vorsitz', 'Schatzmeister', 'Materialwart', 'Kleiderwart'];
+  if (elevated.some((role) => userRoles.has(role))) return true;
+  const request = procurementRequests.find((candidate) => candidate.id === entry.requestId);
+  return !!request && (request.requestedByEmail === user?.email
+    || (request.departmentId && (user?.departmentIds || []).includes(request.departmentId)));
+}
+
 function createProcurementEmailService({
   procurementEmailImports, procurementRequests, suppliers, nextId,
   persistData = async () => {},
@@ -105,14 +114,8 @@ function registerProcurementEmailRoutes({
   const address = process.env.PROCUREMENT_EMAIL_ADDRESS
     || process.env.PROCUREMENT_IMAP_USER
     || `angebote@${process.env.SCANNER_EMAIL_DOMAIN || 'materialkompass.org'}`;
-  const roles = (user) => new Set(user?.roles || []);
-  const canSee = (req, entry) => {
-    const elevated = ['Admin', 'Vorsitz', 'Schatzmeister', 'Materialwart', 'Kleiderwart'];
-    if (elevated.some((role) => roles(req.user).has(role))) return true;
-    const request = procurementRequests.find((candidate) => candidate.id === entry.requestId);
-    return !!request && (request.requestedByEmail === req.user.email
-      || (request.departmentId && (req.user.departmentIds || []).includes(request.departmentId)));
-  };
+  const canSee = (req, entry) =>
+    canAccessProcurementEmail(req.user, entry, procurementRequests);
   const find = (req, res) => {
     const entry = procurementEmailImports.find((candidate) => candidate.id === req.params.id);
     if (!entry || !canSee(req, entry)) {
@@ -193,6 +196,7 @@ function registerProcurementEmailRoutes({
 }
 
 module.exports = {
+  canAccessProcurementEmail,
   createProcurementEmailService,
   registerProcurementEmailRoutes,
 };

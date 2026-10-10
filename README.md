@@ -31,6 +31,10 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 - Inventarverwaltung für Einzel- und Mengenartikel mit automatischen Inventarnummern
 - Einheitliche Inventarnummern `Gliederungsnummer-Hauptkategorie-Unterkategorie-Laufnummer`; die Gliederungsnummer ist über `GLIEDERUNGSNUMMER` konfigurierbar (Standard `10050035`)
 - Aus-/Rückgabe, Umbuchung, Archiv und vollständiger Bewegungsverlauf
+- Reservierungs- und Wartungskalender für inventarisierte Einzelstücke mit
+  Freigabeworkflow, Konfliktprüfung, ICS-Export und organisationsbezogener Aufbewahrung
+- Fahrzeugverwaltung für Kraftfahrzeuge, Anhänger, Boote und sonstige Einsatz- oder
+  Vereinsfahrzeuge mit Reservierung, Wartung, Mängeln und versionierten Beladungslisten
 - Prüfungen, vollständiges Mängelmanagement, Dokumente sowie XLSX-/ODS-Import und -Export
 - Barcode-/QR-Code-Anzeige, Handscanner- und Webkamera-Unterstützung
 - ZPL-Etikettendruck über LAN für Zebra-Drucker unter Windows und Android
@@ -169,6 +173,68 @@ innerhalb der letzten 365 Tage vollständig mit dem zweiten Faktor angemeldet ha
 weiterhin höchstens sieben Tage gültige gerätegebundene Offlinefreigabe wird bei
 Serverkontakt automatisch verlängert. Nach Ablauf der Jahresfrist ist vor einer
 weiteren Verlängerung wieder eine interaktive 2-FA-Anmeldung erforderlich.
+
+## Reservierungs- und Wartungskalender
+
+Der Dashboard-Bereich **Kalender** zeigt Reservierungen, Wartungen sowie die am
+Inventar gepflegten Prüf- und Wartungsfälligkeiten als Monats-, Wochen- oder
+Listenansicht. Filter stehen für Typ, Status, Standort, Fachbereich und
+Inventarnummer bereit; der sichtbare Zeitraum kann als ICS-Datei exportiert werden.
+
+Reservierbar sind ausschließlich aktive **Einzelartikel** mit Inventarnummer. Eine
+Reservierung darf mehrere unterschiedliche Einzelstücke enthalten, jedoch keine
+Mengenartikel. Zeiträume werden als UTC-Zeitpunkte gespeichert und in der lokalen
+Zeitzone des Clients angezeigt. Sich überschneidende aktive Reservierungen und
+Wartungen werden serverseitig verhindert. Sicherheitskritisches, defektes, in
+Reparatur befindliches, ausgesondertes oder verlorenes Material bleibt gesperrt.
+
+Die Statusfolge lautet:
+
+- Reservierung: `Ausstehend → Freigegeben → Ausgegeben → Abgeschlossen`, alternativ
+  `Abgelehnt` oder `Storniert`;
+- Wartung: `Geplant → In Arbeit → Abgeschlossen`, alternativ `Abgebrochen`.
+
+Ob eine Reservierung freigegeben werden muss, wird am Artikel festgelegt. Nutzer
+können eigene aktive Reservierungen anlegen, bearbeiten und stornieren.
+Fachbereichsleitungen entscheiden für ihre zugeordneten Fachbereiche;
+Materialwarte und Admins verwalten alle Reservierungen der aktiven Einheit.
+Sachkundige PSAgE, Materialwarte und Admins dürfen Wartungen verwalten. Nur
+Materialwarte und Admins können einen Wartungskonflikt mit einer Reservierung
+übersteuern; eine Begründung und ein Audit-Eintrag sind verpflichtend.
+
+Inventar anderer über- oder untergeordneter Ebenen ist nur reservierbar, wenn beide
+Freigaben vorliegen: Die besitzende Einheit muss ihr Inventar für die andere Ebene
+sichtbar gemacht haben, und am konkreten Einzelstück muss diese Ebene zusätzlich als
+reservierungsberechtigt ausgewählt sein. Organisationsgrenzen werden nie überschritten.
+Konflikte werden organisationsweit geprüft; Bestandsbewegungen bleiben der
+besitzenden Einheit zugeordnet.
+
+Admins konfigurieren im Kalender einen Organisationsstandard für die Aufbewahrung
+und optional eine abweichende Frist je Einheit. `0` bedeutet unbegrenzt, eine leere
+Einheitsangabe übernimmt den Organisationsstandard. Zulässig sind 1 bis 240 Monate.
+Die tägliche Bereinigung entfernt nur terminale Vorgänge nach Fristablauf; aktive
+Reservierungen und Wartungen bleiben erhalten. Die technisch mögliche Frist ersetzt
+keine rechtliche oder fachliche Löschentscheidung.
+
+## Fahrzeugverwaltung
+
+Der Dashboard-Bereich **Fahrzeuge** verwaltet Fahrzeugstammdaten, gliederungsbezogene
+Sicht- und Reservierungsfreigaben, Reservierungen, Ausgabe und Rückgabe, Wartungen,
+Mängel sowie die tatsächliche Beladung. Pflichtfelder sind nur Kennzeichen und
+Fahrgestellnummer. Jedes Fahrzeug erhält automatisch einen geschützten Lagerort;
+Beladungen reduzieren dadurch auch bei Mengenartikeln den frei verfügbaren Bestand.
+
+Die neue Rolle **Fahrzeugwart** verwaltet Fahrzeuge, Wartungen, Beladungen und
+versionierte Soll-Beladungslisten. Primär ausrückende Fahrzeuge können abhängig von
+der Organisationseinstellung zusätzlich die Zustimmung des Technischen Leiters
+Einsatz erfordern. Fahrzeugtermine erscheinen im gemeinsamen Kalender, ohne
+persönliche Reservierungsdetails gegenüber bloß sichtberechtigten Einheiten
+offenzulegen.
+
+Außerdienstgestellte Fahrzeuge werden archiviert und frühestens nach zehn Jahren
+entfernt; offene Mängel oder Restbeladung verhindern die endgültige Löschung. Die
+vollständigen Arbeitsabläufe, Rechte und Endpunkte beschreibt
+[`VEHICLE_MANAGEMENT.md`](VEHICLE_MANAGEMENT.md).
 
 ## Inventuren
 
@@ -670,7 +736,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.4.3
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.5.0
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -678,7 +744,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.4.3
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.5.0
 ```
 
 macOS wird auf einem Mac als DMG gebaut:

@@ -607,7 +607,7 @@ class _ArticleView extends StatelessWidget {
                         const SizedBox(width: 18),
                         const Icon(Icons.verified_outlined, size: 17),
                         const SizedBox(width: 6),
-                        const Text('Stand 1.4.3'),
+                        const Text('Stand 1.5.0'),
                         const SizedBox(width: 18),
                         const Icon(Icons.groups_outlined, size: 17),
                         const SizedBox(width: 6),
@@ -1018,6 +1018,8 @@ class _GuideIllustration {
 const _categories = [
   _GuideCategory('Erste Schritte', Icons.rocket_launch_outlined),
   _GuideCategory('Inventar', Icons.inventory_2_outlined),
+  _GuideCategory('Fahrzeuge', Icons.directions_car_outlined),
+  _GuideCategory('Reservierung & Wartung', Icons.calendar_month_outlined),
   _GuideCategory('Kleiderkammer', Icons.checkroom_outlined),
   _GuideCategory('Beschaffung', Icons.shopping_cart_outlined),
   _GuideCategory('Mängel & Prüfungen', Icons.report_problem_outlined),
@@ -1169,6 +1171,317 @@ const _articles = [
     tip:
         'Offline erfasste Buchungen sind zunächst vorgemerkt. Prüfe nach der Synchronisation, ob ein Konflikt gemeldet wurde.',
     keywords: ['ausleihe', 'rückgabe', 'empfänger', 'buchung', 'offline'],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Fahrzeug anlegen und freigeben',
+    summary:
+        'Stammdaten erfassen und Sicht- sowie Reservierungsrechte anderer Gliederungen festlegen.',
+    icon: Icons.add_road_outlined,
+    readingMinutes: 5,
+    audience: 'Für Fahrzeugwarte und Administration',
+    prerequisite:
+        'Du brauchst Fahrzeug-Schreibrechte; für Freigaben muss das Fahrzeug deiner aktiven Gliederung gehören.',
+    steps: [
+      'Öffne auf dem Dashboard „Fahrzeuge“ und wähle unten „Fahrzeug“.',
+      'Erfasse Kennzeichen und Fahrgestellnummer. Nur diese beiden Angaben sind Pflicht; Funkrufname, Fahrzeugtyp, Hersteller, Modell, Baujahr, Kilometerstand und Betriebsstunden sind optional.',
+      'Ordne bei Bedarf einen Stellplatz-Lagerort und genauere Stellplatz-Details zu. Der zusätzliche, geschützte Fahrzeug-Lagerort für die Beladung wird automatisch angelegt.',
+      'Kennzeichne ein primär ausrückendes Fahrzeug ausdrücklich. Wenn die Organisation die TLE-Zweitfreigabe aktiviert hat, benötigen dessen Reservierungen später eine zusätzliche Zustimmung.',
+      'Speichere das Fahrzeug. Kennzeichen und Fahrgestellnummer müssen innerhalb der Organisation eindeutig sein.',
+      'Öffne das Fahrzeug und wähle oben „Für Gliederungen freigeben“. Lege getrennt fest, welche Gliederungen das Fahrzeug sehen und welche es reservieren dürfen.',
+      'Speichere die Freigaben. Eine Reservierungsfreigabe schließt die Sichtfreigabe ein; Organisationsgrenzen werden niemals überschritten.',
+    ],
+    tip:
+        'Vergib Reservierungsrechte nur an tatsächlich zusammenarbeitende Gliederungen und prüfe die Freigaben regelmäßig. Rollenrechte werden durch eine Freigabe nicht ersetzt.',
+    keywords: [
+      'fahrzeug anlegen',
+      'kennzeichen',
+      'fahrgestellnummer',
+      'vin',
+      'funkrufname',
+      'stellplatz',
+      'gliederung',
+      'sichtfreigabe',
+      'reservierungsfreigabe',
+      'primärfahrzeug',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Fahrzeug reservieren und freigeben',
+    summary:
+        'Eine Fahrzeuganfrage stellen und den ein- oder zweistufigen Freigabeprozess sicher durchführen.',
+    icon: Icons.event_available_outlined,
+    readingMinutes: 6,
+    audience:
+        'Für reservierende Personen, Fahrzeugwarte und Technische Leiter Einsatz',
+    prerequisite:
+        'Das Fahrzeug muss für deine Gliederung sichtbar und reservierbar sein; die Reservierung benötigt eine Onlineverbindung.',
+    steps: [
+      'Öffne „Fahrzeuge“, suche das gewünschte Fahrzeug und öffne seine Detailansicht.',
+      'Wähle im Abschnitt „Reservierungen“ die Aktion „Reservieren“.',
+      'Trage Beginn, Ende, Titel, Zweck, Ziel und Kontakt ein. Ergänze bei Bedarf eine Notiz; die anfragende Person wird automatisch aus dem angemeldeten Konto übernommen.',
+      'Wähle „Beantragen“. Überschneidungen mit aktiven Reservierungen sowie blockierende Wartungen oder Sicherheitszustände werden serverseitig geprüft.',
+      'Ein Fahrzeugwart der besitzenden Gliederung öffnet das Aktionsmenü der Anfrage und wählt „Fahrzeug freigeben“ oder „Ablehnen“. Eine Ablehnung benötigt eine Begründung.',
+      'Bei einem entsprechend konfigurierten primär ausrückenden Fahrzeug folgt der Status „TLE-Freigabe ausstehend“. Nur eine berechtigte Person wählt anschließend „TLE-Freigabe erteilen“.',
+      'Nach allen erforderlichen Zustimmungen lautet der Status „Freigegeben“. Die anfragende Person kann eine noch nicht ausgegebene Anfrage bei Bedarf stornieren.',
+    ],
+    tip:
+        'Im gemeinsamen Kalender sehen bloß sichtberechtigte Gliederungen nur einen neutralen Fahrzeugtermin. Titel, Kontakt und persönliche Angaben bleiben auf Anfragende und zuständige Entscheider beschränkt.',
+    keywords: [
+      'fahrzeug reservieren',
+      'titel',
+      'zweck',
+      'ziel',
+      'kontakt',
+      'anfragende person',
+      'tle',
+      'zweite freigabe',
+      'technischer leiter einsatz',
+      'kalender',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Fahrzeug übergeben und zurücknehmen',
+    summary:
+        'Eine freigegebene Reservierung mit Fahrzeugzustand und Laufleistung abschließen.',
+    icon: Icons.key_outlined,
+    readingMinutes: 4,
+    audience: 'Für Fahrzeugwarte und Reservierungsverwaltung',
+    prerequisite:
+        'Die Reservierung muss vollständig freigegeben sein und das Fahrzeug darf keine aktive Sicherheitssperre besitzen.',
+    steps: [
+      'Öffne das Fahrzeug und suche die freigegebene Reservierung.',
+      'Wähle im Aktionsmenü „Übergeben“. Erfasse Kilometerstand beziehungsweise Laufleistung, Tank- oder Ladezustand und bei Bedarf eine Notiz.',
+      'Prüfe vor der Übergabe die sichtbaren Sicherheitshinweise. Ein defektes Fahrzeug, ein offener einsatzkritischer Mangel oder eine blockierende Wartung verhindert die Ausgabe.',
+      'Bei der Rückkehr wählst du an der Reservierung „Zurücknehmen“. Erfasse den neuen Kilometerstand, Tank- oder Ladezustand sowie Rückgabenotizen.',
+      'Aktiviere „Schaden festgestellt“, wenn bei der Rücknahme ein Schaden aufgefallen ist, und speichere die Rückgabe.',
+      'Lege für einen festgestellten Schaden anschließend im Abschnitt „Mängel“ über „Mangel melden“ einen vollständigen Fahrzeugmangel an.',
+    ],
+    tip:
+        'Der Rückgabe-Kilometerstand darf nicht unter dem Wert der Übergabe liegen. Dokumentiere Abweichungen und Schäden möglichst unmittelbar.',
+    keywords: [
+      'übergabe',
+      'rücknahme',
+      'ausgabe',
+      'kilometerstand',
+      'tankstand',
+      'ladezustand',
+      'schaden',
+      'gesperrt',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Fahrzeug warten und Mängel bearbeiten',
+    summary:
+        'Wartungen planen, Sicherheitssperren verstehen und Fahrzeugmängel nachvollziehbar melden.',
+    icon: Icons.car_repair_outlined,
+    readingMinutes: 5,
+    audience: 'Für Fahrzeugwarte und Mängelbearbeitung',
+    prerequisite:
+        'Du benötigst Wartungs- beziehungsweise Mängelrechte in der besitzenden Gliederung.',
+    steps: [
+      'Öffne das Fahrzeug und wähle im Abschnitt „Wartung“ die Aktion „Wartung planen“.',
+      'Erfasse Wartungsart und Zeitraum. Ergänze Fälligkeit, Intervall, ausführende Stelle, Kilometerstand, Kosten und Beschreibung, soweit bekannt.',
+      'Aktiviere „Sicherheitskritische Wartung“, wenn das Fahrzeug während des Termins oder bei Überfälligkeit nicht eingesetzt werden darf.',
+      'Geplante und laufende Wartungen erscheinen auch im gemeinsamen Kalender. Eine blockierende Wartung verhindert Reservierung beziehungsweise Übergabe.',
+      'Schließe eine erledigte Wartung über „Abschließen“ ab. Der Verlauf bleibt am Fahrzeug nachvollziehbar.',
+      'Für einen technischen Schaden wählst du im Abschnitt „Mängel“ die Aktion „Mangel melden“, erfasst Titel, Beschreibung und Priorität und entscheidest, ob das Fahrzeug nicht einsatzfähig ist.',
+      'Ein offener einsatzkritischer Mangel setzt das Fahrzeug auf „Defekt“ und sperrt es. Nach ordnungsgemäßem Abschluss des Mangels kann der vorherige Fahrzeugstatus wiederhergestellt werden.',
+    ],
+    tip:
+        '„Außer Dienst“ ist ein geplanter Lebenszyklusstatus und erzeugt keinen Mangel. Nutze einen Mangel nur für einen tatsächlich festgestellten Fehler oder Schaden.',
+    keywords: [
+      'fahrzeugwartung',
+      'inspektion',
+      'werkstatt',
+      'kosten',
+      'sicherheitskritisch',
+      'mangel',
+      'defekt',
+      'nicht einsatzfähig',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Fahrzeug beladen und Inventar abbuchen',
+    summary:
+        'Inventar auf den Fahrzeug-Lagerort buchen und später kontrolliert zurücklagern.',
+    icon: Icons.inventory_outlined,
+    readingMinutes: 5,
+    audience: 'Für Fahrzeugwarte und Materialverwaltung',
+    prerequisite:
+        'Das Fahrzeug und das verfügbare Inventar müssen derselben besitzenden Gliederung zugeordnet sein.',
+    steps: [
+      'Öffne das Fahrzeug und wähle im Abschnitt „Beladung“ die Aktion „Inventar buchen“.',
+      'Wähle einen verfügbaren Artikel, trage die Menge ein und ergänze eine Beladungsposition oder ein Fach sowie bei Bedarf eine Notiz.',
+      'Bestätige mit „Buchen“. Ein Einzelstück wechselt physisch an den geschützten Fahrzeug-Lagerort; bei einem Mengenartikel wird die gebuchte Menge vom frei verfügbaren Bestand abgezogen.',
+      'Prüfe die aktuelle Beladung direkt in der Fahrzeugansicht. Sicherheitsbedingt gesperrtes oder bereits vollständig gebuchtes Material kann nicht erneut beladen werden.',
+      'Zum Entladen wählst du am Eintrag „Vom Fahrzeug abbuchen“ und anschließend einen gültigen Ziel-Lagerort.',
+      'Kontrolliere nach dem Abbuchen den Zielort und bei Mengenartikeln die wieder verfügbare Menge im Inventar.',
+    ],
+    tip:
+        'Verwende einheitliche Positionsbezeichnungen wie „Geräteraum 1“ oder „Backskiste Steuerbord“, damit Soll- und Ist-Beladung später eindeutig verglichen werden können.',
+    keywords: [
+      'beladung',
+      'inventar buchen',
+      'fahrzeug lagerort',
+      'geräteraum',
+      'fach',
+      'menge',
+      'abbuchen',
+      'entladen',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Beladungsliste erstellen und drucken',
+    summary:
+        'Aus der tatsächlichen Fahrzeugbeladung eine versionierte Soll-Liste mit Abweichungen erzeugen.',
+    icon: Icons.playlist_add_check_outlined,
+    readingMinutes: 4,
+    audience: 'Für Fahrzeugwarte und druckberechtigte Personen',
+    prerequisite:
+        'Auf dem Fahrzeug muss mindestens ein Inventareintrag gebucht sein.',
+    steps: [
+      'Öffne das Fahrzeug und kontrolliere im Abschnitt „Beladung“ die tatsächliche Ist-Beladung einschließlich Positionen.',
+      'Wähle „Soll-Liste erstellen“, vergib eine eindeutige Bezeichnung und passe die Soll-Mengen an.',
+      'Wähle „Aktivieren“. Die neue Liste erhält eine Versionsnummer und ersetzt die bisher aktive Version, ohne die Historie zu löschen.',
+      'Prüfe in der Übersicht die aktive Version. Soll- und Ist-Mengen sowie Abweichungen werden beim Erzeugen der Druckfassung erneut gegenübergestellt.',
+      'Wähle „Drucken“, um den Systemdruckdialog zu öffnen, oder „PDF“, um die A4-Datei zu speichern.',
+      'Nutze die Unterschriftsfelder der Druckfassung für Prüfung, Datum und verantwortliche Person.',
+    ],
+    tip:
+        'Erstelle nach einer dauerhaft geänderten Standardbeladung eine neue Version. Vorübergehende Abweichungen gehören in die Prüfung, nicht in eine unkontrolliert geänderte Altliste.',
+    keywords: [
+      'beladungsliste',
+      'soll liste',
+      'ist beladung',
+      'abweichung',
+      'version',
+      'drucken',
+      'pdf',
+      'unterschrift',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Fahrzeuge',
+    title: 'Fahrzeug außer Dienst stellen',
+    summary:
+        'Ein Fahrzeug archivieren und die zehnjährige Aufbewahrung korrekt berücksichtigen.',
+    icon: Icons.archive_outlined,
+    readingMinutes: 3,
+    audience: 'Für Fahrzeugwarte und Administration',
+    prerequisite:
+        'Du brauchst Schreibrechte für das Fahrzeug der besitzenden Gliederung.',
+    steps: [
+      'Öffne das Fahrzeug, wähle „Fahrzeug bearbeiten“ und setze den Status auf „Außer Dienst“.',
+      'Speichere die Änderung. Das Fahrzeug wird archiviert und ist in der normalen Übersicht nicht mehr sichtbar.',
+      'Aktiviere in der Fahrzeugübersicht den Filter „Außer Dienst“, wenn du archivierte Fahrzeuge weiterhin prüfen möchtest.',
+      'Die Außerdienststellung selbst erzeugt keinen Mangel. Offene Mängel bleiben jedoch mit dem Fahrzeug verknüpft und müssen fachlich abgeschlossen werden.',
+      'Das System entfernt ein Fahrzeug frühestens zehn Kalenderjahre nach der Außerdienststellung und nur, wenn kein offener Mangel und keine Restbeladung mehr vorhanden ist.',
+    ],
+    tip:
+        'Buche Inventar vor der endgültigen Aussonderung auf reguläre Lagerorte zurück. Audit-Einträge bleiben auch nach der späteren technischen Bereinigung erhalten.',
+    keywords: [
+      'außer dienst',
+      'archiv',
+      'löschen',
+      'zehn jahre',
+      'aufbewahrung',
+      'restbeladung',
+      'aussonderung',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Reservierung & Wartung',
+    title: 'Einzelstücke reservieren',
+    summary:
+        'Mehrere verfügbare Einzelstücke in einem Termin reservieren und den Status verfolgen.',
+    icon: Icons.bookmark_add_outlined,
+    readingMinutes: 4,
+    audience: 'Für alle Konten mit Reservierungsrecht',
+    prerequisite:
+        'Jeder ausgewählte Artikel muss ein aktives Einzelstück mit Inventarnummer sein. Mengenartikel können nicht reserviert werden.',
+    steps: [
+      'Öffne auf dem Dashboard „Kalender“ und wähle über das Plus „Reservierung“.',
+      'Trage Zweck, Beginn und Ende ein. Termine werden in deiner Ortszeit angezeigt und intern eindeutig gespeichert.',
+      'Suche die benötigten Einzelstücke über Bezeichnung oder Inventarnummer und wähle bei Bedarf mehrere verschiedene Artikel aus.',
+      'Speichere die Reservierung. Bei freigabepflichtigem Material lautet der Status zunächst „Ausstehend“, andernfalls „Freigegeben“.',
+      'Eigene ausstehende oder freigegebene Reservierungen kannst du bearbeiten oder stornieren. Ausgabe und Rückgabe bucht die zuständige Materialverwaltung.',
+    ],
+    tip:
+        'Eine Reservierung sperrt nur den gewählten Zeitraum. Überschneidungen mit anderen Reservierungen oder Wartungen werden serverseitig verhindert.',
+    keywords: [
+      'kalender',
+      'reservierung',
+      'einzelstück',
+      'freigabe',
+      'ausgabe',
+      'rückgabe',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Reservierung & Wartung',
+    title: 'Inventar zwischen Organisationsebenen reservieren',
+    summary:
+        'Ein Einzelstück kontrolliert für eine über- oder untergeordnete Ebene freigeben.',
+    icon: Icons.account_tree_outlined,
+    readingMinutes: 4,
+    audience: 'Für Admins und Materialverwaltung',
+    prerequisite:
+        'Ein Admin muss die Inventarsichtbarkeit der besitzenden Ebene zuvor für die andere Ebene freigeben.',
+    steps: [
+      'Öffne den Artikel in seiner besitzenden Organisationseinheit und wähle „Bearbeiten“.',
+      'Aktiviere unter „Reservierung durch andere Organisationsebenen“ nur die Ebenen, die genau dieses Einzelstück reservieren dürfen.',
+      'Speichere den Artikel. Die Freigabe gilt zusätzlich zur allgemeinen Inventarsichtbarkeit und niemals organisationsübergreifend.',
+      'Die freigegebene Ebene findet das Einzelstück anschließend in der Materialsuche des Kalenders.',
+      'Alle Reservierungen desselben Artikels werden organisationsweit auf Überschneidungen geprüft. Die Ausgabe- und Rückgabebewegung bleibt dem besitzenden Inventar zugeordnet.',
+    ],
+    tip:
+        'Entferne nicht mehr benötigte Freigaben zeitnah. Bestehende Vorgänge bleiben für ihre sichere Abwicklung nachvollziehbar.',
+    keywords: ['ebene', 'freigabe', 'organisation', 'mandant', 'nur ansicht'],
+  ),
+  _GuideArticle(
+    category: 'Reservierung & Wartung',
+    title: 'Wartungen planen und abschließen',
+    summary:
+        'Wartungstermine konfliktfrei dokumentieren und einen Folgetermin setzen.',
+    icon: Icons.build_outlined,
+    readingMinutes: 5,
+    audience: 'Für Materialwarte, Admins und Sachkundige PSAgE',
+    prerequisite:
+        'Du benötigst die Berechtigung zur Wartungsverwaltung in der besitzenden Organisationseinheit.',
+    steps: [
+      'Öffne den Kalender und wähle über das Plus „Wartung“.',
+      'Wähle das Einzelstück und erfasse Art, verantwortliche Person, Zeitraum und Beschreibung.',
+      'Besteht bereits eine Reservierung, dürfen nur Admins oder Materialwarte den Konflikt mit einer verpflichtenden Begründung übersteuern.',
+      'Setze den Status während der Durchführung auf „In Arbeit“ und dokumentiere Dienstleister, Kosten und Abschlussnotiz.',
+      'Wähle beim Abschluss „Abgeschlossen“ und hinterlege bei Bedarf das nächste Wartungsdatum. Dieses erscheint wieder im Kalender.',
+    ],
+    tip:
+        'Sicherheitskritisches Material bleibt bei abgelaufener Prüfung oder Wartung unabhängig von Kalenderfreigaben für Reservierung und Ausgabe gesperrt.',
+    keywords: ['wartung', 'folgetermin', 'konflikt', 'safety', 'dienstleister'],
+  ),
+  _GuideArticle(
+    category: 'Reservierung & Wartung',
+    title: 'Kalenderaufbewahrung festlegen',
+    summary:
+        'Organisationsstandard und abweichende Frist einer Einheit sicher konfigurieren.',
+    icon: Icons.policy_outlined,
+    readingMinutes: 3,
+    audience: 'Für Admins',
+    prerequisite: 'Du brauchst Organisationsverwaltungsrechte.',
+    steps: [
+      'Öffne im Kalender oben „Aufbewahrung konfigurieren“.',
+      'Lege den Organisationsstandard in Monaten fest. Der Wert 0 bedeutet unbegrenzte Aufbewahrung.',
+      'Übernimm den Standard für die aktive Einheit oder erfasse eine eigene Frist zwischen 0 und 240 Monaten.',
+      'Abgelaufene abgeschlossene, abgelehnte, stornierte oder abgebrochene Einträge werden bei der täglichen Bereinigung entfernt. Aktive Vorgänge bleiben erhalten.',
+      'Stimme die Frist vor dem Produktivbetrieb mit dem fachlichen, haftungsrechtlichen und datenschutzrechtlichen Löschkonzept ab.',
+    ],
+    keywords: ['aufbewahrung', 'löschung', 'frist', 'monate', 'datenschutz'],
   ),
   _GuideArticle(
     category: 'Kleiderkammer',

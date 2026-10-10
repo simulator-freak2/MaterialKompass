@@ -12,6 +12,8 @@ const UNIT_SCOPED_COLLECTIONS = new Set([
   'departments', 'locations', 'shelves', 'storageLevels', 'stockStructures',
   'materials', 'deletedMaterials', 'materialMovements', 'materialInspections',
   'materialDocuments', 'reservations', 'maintenanceEvents', 'clothingItems',
+  'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
+  'vehicleLoadAssignments', 'vehicleLoadLists',
   'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports', 'procurementRequests',
   'procurementOffers', 'procurementOrders', 'procurementReceipts',
@@ -116,6 +118,41 @@ function normalizeTenancyData(data) {
       unit.edvNumber = nextLegacyEdvNumber('UNIT', usedEdvNumbers);
     }
   }
+  // Inventory remains isolated by default. A source unit may explicitly make
+  // its inventory readable from selected ancestor or descendant units. Invalid
+  // legacy references are discarded during normalization.
+  for (const unit of organizationUnits) {
+    const relatedUnitIds = new Set([
+      ...descendantsOf(organizationUnits, unit.organizationId, unit.id),
+      ...ancestorsOf(organizationUnits, unit.organizationId, unit.id),
+    ]);
+    relatedUnitIds.delete(unit.id);
+    unit.inventoryVisibleToUnitIds = [...new Set(
+      Array.isArray(unit.inventoryVisibleToUnitIds)
+        ? unit.inventoryVisibleToUnitIds.map(String) : [],
+    )].filter((id) => relatedUnitIds.has(id));
+    if (unit.calendarRetentionMonths !== null && unit.calendarRetentionMonths !== undefined) {
+      const months = Number(unit.calendarRetentionMonths);
+      unit.calendarRetentionMonths = Number.isInteger(months) && months >= 0 && months <= 240
+        ? months : null;
+    } else {
+      unit.calendarRetentionMonths = null;
+    }
+  }
+  for (const organization of organizations) {
+    const months = Number(organization.calendarRetentionMonths ?? 0);
+    organization.calendarRetentionMonths = Number.isInteger(months)
+      && months >= 0 && months <= 240 ? months : 0;
+  }
+  for (const item of data.materials || []) {
+    const owner = organizationUnits.find((unit) => unit.id === item.unitId
+      && unit.organizationId === item.organizationId);
+    const eligible = new Set(owner?.inventoryVisibleToUnitIds || []);
+    item.reservationAllowedUnitIds = item.itemType === 'individual'
+      ? [...new Set(Array.isArray(item.reservationAllowedUnitIds)
+        ? item.reservationAllowedUnitIds.map(String) : [])].filter((id) => eligible.has(id))
+      : [];
+  }
   for (const user of data.users || []) {
     if (!memberships.some((entry) =>
       entry.userId === user.id && entry.organizationId === defaultOrganization.id
@@ -196,6 +233,31 @@ function descendantsOf(units, organizationId, unitId) {
     }
   }
   return result;
+}
+
+function ancestorsOf(units, organizationId, unitId) {
+  const result = new Set();
+  let current = units.find((entry) => entry.id === unitId
+    && entry.organizationId === organizationId);
+  while (current?.parentId) {
+    const parent = units.find((entry) => entry.id === current.parentId
+      && entry.organizationId === organizationId);
+    if (!parent || result.has(parent.id)) break;
+    result.add(parent.id);
+    current = parent;
+  }
+  return result;
+}
+
+function inventoryReadableUnitIds(units, organizationId, viewerUnitId) {
+  const readable = new Set([viewerUnitId]);
+  for (const unit of units) {
+    if (unit.organizationId !== organizationId || unit.status !== 'active') continue;
+    if ((unit.inventoryVisibleToUnitIds || []).includes(viewerUnitId)) {
+      readable.add(unit.id);
+    }
+  }
+  return readable;
 }
 
 function rolePermissions(roles, organizationId, roleNames) {
@@ -418,6 +480,7 @@ function publicOrganization(organization) {
     edvNumber: organization.edvNumber,
     status: organization.status,
     branding: organization.branding || {},
+    calendarRetentionMonths: Number(organization.calendarRetentionMonths ?? 0),
     archivedAt: organization.archivedAt || null,
     purgeAfter: organization.purgeAfter || null,
   };
@@ -451,6 +514,11 @@ function registerTenancyRoutes({
   const canCreateOrganizationStructure = (req) =>
     req.user?.roles?.includes('Admin')
       && req.user?.permissions?.includes('organizations.write');
+
+  const relatedUnitIds = (unit) => new Set([
+    ...ancestorsOf(units, unit.organizationId, unit.id),
+    ...descendantsOf(units, unit.organizationId, unit.id),
+  ]);
 
   app.get('/api/organizations', authMiddleware, (req, res) => {
     const allowed = new Set(memberships
@@ -486,12 +554,15 @@ function registerTenancyRoutes({
       id: randomUUID(), name, shortName, edvNumber: organizationEdvNumber, status: 'active',
       branding: req.body.branding && typeof req.body.branding === 'object' ? req.body.branding : {},
       createdAt: nowIso(), archivedAt: null, purgeAfter: null,
+      calendarRetentionMonths: 0,
     };
     const root = {
       id: randomUUID(), organizationId: organization.id, parentId: null,
       name, type: 'Organisation', edvNumber: organizationEdvNumber,
       status: 'active', createdAt: nowIso(),
       archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
+      inventoryVisibleToUnitIds: [],
+      calendarRetentionMonths: null,
     };
     organizations.push(organization);
     units.push(root);
@@ -511,9 +582,24 @@ function registerTenancyRoutes({
   app.get('/api/organization-units', authMiddleware, (req, res) => {
     const membership = membershipFor(req.user.id, req.tenant.organizationId);
     const allowed = new Set((membership?.scopes || []).map((scope) => scope.unitId));
+    const manageable = canCreateOrganizationStructure(req)
+      ? unitIdsForPermission(req, 'organizations.write') : new Set();
+    const userManageable = unitIdsForPermission(req, 'users.write');
+    const visible = new Set(allowed);
+    for (const unitId of manageable) {
+      const unit = units.find((entry) => entry.id === unitId
+        && entry.organizationId === req.tenant.organizationId);
+      if (unit) relatedUnitIds(unit).forEach((id) => visible.add(id));
+    }
     return res.json(units.filter((entry) =>
-      entry.organizationId === req.tenant.organizationId && allowed.has(entry.id)
-    ));
+      entry.organizationId === req.tenant.organizationId && visible.has(entry.id)
+    ).map((entry) => ({
+      ...entry,
+      inventoryVisibleToUnitIds: manageable.has(entry.id)
+        ? [...(entry.inventoryVisibleToUnitIds || [])] : undefined,
+      canManageStructure: manageable.has(entry.id),
+      canManageUnit: userManageable.has(entry.id),
+    })));
   });
 
   app.post('/api/organization-units', authMiddleware, async (req, res) => {
@@ -545,6 +631,8 @@ function registerTenancyRoutes({
       id: randomUUID(), organizationId: req.tenant.organizationId, parentId,
       name, type, edvNumber: unitEdvNumber, status: 'active', createdAt: nowIso(),
       archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
+      inventoryVisibleToUnitIds: [],
+      calendarRetentionMonths: null,
     };
     units.push(unit);
     const creatorMembership = membershipFor(req.user.id, req.tenant.organizationId);
@@ -561,6 +649,45 @@ function registerTenancyRoutes({
     await persistUnit(unit);
     logEvent('create', 'OrganizationUnit', { id: unit.id, parentId }, req.user.username);
     return res.status(201).json(unit);
+  });
+
+  app.put('/api/organization-units/:id/inventory-visibility', authMiddleware, async (req, res) => {
+    if (!canCreateOrganizationStructure(req)) {
+      return res.status(403).json({
+        error: 'Nur Administratoren dürfen Inventarfreigaben verwalten.',
+      });
+    }
+    const manageable = unitIdsForPermission(req, 'organizations.write');
+    const unit = units.find((entry) => entry.id === req.params.id
+      && entry.organizationId === req.tenant.organizationId
+      && entry.status === 'active' && manageable.has(entry.id));
+    if (!unit) {
+      return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    }
+    if (!Array.isArray(req.body.visibleToUnitIds) || req.body.visibleToUnitIds.length > 500) {
+      return res.status(400).json({ error: 'visibleToUnitIds muss eine Liste mit höchstens 500 Einträgen sein.' });
+    }
+    const visibleToUnitIds = [...new Set(req.body.visibleToUnitIds.map((id) => text(id, 64)))]
+      .filter(Boolean);
+    const eligible = relatedUnitIds(unit);
+    eligible.delete(unit.id);
+    const invalid = visibleToUnitIds.find((id) => !eligible.has(id)
+      || !units.some((entry) => entry.id === id
+        && entry.organizationId === unit.organizationId && entry.status === 'active'));
+    if (invalid) {
+      return res.status(400).json({
+        error: 'Inventar darf nur gezielt für aktive über- oder untergeordnete Ebenen freigegeben werden.',
+      });
+    }
+    unit.inventoryVisibleToUnitIds = visibleToUnitIds;
+    await persistUnit(unit);
+    logEvent('update', 'InventoryVisibility', {
+      unitId: unit.id, visibleToUnitIds,
+    }, req.user.username);
+    return res.json({
+      unitId: unit.id,
+      visibleToUnitIds: [...unit.inventoryVisibleToUnitIds],
+    });
   });
 
   app.put('/api/organization-units/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
@@ -692,6 +819,8 @@ module.exports = {
   runWithTenant,
   runAsSystem,
   descendantsOf,
+  ancestorsOf,
+  inventoryReadableUnitIds,
   contextForMembership,
   rolePermissions,
   registerTenancyRoutes,

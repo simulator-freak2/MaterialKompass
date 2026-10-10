@@ -5,7 +5,7 @@ const DEFECT_STATUSES = Object.freeze([
   'Geprüft/Geschlossen',
 ]);
 const DEFECT_PRIORITIES = Object.freeze(['Niedrig', 'Normal', 'Hoch', 'Kritisch']);
-const ENTITY_TYPES = Object.freeze(['MaterialItem', 'ClothingItem']);
+const ENTITY_TYPES = Object.freeze(['MaterialItem', 'ClothingItem', 'Vehicle']);
 const CLOSED_STATUSES = new Set(['Geprüft/Geschlossen']);
 const NEXT_STATUS = Object.freeze({
   Neu: 'In Prüfung',
@@ -101,7 +101,7 @@ function createSimplePdf(title, lines) {
 
 function registerDefectManagement({
   app, authMiddleware, requirePermission, hasPermission, defectReports,
-  materials, clothingItems, users, notifications, logEvent, nextId, XLSX,
+  materials, clothingItems, vehicles = [], users, notifications, logEvent, nextId, XLSX,
   categories = [], departments = [], procurementRequests = [], locations = [], stockStructures = [],
 }) {
   const nowIso = () => new Date().toISOString();
@@ -109,6 +109,7 @@ function registerDefectManagement({
   function entityFor(type, id) {
     if (type === 'MaterialItem') return materials.find((entry) => entry.id === id);
     if (type === 'ClothingItem') return clothingItems.find((entry) => entry.id === id);
+    if (type === 'Vehicle') return vehicles.find((entry) => entry.id === id);
     return null;
   }
 
@@ -117,6 +118,7 @@ function registerDefectManagement({
     if (roles.has('Admin') || roles.has('Vorsitz')) return true;
     if (entityType === 'MaterialItem') return roles.has('Materialwart');
     if (entityType === 'ClothingItem') return roles.has('Kleiderwart') || roles.has('Sachkundiger PSAgE');
+    if (entityType === 'Vehicle') return roles.has('Fahrzeugwart');
     return false;
   }
 
@@ -129,7 +131,7 @@ function registerDefectManagement({
     const createdAt = report.createdAt || nowIso();
     report.id ||= `defect-${index + 1}`;
     report.defectNumber ||= `M-${createdAt.slice(0, 4)}-${String(index + 1).padStart(4, '0')}`;
-    report.entityType = report.entityType === 'ClothingItem' ? 'ClothingItem' : 'MaterialItem';
+    report.entityType = ENTITY_TYPES.includes(report.entityType) ? report.entityType : 'MaterialItem';
     report.title ||= text(report.description, 80) || 'Übernommener Mangel';
     report.description ||= report.title;
     report.status = DEFECT_STATUSES.includes(report.status) ? report.status : report.status === 'Behoben' ? 'Behoben' : 'Neu';
@@ -192,8 +194,9 @@ function registerDefectManagement({
     const entity = entityFor(report.entityType, report.entityId);
     return {
       ...report,
-      entityName: entity?.name || report.entityNameSnapshot || 'Gelöschter Artikel',
-      inventoryNumber: entity?.inventoryNumber || report.inventoryNumberSnapshot
+      entityName: entity?.name || entity?.radioCallName || entity?.registrationNumber
+        || report.entityNameSnapshot || 'Gelöschtes Objekt',
+      inventoryNumber: entity?.inventoryNumber || entity?.registrationNumber || report.inventoryNumberSnapshot
         || report.disposal?.inventoryNumber || null,
       images: report.images.map((image) => includeImageData ? image : ({
         id: image.id, fileName: image.fileName, mimeType: image.mimeType,
@@ -231,13 +234,17 @@ function registerDefectManagement({
       entity.status = Number(entity.issuedQuantity || 0) > 0 ? 'Ausgegeben' :
         ['Defekt', 'In Reparatur', 'Ausgegeben'].includes(report.previousEntityStatus)
           ? 'Lagernd' : report.previousEntityStatus || 'Lagernd';
-    } else {
+    } else if (report.entityType === 'ClothingItem') {
       entity.status = entity.assignedPerson ? 'Ausgegeben' : 'Lagernd';
+    } else {
+      entity.status = report.previousEntityStatus === 'Defekt'
+        ? 'Verfügbar' : report.previousEntityStatus || 'Verfügbar';
     }
   }
 
   function createNotifications(report, actorId) {
-    const targetRole = report.entityType === 'MaterialItem' ? 'Materialwart' : 'Kleiderwart';
+    const targetRole = report.entityType === 'MaterialItem' ? 'Materialwart'
+      : report.entityType === 'Vehicle' ? 'Fahrzeugwart' : 'Kleiderwart';
     users.filter((user) => user.active && user.id !== actorId &&
       (user.roles?.includes(targetRole) || user.roles?.includes('Admin') ||
         (report.priority === 'Kritisch' && user.roles?.includes('Vorsitz'))))
@@ -352,7 +359,9 @@ function registerDefectManagement({
     if (!source.preserveEntityStatus) markEntityDefective(report);
     createNotifications(report, user.id);
     logEvent('create', 'DefectReport', {
-      id: report.id, itemName: values.entity.name, inventoryNumber: values.entity.inventoryNumber,
+      id: report.id,
+      itemName: values.entity.name || values.entity.radioCallName || values.entity.registrationNumber,
+      inventoryNumber: values.entity.inventoryNumber || values.entity.registrationNumber,
       defectNumber: report.defectNumber,
     }, user.username);
     return { report };
@@ -384,8 +393,8 @@ function registerDefectManagement({
       defectNumber: report.defectNumber,
       entityType: report.entityType,
       entityId: report.entityId,
-      entityName: entity?.name || 'Gelöschter Artikel',
-      inventoryNumber: entity?.inventoryNumber || null,
+      entityName: entity?.name || entity?.radioCallName || entity?.registrationNumber || 'Gelöschtes Objekt',
+      inventoryNumber: entity?.inventoryNumber || entity?.registrationNumber || null,
       title: report.title,
       description: report.description,
       priority: report.priority,
@@ -489,8 +498,10 @@ function registerDefectManagement({
       const entity = entityFor(report.entityType, report.entityId);
       return {
         Mangelnummer: report.defectNumber, Titel: report.title,
-        Bereich: report.entityType === 'MaterialItem' ? 'Inventar' : 'Kleidung',
-        Artikel: entity?.name || '', Inventarnummer: entity?.inventoryNumber || '',
+        Bereich: report.entityType === 'MaterialItem' ? 'Inventar'
+          : report.entityType === 'Vehicle' ? 'Fahrzeuge' : 'Kleidung',
+        Artikel: entity?.name || entity?.radioCallName || entity?.registrationNumber || '',
+        Inventarnummer: entity?.inventoryNumber || entity?.registrationNumber || '',
         Menge: report.affectedQuantity, Status: report.status, Priorität: report.priority,
         Verantwortlich: report.assignee, Frist: report.dueDate || '',
         'Getroffene Maßnahmen': report.measuresTaken || '',
@@ -557,9 +568,10 @@ function registerDefectManagement({
     };
     const details = [
       { label: 'Mangelnummer', value: report.defectNumber },
-      { label: 'Bereich', value: report.entityType === 'MaterialItem' ? 'Inventarverwaltung' : 'Kleiderkammer' },
-      { label: 'Artikel', value: entity.name },
-      { label: 'Inventarnummer', value: entity.inventoryNumber },
+      { label: 'Bereich', value: report.entityType === 'MaterialItem' ? 'Inventarverwaltung'
+        : report.entityType === 'Vehicle' ? 'Fahrzeugverwaltung' : 'Kleiderkammer' },
+      { label: 'Artikel', value: entity.name || entity.radioCallName || entity.registrationNumber },
+      { label: 'Inventarnummer', value: entity.inventoryNumber || entity.registrationNumber },
       { label: 'Kategorie', value: entity.categoryId
         ? categoryName(entity.categoryId)
         : [categoryName(entity.categoryCode), categoryName(entity.subcategoryCode)].filter(Boolean).join(' / ') },
@@ -788,6 +800,12 @@ function registerDefectManagement({
   });
 
   function prepareDisposal(req, res, report) {
+    if (report.entityType === 'Vehicle') {
+      res.status(409).json({
+        error: 'Fahrzeuge werden in der Fahrzeugverwaltung außer Dienst gestellt.',
+      });
+      return null;
+    }
     if (!can(req.user, 'defects.edit', report) || report.archivedAt) {
       res.status(403).json({ error: 'Der Mangel darf nicht bearbeitet werden.' });
       return null;

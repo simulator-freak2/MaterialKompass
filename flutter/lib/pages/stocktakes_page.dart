@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -10,6 +11,7 @@ import '../constants.dart';
 import '../services/document_output_service.dart';
 import '../services/download_service.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
+import '../widgets/mail_count_badge.dart';
 
 class StocktakesPage extends StatefulWidget {
   final String token;
@@ -21,12 +23,16 @@ class StocktakesPage extends StatefulWidget {
   State<StocktakesPage> createState() => _StocktakesPageState();
 }
 
-class _StocktakesPageState extends State<StocktakesPage> {
+class _StocktakesPageState extends State<StocktakesPage>
+    with WidgetsBindingObserver {
   List<Map<String, dynamic>> stocktakes = [];
   List<Map<String, dynamic>> unassignedEmails = [];
+  List<Map<String, dynamic>> _emailImports = [];
   Map<String, dynamic> options = {};
   Set<String> permissions = {};
   bool loading = true;
+  bool _backgroundRefreshInProgress = false;
+  Timer? _refreshTimer;
 
   Map<String, String> get headers => {
     'Authorization': 'Bearer ${widget.token}',
@@ -34,11 +40,36 @@ class _StocktakesPageState extends State<StocktakesPage> {
   };
 
   bool can(String permission) => permissions.contains(permission);
+  List<Map<String, dynamic>> get _pendingEmails => _emailImports
+      .where(
+        (entry) =>
+            entry['status'] != 'verarbeitet' && entry['status'] != 'verworfen',
+      )
+      .toList();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+    _refreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshInBackground()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshInBackground());
+    }
   }
 
   Future<dynamic> _request(
@@ -75,8 +106,8 @@ class _StocktakesPageState extends State<StocktakesPage> {
     return data;
   }
 
-  Future<void> _load() async {
-    setState(() => loading = true);
+  Future<void> _load({bool showLoading = true, bool quiet = false}) async {
+    if (showLoading) setState(() => loading = true);
     try {
       final responses = await Future.wait([
         http.get(Uri.parse('$apiBaseUrl/api/stocktakes'), headers: headers),
@@ -106,16 +137,33 @@ class _StocktakesPageState extends State<StocktakesPage> {
         permissions = (user['permissions'] as List? ?? const [])
             .map((entry) => entry.toString())
             .toSet();
-        unassignedEmails = (jsonDecode(responses[3].body) as List)
+        _emailImports = (jsonDecode(responses[3].body) as List)
             .map((entry) => Map<String, dynamic>.from(entry as Map))
-            .where((entry) => entry['stocktakeId'] == null)
+            .toList();
+        unassignedEmails = _emailImports
+            .where(
+              (entry) =>
+                  entry['stocktakeId'] == null &&
+                  entry['status'] != 'verarbeitet' &&
+                  entry['status'] != 'verworfen',
+            )
             .toList();
         loading = false;
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => loading = false);
-      _message(error.toString(), error: true);
+      if (showLoading) setState(() => loading = false);
+      if (!quiet) _message(error.toString(), error: true);
+    }
+  }
+
+  Future<void> _refreshInBackground() async {
+    if (_backgroundRefreshInProgress) return;
+    _backgroundRefreshInProgress = true;
+    try {
+      await _load(showLoading: false, quiet: true);
+    } finally {
+      _backgroundRefreshInProgress = false;
     }
   }
 
@@ -226,12 +274,120 @@ class _StocktakesPageState extends State<StocktakesPage> {
     }
   }
 
+  Future<void> _discardEmail(Map<String, dynamic> email) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Inventur-E-Mail verwerfen?'),
+        content: Text(
+          '„${email['subject'] ?? 'Ohne Betreff'}“ wird als erledigt markiert. '
+          'Die E-Mail wird nicht in eine Inventur übernommen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Verwerfen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final result = await _request(
+      '/api/stocktake-email-imports/${email['id']}/discard',
+      method: 'POST',
+      body: {'reason': 'Manuell verworfen'},
+    );
+    if (result != null) {
+      _message('Inventur-E-Mail wurde verworfen.');
+      await _load();
+    }
+  }
+
+  Future<void> _showEmailQueue() async {
+    final pending = _pendingEmails;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unbearbeitete Inventur-E-Mails'),
+        content: SizedBox(
+          width: 620,
+          child: pending.isEmpty
+              ? const Text('Keine unbearbeiteten Inventur-E-Mails vorhanden.')
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: pending.length,
+                  separatorBuilder: (_, _) => const Divider(),
+                  itemBuilder: (_, index) {
+                    final email = pending[index];
+                    final stocktake = stocktakes
+                        .where((entry) => entry['id'] == email['stocktakeId'])
+                        .firstOrNull;
+                    return ListTile(
+                      leading: Icon(
+                        email['status'] == 'fehlerhaft'
+                            ? Icons.error_outline
+                            : Icons.mark_email_unread_outlined,
+                      ),
+                      title: Text(
+                        email['subject']?.toString() ?? 'Ohne Betreff',
+                      ),
+                      subtitle: Text(
+                        stocktake == null
+                            ? '${email['status']} · nicht zugeordnet'
+                            : '${email['status']} · ${stocktake['name']}',
+                      ),
+                      onTap: () async {
+                        Navigator.pop(dialogContext);
+                        if (stocktake == null) {
+                          await _assignEmail(email);
+                        } else {
+                          await _open(stocktake);
+                        }
+                      },
+                      trailing: can('stocktakes.email.import')
+                          ? IconButton(
+                              tooltip: 'E-Mail verwerfen',
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () async {
+                                Navigator.pop(dialogContext);
+                                await _discardEmail(email);
+                              },
+                            )
+                          : null,
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Schließen'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final pendingEmailCount = _pendingEmails.length;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Inventuren'),
         actions: [
+          MailCountBadge(
+            count: pendingEmailCount,
+            areaLabel: 'Inventuren',
+            child: IconButton(
+              onPressed: _showEmailQueue,
+              tooltip: 'Unbearbeitete Inventur-E-Mails',
+              icon: const Icon(Icons.forward_to_inbox_outlined),
+            ),
+          ),
           IconButton(
             onPressed: _load,
             tooltip: 'Aktualisieren',
@@ -812,6 +968,38 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
     );
     if (data != null) {
       message('Eingescannte Liste wurde als verarbeitet markiert.');
+      await _load();
+    }
+  }
+
+  Future<void> _discardEmail(Map<String, dynamic> email) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Inventur-E-Mail verwerfen?'),
+        content: const Text(
+          'Die E-Mail wird als erledigt markiert und nicht in die Inventur übernommen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Verwerfen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final data = await request(
+      '/api/stocktake-email-imports/${email['id']}/discard',
+      method: 'POST',
+      body: {'reason': 'Manuell verworfen'},
+    );
+    if (data != null) {
+      message('Inventur-E-Mail wurde verworfen.');
       await _load();
     }
   }
@@ -1562,7 +1750,8 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                 (email) => Card(
                   child: ExpansionTile(
                     leading: Icon(
-                      email['status'] == 'verarbeitet'
+                      email['status'] == 'verarbeitet' ||
+                              email['status'] == 'verworfen'
                           ? Icons.mark_email_read_outlined
                           : Icons.mark_email_unread_outlined,
                     ),
@@ -1591,15 +1780,28 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                         ),
                       ),
                       if (email['status'] != 'verarbeitet' &&
-                          can('stocktakes.count'))
+                          email['status'] != 'verworfen')
                         Padding(
                           padding: const EdgeInsets.all(12),
-                          child: FilledButton.icon(
-                            onPressed: () => _markEmailProcessed(email),
-                            icon: const Icon(Icons.done_all),
-                            label: const Text(
-                              'Nach Übertragung als verarbeitet markieren',
-                            ),
+                          child: Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              if (can('stocktakes.count'))
+                                FilledButton.icon(
+                                  onPressed: () => _markEmailProcessed(email),
+                                  icon: const Icon(Icons.done_all),
+                                  label: const Text(
+                                    'Nach Übertragung als verarbeitet markieren',
+                                  ),
+                                ),
+                              if (can('stocktakes.email.import'))
+                                OutlinedButton.icon(
+                                  onPressed: () => _discardEmail(email),
+                                  icon: const Icon(Icons.delete_outline),
+                                  label: const Text('E-Mail verwerfen'),
+                                ),
+                            ],
                           ),
                         ),
                     ],

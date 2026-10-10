@@ -10,6 +10,7 @@ import 'package:materialkompass/pages/procurement_page.dart';
 import 'package:materialkompass/pages/users_page.dart';
 import 'package:materialkompass/pages/wardrobe_page.dart';
 import 'package:materialkompass/widgets/address_input.dart';
+import 'package:materialkompass/widgets/mail_count_badge.dart';
 import 'package:materialkompass/widgets/stat_card.dart';
 
 void main() {
@@ -71,10 +72,14 @@ void main() {
                 'openDefectCount': 1,
                 'defectsInProgressCount': 1,
                 'pendingDefectEmailCount': 2,
+                'pendingProcurementEmailCount': 3,
+                'pendingStocktakeEmailCount': 4,
                 'procurementCount': 5,
                 'pendingProcurementApprovals': 2,
                 'overdueProcurementOrders': 1,
                 'openProcurementReceipts': 4,
+                'pendingReservationCount': 2,
+                'upcomingCalendarCount': 3,
               },
               'currentUser': {
                 'name': 'Admin User',
@@ -87,11 +92,13 @@ void main() {
                   'categories.read',
                   'inventory.read',
                   'clothing.read',
+                  'stocktakes.read',
                   'defects.read',
                   'procurement.read',
                   'procurement.approve',
                   'procurement.order',
                   'procurement.receive',
+                  'calendar.read',
                 ],
               },
               'recentActivity': [
@@ -116,6 +123,8 @@ void main() {
     expect(find.text('Material'), findsWidgets);
     expect(find.text('Material ausgegeben'), findsOneWidget);
     expect(find.text('E-Mail-Prüfungen'), findsOneWidget);
+    expect(find.text('Reservierungen offen'), findsOneWidget);
+    expect(find.text('Kalendertermine bald'), findsOneWidget);
 
     final firstCard = tester.getTopLeft(
       find.byWidgetPredicate(
@@ -139,7 +148,35 @@ void main() {
     expect(find.text('Nutzerverwaltung'), findsOneWidget);
     expect(find.text('Organisationen'), findsOneWidget);
     expect(find.text('Mängel'), findsOneWidget);
+    expect(find.text('Kalender'), findsOneWidget);
     expect(find.byIcon(Icons.checkroom), findsWidgets);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is MailCountBadge &&
+            widget.areaLabel == 'Mängel' &&
+            widget.count == 2,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is MailCountBadge &&
+            widget.areaLabel == 'Beschaffung' &&
+            widget.count == 3,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is MailCountBadge &&
+            widget.areaLabel == 'Inventuren' &&
+            widget.count == 4,
+      ),
+      findsOneWidget,
+    );
 
     final wardrobeIcon = tester.getTopLeft(find.byIcon(Icons.checkroom).first);
     final wardrobeLabel = tester.getTopLeft(find.text('Kleiderkammer').first);
@@ -196,6 +233,7 @@ void main() {
     expect(find.text('Lagerorte'), findsOneWidget);
     expect(find.text('Kleiderkammer'), findsNothing);
     expect(find.text('Beschaffung'), findsNothing);
+    expect(find.text('Kalender'), findsNothing);
     expect(find.text('Nutzerverwaltung'), findsNothing);
     expect(find.text('Organisationen'), findsNothing);
     expect(find.text('Kleidung'), findsNothing);
@@ -444,6 +482,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: InventoryFormDialog(
+            reservationShareCandidates: const [],
             categories: const [
               {'id': '02', 'name': 'Werkzeug', 'parentId': null},
               {'id': '02-02', 'name': 'Handwerk', 'parentId': '02'},

@@ -22,6 +22,10 @@ const permissions = [
   'stocktakes.read', 'stocktakes.create', 'stocktakes.count',
   'stocktakes.evaluate', 'stocktakes.export', 'stocktakes.email.import',
   'calendar.read', 'reservations.create', 'reservations.manage', 'maintenance.manage',
+  'vehicles.read', 'vehicles.write', 'vehicles.share',
+  'vehicles.load.read', 'vehicles.load.manage', 'vehicles.print',
+  'vehicle_reservations.create', 'vehicle_reservations.manage',
+  'vehicle_reservations.operational_approve', 'vehicle_maintenance.manage',
 ];
 
 const roles = [
@@ -34,6 +38,7 @@ const roles = [
   { id: 'role-schatzmeister', name: 'Schatzmeister', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
   { id: 'role-jugendvorsitzender', name: 'Jugendvorsitzender', permissions: ['material.read', 'dashboard.read'] },
   { id: 'role-sachkundiger', name: 'Sachkundiger PSAgE', permissions: ['material.read', 'clothing.read', 'clothing.inspect', 'defects.read'] },
+  { id: 'role-fahrzeugwart', name: 'Fahrzeugwart', permissions: ['calendar.read', 'vehicles.read', 'vehicles.write', 'vehicles.share', 'vehicles.load.read', 'vehicles.load.manage', 'vehicles.print', 'vehicle_reservations.create', 'vehicle_reservations.manage', 'vehicle_maintenance.manage', 'inventory.read', 'defects.read', 'defects.report', 'defects.edit', 'dashboard.read'] },
 ];
 
 const users = [
@@ -145,6 +150,11 @@ const materialInspections = [];
 const materialDocuments = [];
 const reservations = [];
 const maintenanceEvents = [];
+const vehicles = [];
+const vehicleReservations = [];
+const vehicleMaintenanceEvents = [];
+const vehicleLoadAssignments = [];
+const vehicleLoadLists = [];
 const clothingInspections = [];
 
 const clothingItems = [
@@ -217,6 +227,11 @@ module.exports = {
     materialDocuments,
     reservations,
     maintenanceEvents,
+    vehicles,
+    vehicleReservations,
+    vehicleMaintenanceEvents,
+    vehicleLoadAssignments,
+    vehicleLoadLists,
     clothingItems,
     clothingInspections,
     issueTransactions,

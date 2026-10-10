@@ -11,8 +11,10 @@ import '../services/offline_http.dart' as offline_transport;
 import '../services/offline_session_service.dart';
 import '../services/offline_store.dart';
 import '../widgets/download_folder_dialog.dart';
+import '../widgets/mail_count_badge.dart';
 import '../widgets/stat_card.dart';
 import 'categories_page.dart' deferred as categories_page;
+import 'calendar_page.dart' deferred as calendar_page;
 import 'defects_page.dart' deferred as defects_page;
 import 'login_page.dart';
 import 'inventory_page.dart' deferred as inventory_page;
@@ -24,6 +26,7 @@ import 'profile_page.dart' deferred as profile_page;
 import 'stocktakes_page.dart' deferred as stocktakes_page;
 import 'users_page.dart' deferred as users_page;
 import 'wardrobe_page.dart' deferred as wardrobe_page;
+import 'vehicles_page.dart' deferred as vehicles_page;
 
 typedef DashboardLoader = Future<Map<String, dynamic>> Function();
 typedef AppExit = Future<void> Function();
@@ -51,6 +54,7 @@ class _DashboardPageState extends State<DashboardPage>
   late Future<Map<String, dynamic>> _dashboardFuture;
   late String _token;
   Timer? _syncTimer;
+  bool _backgroundRefreshInProgress = false;
 
   @override
   void initState() {
@@ -59,7 +63,10 @@ class _DashboardPageState extends State<DashboardPage>
     WidgetsBinding.instance.addObserver(this);
     unawaited(OfflineStore.instance.restoreStatus());
     _dashboardFuture = _loadDashboard();
-    _syncTimer = Timer.periodic(const Duration(minutes: 1), (_) => _sync());
+    _syncTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshInBackground()),
+    );
   }
 
   Future<void> _sync() =>
@@ -68,7 +75,7 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_sync());
+      unawaited(_refreshInBackground());
       unawaited(OfflineSessionService.prepare(_token));
     }
   }
@@ -93,6 +100,26 @@ class _DashboardPageState extends State<DashboardPage>
 
   Future<Map<String, dynamic>> _loadDashboard() {
     return widget.dashboardLoader?.call() ?? loadDashboard();
+  }
+
+  Future<void> _refreshInBackground() async {
+    if (_backgroundRefreshInProgress) return;
+    _backgroundRefreshInProgress = true;
+    try {
+      try {
+        await _sync();
+      } catch (_) {
+        // A failed offline sync must not suppress the dashboard refresh.
+      }
+      final data = await _loadDashboard();
+      if (mounted) {
+        setState(() => _dashboardFuture = Future.value(data));
+      }
+    } catch (_) {
+      // Keep the last verified values during temporary connection failures.
+    } finally {
+      _backgroundRefreshInProgress = false;
+    }
   }
 
   Future<Map<String, dynamic>> loadDashboard() async {
@@ -343,6 +370,7 @@ class _DashboardPageState extends State<DashboardPage>
       await Navigator.of(
         context,
       ).push(MaterialPageRoute(builder: (_) => pageBuilder()));
+      unawaited(_refreshInBackground());
     } catch (_) {
       if (rootNavigator.mounted) rootNavigator.pop();
       if (mounted) {
@@ -718,6 +746,8 @@ class _DashboardPageState extends State<DashboardPage>
                 'Beschaffung': 'procurement.read',
                 'Berichte': 'reports.read',
                 'Inventuren': 'stocktakes.read',
+                'Kalender': 'calendar.read',
+                'Fahrzeuge': 'vehicles.read',
               };
               final activities = (data['recentActivity'] as List? ?? const [])
                   .where((entry) {
@@ -751,6 +781,28 @@ class _DashboardPageState extends State<DashboardPage>
                       ),
                     ),
                   ),
+                if (can('calendar.read'))
+                  _DashboardAction(
+                    icon: Icons.calendar_month_outlined,
+                    label: 'Kalender',
+                    description:
+                        'Einzelstücke reservieren und Wartungen planen',
+                    onTap: () => _loadAndOpen(
+                      calendar_page.loadLibrary,
+                      () => calendar_page.CalendarPage(token: _token),
+                    ),
+                  ),
+                if (can('vehicles.read'))
+                  _DashboardAction(
+                    icon: Icons.directions_car_outlined,
+                    label: 'Fahrzeuge',
+                    description:
+                        'Fahrzeuge, Wartung, Reservierung und Beladung',
+                    onTap: () => _loadAndOpen(
+                      vehicles_page.loadLibrary,
+                      () => vehicles_page.VehiclesPage(token: _token),
+                    ),
+                  ),
                 if (can('clothing.read'))
                   _DashboardAction(
                     icon: Icons.checkroom,
@@ -768,6 +820,9 @@ class _DashboardPageState extends State<DashboardPage>
                   _DashboardAction(
                     icon: Icons.fact_check_outlined,
                     label: 'Inventuren',
+                    mailCount: hasMetric('pendingStocktakeEmailCount')
+                        ? metricValue('pendingStocktakeEmailCount')
+                        : 0,
                     description:
                         'Bestände digital oder mit Zähllisten aufnehmen',
                     onTap: () => _loadAndOpen(
@@ -782,6 +837,9 @@ class _DashboardPageState extends State<DashboardPage>
                   _DashboardAction(
                     icon: Icons.report_problem_outlined,
                     label: 'Mängel',
+                    mailCount: hasMetric('pendingDefectEmailCount')
+                        ? metricValue('pendingDefectEmailCount')
+                        : 0,
                     description: 'Mängel und E-Mail-Meldungen bearbeiten',
                     onTap: () => _loadAndOpen(
                       defects_page.loadLibrary,
@@ -792,6 +850,9 @@ class _DashboardPageState extends State<DashboardPage>
                   _DashboardAction(
                     icon: Icons.shopping_cart_outlined,
                     label: 'Beschaffung',
+                    mailCount: hasMetric('pendingProcurementEmailCount')
+                        ? metricValue('pendingProcurementEmailCount')
+                        : 0,
                     description: 'Anträge, Freigaben und Bestellungen',
                     onTap: () => _loadAndOpen(
                       procurement_page.loadLibrary,
@@ -868,6 +929,12 @@ class _DashboardPageState extends State<DashboardPage>
                     value: metricValue('procurementCount'),
                     icon: Icons.shopping_cart_outlined,
                   ),
+                if (can('vehicles.read') && hasMetric('vehicleCount'))
+                  _DashboardMetric(
+                    label: 'Fahrzeuge',
+                    value: metricValue('vehicleCount'),
+                    icon: Icons.directions_car_outlined,
+                  ),
               ];
               final tasks = <_DashboardMetric>[
                 if (can('inventory.read') &&
@@ -884,6 +951,37 @@ class _DashboardPageState extends State<DashboardPage>
                     value: metricValue('dueInspectionCount'),
                     icon: Icons.event_busy_outlined,
                     attention: metricValue('dueInspectionCount') > 0,
+                  ),
+                if (can('vehicles.read') && hasMetric('blockedVehicleCount'))
+                  _DashboardMetric(
+                    label: 'Fahrzeuge gesperrt',
+                    value: metricValue('blockedVehicleCount'),
+                    icon: Icons.car_crash_outlined,
+                    attention: metricValue('blockedVehicleCount') > 0,
+                  ),
+                if (can('vehicles.read') &&
+                    hasMetric('pendingVehicleReservationCount'))
+                  _DashboardMetric(
+                    label: 'Fahrzeugfreigaben',
+                    value: metricValue('pendingVehicleReservationCount'),
+                    icon: Icons.event_busy_outlined,
+                    attention:
+                        metricValue('pendingVehicleReservationCount') > 0,
+                  ),
+                if (can('calendar.read') &&
+                    hasMetric('pendingReservationCount'))
+                  _DashboardMetric(
+                    label: 'Reservierungen offen',
+                    value: metricValue('pendingReservationCount'),
+                    icon: Icons.approval_outlined,
+                    attention: metricValue('pendingReservationCount') > 0,
+                  ),
+                if (can('calendar.read') && hasMetric('upcomingCalendarCount'))
+                  _DashboardMetric(
+                    label: 'Kalendertermine bald',
+                    value: metricValue('upcomingCalendarCount'),
+                    icon: Icons.event_available_outlined,
+                    attention: metricValue('upcomingCalendarCount') > 0,
                   ),
                 if (can('defects.read') && hasMetric('openDefectCount'))
                   _DashboardMetric(
@@ -1097,12 +1195,14 @@ class _DashboardAction {
   final IconData icon;
   final String label;
   final String description;
+  final int mailCount;
   final VoidCallback onTap;
 
   const _DashboardAction({
     required this.icon,
     required this.label,
     required this.description,
+    this.mailCount = 0,
     required this.onTap,
   });
 }
@@ -1221,7 +1321,11 @@ class _QuickActionCard extends StatelessWidget {
                   color: colors.primaryContainer,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(action.icon, color: colors.onPrimaryContainer),
+                child: MailCountBadge(
+                  count: action.mailCount,
+                  areaLabel: action.label,
+                  child: Icon(action.icon, color: colors.onPrimaryContainer),
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(

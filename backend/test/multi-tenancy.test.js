@@ -71,6 +71,14 @@ function tenantData() {
     organizationId: 'org-b',
     unitId: 'unit-b',
   });
+  data.locations.push({
+    ...structuredClone(data.locations[0]),
+    id: 'loc-a-child',
+    code: 'A-CHILD',
+    name: 'Lager A-Ortsgruppe',
+    organizationId: 'org-a',
+    unitId: 'unit-a-child',
+  });
   data.materials.push({
     ...structuredClone(data.materials[0]),
     id: 'material-a-child',
@@ -78,6 +86,8 @@ function tenantData() {
     name: 'Nur A-Ortsgruppe',
     organizationId: 'org-a',
     unitId: 'unit-a-child',
+    locationId: 'loc-a-child',
+    stockStructureId: null,
   });
   data.categories.push(
     {
@@ -192,6 +202,17 @@ test('only admins with organization permission create organizations and suborgan
     });
     assert.equal(creatorCanEnter.response.status, 200);
 
+    const nestedUnit = await request(authorized.baseUrl, '/api/organization-units', {
+      token: creatorCanEnter.data.token,
+      method: 'POST',
+      body: {
+        name: 'A-Unterebene', type: 'Gruppe',
+        parentId: unit.data.id, edvNumber: '10000104',
+      },
+    });
+    assert.equal(nestedUnit.response.status, 201);
+    assert.equal(nestedUnit.data.parentId, unit.data.id);
+
     const materialwartToken = await login(
       authorized.baseUrl, 'materialwart', 'Material123!'
     );
@@ -259,6 +280,159 @@ test('only admins with organization permission create organizations and suborgan
     assert.equal(unit.response.status, 403);
   } finally {
     await new Promise((resolve) => missingPermission.server.close(resolve));
+  }
+});
+
+test('admins selectively share inventory with parent and child units as read-only', async () => {
+  const { server, baseUrl } = await start();
+  try {
+    const rootToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const sharedUp = await request(
+      baseUrl,
+      '/api/organization-units/unit-a-child/inventory-visibility',
+      {
+        token: rootToken,
+        method: 'PUT',
+        body: { visibleToUnitIds: ['unit-a'] },
+      },
+    );
+    assert.equal(sharedUp.response.status, 200);
+    assert.deepEqual(sharedUp.data.visibleToUnitIds, ['unit-a']);
+
+    const rootInventory = await request(baseUrl, '/api/material', { token: rootToken });
+    const sharedChildItem = rootInventory.data.find((entry) =>
+      entry.id === 'material-a-child');
+    assert.ok(sharedChildItem);
+    assert.equal(sharedChildItem.readOnly, true);
+    assert.equal(sharedChildItem.sourceUnitName, 'A-Ortsgruppe');
+
+    const sharedWrite = await request(baseUrl, '/api/material/material-a-child', {
+      token: rootToken,
+      method: 'PUT',
+      body: { name: 'Darf nicht geändert werden' },
+    });
+    assert.equal(sharedWrite.response.status, 404);
+
+    const siblingShare = await request(
+      baseUrl,
+      '/api/organization-units/unit-a-child/inventory-visibility',
+      {
+        token: rootToken,
+        method: 'PUT',
+        body: { visibleToUnitIds: ['unit-a-sibling'] },
+      },
+    );
+    assert.equal(siblingShare.response.status, 400);
+
+    const sharedDown = await request(
+      baseUrl,
+      '/api/organization-units/unit-a/inventory-visibility',
+      {
+        token: rootToken,
+        method: 'PUT',
+        body: { visibleToUnitIds: ['unit-a-child'] },
+      },
+    );
+    assert.equal(sharedDown.response.status, 200);
+
+    const childContext = await request(baseUrl, '/api/auth/context', {
+      token: rootToken,
+      method: 'POST',
+      body: { organizationId: 'org-a', unitId: 'unit-a-child' },
+    });
+    const childInventory = await request(baseUrl, '/api/material', {
+      token: childContext.data.token,
+    });
+    assert.ok(childInventory.data.some((entry) =>
+      entry.id === 'material-1' && entry.readOnly === true));
+    assert.ok(childInventory.data.some((entry) =>
+      entry.id === 'material-a-child' && entry.readOnly === false));
+
+    const nonAdminToken = await login(baseUrl, 'materialwart', 'Material123!');
+    const forbidden = await request(
+      baseUrl,
+      '/api/organization-units/unit-a-child/inventory-visibility',
+      {
+        token: nonAdminToken,
+        method: 'PUT',
+        body: { visibleToUnitIds: ['unit-a'] },
+      },
+    );
+    assert.equal(forbidden.response.status, 403);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('cross-level reservations require an explicit item grant and conflict organization-wide', async () => {
+  const { server, baseUrl } = await start();
+  try {
+    const rootToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const visibility = await request(
+      baseUrl,
+      '/api/organization-units/unit-a-child/inventory-visibility',
+      { token: rootToken, method: 'PUT', body: { visibleToUnitIds: ['unit-a'] } },
+    );
+    assert.equal(visibility.response.status, 200);
+
+    const beforeGrant = await request(baseUrl, '/api/calendar/materials', {
+      token: rootToken,
+    });
+    assert.ok(!beforeGrant.data.some((entry) => entry.id === 'material-a-child'));
+
+    const childContext = await request(baseUrl, '/api/auth/context', {
+      token: rootToken,
+      method: 'POST',
+      body: { organizationId: 'org-a', unitId: 'unit-a-child' },
+    });
+    const childToken = childContext.data.token;
+    const childMaterial = await request(baseUrl, '/api/material/material-a-child', {
+      token: childToken,
+    });
+    const grant = await request(baseUrl, '/api/material/material-a-child', {
+      token: childToken,
+      method: 'PUT',
+      body: { ...childMaterial.data, reservationAllowedUnitIds: ['unit-a'] },
+    });
+    assert.equal(grant.response.status, 200);
+    assert.deepEqual(grant.data.reservationAllowedUnitIds, ['unit-a']);
+
+    const afterGrant = await request(baseUrl, '/api/calendar/materials', {
+      token: rootToken,
+    });
+    const shared = afterGrant.data.find((entry) => entry.id === 'material-a-child');
+    assert.ok(shared);
+    assert.equal(shared.externalReservation, true);
+
+    const body = {
+      purpose: 'Gemeinsame Übung',
+      startAt: '2027-11-01T08:00:00.000Z',
+      endAt: '2027-11-01T12:00:00.000Z',
+      items: [{ materialId: 'material-a-child', quantity: 1 }],
+    };
+    const reservation = await request(baseUrl, '/api/reservations', {
+      token: rootToken, method: 'POST', body,
+    });
+    assert.equal(reservation.response.status, 201);
+    assert.equal(reservation.data.items[0].materialUnitId, 'unit-a-child');
+
+    const sourceConflict = await request(baseUrl, '/api/reservations', {
+      token: childToken, method: 'POST', body: { ...body, purpose: 'Lokaler Termin' },
+    });
+    assert.equal(sourceConflict.response.status, 409);
+
+    const issued = await request(
+      baseUrl,
+      `/api/reservations/${reservation.data.id}/issue`,
+      { token: rootToken, method: 'POST', body: {} },
+    );
+    assert.equal(issued.response.status, 200);
+    const sourceAfterIssue = await request(baseUrl, '/api/material/material-a-child', {
+      token: childToken,
+    });
+    assert.equal(sourceAfterIssue.data.issuedQuantity, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

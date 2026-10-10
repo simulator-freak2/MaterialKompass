@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -15,6 +16,7 @@ import '../widgets/address_input.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/label_print_dialogs.dart';
+import '../widgets/mail_count_badge.dart';
 
 double offerTotalValue(Map offer) {
   final calculated = num.tryParse(
@@ -36,7 +38,8 @@ class ProcurementPage extends StatefulWidget {
   State<ProcurementPage> createState() => _ProcurementPageState();
 }
 
-class _ProcurementPageState extends State<ProcurementPage> {
+class _ProcurementPageState extends State<ProcurementPage>
+    with WidgetsBindingObserver {
   final _search = TextEditingController();
   final _searchDebouncer = Debouncer();
   List<Map<String, dynamic>> _requests = [];
@@ -51,7 +54,9 @@ class _ProcurementPageState extends State<ProcurementPage> {
   Set<String> _roles = {};
   Set<String> _departmentIds = {};
   bool _loading = true;
+  bool _backgroundRefreshInProgress = false;
   String? _status;
+  Timer? _refreshTimer;
 
   Map<String, String> get _headers => {
     'Authorization': 'Bearer ${widget.token}',
@@ -62,6 +67,12 @@ class _ProcurementPageState extends State<ProcurementPage> {
   bool _can(String permission) => _permissions.contains(permission);
   bool get _canPrintLabels =>
       LabelPrintService.instance.supported && userMayPrintLabels(_roles);
+  int get _pendingEmailCount => _emailInbox
+      .where(
+        (entry) =>
+            entry['status'] != 'verarbeitet' && entry['status'] != 'verworfen',
+      )
+      .length;
 
   List<Map<String, dynamic>> get _availableDepartments => _departments
       .where(
@@ -75,16 +86,30 @@ class _ProcurementPageState extends State<ProcurementPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _search.addListener(_refreshView);
     _load();
+    _refreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshInBackground()),
+    );
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _search.removeListener(_refreshView);
     _searchDebouncer.dispose();
     _search.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshInBackground());
+    }
   }
 
   void _refreshView() {
@@ -98,8 +123,8 @@ class _ProcurementPageState extends State<ProcurementPage> {
           .map((entry) => Map<String, dynamic>.from(entry as Map))
           .toList();
 
-  Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
+  Future<void> _load({bool showLoading = true, bool quiet = false}) async {
+    if (showLoading && mounted) setState(() => _loading = true);
     try {
       final responses = await Future.wait([
         AppHttpClient.get(
@@ -169,8 +194,18 @@ class _ProcurementPageState extends State<ProcurementPage> {
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _loading = false);
-      _message(error.toString(), error: true);
+      if (showLoading) setState(() => _loading = false);
+      if (!quiet) _message(error.toString(), error: true);
+    }
+  }
+
+  Future<void> _refreshInBackground() async {
+    if (_backgroundRefreshInProgress) return;
+    _backgroundRefreshInProgress = true;
+    try {
+      await _load(showLoading: false, quiet: true);
+    } finally {
+      _backgroundRefreshInProgress = false;
     }
   }
 
@@ -952,18 +987,26 @@ class _ProcurementPageState extends State<ProcurementPage> {
 
   @override
   Widget build(BuildContext context) {
+    final pendingEmailCount = _pendingEmailCount;
     return DefaultTabController(
       length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Beschaffung'),
-          bottom: const TabBar(
+          bottom: TabBar(
             isScrollable: true,
             tabs: [
-              Tab(icon: Icon(Icons.list_alt), text: 'Vorgänge'),
-              Tab(icon: Icon(Icons.approval_outlined), text: 'Freigaben'),
-              Tab(icon: Icon(Icons.inbox_outlined), text: 'Postbox'),
+              const Tab(icon: Icon(Icons.list_alt), text: 'Vorgänge'),
+              const Tab(icon: Icon(Icons.approval_outlined), text: 'Freigaben'),
               Tab(
+                icon: MailCountBadge(
+                  count: pendingEmailCount,
+                  areaLabel: 'Beschaffung',
+                  child: const Icon(Icons.inbox_outlined),
+                ),
+                text: 'Postbox',
+              ),
+              const Tab(
                 icon: Icon(Icons.local_shipping_outlined),
                 text: 'Lieferanten',
               ),

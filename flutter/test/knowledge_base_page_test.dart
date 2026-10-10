@@ -52,7 +52,7 @@ void main() {
     await tester.tap(find.text('Zwei-Faktor-Authentifizierung einrichten'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Stand 1.4.3'), findsOneWidget);
+    expect(find.text('Stand 1.5.0'), findsOneWidget);
     expect(find.text('Für alle persönlichen Konten'), findsOneWidget);
     expect(find.text('Bevor du beginnst'), findsOneWidget);
     expect(find.byType(Image), findsWidgets);
@@ -117,6 +117,52 @@ void main() {
 
     expect(find.textContaining('öffentlichen Schlüssel'), findsOneWidget);
     expect(find.textContaining('Linux'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('knowledge base covers vehicle load lists and printing', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: KnowledgeBasePage()));
+    expect(find.text('Fahrzeuge'), findsWidgets);
+
+    await tester.enterText(find.byType(SearchBar), 'Beladungsliste');
+    await tester.pump();
+
+    expect(find.text('Beladungsliste erstellen und drucken'), findsOneWidget);
+    await tester.tap(find.text('Beladungsliste erstellen und drucken'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Versionsnummer'), findsOneWidget);
+    expect(find.textContaining('Systemdruckdialog'), findsOneWidget);
+    expect(find.textContaining('Unterschriftsfelder'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('knowledge base explains separate vehicle and TLE approval', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: KnowledgeBasePage()));
+    await tester.enterText(find.byType(SearchBar), 'TLE-Freigabe erteilen');
+    await tester.pump();
+
+    expect(find.text('Fahrzeug reservieren und freigeben'), findsOneWidget);
+    await tester.tap(find.text('Fahrzeug reservieren und freigeben'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Fahrzeug freigeben'), findsOneWidget);
+    expect(find.textContaining('TLE-Freigabe erteilen'), findsOneWidget);
+    expect(find.textContaining('neutralen Fahrzeugtermin'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

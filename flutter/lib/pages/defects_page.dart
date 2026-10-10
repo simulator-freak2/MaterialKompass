@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -10,6 +11,7 @@ import '../services/document_output_service.dart';
 import '../services/download_service.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
+import '../widgets/mail_count_badge.dart';
 
 const _statuses = <String>[
   'Neu',
@@ -53,7 +55,7 @@ class DefectsPage extends StatefulWidget {
   State<DefectsPage> createState() => _DefectsPageState();
 }
 
-class _DefectsPageState extends State<DefectsPage> {
+class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
   final _searchDebouncer = Debouncer();
   bool _loading = true;
   bool _showArchived = false;
@@ -73,6 +75,8 @@ class _DefectsPageState extends State<DefectsPage> {
   Set<String> _permissions = {};
   Set<String> _roles = {};
   bool _initialCreateOpened = false;
+  bool _backgroundRefreshInProgress = false;
+  Timer? _refreshTimer;
 
   AuthenticatedApiClient get _api => AuthenticatedApiClient(widget.token);
 
@@ -82,19 +86,34 @@ class _DefectsPageState extends State<DefectsPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+    _refreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshInBackground()),
+    );
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _searchDebouncer.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshInBackground());
+    }
   }
 
   Future<dynamic> _request(
     String path, {
     String method = 'GET',
     Map<String, dynamic>? body,
+    bool quiet = false,
   }) async {
     try {
       if (widget.request != null) {
@@ -102,7 +121,7 @@ class _DefectsPageState extends State<DefectsPage> {
       }
       return await _api.request(path, method: method, body: body);
     } on AuthenticatedApiException catch (error) {
-      if (mounted) _message(error.message);
+      if (mounted && !quiet) _message(error.message);
       return null;
     }
   }
@@ -116,11 +135,11 @@ class _DefectsPageState extends State<DefectsPage> {
     );
   }
 
-  Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
-    final me = await _request('/api/auth/me');
+  Future<void> _load({bool showLoading = true, bool quiet = false}) async {
+    if (showLoading && mounted) setState(() => _loading = true);
+    final me = await _request('/api/auth/me', quiet: quiet);
     if (me is! Map) {
-      if (mounted) setState(() => _loading = false);
+      if (showLoading && mounted) setState(() => _loading = false);
       return;
     }
     final user = Map<String, dynamic>.from(me['user'] as Map);
@@ -133,10 +152,13 @@ class _DefectsPageState extends State<DefectsPage> {
         .toSet();
 
     final requests = <Future<dynamic>>[
-      _request('/api/defects?archived=${_showArchived ? 'all' : 'false'}'),
-      _request('/api/notifications'),
-      _request('/api/defect-email-imports'),
-      _request('/api/defect-report-items'),
+      _request(
+        '/api/defects?archived=${_showArchived ? 'all' : 'false'}',
+        quiet: quiet,
+      ),
+      _request('/api/notifications', quiet: quiet),
+      _request('/api/defect-email-imports', quiet: quiet),
+      _request('/api/defect-report-items', quiet: quiet),
     ];
     final results = await Future.wait(requests);
     if (!mounted) return;
@@ -161,7 +183,7 @@ class _DefectsPageState extends State<DefectsPage> {
                 .map((entry) => Map<String, dynamic>.from(entry as Map))
                 .toList()
           : [];
-      if (_selectedDefectId != null) _selectedDetail = null;
+      if (showLoading && _selectedDefectId != null) _selectedDetail = null;
       _loading = false;
     });
     await _ensureSelection();
@@ -175,6 +197,16 @@ class _DefectsPageState extends State<DefectsPage> {
           );
         }
       });
+    }
+  }
+
+  Future<void> _refreshInBackground() async {
+    if (_backgroundRefreshInProgress) return;
+    _backgroundRefreshInProgress = true;
+    try {
+      await _load(showLoading: false, quiet: true);
+    } finally {
+      _backgroundRefreshInProgress = false;
     }
   }
 
@@ -406,6 +438,8 @@ class _DefectsPageState extends State<DefectsPage> {
                                 leading: Icon(
                                   item['entityType'] == 'MaterialItem'
                                       ? Icons.inventory_2_outlined
+                                      : item['entityType'] == 'Vehicle'
+                                      ? Icons.directions_car_outlined
                                       : Icons.checkroom_outlined,
                                 ),
                                 title: Text(item['name']?.toString() ?? ''),
@@ -2509,9 +2543,9 @@ class _DefectsPageState extends State<DefectsPage> {
       appBar: AppBar(
         title: const Text('Mängelmanagement'),
         actions: [
-          Badge(
-            isLabelVisible: pendingEmailCount > 0,
-            label: Text('$pendingEmailCount'),
+          MailCountBadge(
+            count: pendingEmailCount,
+            areaLabel: 'Mängel',
             child: IconButton(
               tooltip: 'E-Mail-Prüfwarteschlange',
               onPressed: _showEmailQueue,
@@ -2717,7 +2751,7 @@ class _DefectsPageState extends State<DefectsPage> {
             ),
             _filter(
               'Bereich',
-              const ['Alle', 'MaterialItem', 'ClothingItem'],
+              const ['Alle', 'MaterialItem', 'ClothingItem', 'Vehicle'],
               _entityType,
               (value) => _changeFilter(() => _entityType = value),
               width: compact ? 150 : 165,
@@ -2725,6 +2759,7 @@ class _DefectsPageState extends State<DefectsPage> {
                 'Alle': 'Alle',
                 'MaterialItem': 'Inventar',
                 'ClothingItem': 'Kleidung',
+                'Vehicle': 'Fahrzeuge',
               },
             ),
             FilterChip(
@@ -2750,9 +2785,9 @@ class _DefectsPageState extends State<DefectsPage> {
               avatar: const Icon(Icons.build_outlined, size: 18),
               label: Text('$inProgressCount in Arbeit'),
             ),
-            Badge(
-              isLabelVisible: pendingEmailCount > 0,
-              label: Text('$pendingEmailCount'),
+            MailCountBadge(
+              count: pendingEmailCount,
+              areaLabel: 'Mängel',
               child: OutlinedButton.icon(
                 onPressed: _showEmailInfo,
                 icon: const Icon(Icons.alternate_email),
@@ -4528,7 +4563,11 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
                   (value) => DropdownMenuItem(
                     value: value,
                     child: Text(
-                      value == 'MaterialItem' ? 'Inventar' : 'Kleidung',
+                      value == 'MaterialItem'
+                          ? 'Inventar'
+                          : value == 'Vehicle'
+                          ? 'Fahrzeuge'
+                          : 'Kleidung',
                     ),
                   ),
                 )

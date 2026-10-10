@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 
 import '../services/authenticated_api_client.dart';
@@ -25,6 +27,8 @@ class _CalendarPageState extends State<CalendarPage> {
   List<Map<String, dynamic>> locations = [];
   List<String> departments = [];
   Set<String> permissions = {};
+  Map<String, dynamic> capabilities = {};
+  Map<String, dynamic> settings = {};
   bool loading = true;
   String kindFilter = 'Alle', statusFilter = 'Alle';
   String? locationFilter, departmentFilter;
@@ -82,6 +86,7 @@ class _CalendarPageState extends State<CalendarPage> {
         api.request('/api/calendar?$query'),
         api.request('/api/calendar/materials?limit=100'),
         api.request('/api/auth/me'),
+        api.request('/api/calendar/settings'),
       ]);
       final calendar = Map<String, dynamic>.from(results[0] as Map);
       final options = Map<String, dynamic>.from(
@@ -107,6 +112,10 @@ class _CalendarPageState extends State<CalendarPage> {
         permissions = (user['permissions'] as List? ?? const [])
             .map((entry) => entry.toString())
             .toSet();
+        capabilities = Map<String, dynamic>.from(
+          calendar['capabilities'] as Map? ?? const {},
+        );
+        settings = Map<String, dynamic>.from(results[3] as Map);
         loading = false;
       });
     } on AuthenticatedApiException catch (error) {
@@ -176,8 +185,11 @@ class _CalendarPageState extends State<CalendarPage> {
   Future<void> _createReservation([Map<String, dynamic>? existing]) async {
     final body = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) =>
-          ReservationDialog(materials: materials, existing: existing),
+      builder: (_) => ReservationDialog(
+        materials: materials,
+        existing: existing,
+        searchMaterials: _searchMaterials,
+      ),
     );
     if (body == null) return;
     try {
@@ -201,6 +213,16 @@ class _CalendarPageState extends State<CalendarPage> {
     }
   }
 
+  Future<List<Map<String, dynamic>>> _searchMaterials(String query) async {
+    final parameters = Uri(
+      queryParameters: {'query': query, 'limit': '100'},
+    ).query;
+    final result = await api.request('/api/calendar/materials?$parameters');
+    return (result as List)
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+  }
+
   Future<void> _editMaintenance([Map<String, dynamic>? existing]) async {
     final body = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -219,7 +241,9 @@ class _CalendarPageState extends State<CalendarPage> {
       if (mounted) _message('Wartung wurde gespeichert.');
       await _load();
     } on AuthenticatedApiException catch (error) {
-      if (error.statusCode == 409 && mounted) {
+      if (error.statusCode == 409 &&
+          capabilities['canOverrideMaintenanceConflict'] == true &&
+          mounted) {
         final reason = await _overrideReason(error.message);
         if (reason != null) {
           body['overrideConflict'] = true;
@@ -240,6 +264,108 @@ class _CalendarPageState extends State<CalendarPage> {
           }
         }
       }
+      if (mounted) _message(error.message, error: true);
+    }
+  }
+
+  Future<void> _showRetentionSettings() async {
+    final organization = TextEditingController(
+      text: '${settings['organizationRetentionMonths'] ?? 0}',
+    );
+    final unit = TextEditingController(
+      text: settings['unitRetentionMonths']?.toString() ?? '',
+    );
+    var inherit = settings['unitRetentionMonths'] == null;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Kalenderaufbewahrung'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Abgeschlossene, abgelehnte, stornierte oder abgebrochene Einträge werden nach Ablauf entfernt. 0 bedeutet unbegrenzt.',
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: organization,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Organisationsstandard in Monaten (0–240)',
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: inherit,
+                  title: const Text(
+                    'Für diese Einheit Organisationsstandard verwenden',
+                  ),
+                  onChanged: (value) => update(() => inherit = value),
+                ),
+                if (!inherit)
+                  TextField(
+                    controller: unit,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Abweichung der Einheit in Monaten (0–240)',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final organizationMonths = int.tryParse(organization.text);
+                final unitMonths = inherit ? null : int.tryParse(unit.text);
+                if (organizationMonths == null ||
+                    organizationMonths < 0 ||
+                    organizationMonths > 240 ||
+                    (!inherit &&
+                        (unitMonths == null ||
+                            unitMonths < 0 ||
+                            unitMonths > 240))) {
+                  return;
+                }
+                Navigator.pop(context, {
+                  'organization': organizationMonths,
+                  'unit': unitMonths,
+                });
+              },
+              child: const Text('Speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
+    organization.dispose();
+    unit.dispose();
+    if (result == null) return;
+    try {
+      await api.request(
+        '/api/calendar/settings',
+        method: 'PUT',
+        body: {
+          'scope': 'organization',
+          'retentionMonths': result['organization'],
+        },
+      );
+      await api.request(
+        '/api/calendar/settings',
+        method: 'PUT',
+        body: {'scope': 'unit', 'retentionMonths': result['unit']},
+      );
+      if (mounted) _message('Aufbewahrungseinstellungen wurden gespeichert.');
+      await _load();
+    } on AuthenticatedApiException catch (error) {
       if (mounted) _message(error.message, error: true);
     }
   }
@@ -339,6 +465,12 @@ class _CalendarPageState extends State<CalendarPage> {
             onPressed: _export,
             icon: const Icon(Icons.event_available_outlined),
           ),
+          if (settings['canManage'] == true)
+            IconButton(
+              tooltip: 'Aufbewahrung konfigurieren',
+              onPressed: _showRetentionSettings,
+              icon: const Icon(Icons.policy_outlined),
+            ),
           IconButton(
             tooltip: 'Aktualisieren',
             onPressed: _load,
@@ -514,7 +646,7 @@ class _CalendarPageState extends State<CalendarPage> {
             controller: materialFilter,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
-              labelText: 'Material / Inventarnummer',
+              labelText: 'Material, Fahrzeug / Kennung',
               isDense: true,
               prefixIcon: Icon(Icons.search),
             ),
@@ -699,7 +831,10 @@ class _CalendarPageState extends State<CalendarPage> {
                 'Zeitraum',
                 '${_dateTime(event['startAt'])} – ${_dateTime(event['endAt'])}',
               ),
-              _detail('Material', _materialLabel(event)),
+              _detail(
+                kind?.startsWith('vehicle-') == true ? 'Fahrzeug' : 'Material',
+                _materialLabel(event),
+              ),
               if (event['requesterName'] != null)
                 _detail('Reservierende Person', event['requesterName']),
               if (event['responsible'] != null)
@@ -716,6 +851,24 @@ class _CalendarPageState extends State<CalendarPage> {
           ),
         ),
         actions: [
+          if (kind == 'reservation' &&
+              ['Ausstehend', 'Freigegeben'].contains(event['status']) &&
+              (event['canManage'] == true || event['canEditOwn'] == true))
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                try {
+                  final detail = Map<String, dynamic>.from(
+                    await api.request('/api/reservations/${event['id']}')
+                        as Map,
+                  );
+                  if (mounted) await _createReservation(detail);
+                } on AuthenticatedApiException catch (error) {
+                  if (mounted) _message(error.message, error: true);
+                }
+              },
+              child: const Text('Bearbeiten'),
+            ),
           if (kind == 'reservation' &&
               event['status'] == 'Ausstehend' &&
               event['canManage'] == true)
@@ -817,19 +970,30 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Color _eventColor(Map<String, dynamic> event) => switch (event['kind']) {
     'reservation' => Colors.blue,
+    'vehicle-reservation' => Colors.teal,
+    'vehicle-maintenance' => Colors.deepOrange,
     'inspection' => Colors.orange,
     _ => Colors.deepPurple,
   };
   IconData _eventIcon(Map<String, dynamic> event) => switch (event['kind']) {
     'reservation' => Icons.bookmark_outline,
+    'vehicle-reservation' => Icons.directions_car_outlined,
+    'vehicle-maintenance' => Icons.car_repair_outlined,
     'inspection' => Icons.fact_check_outlined,
     _ => Icons.build_outlined,
   };
 }
 
 class ReservationDialog extends StatefulWidget {
-  const ReservationDialog({required this.materials, this.existing, super.key});
+  const ReservationDialog({
+    required this.materials,
+    required this.searchMaterials,
+    this.existing,
+    super.key,
+  });
   final List<Map<String, dynamic>> materials;
+  final Future<List<Map<String, dynamic>>> Function(String query)
+  searchMaterials;
   final Map<String, dynamic>? existing;
 
   @override
@@ -838,6 +1002,10 @@ class ReservationDialog extends StatefulWidget {
 
 class _ReservationDialogState extends State<ReservationDialog> {
   final formKey = GlobalKey<FormState>();
+  final materialSearch = TextEditingController();
+  Timer? searchTimer;
+  bool searching = false;
+  late List<Map<String, dynamic>> availableMaterials;
   late final purpose = TextEditingController(
     text:
         widget.existing?['title']?.toString() ??
@@ -860,10 +1028,57 @@ class _ReservationDialogState extends State<ReservationDialog> {
   };
 
   @override
+  void initState() {
+    super.initState();
+    availableMaterials = [...widget.materials];
+    for (final raw in widget.existing?['items'] as List? ?? const []) {
+      final item = Map<String, dynamic>.from(raw as Map);
+      if (!availableMaterials.any(
+        (entry) => entry['id'] == item['materialId'],
+      )) {
+        availableMaterials.add({
+          'id': item['materialId'],
+          'inventoryNumber': item['inventoryNumber'],
+          'name': item['materialName'],
+        });
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    searchTimer?.cancel();
+    materialSearch.dispose();
     purpose.dispose();
     note.dispose();
     super.dispose();
+  }
+
+  void _scheduleSearch(String query) {
+    searchTimer?.cancel();
+    searchTimer = Timer(const Duration(milliseconds: 300), () async {
+      if (mounted) setState(() => searching = true);
+      try {
+        final result = await widget.searchMaterials(query.trim());
+        if (!mounted) return;
+        final selectedItems = availableMaterials
+            .where((entry) => selected.containsKey(entry['id']?.toString()))
+            .toList();
+        setState(() {
+          availableMaterials = [
+            ...selectedItems,
+            ...result.where(
+              (entry) => !selectedItems.any(
+                (selected) => selected['id'] == entry['id'],
+              ),
+            ),
+          ];
+          searching = false;
+        });
+      } catch (_) {
+        if (mounted) setState(() => searching = false);
+      }
+    });
   }
 
   @override
@@ -904,15 +1119,39 @@ class _ReservationDialogState extends State<ReservationDialog> {
               'Material mit Inventarnummer *',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
-            ...widget.materials.map((item) {
+            TextField(
+              controller: materialSearch,
+              onChanged: _scheduleSearch,
+              decoration: InputDecoration(
+                labelText: 'Einzelstück suchen',
+                hintText: 'Inventarnummer oder Bezeichnung',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: searching
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : null,
+              ),
+            ),
+            ...availableMaterials.map((item) {
               final id = item['id'].toString();
               final chosen = selected.containsKey(id);
+              final external = item['externalReservation'] == true;
               return CheckboxListTile(
                 value: chosen,
                 title: Text('${item['inventoryNumber']} · ${item['name']}'),
-                subtitle: item['reservationApprovalRequired'] == true
-                    ? const Text('Freigabe durch Materialwart erforderlich')
-                    : null,
+                subtitle: Text(
+                  [
+                    if (item['reservationApprovalRequired'] == true)
+                      'Freigabe durch Materialwart erforderlich',
+                    if (external)
+                      'Freigegeben aus ${item['sourceUnitName'] ?? 'anderer Ebene'}',
+                  ].join(' · '),
+                ),
                 onChanged: (value) => setState(() {
                   if (value == true) {
                     selected[id] = 1;
@@ -920,18 +1159,6 @@ class _ReservationDialogState extends State<ReservationDialog> {
                     selected.remove(id);
                   }
                 }),
-                secondary: chosen && (item['quantity'] as num? ?? 1) > 1
-                    ? SizedBox(
-                        width: 80,
-                        child: TextFormField(
-                          initialValue: '${selected[id]}',
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Menge'),
-                          onChanged: (value) =>
-                              selected[id] = int.tryParse(value) ?? 0,
-                        ),
-                      )
-                    : null,
               );
             }),
             TextFormField(
@@ -973,7 +1200,7 @@ class _ReservationDialogState extends State<ReservationDialog> {
       'startAt': start.toUtc().toIso8601String(),
       'endAt': end.toUtc().toIso8601String(),
       'items': selected.entries
-          .map((entry) => {'materialId': entry.key, 'quantity': entry.value})
+          .map((entry) => {'materialId': entry.key, 'quantity': 1})
           .toList(),
     });
   }
@@ -1015,6 +1242,9 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
   late final completion = TextEditingController(
     text: widget.existing?['completionNote']?.toString() ?? '',
   );
+  late final nextMaintenanceDate = TextEditingController(
+    text: widget.existing?['nextMaintenanceDate']?.toString() ?? '',
+  );
 
   @override
   void dispose() {
@@ -1025,6 +1255,7 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
       provider,
       cost,
       completion,
+      nextMaintenanceDate,
     ]) {
       value.dispose();
     }
@@ -1128,6 +1359,21 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
                 labelText: 'Abschlussnotiz (optional)',
               ),
             ),
+            if (status == 'Abgeschlossen')
+              TextFormField(
+                controller: nextMaintenanceDate,
+                keyboardType: TextInputType.datetime,
+                decoration: const InputDecoration(
+                  labelText: 'Nächster Wartungstermin (JJJJ-MM-TT)',
+                ),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  return text.isEmpty ||
+                          RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(text)
+                      ? null
+                      : 'Datum im Format JJJJ-MM-TT eingeben';
+                },
+              ),
           ],
         ),
       ),
@@ -1160,6 +1406,8 @@ class _MaintenanceDialogState extends State<MaintenanceDialog> {
       'provider': provider.text.trim(),
       'cost': cost.text.trim().replaceAll(',', '.'),
       'completionNote': completion.text.trim(),
+      if (status == 'Abgeschlossen')
+        'nextMaintenanceDate': nextMaintenanceDate.text.trim(),
     });
   }
 }
@@ -1256,6 +1504,8 @@ String _weekday(int day) => const [
 ][day - 1];
 String _kindLabel(String? kind) => switch (kind) {
   'reservation' => 'Reservierung',
+  'vehicle-reservation' => 'Fahrzeugreservierung',
+  'vehicle-maintenance' => 'Fahrzeugwartung',
   'inspection' => 'Prüfung',
   'maintenance-due' => 'Wartungstermin',
   _ => 'Wartung',
