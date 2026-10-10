@@ -371,6 +371,20 @@ function sameOcrValue(left, right) {
     || equivalentGroups.some((group) => group.includes(character) && group.includes(second[index])));
 }
 
+function sameOcrEmail(left, right) {
+  const first = String(left || '').toLowerCase().replace(/\s+/g, '');
+  const second = String(right || '').toLowerCase().replace(/\s+/g, '');
+  if (sameOcrValue(first, second)) return true;
+  if (!EMAIL_PATTERN.test(first) || !EMAIL_PATTERN.test(second)) return false;
+  const [firstLocal, firstDomain] = first.split('@');
+  const [secondLocal, secondDomain] = second.split('@');
+  if (firstDomain !== secondDomain) return false;
+  // Tesseract can collapse the adjacent strokes in "ri" into a single "n".
+  // Limit this repair to the local part and an identical domain so a genuinely
+  // different contact address is never replaced merely because it looks close.
+  return firstLocal.replace(/ri/g, 'n') === secondLocal.replace(/ri/g, 'n');
+}
+
 function hasDefectFormFields(fields) {
   const knownNames = new Set([
     'Inventarnummer',
@@ -874,7 +888,7 @@ function createDefectEmailService({
     const extractedData = { ...analysis.extracted };
     if (EMAIL_PATTERN.test(sender)
       && (!EMAIL_PATTERN.test(extractedData.contactEmail)
-        || sameOcrValue(sender, extractedData.contactEmail))) {
+        || sameOcrEmail(sender, extractedData.contactEmail))) {
       extractedData.contactEmail = sender;
     }
     if (senderName && (!normalizeText(extractedData.contactName)

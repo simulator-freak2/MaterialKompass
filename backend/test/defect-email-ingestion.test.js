@@ -195,6 +195,17 @@ test('digital email report is recognized, created and keeps report plus email bo
   }
 });
 
+test('sender address repairs a matching ri-to-n OCR error in the report address', async () => {
+  const app = createApp();
+  const result = await ingestInDefaultOrganization(
+    app,
+    mailWithAttachment(await filledReportPdf({ email: 'enka@example.org' })),
+    { mailbox: 'INBOX', uid: 28, uidValidity: '10' },
+  );
+  assert.equal(result.entry.extractedData.contactEmail, 'erika@example.org');
+  await app.locals.defectEmailService.stop();
+});
+
 test('legacy report checkbox names are recognized', async () => {
   const app = createApp();
   const result = await ingestInDefaultOrganization(
