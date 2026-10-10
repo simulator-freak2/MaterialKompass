@@ -9,8 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80",
+    "test": "node --test --test-force-exit",
+    "test:coverage": "node --test --test-force-exit --experimental-test-coverage --test-coverage-lines=80",
     "test:performance": "node --test --test-concurrency=1 quality/performance-budget.js"
   },
   "dependencies": {
