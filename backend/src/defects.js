@@ -24,6 +24,7 @@ const MAX_DEFECT_IMAGES_TOTAL = 5_000;
 const MAX_NOTIFICATION_RECORDS = 100_000;
 const MAX_DEFECT_STORAGE_BYTES = 256 * 1024 * 1024;
 const { neutralizeSpreadsheetCell } = require('./security-utils');
+const { currentTenant, rawCollection, youthUnitsAreLinked } = require('./tenancy');
 
 let defectReportTemplateModule;
 function defectReportTemplate() {
@@ -103,14 +104,42 @@ function registerDefectManagement({
   app, authMiddleware, requirePermission, hasPermission, defectReports,
   materials, clothingItems, vehicles = [], users, notifications, logEvent, nextId, XLSX,
   categories = [], departments = [], procurementRequests = [], locations = [], stockStructures = [],
+  organizationUnits = [],
 }) {
   const nowIso = () => new Date().toISOString();
+  const allDefects = () => rawCollection(defectReports);
+  const allMaterials = () => rawCollection(materials);
+  const allClothingItems = () => rawCollection(clothingItems);
+  const allVehicles = () => rawCollection(vehicles);
 
-  function entityFor(type, id) {
-    if (type === 'MaterialItem') return materials.find((entry) => entry.id === id);
-    if (type === 'ClothingItem') return clothingItems.find((entry) => entry.id === id);
-    if (type === 'Vehicle') return vehicles.find((entry) => entry.id === id);
+  function entityFor(type, id, { raw = false, organizationId = null } = {}) {
+    const matches = (entry) => entry.id === id
+      && (!organizationId || entry.organizationId === organizationId);
+    if (type === 'MaterialItem') return (raw ? allMaterials() : materials).find(matches);
+    if (type === 'ClothingItem') return (raw ? allClothingItems() : clothingItems).find(matches);
+    if (type === 'Vehicle') return (raw ? allVehicles() : vehicles).find(matches);
     return null;
+  }
+
+  function isReportableEntity(req, type, entity) {
+    if (!hasPermission(req.user, 'defects.report')) return null;
+    if (!entity || entity.organizationId !== req.tenant.organizationId) return null;
+    const youthReporter = req.user.roles?.some((role) =>
+      role === 'Jugendmitglied' || role === 'Jugendvorsitzender');
+    if (!scopeFor(req.user, type)
+        && !(youthReporter && ['MaterialItem', 'Vehicle'].includes(type))) return null;
+    if (entity.unitId === req.tenant.unitId) return entity;
+    if (!['MaterialItem', 'Vehicle'].includes(type)) return null;
+    return youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+      req.tenant.unitId, entity.unitId) ? entity : null;
+  }
+
+  function reportableEntity(req, type, id) {
+    const entity = entityFor(type, id, {
+      raw: true,
+      organizationId: req.tenant.organizationId,
+    });
+    return isReportableEntity(req, type, entity);
   }
 
   function scopeFor(user, entityType) {
@@ -174,7 +203,9 @@ function registerDefectManagement({
 
   function nextDefectNumber() {
     const year = new Date().getFullYear();
-    const highest = defectReports.reduce((max, report) => {
+    const tenant = currentTenant();
+    const highest = allDefects().filter((report) => !tenant
+      || report.organizationId === tenant.organizationId).reduce((max, report) => {
       const match = String(report.defectNumber || '').match(new RegExp(`^M-${year}-(\\d+)$`));
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
@@ -191,7 +222,10 @@ function registerDefectManagement({
   }
 
   function publicDefect(report, includeImageData = false) {
-    const entity = entityFor(report.entityType, report.entityId);
+    const entity = entityFor(report.entityType, report.entityId, {
+      raw: true,
+      organizationId: report.organizationId,
+    });
     return {
       ...report,
       entityName: entity?.name || entity?.radioCallName || entity?.registrationNumber
@@ -209,17 +243,52 @@ function registerDefectManagement({
     };
   }
 
-  function activeForEntity(entityType, entityId, exceptId = null) {
-    return defectReports.filter((report) => report.id !== exceptId && report.entityType === entityType &&
-      report.entityId === entityId && !report.doesNotAffectEntityStatus
+  function publicDefectFor(req, report, includeImageData = false) {
+    const result = publicDefect(report, includeImageData);
+    if (report.unitId === req.tenant.unitId) return { ...result, readOnly: false };
+    return {
+      id: result.id,
+      defectNumber: result.defectNumber,
+      organizationId: result.organizationId,
+      unitId: result.unitId,
+      entityType: result.entityType,
+      entityId: result.entityId,
+      entityName: result.entityName,
+      inventoryNumber: result.inventoryNumber,
+      affectedQuantity: result.affectedQuantity,
+      title: result.title,
+      description: result.description,
+      priority: result.priority,
+      status: result.status,
+      reportedAt: result.reportedAt,
+      reportedByName: result.reportedByName,
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+      archivedAt: result.archivedAt,
+      readOnly: true,
+      images: [],
+      documents: [],
+    };
+  }
+
+  function activeForEntity(entityType, entityId, exceptId = null,
+    organizationId = currentTenant()?.organizationId) {
+    return allDefects().filter((report) => report.id !== exceptId && report.entityType === entityType &&
+      report.entityId === entityId && (!organizationId || report.organizationId === organizationId)
+      && !report.doesNotAffectEntityStatus
       && !report.archivedAt && !CLOSED_STATUSES.has(report.status));
   }
 
   function markEntityDefective(report) {
     if (report.doesNotAffectEntityStatus || report.disposal) return;
-    const entity = entityFor(report.entityType, report.entityId);
+    const entity = entityFor(report.entityType, report.entityId, {
+      raw: true,
+      organizationId: report.organizationId,
+    });
     if (!entity) return;
-    const existingBaseline = activeForEntity(report.entityType, report.entityId, report.id)
+    const existingBaseline = activeForEntity(
+      report.entityType, report.entityId, report.id, report.organizationId,
+    )
       .find((entry) => entry.previousEntityStatus && entry.previousEntityStatus !== 'Defekt')
       ?.previousEntityStatus;
     report.previousEntityStatus ||= existingBaseline || entity.status || 'Lagernd';
@@ -227,8 +296,13 @@ function registerDefectManagement({
   }
 
   function restoreEntityIfResolved(report) {
-    const entity = entityFor(report.entityType, report.entityId);
-    if (!entity || activeForEntity(report.entityType, report.entityId, report.id).length) return;
+    const entity = entityFor(report.entityType, report.entityId, {
+      raw: true,
+      organizationId: report.organizationId,
+    });
+    if (!entity || activeForEntity(
+      report.entityType, report.entityId, report.id, report.organizationId,
+    ).length) return;
     if (entity.status === 'Ausgesondert') return;
     if (report.entityType === 'MaterialItem') {
       entity.status = Number(entity.issuedQuantity || 0) > 0 ? 'Ausgegeben' :
@@ -281,10 +355,12 @@ function registerDefectManagement({
     }
   }
 
-  function validateCreate(body) {
+  function validateCreate(body, req = null) {
     const entityType = text(body.entityType, 32);
     const entityId = text(body.entityId, 64);
-    const entity = entityFor(entityType, entityId);
+    const entity = req
+      ? reportableEntity(req, entityType, entityId)
+      : entityFor(entityType, entityId);
     const title = text(body.title, 160);
     const description = text(body.description, 10_000);
     const priority = text(body.priority || 'Normal', 32);
@@ -302,24 +378,29 @@ function registerDefectManagement({
   }
 
   function createReport(body, user, source = {}) {
-    if (defectReports.length >= MAX_DEFECT_RECORDS) {
+    const organizationId = source.request?.tenant?.organizationId
+      || currentTenant()?.organizationId;
+    if (allDefects().filter((entry) =>
+      !organizationId || entry.organizationId === organizationId).length >= MAX_DEFECT_RECORDS) {
       return { error: 'Die maximale Anzahl an Mängelmeldungen ist erreicht.', status: 507 };
     }
-    const values = validateCreate(body);
+    const values = validateCreate(body, source.request || null);
     if (values.error) return values;
     const createdAt = nowIso();
     const comparable = `${values.title} ${values.description}`;
-    const possibleDuplicate = defectReports.find((entry) =>
+    const possibleDuplicate = allDefects().find((entry) =>
       !entry.archivedAt && !CLOSED_STATUSES.has(entry.status) &&
       entry.entityType === values.entityType && entry.entityId === values.entityId &&
       similarity(comparable, `${entry.title} ${entry.description}`) >= 0.6);
-    const possibleRecurrence = defectReports.slice().reverse().find((entry) =>
+    const possibleRecurrence = allDefects().slice().reverse().find((entry) =>
       CLOSED_STATUSES.has(entry.status) && entry.entityType === values.entityType &&
       entry.entityId === values.entityId &&
       (similarity(comparable, `${entry.title} ${entry.description}`) >= 0.6 ||
         (body.damageType && entry.damageType === body.damageType)));
     const report = {
-      id: nextId('defect', defectReports), defectNumber: nextDefectNumber(),
+      id: nextId('defect', allDefects()), defectNumber: nextDefectNumber(),
+      organizationId: values.entity.organizationId,
+      unitId: values.entity.unitId,
       entityType: values.entityType, entityId: values.entityId,
       affectedQuantity: values.affectedQuantity, title: values.title,
       description: values.description, priority: values.priority, status: 'Neu',
@@ -345,7 +426,7 @@ function registerDefectManagement({
       emailSource: source.emailSource || null,
       archivedAt: null, archivedBy: null,
     };
-    defectReports.push(report);
+    allDefects().push(report);
     addHistory(
       report,
       user.username,
@@ -363,6 +444,8 @@ function registerDefectManagement({
       itemName: values.entity.name || values.entity.radioCallName || values.entity.registrationNumber,
       inventoryNumber: values.entity.inventoryNumber || values.entity.registrationNumber,
       defectNumber: report.defectNumber,
+      reportingUnitId: source.request?.tenant?.unitId || report.unitId,
+      ownerUnitId: report.unitId,
     }, user.username);
     return { report };
   }
@@ -444,14 +527,27 @@ function registerDefectManagement({
   }
 
   function findVisible(req, includeArchived = false) {
-    return defectReports.filter((report) => scopeFor(req.user, report.entityType) &&
-      (includeArchived || !report.archivedAt));
+    return allDefects().filter((report) => {
+      if (report.organizationId !== req.tenant.organizationId
+          || (!includeArchived && report.archivedAt)) return false;
+      if (report.unitId === req.tenant.unitId && scopeFor(req.user, report.entityType)) return true;
+      const ownReport = report.reportedBy === req.user.id;
+      return ownReport && (report.unitId === req.tenant.unitId
+        || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+          req.tenant.unitId, report.unitId));
+    });
   }
 
-  function findDefect(req, res) {
-    const report = defectReports.find((entry) => entry.id === req.params.id);
-    if (!report || !scopeFor(req.user, report.entityType)) {
+  function findDefect(req, res, { write = false } = {}) {
+    const report = findVisible(req, true).find((entry) => entry.id === req.params.id);
+    if (!report) {
       res.status(404).json({ error: 'Mangel nicht gefunden.' });
+      return null;
+    }
+    if (write && report.unitId !== req.tenant.unitId) {
+      res.status(403).json({
+        error: 'Verknüpfte Mängelmeldungen können nur schreibgeschützt eingesehen werden.',
+      });
       return null;
     }
     return report;
@@ -462,7 +558,7 @@ function registerDefectManagement({
     const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     res.json(findVisible(req, includeArchived).slice().reverse()
-      .slice(offset, offset + limit).map((report) => publicDefect(report)));
+      .slice(offset, offset + limit).map((report) => publicDefectFor(req, report)));
   });
 
   app.get('/api/defects/summary', authMiddleware, requirePermission('defects.read'), (req, res) => {
@@ -540,19 +636,23 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects', authMiddleware, requirePermission('defects.report'), (req, res) => {
-    if (!scopeFor(req.user, req.body.entityType)) return res.status(403).json({ error: 'Für diesen Bereich fehlt die Berechtigung.' });
-    const result = createReport(req.body, req.user);
+    const result = createReport(req.body, req.user, { request: req });
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
-    return res.status(201).json(publicDefect(result.report));
+    return res.status(201).json(publicDefectFor(req, result.report));
   });
 
   app.get('/api/defects/:id', authMiddleware, requirePermission('defects.read'), (req, res) => {
     const report = findDefect(req, res); if (!report) return;
-    return res.json(publicDefect(report, true));
+    return res.json(publicDefectFor(req, report, true));
   });
 
   app.get('/api/defects/:id/print', authMiddleware, requirePermission('defects.read'), async (req, res) => {
     const report = findDefect(req, res); if (!report) return;
+    if (report.unitId !== req.tenant.unitId) {
+      return res.status(403).json({
+        error: 'Verknüpfte Mängelmeldungen können nur im Status eingesehen werden.',
+      });
+    }
     const entity = entityFor(report.entityType, report.entityId) || {};
     const date = (value) => {
       const parsed = new Date(value || '');
@@ -636,7 +736,7 @@ function registerDefectManagement({
   });
 
   app.put('/api/defects/:id', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     if (!can(req.user, 'defects.edit', report) || report.archivedAt) return res.status(403).json({ error: 'Der Mangel darf nicht bearbeitet werden.' });
     const before = structuredClone(report);
     if (req.body.title !== undefined) report.title = text(req.body.title, 160);
@@ -683,7 +783,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/assign', authMiddleware, requirePermission('defects.assign'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     if (!can(req.user, 'defects.assign', report) || report.archivedAt) return res.status(403).json({ error: 'Zuweisung nicht erlaubt.' });
     const oldAssignment = {
       assignee: report.assignee, assigneeUserId: report.assigneeUserId || null,
@@ -735,7 +835,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/transition', authMiddleware, (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const target = text(req.body.status, 64);
     const reopening = report.status === 'Geprüft/Geschlossen' && target === 'Neu';
     const requiredPermission = ['Behoben', 'Geprüft/Geschlossen'].includes(target) ? 'defects.close' : 'defects.edit';
@@ -755,7 +855,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/comments', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const value = text(req.body.text, 5000);
     if (!value || report.archivedAt) return res.status(400).json({ error: 'Ein Kommentartext ist erforderlich.' });
     const comment = { id: nextId('comment', report.comments), text: value, author: req.user.name || req.user.username, authorId: req.user.id, createdAt: nowIso() };
@@ -764,7 +864,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/checklist', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const label = text(req.body.label, 500);
     if (!label || report.archivedAt) return res.status(400).json({ error: 'Eine Aufgabenbeschreibung ist erforderlich.' });
     const item = { id: nextId('check', report.checklist), label, done: false, doneAt: null, doneBy: null };
@@ -773,7 +873,7 @@ function registerDefectManagement({
   });
 
   app.patch('/api/defects/:id/checklist/:itemId', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const item = report.checklist.find((entry) => entry.id === req.params.itemId);
     if (!item || report.archivedAt) return res.status(404).json({ error: 'Checklistenpunkt nicht gefunden.' });
     const oldDone = item.done;
@@ -783,7 +883,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/related-actions', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const actionType = text(req.body.type, 64);
     const label = text(req.body.label, 500);
     if (!['Reparatur', 'Beschaffung'].includes(actionType) || !label || report.archivedAt) {
@@ -948,14 +1048,14 @@ function registerDefectManagement({
   }
 
   app.post('/api/defects/:id/dispose-without-replacement', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const context = prepareDisposal(req, res, report); if (!context) return;
     recordDisposal(req, report, context);
     return res.status(201).json({ defect: publicDefect(report) });
   });
 
   app.post('/api/defects/:id/dispose-and-procure', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     if (!hasPermission(req.user, 'procurement.request')) {
       return res.status(403).json({ error: 'Zum Erstellen des Beschaffungsantrags fehlt die Berechtigung.' });
     }
@@ -1025,7 +1125,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/follow-up-tasks', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const label = text(req.body.label, 500);
     if (!label || report.archivedAt) return res.status(400).json({ error: 'Eine Folgeaufgabe ist erforderlich.' });
     const task = {
@@ -1039,7 +1139,7 @@ function registerDefectManagement({
   });
 
   app.patch('/api/defects/:id/follow-up-tasks/:taskId', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const task = report.followUpTasks.find((entry) => entry.id === req.params.taskId);
     if (!task || report.archivedAt) return res.status(404).json({ error: 'Folgeaufgabe nicht gefunden.' });
     const oldDone = task.done;
@@ -1048,10 +1148,14 @@ function registerDefectManagement({
     return res.json(task);
   });
 
-  app.post('/api/defects/:id/images', authMiddleware, requirePermission('defects.edit'), (req, res) => {
+  app.post('/api/defects/:id/images', authMiddleware, (req, res) => {
     const report = findDefect(req, res); if (!report) return;
+    const mayAddImage = (report.unitId === req.tenant.unitId
+      && can(req.user, 'defects.edit', report))
+      || (report.reportedBy === req.user.id && report.status === 'Neu');
+    if (!mayAddImage) return res.status(403).json({ error: 'Zu dieser Mängelmeldung dürfen keine Bilder hinzugefügt werden.' });
     if (report.archivedAt || report.images.length >= MAX_IMAGES) return res.status(409).json({ error: `Maximal ${MAX_IMAGES} Bilder sind erlaubt.` });
-    if (defectReports.reduce((sum, entry) => sum + entry.images.length, 0) >= MAX_DEFECT_IMAGES_TOTAL) {
+    if (allDefects().reduce((sum, entry) => sum + entry.images.length, 0) >= MAX_DEFECT_IMAGES_TOTAL) {
       return res.status(507).json({ error: 'Die maximale Gesamtzahl an Mängelbildern ist erreicht.' });
     }
     const mimeType = text(req.body.mimeType, 64).toLowerCase();
@@ -1059,7 +1163,7 @@ function registerDefectManagement({
     if (!IMAGE_MIME_TYPES.has(mimeType) || !fileBase64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(fileBase64)) return res.status(400).json({ error: 'Nur gültige JPEG- oder PNG-Bilder sind erlaubt.' });
     const bytes = Buffer.from(fileBase64, 'base64');
     if (bytes.length > MAX_IMAGE_BYTES) return res.status(413).json({ error: 'Ein Bild darf höchstens 8 MB groß sein.' });
-    const storedBinaryBytes = defectReports.reduce((sum, entry) => sum
+    const storedBinaryBytes = allDefects().reduce((sum, entry) => sum
       + [...(entry.images || []), ...(entry.documents || [])].reduce((inner, file) =>
         inner + Buffer.byteLength(file.fileBase64 || '', 'base64'), 0), 0);
     if (storedBinaryBytes + bytes.length > MAX_DEFECT_STORAGE_BYTES) {
@@ -1075,7 +1179,7 @@ function registerDefectManagement({
   });
 
   app.delete('/api/defects/:id/images/:imageId', authMiddleware, requirePermission('defects.edit'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     const index = report.images.findIndex((entry) => entry.id === req.params.imageId);
     if (index < 0 || report.archivedAt) return res.status(404).json({ error: 'Bild nicht gefunden.' });
     const [removed] = report.images.splice(index, 1); addHistory(report, req.user.username, 'image-delete', changeDetails('image', { ...removed, fileBase64: '[binary]' }, null));
@@ -1083,7 +1187,7 @@ function registerDefectManagement({
   });
 
   app.post('/api/defects/:id/archive', authMiddleware, requirePermission('defects.archive'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     if (report.status !== 'Geprüft/Geschlossen') return res.status(409).json({ error: 'Nur geschlossene Mängel können archiviert werden.' });
     report.archivedAt = nowIso(); report.archivedBy = req.user.username;
     if (report.emailSource) report.emailSource.deleteRequestedAt = nowIso();
@@ -1092,7 +1196,7 @@ function registerDefectManagement({
   });
 
   app.delete('/api/defects/:id', authMiddleware, requirePermission('defects.delete'), (req, res) => {
-    const report = findDefect(req, res); if (!report) return;
+    const report = findDefect(req, res, { write: true }); if (!report) return;
     if (report.status !== 'Geprüft/Geschlossen') {
       return res.status(409).json({ error: 'Ein Mangel muss vor dem Löschen geschlossen werden.' });
     }
@@ -1148,6 +1252,13 @@ function registerDefectManagement({
   return {
     statuses: DEFECT_STATUSES,
     canScope: (user, entityType) => scopeFor(user, entityType),
+    reportableItems(req) {
+      return [
+        ...allMaterials().map((item) => ({ item, entityType: 'MaterialItem' })),
+        ...allClothingItems().map((item) => ({ item, entityType: 'ClothingItem' })),
+        ...allVehicles().map((item) => ({ item, entityType: 'Vehicle' })),
+      ].filter(({ item, entityType }) => isReportableEntity(req, entityType, item));
+    },
     hasOpenDefect: (entityType, entityId) => activeForEntity(entityType, entityId).length > 0,
     createFromEmail({
       body,

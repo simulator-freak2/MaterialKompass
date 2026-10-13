@@ -9,6 +9,8 @@ import '../services/api_client.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../services/passkey_service.dart';
+import '../services/system_message_service.dart';
+import '../widgets/system_message_card.dart';
 import '../widgets/password_login_form.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
@@ -26,10 +28,12 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final api = ApiClient();
   final passkeys = PasskeyService();
+  final systemMessages = SystemMessageService();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool loading = false;
   bool downloadsLoading = true;
+  List<SystemMessage> maintenanceMessages = const [];
   List<Map<String, dynamic>> downloads = const [
     {'platform': 'windows', 'label': 'Windows', 'available': false},
     {'platform': 'macos', 'label': 'macOS', 'available': false},
@@ -42,12 +46,14 @@ class _LoginPageState extends State<LoginPage> {
   void initState() {
     super.initState();
     if (kIsWeb) loadDownloads();
+    loadSystemMessages();
   }
 
   @override
   void dispose() {
     api.close();
     passkeys.close();
+    systemMessages.dispose();
     emailController.dispose();
     passwordController.dispose();
     super.dispose();
@@ -68,6 +74,15 @@ class _LoginPageState extends State<LoginPage> {
       // Die Anmeldung bleibt auch bei einem nicht erreichbaren Downloadserver nutzbar.
     } finally {
       if (mounted) setState(() => downloadsLoading = false);
+    }
+  }
+
+  Future<void> loadSystemMessages() async {
+    try {
+      final messages = await systemMessages.publicMessages();
+      if (mounted) setState(() => maintenanceMessages = messages);
+    } catch (_) {
+      // Hinweise dürfen die Anmeldung bei einem temporären Fehler nicht blockieren.
     }
   }
 
@@ -398,6 +413,10 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        for (final message in maintenanceMessages) ...[
+                          SystemMessageCard(message: message),
+                          const SizedBox(height: 12),
+                        ],
                         Image.asset(
                           'assets/branding/materialkompass_logo_mit_schriftzug.png',
                           height: 92,

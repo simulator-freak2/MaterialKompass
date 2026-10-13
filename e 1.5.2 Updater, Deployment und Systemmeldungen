@@ -1,0 +1,62 @@
+warning: in the working copy of 'ARCHITECTURE.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'VEHICLE_MANAGEMENT.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/app.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/calendar.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/data/seed.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/db/user-store.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/defect-email-ingestion.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/defects.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/tenancy.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/user-management.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/vehicles.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/test/multi-tenancy.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'flutter/lib/pages/defects_page.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'ops/backup-mariadb.sh', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'packaging/linux/build_deb.sh', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'packaging/macos/build_dmg.sh', CRLF will be replaced by LF the next time Git touches it
+ .github/workflows/client-installers.yml    |  13 [32m+[m[31m-[m
+ .github/workflows/quality.yml              |   2 [32m+[m
+ .gitignore                                 |   4 [32m+[m
+ ARCHITECTURE.md                            |   1 [32m+[m
+ PERFORMANCE.md                             |  16 [32m+[m[31m-[m
+ README.md                                  |  52 [32m+++[m[31m-[m
+ THREAT_MODEL.md                            |   3 [32m+[m[31m-[m
+ VEHICLE_MANAGEMENT.md                      |   8 [32m+[m[31m-[m
+ backend/.env.example                       |  10 [32m+[m[31m-[m
+ backend/package-lock.json                  |   4 [32m+[m[31m-[m
+ backend/package.json                       |   2 [32m+[m[31m-[m
+ backend/src/app.js                         |  98 [32m++++++[m[31m-[m
+ backend/src/calendar.js                    |  90 [32m++++[m[31m--[m
+ backend/src/data/seed.js                   |   5 [32m+[m[31m-[m
+ backend/src/db/user-store.js               |   1 [32m+[m
+ backend/src/defect-email-ingestion.js      |   6 [32m+[m[31m-[m
+ backend/src/defects.js                     | 209 [32m++++++++++[m[31m----[m
+ backend/src/tenancy.js                     | 149 [32m+++++++++[m[31m-[m
+ backend/src/user-management.js             |  26 [32m+[m[31m-[m
+ backend/src/vehicles.js                    | 174 [32m++++++++++[m[31m--[m
+ backend/test/multi-tenancy.test.js         | 244 [32m++++++++++++++++[m
+ backend/test/platform-readiness.test.js    |   3 [32m+[m[31m-[m
+ backend/test/vehicles.test.js              | 102 [32m++++++[m[31m-[m
+ compose.yaml                               |  40 [32m++[m[31m-[m
+ flutter/lib/pages/dashboard_page.dart      |  43 [32m+++[m
+ flutter/lib/pages/defects_page.dart        |  66 [32m+++[m[31m--[m
+ flutter/lib/pages/inventory_page.dart      |   2 [32m+[m[31m-[m
+ flutter/lib/pages/knowledge_base_page.dart |  31 [32m++[m
+ flutter/lib/pages/locations_page.dart      |  41 [32m++[m[31m-[m
+ flutter/lib/pages/login_page.dart          |  19 [32m++[m
+ flutter/lib/pages/organizations_page.dart  | 138 [32m++++++++[m[31m-[m
+ flutter/lib/pages/users_page.dart          |  46 [32m++[m[31m-[m
+ flutter/lib/pages/vehicles_page.dart       | 441 [32m+++++++++++++++++++++++++[m[31m----[m
+ flutter/pubspec.yaml                       |   2 [32m+[m[31m-[m
+ flutter/test/vehicles_page_test.dart       | 101 [32m++++++[m[31m-[m
+ ops/backup-mariadb.sh                      |  13 [32m+[m
+ packaging/android/build_installer.ps1      |  11 [32m+[m[31m-[m
+ packaging/ios/build_unsigned_app.sh        |   3 [32m+[m
+ packaging/linux/build_deb.sh               |   6 [32m+[m[31m-[m
+ packaging/macos/build_dmg.sh               |   5 [32m+[m[31m-[m
+ packaging/windows/MaterialKompass.iss      |   2 [32m+[m[31m-[m
+ packaging/windows/build_installer.ps1      |  10 [32m+[m[31m-[m
+ 42 files changed, 1975 insertions(+), 267 deletions(-)

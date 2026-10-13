@@ -1,6 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const { assessMaterialSafety } = require('./material-safety');
-const { currentTenant, rawCollection } = require('./tenancy');
+const { currentTenant, rawCollection, youthUnitsAreLinked } = require('./tenancy');
 
 const ACTIVE_RESERVATION_STATUSES = new Set(['Ausstehend', 'Freigegeben']);
 const ACTIVE_MAINTENANCE_STATUSES = new Set(['Geplant', 'In Arbeit']);
@@ -79,6 +79,8 @@ function registerCalendarRoutes({
     const tenant = currentTenant();
     return Boolean(vehicle && tenant && vehicle.organizationId === tenant.organizationId
       && (vehicle.unitId === tenant.unitId
+        || youthUnitsAreLinked(organizationUnits, tenant.organizationId,
+          tenant.unitId, vehicle.unitId)
         || vehicle.viewAllowedUnitIds?.includes(tenant.unitId)
         || vehicle.reservationAllowedUnitIds?.includes(tenant.unitId)));
   }
@@ -100,6 +102,8 @@ function registerCalendarRoutes({
     const tenant = currentTenant();
     if (!item || item.archived || !tenant || item.organizationId !== tenant.organizationId) return false;
     if (item.unitId === tenant.unitId) return true;
+    if (youthUnitsAreLinked(organizationUnits, tenant.organizationId,
+      tenant.unitId, item.unitId)) return true;
     const source = sourceUnitFor(item);
     if (!source?.inventoryVisibleToUnitIds?.includes(tenant.unitId)) return false;
     return !requireReservationGrant
@@ -168,6 +172,14 @@ function registerCalendarRoutes({
 
   function mayManageReservation(user, entry) {
     if (!hasPermission(user, 'reservations.manage')) return false;
+    const tenant = currentTenant();
+    if (!tenant) return false;
+    const youthLinkedReservation = (entry.items || []).some((item) =>
+      youthUnitsAreLinked(organizationUnits, tenant.organizationId,
+        entry.requesterUnitId || entry.unitId, item.materialUnitId));
+    if (youthLinkedReservation && !(entry.items || []).every((item) =>
+      item.materialOrganizationId === tenant.organizationId
+      && item.materialUnitId === tenant.unitId)) return false;
     if (managesAllReservations(user)) return true;
     const allowed = departmentNames(user);
     if (allowed.size === 0) return false;
@@ -212,7 +224,22 @@ function registerCalendarRoutes({
         quantity: 1,
       });
     }
-    return { items: [...combined.values()] };
+    const items = [...combined.values()];
+    const tenant = currentTenant();
+    const includesYouthLink = tenant && items.some((item) =>
+      youthUnitsAreLinked(organizationUnits, tenant.organizationId,
+        tenant.unitId, item.materialUnitId));
+    if (includesYouthLink && new Set(items.map((item) => item.materialUnitId)).size > 1) {
+      return { error: 'Eine Reservierung darf nur Inventar einer besitzenden Gliederung enthalten.' };
+    }
+    return { items };
+  }
+
+  function reservationVisible(entry) {
+    const tenant = currentTenant();
+    return Boolean(tenant && entry.organizationId === tenant.organizationId
+      && (entry.unitId === tenant.unitId
+        || (entry.items || []).some((item) => item.materialUnitId === tenant.unitId)));
   }
 
   function unavailableReason(item) {
@@ -334,7 +361,7 @@ function registerCalendarRoutes({
   function calendarEvents(from, to, user) {
     const events = [];
     const materialIndex = new Map(allMaterials().map((entry) => [entry.id, entry]));
-    reservations.forEach((entry) => {
+    allReservations().filter(reservationVisible).forEach((entry) => {
       if (overlaps(entry.startAt, entry.endAt, from, to)) {
         const reservationMaterials = entry.items.map((item) => materialIndex.get(item.materialId)).filter(Boolean);
         const canManage = mayManageReservation(user, entry);
@@ -607,8 +634,11 @@ function registerCalendarRoutes({
   });
 
   app.get('/api/reservations/:id', authMiddleware, requirePermission('calendar.read'), (req, res) => {
-    const entry = reservations.find((candidate) => candidate.id === req.params.id);
-    if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    const entry = allReservations().find((candidate) => candidate.id === req.params.id
+      && candidate.organizationId === req.tenant.organizationId);
+    if (!entry || !reservationVisible(entry)) {
+      return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    }
     if (entry.requesterUserId !== req.user.id && !mayManageReservation(req.user, entry)) {
       return res.status(403).json({ error: 'Reservierungsdetails dürfen nur durch die anfragende oder verwaltende Person eingesehen werden.' });
     }
@@ -620,31 +650,48 @@ function registerCalendarRoutes({
   });
 
   app.post('/api/reservations', authMiddleware, requirePermission('reservations.create'), (req, res) => {
-    if (reservations.length >= MAX_EVENTS) return res.status(507).json({ error: 'Die maximale Anzahl an Reservierungen ist erreicht.' });
+    if (allReservations().filter((entry) =>
+      entry.organizationId === req.tenant.organizationId).length >= MAX_EVENTS) {
+      return res.status(507).json({ error: 'Die maximale Anzahl an Reservierungen ist erreicht.' });
+    }
     const values = reservationValues(req.body);
     if (values.error) return res.status(400).json({ error: values.error });
     const conflict = validateReservationAvailability(values.items, new Date(values.startAt), new Date(values.endAt));
     if (conflict) return res.status(409).json({ error: conflict });
-    const approvalRequired = values.items.some(({ materialId }) => materialFor(materialId)?.reservationApprovalRequired === true);
+    const approvalRequired = values.items.some(({ materialId, materialUnitId }) =>
+      youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+        req.tenant.unitId, materialUnitId)
+      || materialFor(materialId)?.reservationApprovalRequired === true);
     const entry = {
       id: `reservation-${randomUUID()}`,
+      organizationId: req.tenant.organizationId,
+      unitId: req.tenant.unitId,
       ...values,
       requesterUserId: req.user.id,
       requesterName: req.user.name || req.user.username,
+      requesterUnitId: req.tenant.unitId,
       status: approvalRequired ? 'Ausstehend' : 'Freigegeben',
       approvalRequired,
       createdBy: req.user.username,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    reservations.push(entry);
-    logEvent('create', 'Reservation', { id: entry.id, inventoryNumbers: entry.items.map((item) => item.inventoryNumber) }, req.user.username);
+    allReservations().push(entry);
+    logEvent('create', 'Reservation', {
+      id: entry.id,
+      inventoryNumbers: entry.items.map((item) => item.inventoryNumber),
+      requesterUnitId: req.tenant.unitId,
+      ownerUnitId: entry.items[0]?.materialUnitId || req.tenant.unitId,
+    }, req.user.username);
     return res.status(201).json(publicReservation(entry));
   });
 
   app.put('/api/reservations/:id', authMiddleware, requirePermission('reservations.create'), (req, res) => {
-    const entry = reservations.find((candidate) => candidate.id === req.params.id);
-    if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    const entry = allReservations().find((candidate) => candidate.id === req.params.id
+      && candidate.organizationId === req.tenant.organizationId);
+    if (!entry || !reservationVisible(entry)) {
+      return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    }
     if (!mayChangeOwn(req.user, entry) && !mayManageReservation(req.user, entry)) {
       return res.status(403).json({ error: 'Diese Reservierung darf nicht bearbeitet werden.' });
     }
@@ -652,7 +699,10 @@ function registerCalendarRoutes({
     if (values.error) return res.status(400).json({ error: values.error });
     const conflict = validateReservationAvailability(values.items, new Date(values.startAt), new Date(values.endAt), entry.id);
     if (conflict) return res.status(409).json({ error: conflict });
-    const approvalRequired = values.items.some(({ materialId }) => materialFor(materialId)?.reservationApprovalRequired === true);
+    const approvalRequired = values.items.some(({ materialId, materialUnitId }) =>
+      youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+        req.tenant.unitId, materialUnitId)
+      || materialFor(materialId)?.reservationApprovalRequired === true);
     Object.assign(entry, values, {
       approvalRequired,
       status: approvalRequired ? 'Ausstehend' : 'Freigegeben',
@@ -665,7 +715,8 @@ function registerCalendarRoutes({
   });
 
   app.post('/api/reservations/:id/decision', authMiddleware, requirePermission('reservations.manage'), (req, res) => {
-    const entry = reservations.find((candidate) => candidate.id === req.params.id);
+    const entry = allReservations().find((candidate) => candidate.id === req.params.id
+      && candidate.organizationId === req.tenant.organizationId);
     if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
     if (!mayManageReservation(req.user, entry)) return res.status(403).json({ error: 'Diese Reservierung darf nicht freigegeben werden.' });
     if (entry.status !== 'Ausstehend') return res.status(409).json({ error: 'Nur ausstehende Reservierungen können entschieden werden.' });
@@ -684,8 +735,11 @@ function registerCalendarRoutes({
   });
 
   app.post('/api/reservations/:id/cancel', authMiddleware, requirePermission('reservations.create'), (req, res) => {
-    const entry = reservations.find((candidate) => candidate.id === req.params.id);
-    if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    const entry = allReservations().find((candidate) => candidate.id === req.params.id
+      && candidate.organizationId === req.tenant.organizationId);
+    if (!entry || !reservationVisible(entry)) {
+      return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
+    }
     if (!mayChangeOwn(req.user, entry) && !mayManageReservation(req.user, entry)) {
       return res.status(403).json({ error: 'Diese Reservierung darf nicht storniert werden.' });
     }
@@ -699,7 +753,8 @@ function registerCalendarRoutes({
   });
 
   app.post('/api/reservations/:id/issue', authMiddleware, requirePermission('reservations.manage'), (req, res) => {
-    const entry = reservations.find((candidate) => candidate.id === req.params.id);
+    const entry = allReservations().find((candidate) => candidate.id === req.params.id
+      && candidate.organizationId === req.tenant.organizationId);
     if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
     if (!mayManageReservation(req.user, entry)) return res.status(403).json({ error: 'Diese Reservierung darf nicht ausgegeben werden.' });
     if (entry.status !== 'Freigegeben') return res.status(409).json({ error: 'Nur freigegebene Reservierungen können ausgegeben werden.' });
@@ -740,7 +795,8 @@ function registerCalendarRoutes({
   });
 
   app.post('/api/reservations/:id/return', authMiddleware, requirePermission('reservations.manage'), (req, res) => {
-    const entry = reservations.find((candidate) => candidate.id === req.params.id);
+    const entry = allReservations().find((candidate) => candidate.id === req.params.id
+      && candidate.organizationId === req.tenant.organizationId);
     if (!entry) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
     if (!mayManageReservation(req.user, entry)) return res.status(403).json({ error: 'Diese Reservierung darf nicht zurückgenommen werden.' });
     if (entry.status !== 'Ausgegeben') return res.status(409).json({ error: 'Nur ausgegebene Reservierungen können zurückgenommen werden.' });

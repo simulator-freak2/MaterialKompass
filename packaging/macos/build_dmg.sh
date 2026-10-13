@@ -2,6 +2,8 @@
 set -euo pipefail
 
 API_BASE_URL="${1:-https://materialkompass.org}"
+VERSION="${2:-1.5.1}"
+BUILD_NUMBER="${3:-1}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 FLUTTER_ROOT="$REPOSITORY_ROOT/flutter"
@@ -20,7 +22,8 @@ fi
 
 cd "$FLUTTER_ROOT"
 flutter pub get
-flutter build macos --release --dart-define="API_BASE_URL=$API_BASE_URL"
+flutter build macos --release --build-name="$VERSION" --build-number="$BUILD_NUMBER" \
+  --dart-define="API_BASE_URL=$API_BASE_URL"
 
 if [[ "$SIGNED_BUILD" == true ]]; then
   codesign --force --deep --options runtime --timestamp \

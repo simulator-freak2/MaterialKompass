@@ -2069,6 +2069,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
           );
           final history = (detail['history'] as List? ?? const []).reversed;
           final archived = detail['archivedAt'] != null;
+          final readOnly = detail['readOnly'] == true;
           final compactDialog = MediaQuery.sizeOf(context).width < 1050;
           return AlertDialog(
             insetPadding: compactDialog
@@ -2116,12 +2117,13 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        OutlinedButton.icon(
-                          onPressed: printReport,
-                          icon: const Icon(Icons.print_outlined),
-                          label: const Text('Mängelmeldung drucken'),
-                        ),
-                        if (!archived) ...[
+                        if (!readOnly)
+                          OutlinedButton.icon(
+                            onPressed: printReport,
+                            icon: const Icon(Icons.print_outlined),
+                            label: const Text('Mängelmeldung drucken'),
+                          ),
+                        if (!archived && !readOnly) ...[
                           if (_can('defects.edit'))
                             OutlinedButton.icon(
                               onPressed: edit,
@@ -2190,7 +2192,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const Spacer(),
-                        if (!archived && _can('defects.edit'))
+                        if (!archived && !readOnly && _can('defects.edit'))
                           IconButton(
                             onPressed: addChecklist,
                             tooltip: 'Aufgabe hinzufügen',
@@ -2204,7 +2206,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                         contentPadding: EdgeInsets.zero,
                         value: item['done'] == true,
                         title: Text(item['label']?.toString() ?? ''),
-                        onChanged: archived || !_can('defects.edit')
+                        onChanged: archived || readOnly || !_can('defects.edit')
                             ? null
                             : (value) async {
                                 await _request(
@@ -2227,7 +2229,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const Spacer(),
-                        if (!archived && _can('defects.edit'))
+                        if (!archived && !readOnly && _can('defects.edit'))
                           IconButton(
                             onPressed: addRelatedAction,
                             tooltip:
@@ -2256,7 +2258,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const Spacer(),
-                        if (!archived && _can('defects.edit'))
+                        if (!archived && !readOnly && _can('defects.edit'))
                           IconButton(
                             onPressed: addFollowUp,
                             tooltip: 'Folgeaufgabe hinzufügen',
@@ -2281,7 +2283,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                               .where((v) => v.isNotEmpty)
                               .join(' · '),
                         ),
-                        onChanged: archived || !_can('defects.edit')
+                        onChanged: archived || readOnly || !_can('defects.edit')
                             ? null
                             : (value) async {
                                 await _request(
@@ -2332,7 +2334,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const Spacer(),
-                        if (!archived && _can('defects.edit'))
+                        if (!archived && !readOnly && _can('defects.edit'))
                           IconButton(
                             onPressed: addImage,
                             tooltip: 'JPEG/PNG hinzufügen',
@@ -2378,7 +2380,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const Spacer(),
-                        if (!archived && _can('defects.edit'))
+                        if (!archived && !readOnly && _can('defects.edit'))
                           IconButton(
                             onPressed: addComment,
                             icon: const Icon(Icons.add_comment),
@@ -2420,6 +2422,7 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
             ),
             actions: [
               if (!archived &&
+                  !readOnly &&
                   detail['status'] == 'Geprüft/Geschlossen' &&
                   _can('defects.archive'))
                 TextButton.icon(
@@ -2917,11 +2920,18 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
         ),
       );
     }
+    final readOnly = detail['readOnly'] == true;
     final canWriteEntity =
-        (detail['entityType'] == 'MaterialItem' && _can('inventory.write')) ||
-        (detail['entityType'] == 'ClothingItem' && _can('clothing.write'));
+        !readOnly &&
+            (detail['entityType'] == 'MaterialItem' &&
+                _can('inventory.write')) ||
+        (!readOnly &&
+            detail['entityType'] == 'ClothingItem' &&
+            _can('clothing.write'));
     final nextStatus = _nextStatus[detail['status']];
     final canTransition = nextStatus == null
+        ? false
+        : readOnly
         ? false
         : ['Behoben', 'Geprüft/Geschlossen'].contains(nextStatus)
         ? _can('defects.close')
@@ -2929,13 +2939,16 @@ class _DefectsPageState extends State<DefectsPage> with WidgetsBindingObserver {
     return _DefectDetailWorkspace(
       key: ValueKey(detail['id']),
       defect: detail,
-      canEdit: _can('defects.edit'),
-      canAssign: _can('defects.assign'),
+      canEdit: !readOnly && _can('defects.edit'),
+      canAssign: !readOnly && _can('defects.assign'),
       canTransition: canTransition,
-      canArchive: _can('defects.archive'),
-      canDispose: _can('defects.edit') && canWriteEntity,
+      canArchive: !readOnly && _can('defects.archive'),
+      canDispose: !readOnly && _can('defects.edit') && canWriteEntity,
       canProcure:
-          _can('defects.edit') && _can('procurement.request') && canWriteEntity,
+          !readOnly &&
+          _can('defects.edit') &&
+          _can('procurement.request') &&
+          canWriteEntity,
       onSave: _saveSelected,
       onAssign: () => _assignSelected(),
       onAssignToMe: () => _assignSelected(assignToMe: true),
@@ -3216,13 +3229,14 @@ class _DefectDetailWorkspaceState extends State<_DefectDetailWorkspace> {
                         }
                       },
                       itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'print',
-                          child: ListTile(
-                            leading: Icon(Icons.print_outlined),
-                            title: Text('Mängelmeldung drucken'),
+                        if (defect['readOnly'] != true)
+                          const PopupMenuItem(
+                            value: 'print',
+                            child: ListTile(
+                              leading: Icon(Icons.print_outlined),
+                              title: Text('Mängelmeldung drucken'),
+                            ),
                           ),
-                        ),
                         if (!archived && widget.canEdit)
                           const PopupMenuItem(
                             value: 'related',

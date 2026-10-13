@@ -31,6 +31,7 @@ Anfragen im HTTP-Header `Authorization: Bearer …`.
 | Kleiderkammer | `flutter/lib/pages/wardrobe_page.dart`, Routen in `backend/src/app.js` |
 | Mängel | `flutter/lib/pages/defects_page.dart`, `backend/src/defects.js` |
 | Nutzer, Rollen, Anmeldung | `backend/src/user-management.js`, Authentifizierung in `backend/src/app.js` |
+| Jugend-/Stammverknüpfung und Mandantengrenzen | `backend/src/tenancy.js`; gezielte Lese- und Reservierungsregeln in `backend/src/app.js`, `backend/src/calendar.js`, `backend/src/vehicles.js` und `backend/src/defects.js` |
 | Konto-2-FA und Login-Challenges | `backend/src/user-mfa.js`, `backend/src/mfa-security.js`, `backend/src/totp.js` |
 | Passkey-Zeremonien und Credential-Index | `backend/src/passkeys.js`, `flutter/lib/services/passkey_service.dart` |
 | Dienstgeräte und Gerätesitzungen | `backend/src/service-devices.js`, `flutter/lib/pages/service_device_*.dart` |

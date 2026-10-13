@@ -54,6 +54,9 @@ class _LocationsPageState extends State<LocationsPage> {
   String _value(Map<String, dynamic> entry, String key) =>
       entry[key]?.toString().trim() ?? '';
 
+  bool _canEdit(Map<String, dynamic> entry) =>
+      _canWrite && entry['readOnly'] != true;
+
   List<Map<String, dynamic>> _mapList(Object? value) => (value as List? ?? [])
       .map((entry) => Map<String, dynamic>.from(entry as Map))
       .toList();
@@ -428,7 +431,7 @@ class _LocationsPageState extends State<LocationsPage> {
       leading: const Icon(Icons.inventory_2_outlined, size: 20),
       title: Text(_value(position, 'name')),
       subtitle: Text(_value(position, 'fullCode')),
-      trailing: _canWrite
+      trailing: _canEdit(position)
           ? _actions(
               tooltip: 'Lagerplatzaktionen',
               items: [
@@ -463,7 +466,7 @@ class _LocationsPageState extends State<LocationsPage> {
         leading: const Icon(Icons.layers_outlined),
         title: Text(_value(level, 'name')),
         subtitle: Text('${_value(level, 'code')} · ${positions.length} Plätze'),
-        trailing: _canWrite
+        trailing: _canEdit(level)
             ? _actions(
                 tooltip: 'Ebenenaktionen',
                 items: [
@@ -495,6 +498,7 @@ class _LocationsPageState extends State<LocationsPage> {
                 _emptyBranch(
                   'Keine Lagerplätze angelegt.',
                   () => _editPosition(id),
+                  canAdd: _canEdit(level),
                 ),
               ]
             : positions.map(_positionTile).toList(),
@@ -514,7 +518,7 @@ class _LocationsPageState extends State<LocationsPage> {
         leading: const Icon(Icons.shelves),
         title: Text(_value(shelf, 'name')),
         subtitle: Text('${_value(shelf, 'code')} · ${levels.length} Ebenen'),
-        trailing: _canWrite
+        trailing: _canEdit(shelf)
             ? _actions(
                 tooltip: 'Regalaktionen',
                 items: [
@@ -538,18 +542,28 @@ class _LocationsPageState extends State<LocationsPage> {
               )
             : null,
         children: levels.isEmpty
-            ? [_emptyBranch('Keine Ebenen angelegt.', () => _editLevel(id))]
+            ? [
+                _emptyBranch(
+                  'Keine Ebenen angelegt.',
+                  () => _editLevel(id),
+                  canAdd: _canEdit(shelf),
+                ),
+              ]
             : levels.map(_levelTile).toList(),
       ),
     );
   }
 
-  Widget _emptyBranch(String message, VoidCallback onAdd) => Padding(
+  Widget _emptyBranch(
+    String message,
+    VoidCallback onAdd, {
+    bool? canAdd,
+  }) => Padding(
     padding: const EdgeInsets.fromLTRB(56, 12, 16, 16),
     child: Row(
       children: [
         Expanded(child: Text(message)),
-        if (_canWrite)
+        if (canAdd ?? _canWrite)
           TextButton.icon(
             onPressed: onAdd,
             icon: const Icon(Icons.add),
@@ -589,9 +603,14 @@ class _LocationsPageState extends State<LocationsPage> {
             Text(
               '${_value(building, 'code')} · ${shelves.length} Regale · $positionCount Lagerplätze',
             ),
+            if (building['readOnly'] == true)
+              Text(
+                'Nur Suche · ${_value(building, 'sourceUnitName')}',
+                style: TextStyle(color: Colors.blueGrey.shade700),
+              ),
           ],
         ),
-        trailing: _canWrite
+        trailing: _canEdit(building)
             ? _actions(
                 tooltip: 'Gebäudeaktionen',
                 items: [
@@ -616,7 +635,7 @@ class _LocationsPageState extends State<LocationsPage> {
             : null,
         children: [
           const Divider(height: 1),
-          if (address.isEmpty && _canWrite)
+          if (address.isEmpty && _canEdit(building))
             ListTile(
               leading: Icon(
                 Icons.warning_amber_outlined,
@@ -632,7 +651,11 @@ class _LocationsPageState extends State<LocationsPage> {
               ),
             ),
           if (shelves.isEmpty)
-            _emptyBranch('Keine Regale angelegt.', () => _editShelf(id))
+            _emptyBranch(
+              'Keine Regale angelegt.',
+              () => _editShelf(id),
+              canAdd: _canEdit(building),
+            )
           else
             ...shelves.map(_shelfTile),
         ],

@@ -102,6 +102,70 @@ function tenantData() {
   return data;
 }
 
+function youthTenantData() {
+  const data = tenantData();
+  data.organizationUnits.push({
+    id: 'unit-a-youth', organizationId: 'org-a', parentId: 'unit-a',
+    baseUnitId: 'unit-a', unitKind: 'youth', name: 'Jugend A',
+    type: 'Jugendorganisation', edvNumber: '10000110', status: 'active',
+  });
+  const chair = {
+    ...structuredClone(data.users.find((entry) => entry.id === 'user-materialwart')),
+    id: 'user-youth-chair', name: 'Jugend Vorsitz', username: 'jugendvorsitz',
+    email: 'jugendvorsitz@example.test', roles: ['Vorsitz'], permissions: [],
+  };
+  data.users.push(chair);
+  data.memberships.push({
+    id: 'membership-youth-chair', userId: chair.id, organizationId: 'org-a',
+    status: 'active', defaultUnitId: 'unit-a-youth',
+    scopes: [
+      {
+        unitId: 'unit-a-youth', includeDescendants: false,
+        roles: ['Vorsitz'], departmentIds: [],
+      },
+      {
+        unitId: 'unit-a', includeDescendants: false,
+        roles: ['Nutzer'], departmentIds: [],
+      },
+    ],
+  });
+  data.locations.push({
+    id: 'loc-a-youth', name: 'Jugendlager', code: 'JUG', type: 'Lager',
+    street: 'Jugendweg', houseNumber: '1', postalCode: '12345', city: 'Musterstadt',
+    country: 'Deutschland', organizationId: 'org-a', unitId: 'unit-a-youth',
+  });
+  data.materials.push({
+    ...structuredClone(data.materials[0]), id: 'material-a-youth',
+    inventoryNumber: 'A-YOUTH-001', name: 'Jugend-Zelt', locationId: 'loc-a-youth',
+    stockStructureId: null, organizationId: 'org-a', unitId: 'unit-a-youth',
+    safetyCritical: false, nextInspectionDate: null, nextMaintenanceDate: null,
+  });
+  data.materials.push({
+    ...structuredClone(data.materials[0]), id: 'material-a-base-shared',
+    inventoryNumber: 'A-BASE-001', name: 'Stamm-Zelt', locationId: 'loc-1',
+    stockStructureId: null, organizationId: 'org-a', unitId: 'unit-a',
+    safetyCritical: false, nextInspectionDate: null, nextMaintenanceDate: null,
+    reservationApprovalRequired: false, reservationAllowedUnitIds: [],
+  });
+  data.vehicles.push({
+    id: 'vehicle-a-base', organizationId: 'org-a', unitId: 'unit-a',
+    registrationNumber: 'A JUG 1', vin: 'YOUTH-VEHICLE-1',
+    radioCallName: 'Stammfahrzeug', vehicleKind: 'Kraftfahrzeug',
+    usage: 'sonstige Verwendung', type: 'Vereinsfahrzeug', status: 'Verfügbar',
+    primaryResponseVehicle: false, viewAllowedUnitIds: [],
+    reservationAllowedUnitIds: [], createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  data.vehicles.push({
+    id: 'vehicle-a-youth', organizationId: 'org-a', unitId: 'unit-a-youth',
+    registrationNumber: 'A JUG 2', vin: 'YOUTH-VEHICLE-2',
+    radioCallName: 'Jugendfahrzeug', vehicleKind: 'Kraftfahrzeug',
+    usage: 'sonstige Verwendung', type: 'Vereinsfahrzeug', status: 'Verfügbar',
+    primaryResponseVehicle: false, viewAllowedUnitIds: [],
+    reservationAllowedUnitIds: [], createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  return data;
+}
+
 async function start(data = tenantData()) {
   const app = createApp({ data, skipEmailVerification: true });
   const server = await new Promise((resolve) => {
@@ -280,6 +344,186 @@ test('only admins with organization permission create organizations and suborgan
     assert.equal(unit.response.status, 403);
   } finally {
     await new Promise((resolve) => missingPermission.server.close(resolve));
+  }
+});
+
+test('youth organizations are one-to-one linked units without child units', async () => {
+  const { server, baseUrl } = await start();
+  try {
+    const token = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const youth = await request(baseUrl, '/api/organization-units', {
+      token, method: 'POST', body: {
+        name: 'Jugend A', type: 'Wird ignoriert', unitKind: 'youth',
+        parentId: 'unit-a', edvNumber: '10000120',
+      },
+    });
+    assert.equal(youth.response.status, 201);
+    assert.equal(youth.data.unitKind, 'youth');
+    assert.equal(youth.data.baseUnitId, 'unit-a');
+    assert.equal(youth.data.type, 'Jugendorganisation');
+
+    const duplicate = await request(baseUrl, '/api/organization-units', {
+      token, method: 'POST', body: {
+        name: 'Zweite Jugend', unitKind: 'youth',
+        parentId: 'unit-a', edvNumber: '10000121',
+      },
+    });
+    assert.equal(duplicate.response.status, 409);
+
+    const child = await request(baseUrl, '/api/organization-units', {
+      token, method: 'POST', body: {
+        name: 'Unzulässige Untergruppe', type: 'Gruppe',
+        parentId: youth.data.id, edvNumber: '10000122',
+      },
+    });
+    assert.equal(child.response.status, 409);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('youth chair derives the restricted Jugendvorsitzender role in the base unit', async () => {
+  const { server, baseUrl } = await start(youthTenantData());
+  try {
+    const youthToken = await login(baseUrl, 'jugendvorsitz', 'Material123!');
+    const units = await request(baseUrl, '/api/organization-units', { token: youthToken });
+    assert.deepEqual(new Set(units.data.map((entry) => entry.id)),
+      new Set(['unit-a', 'unit-a-youth']));
+
+    const baseContext = await request(baseUrl, '/api/auth/context', {
+      token: youthToken, method: 'POST',
+      body: { organizationId: 'org-a', unitId: 'unit-a' },
+    });
+    assert.equal(baseContext.response.status, 200);
+    assert.deepEqual(new Set(baseContext.data.user.roles),
+      new Set(['Nutzer', 'Jugendvorsitzender']));
+    assert.ok(baseContext.data.user.permissions.includes('reservations.create'));
+    assert.ok(baseContext.data.user.permissions.includes('defects.report'));
+    assert.ok(!baseContext.data.user.permissions.includes('inventory.write'));
+    assert.ok(!baseContext.data.user.permissions.includes('stocktakes.create'));
+
+    const adminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const invalidAssignment = await request(baseUrl, '/api/users/user-youth-chair', {
+      token: adminToken, method: 'PUT', body: {
+        name: 'Jugend Vorsitz', username: 'jugendvorsitz',
+        email: 'jugendvorsitz@example.test', active: true,
+        defaultUnitId: 'unit-a-youth', scopes: [{
+          unitId: 'unit-a-youth', includeDescendants: false,
+          roles: ['Jugendvorsitzender'], departmentIds: [],
+        }],
+      },
+    });
+    assert.equal(invalidAssignment.response.status, 400);
+    const reservedRoleName = await request(baseUrl, '/api/roles', {
+      token: adminToken, method: 'POST', body: {
+        name: 'Jugendvorsitzender', permissions: ['inventory.write'],
+      },
+    });
+    assert.equal(reservedRoleName.response.status, 409);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('youth and base units share only search, reservation and defect reporting capabilities', async () => {
+  const { server, baseUrl } = await start(youthTenantData());
+  try {
+    const youthToken = await login(baseUrl, 'jugendvorsitz', 'Material123!');
+    const inventory = await request(baseUrl, '/api/material', { token: youthToken });
+    assert.ok(inventory.data.some((entry) => entry.id === 'material-a-base-shared'
+      && entry.readOnly === true));
+    assert.ok(!inventory.data.some((entry) => entry.id === 'material-a-child'));
+
+    const forbiddenMaterialWrite = await request(baseUrl, '/api/material/material-a-base-shared', {
+      token: youthToken, method: 'PUT', body: { name: 'Manipuliert' },
+    });
+    assert.equal(forbiddenMaterialWrite.response.status, 404);
+
+    const locations = await request(baseUrl, '/api/locations', { token: youthToken });
+    assert.ok(locations.data.some((entry) => entry.id === 'loc-1' && entry.readOnly === true));
+    const forbiddenLocationWrite = await request(baseUrl, '/api/locations/loc-1', {
+      token: youthToken, method: 'PUT', body: { name: 'Manipuliert' },
+    });
+    assert.equal(forbiddenLocationWrite.response.status, 404);
+
+    const reservableMaterials = await request(baseUrl, '/api/calendar/materials', {
+      token: youthToken,
+    });
+    assert.ok(reservableMaterials.data.some((entry) => entry.id === 'material-a-base-shared'));
+    const reservation = await request(baseUrl, '/api/reservations', {
+      token: youthToken, method: 'POST', body: {
+        purpose: 'Jugendübung', startAt: '2028-06-01T08:00:00.000Z',
+        endAt: '2028-06-01T12:00:00.000Z',
+        items: [{ materialId: 'material-a-base-shared', quantity: 1 }],
+      },
+    });
+    assert.equal(reservation.response.status, 201);
+    assert.equal(reservation.data.status, 'Ausstehend');
+
+    const vehicles = await request(baseUrl, '/api/vehicles', { token: youthToken });
+    assert.ok(vehicles.data.some((entry) => entry.id === 'vehicle-a-base'));
+    const vehicleReservation = await request(baseUrl, '/api/vehicle-reservations', {
+      token: youthToken, method: 'POST', body: {
+        vehicleId: 'vehicle-a-base', title: 'Jugendfahrt', purpose: 'Übung',
+        destination: 'Musterstadt', contact: 'Jugend Vorsitz',
+        startAt: '2028-06-02T08:00:00.000Z', endAt: '2028-06-02T12:00:00.000Z',
+      },
+    });
+    assert.equal(vehicleReservation.response.status, 201);
+    assert.equal(vehicleReservation.data.status, 'Ausstehend');
+
+    const defect = await request(baseUrl, '/api/defects', {
+      token: youthToken, method: 'POST', body: {
+        entityType: 'MaterialItem', entityId: 'material-a-base-shared',
+        title: 'Beschädigtes Zelt', description: 'Eine Stange ist gebrochen.',
+        priority: 'Normal',
+      },
+    });
+    assert.equal(defect.response.status, 201);
+    assert.equal(defect.data.unitId, 'unit-a');
+    const ownDefects = await request(baseUrl, '/api/defects', { token: youthToken });
+    const ownDefect = ownDefects.data.find((entry) => entry.id === defect.data.id);
+    assert.equal(ownDefect.readOnly, true);
+    assert.ok(!Object.hasOwn(ownDefect, 'history'));
+
+    const siblingDefect = await request(baseUrl, '/api/defects', {
+      token: youthToken, method: 'POST', body: {
+        entityType: 'MaterialItem', entityId: 'material-a-child',
+        title: 'Nicht erlaubt', description: 'Nicht verknüpfte Einheit.',
+      },
+    });
+    assert.equal(siblingDefect.response.status, 400);
+
+    const baseToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const baseInventory = await request(baseUrl, '/api/material', { token: baseToken });
+    assert.ok(baseInventory.data.some((entry) => entry.id === 'material-a-youth'
+      && entry.readOnly === true));
+    const baseLocations = await request(baseUrl, '/api/locations', { token: baseToken });
+    assert.ok(baseLocations.data.some((entry) => entry.id === 'loc-a-youth'
+      && entry.readOnly === true));
+    const baseVehicles = await request(baseUrl, '/api/vehicles', { token: baseToken });
+    assert.ok(baseVehicles.data.some((entry) => entry.id === 'vehicle-a-youth'));
+    const reverseDefect = await request(baseUrl, '/api/defects', {
+      token: baseToken, method: 'POST', body: {
+        entityType: 'Vehicle', entityId: 'vehicle-a-youth',
+        title: 'Reifen beschädigt', description: 'Der Reifen verliert Luft.',
+        priority: 'Hoch',
+      },
+    });
+    assert.equal(reverseDefect.response.status, 201);
+    assert.equal(reverseDefect.data.unitId, 'unit-a-youth');
+    assert.equal(reverseDefect.data.readOnly, true);
+    const forbiddenDefectWrite = await request(
+      baseUrl,
+      `/api/defects/${reverseDefect.data.id}`,
+      {
+        token: baseToken, method: 'PUT',
+        body: { title: 'Darf nicht geändert werden' },
+      },
+    );
+    assert.equal(forbiddenDefectWrite.response.status, 403);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

@@ -1,6 +1,6 @@
 # Bedrohungsmodell
 
-Stand: 11. September 2026
+Stand: 11. Oktober 2026
 
 ## Schutzwerte und Vertrauensgrenzen
 
@@ -27,6 +27,7 @@ Schutz der CI-Signierschlüssel liegen in der Verantwortung des Betreibers.
 | --- | --- | --- |
 | Kontoübernahme | bcrypt, Rate-Limits, Sperrlogik, MFA, Passkeys, kurze Challenges, Session-Versionen | Phishing und kompromittierte Endgeräte |
 | Rechteausweitung/IDOR | Authentifizierung plus Routenberechtigung, Bereichsfilter, Negativtests | Fehler in neuen Fachrouten |
+| Unbeabsichtigter Zugriff zwischen Jugend- und Stammgliederung | eindeutige 1:1-Verknüpfung innerhalb derselben Organisation; nur gezielte Such-, Reservierungs- und Melderouten; Fremddaten schreibgeschützt; besitzende Gliederung gibt Reservierungen frei; interne Mängeldaten werden für Meldende redigiert; Negativtests gegen Geschwister und Schreibzugriffe | fehlerhafte administrative Verknüpfung |
 | Datenmanipulation/Doppelbuchung | serverseitige Validierung, Transaktionen, persist-before-response, idempotente Offline-ID | fachlich falsche, aber formal gültige Eingabe |
 | Schadanhänge/ZIP-Bomben/Formeln | Größen-, Typ-, Magic-, Archiv- und Komplexitätsgrenzen; Formelneutralisierung | unbekannte Parserlücken |
 | Secret-Abfluss | keine `.env`/Schlüssel in Git, lokaler Secret-Scan, GitHub-Secrets, getrennte Schlüssel | Host-/CI-Administratorzugriff |

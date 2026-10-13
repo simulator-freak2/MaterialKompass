@@ -1733,6 +1733,36 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',
+    title: 'Jugendorganisation mit Stammgliederung verknüpfen',
+    summary:
+        'Eine Jugendorganisation anlegen und die gegenseitigen, begrenzten Zugriffe sicher verwenden.',
+    icon: Icons.diversity_3_outlined,
+    readingMinutes: 5,
+    audience: 'Für Administration, Jugend und Stammgliederung',
+    prerequisite:
+        'Zum Anlegen brauchst du Organisationsverwaltungsrechte. Eine Stammgliederung darf noch keine Jugendorganisation besitzen.',
+    steps: [
+      'Öffne „Organisationen & Einheiten“ und wähle „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung.',
+      'Ordne normale Jugendmitglieder mit der Rolle „Jugendmitglied“ zu. Vergib an die vorsitzende Person in der Jugendorganisation die Rolle „Vorsitz“.',
+      'Die Rolle „Jugendvorsitzender“ wird in der Jugendorganisation nicht vergeben: Der dortige Vorsitz erhält sie beim Wechsel in die Stammgliederung automatisch.',
+      'Jugend- und Stammgliederung können gegenseitig Lagerorte durchsuchen, Inventar und Fahrzeuge reservieren sowie Mängel melden. Fremde Stammdaten bleiben schreibgeschützt.',
+      'Reserviere Inventar über den Kalender und Fahrzeuge über die Fahrzeugansicht. Verknüpfte Reservierungen sind immer durch die besitzende Gliederung freizugeben.',
+      'Melde Schäden direkt am sichtbaren Inventar oder Fahrzeug. Die Meldung gehört der besitzenden Gliederung; du kannst den Status deiner eigenen Meldung schreibgeschützt verfolgen.',
+    ],
+    tip:
+        'Eigene Ressourcen werden weiterhin nach den normalen Rollenrechten verwaltet. Die Jugendverknüpfung erteilt niemals Rechte zum Bearbeiten, Ausgeben, Umlagern, Warten, Beladen oder Löschen fremder Ressourcen.',
+    keywords: [
+      'jugendorganisation',
+      'stammgliederung',
+      'jugendmitglied',
+      'jugendvorsitzender',
+      'vorsitz',
+      'verknüpfung',
+      'reservierung',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Struktur & Lagerorte',
     title: 'Gebäude und Lagerstruktur anlegen',
     summary: 'Gebäude, Regale, Ebenen und Lagerplätze eindeutig strukturieren.',
     icon: Icons.warehouse_outlined,
@@ -2073,6 +2103,7 @@ const _articles = [
     steps: [
       'Öffne die Nutzerverwaltung und lege das Konto mit Name, Nutzername und eindeutiger E-Mail-Adresse an.',
       'Wähle nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden.',
+      'In Jugendorganisationen steht „Jugendmitglied“ für den eingeschränkten Zugriff bereit. Weise dem Jugendvorsitz dort „Vorsitz“ zu; „Jugendvorsitzender“ entsteht in der Stammgliederung automatisch und darf in der Jugend nicht separat vergeben werden.',
       'Ordne bei Bedarf geleitete Fachbereiche zu und prüfe die daraus entstehenden Bereichs- und Schreibrechte.',
       'Lege fest, ob eine starke Anmeldung per Passkey oder 2-FA verpflichtend ist, und aktiviere das Konto.',
       'Informiere die Person über den vorgesehenen Anmeldeweg. Persönliche QR-Codes verwaltet sie unter „Mein Account“ oder ein Admin in der Nutzerverwaltung.',

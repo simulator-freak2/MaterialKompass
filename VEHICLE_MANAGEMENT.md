@@ -2,9 +2,13 @@
 
 ## Fachlicher Umfang
 
-Die Fahrzeugverwaltung unterstützt Kraftfahrzeuge, Anhänger, Boote sowie sonstige Einsatz- und Vereinsfahrzeuge. Ein Fahrzeug benötigt nur Kennzeichen und Fahrgestellnummer. Funkrufname, Stellplatz, Baujahr, Fahrzeugart, Status und weitere beschreibende Angaben bleiben optional.
+Die Fahrzeugverwaltung unterscheidet die feste Fahrzeugart (`Kraftfahrzeug`, `Boot`, `Anhänger` oder `Sonstige Fahrzeugart`), die Verwendung und den davon abhängigen Fahrzeugtyp. Als Verwendungen stehen zunächst `Einsatzfahrt` und `sonstige Verwendung` bereit. Organisationsverwalter können weitere Verwendungen ergänzen; Fahrzeugwarte pflegen für jede Verwendung die auswählbaren Fahrzeugtypen.
+
+Kennzeichen und Fahrgestellnummer sind nur bei Kraftfahrzeugen und Anhängern Pflichtfelder. Bei Booten und sonstigen Fahrzeugarten können beide Angaben leer bleiben. Funkrufname, Stellplatz, Baujahr, Status und weitere beschreibende Angaben bleiben optional.
 
 Die besitzende Gliederung verwaltet das Fahrzeug und legt getrennt fest, welche Gliederungen es sehen beziehungsweise reservieren dürfen. Die Freigaben ersetzen keine Rollenrechte: Ein Benutzer benötigt zusätzlich immer die passende Berechtigung.
+
+Eine ausdrücklich verknüpfte Jugendorganisation und ihre Stammgliederung dürfen ihre Fahrzeuge automatisch gegenseitig sehen und reservieren. Diese Sonderfreigabe erlaubt weder Stammdatenänderungen noch Wartung, Beladung, Ausgabe, Rücknahme oder Freigabeverwaltung. Die besitzende Gliederung entscheidet weiterhin über die Reservierung; Sicherheits- und gegebenenfalls TLE-Freigaben bleiben unverändert.
 
 ## Rollen und Berechtigungen
 
@@ -50,7 +54,7 @@ Außerdienstgestellte Fahrzeuge sind standardmäßig archiviert und bleiben nach
 - `/api/vehicles`: Fahrzeugliste und Stammdaten
 - `/api/vehicles/options`: Auswahldaten für Formulare
 - `/api/vehicles/sharing-candidates`: freigabefähige Gliederungen
-- `/api/vehicle-settings`: organisationsweite Fahrzeugoptionen
+- `/api/vehicle-settings`: organisationsweite Verwendungen und verwendungsabhängige Fahrzeugtypen
 - `/api/vehicles/:id/sharing`: Sicht- und Reservierungsfreigaben
 - `/api/vehicles/:id/reservations`: Reservierungen und Entscheidungen
 - `/api/vehicles/:id/maintenance`: Wartungsplanung und Abschluss

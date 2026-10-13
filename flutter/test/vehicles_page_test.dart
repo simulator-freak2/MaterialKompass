@@ -39,6 +39,8 @@ void main() {
           'registrationNumber': 'DLRG 1',
           'vin': 'WVWZZZ1JZXW000001',
           'radioCallName': 'Pelikan 1/11-1',
+          'vehicleKind': 'Kraftfahrzeug',
+          'usage': 'Einsatzfahrt',
           'type': 'Einsatzfahrzeug',
           'manufacturer': 'Volkswagen',
           'model': 'Transporter',
@@ -53,11 +55,29 @@ void main() {
     if (path == '/api/vehicles/options') {
       return {
         'types': ['Kraftfahrzeug', 'Einsatzfahrzeug'],
+        'vehicleKinds': [
+          'Kraftfahrzeug',
+          'Boot',
+          'Anhänger',
+          'Sonstige Fahrzeugart',
+        ],
+        'usages': ['Einsatzfahrt', 'sonstige Verwendung'],
+        'vehicleTypesByUsage': {
+          'Einsatzfahrt': ['Einsatzfahrzeug', 'Kommandowagen'],
+          'sonstige Verwendung': ['Vereinsfahrzeug'],
+        },
         'statuses': ['Verfügbar', 'In Wartung', 'Defekt', 'Außer Dienst'],
         'parkingLocations': [
           {'id': 'loc-1', 'name': 'Fahrzeughalle', 'path': 'Fahrzeughalle'},
         ],
-        'organizationSettings': {'primaryVehicleApprovalRequired': true},
+        'organizationSettings': {
+          'primaryVehicleApprovalRequired': true,
+          'usages': ['Einsatzfahrt', 'sonstige Verwendung'],
+          'vehicleTypesByUsage': {
+            'Einsatzfahrt': ['Einsatzfahrzeug', 'Kommandowagen'],
+            'sonstige Verwendung': ['Vereinsfahrzeug'],
+          },
+        },
       };
     }
     if (path == '/api/vehicles/vehicle-1') {
@@ -67,6 +87,8 @@ void main() {
         'registrationNumber': 'DLRG 1',
         'vin': 'WVWZZZ1JZXW000001',
         'radioCallName': 'Pelikan 1/11-1',
+        'vehicleKind': 'Kraftfahrzeug',
+        'usage': 'Einsatzfahrt',
         'type': 'Einsatzfahrzeug',
         'manufacturer': 'Volkswagen',
         'model': 'Transporter',
@@ -258,12 +280,27 @@ void main() {
       (call) => call['path'] == '/api/vehicles' && call['method'] == 'POST',
     );
     expect((create['body'] as Map)['registrationNumber'], 'DLRG 2');
+    expect((create['body'] as Map)['vehicleKind'], 'Kraftfahrzeug');
+    expect((create['body'] as Map)['usage'], 'Einsatzfahrt');
+    expect((create['body'] as Map)['type'], 'Einsatzfahrzeug');
     expect((create['body'] as Map)['primaryResponseVehicle'], isTrue);
 
     await tester.tap(find.byTooltip('Fahrzeug-Einstellungen'));
     await tester.pumpAndSettle();
     expect(find.text('TLE-Zweitfreigabe'), findsOneWidget);
     await tester.tap(find.text('TLE-Zweitfreigabe'));
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Verwendung ergänzen'),
+      'Ausbildung',
+    );
+    await tester.tap(find.byTooltip('Verwendung hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Fahrzeugtyp ergänzen'),
+      'Schulungsboot',
+    );
+    await tester.tap(find.byTooltip('Fahrzeugtyp hinzufügen'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Speichern'));
     await tester.pumpAndSettle();
 
@@ -275,7 +312,69 @@ void main() {
       (settings['body'] as Map)['primaryVehicleApprovalRequired'],
       isFalse,
     );
+    expect((settings['body'] as Map)['usages'], contains('Ausbildung'));
+    expect(
+      ((settings['body'] as Map)['vehicleTypesByUsage'] as Map)['Ausbildung'],
+      containsAll(['Sonstiger Fahrzeugtyp', 'Schulungsboot']),
+    );
   });
+
+  testWidgets(
+    'vehicle kind controls identifier requirements and usage controls type',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final calls = <Map<String, dynamic>>[];
+
+      Future<dynamic> recordingRequest(
+        String path, {
+        String method = 'GET',
+        Object? body,
+      }) async {
+        calls.add({'path': path, 'method': method, 'body': body});
+        return request(path, method: method, body: body);
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VehiclesPage(token: 'test', request: recordingRequest),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Fahrzeug'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Fahrzeugart'), findsOneWidget);
+      expect(find.text('Verwendung'), findsOneWidget);
+      expect(find.text('Fahrzeugtyp'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('vehicle-kind')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Boot').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('vehicle-usage')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('sonstige Verwendung').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Vereinsfahrzeug'), findsOneWidget);
+
+      await tester.tap(find.text('Speichern'));
+      await tester.pumpAndSettle();
+      expect(find.text('Pflichtfeld'), findsNothing);
+
+      final create = calls.lastWhere(
+        (call) => call['path'] == '/api/vehicles' && call['method'] == 'POST',
+      );
+      expect((create['body'] as Map)['vehicleKind'], 'Boot');
+      expect((create['body'] as Map)['usage'], 'sonstige Verwendung');
+      expect((create['body'] as Map)['type'], 'Vereinsfahrzeug');
+      expect((create['body'] as Map)['registrationNumber'], '');
+      expect((create['body'] as Map)['vin'], '');
+    },
+  );
 
   testWidgets('opens every vehicle workflow dialog', (tester) async {
     tester.view.physicalSize = const Size(1200, 1000);

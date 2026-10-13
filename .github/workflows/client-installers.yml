@@ -6,7 +6,7 @@ on:
       version:
         description: Client-Version ohne v
         required: true
-        default: 1.5.0
+        default: 1.5.2
       api_base_url:
         description: Produktive HTTPS-API-Adresse
         required: true
@@ -48,6 +48,7 @@ jobs:
           $parameters = @{
             ApiBaseUrl = '${{ inputs.api_base_url }}'
             Version = '${{ inputs.version }}'
+            BuildNumber = ${{ github.run_number }}
           }
           if (-not $env:WINDOWS_CERT_THUMBPRINT) {
             $parameters.AllowUnsigned = $true
@@ -69,7 +70,7 @@ jobs:
       - name: Linux-Buildabhängigkeiten installieren
         run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev
       - name: DEB-Installer bauen
-        run: bash packaging/linux/build_deb.sh '${{ inputs.api_base_url }}' '${{ inputs.version }}'
+        run: bash packaging/linux/build_deb.sh '${{ inputs.api_base_url }}' '${{ inputs.version }}' '${{ github.run_number }}'
       - uses: actions/upload-artifact@v4
         with:
           name: MaterialKompass-Linux
@@ -108,7 +109,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: bash packaging/macos/build_dmg.sh '${{ inputs.api_base_url }}'
+        run: bash packaging/macos/build_dmg.sh '${{ inputs.api_base_url }}' '${{ inputs.version }}' '${{ github.run_number }}'
       - uses: actions/upload-artifact@v4
         with:
           name: MaterialKompass-macOS
@@ -123,7 +124,7 @@ jobs:
           channel: stable
           cache: true
       - name: iOS-Prüf-Build ohne Signatur bauen
-        run: bash packaging/ios/build_unsigned_app.sh '${{ inputs.api_base_url }}'
+        run: bash packaging/ios/build_unsigned_app.sh '${{ inputs.api_base_url }}' '${{ inputs.version }}' '${{ github.run_number }}'
       - uses: actions/upload-artifact@v4
         with:
           name: MaterialKompass-iOS-unsigned
@@ -141,7 +142,7 @@ jobs:
         working-directory: flutter
         run: |
           flutter pub get
-          flutter build web --release --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+          flutter build web --release --build-name='${{ inputs.version }}' --build-number='${{ github.run_number }}' --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
       - name: Web-Artefakt verpacken
         run: |
           mkdir -p releases
@@ -175,7 +176,7 @@ jobs:
         working-directory: flutter
         run: |
           flutter pub get
-          flutter build apk --release --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+          flutter build apk --release --build-name='${{ inputs.version }}' --build-number='${{ github.run_number }}' --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
           cp build/app/outputs/flutter-apk/app-release.apk ../releases/MaterialKompass-Android.apk
       - uses: actions/upload-artifact@v4
         with:

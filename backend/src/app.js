@@ -50,6 +50,7 @@ const { inspectZipArchive, neutralizeSpreadsheetCell } = require('./security-uti
 const { configurePersistence } = require('./persistence-coordinator');
 const { createRateLimiter } = require('./request-rate-limiter');
 const { registerDataBackupRoutes } = require('./data-backup');
+const { registerSystemMessageRoutes } = require('./system-messages');
 const {
   normalizeTenancyData,
   wrapTenantCollections,
@@ -59,6 +60,8 @@ const {
   runAsSystem,
   rawCollection,
   inventoryReadableUnitIds,
+  youthCounterpartUnitId,
+  youthUnitsAreLinked,
   DEFAULT_ORGANIZATION_ID,
   DEFAULT_UNIT_ID,
   registerTenancyRoutes,
@@ -128,6 +131,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'vehicleLoadAssignments', 'vehicleLoadLists',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
+  'systemMessageAcknowledgements',
   'procurementRequests', 'procurementOffers', 'procurementOrders',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'procurementEmailImports',
@@ -316,6 +320,7 @@ function createApp(options = {}) {
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
   const notifications = (appData.notifications ||= []);
+  const systemMessageAcknowledgements = (appData.systemMessageAcknowledgements ||= []);
   const defectEmailImports = (appData.defectEmailImports ||= []);
   const procurementRequests = appData.procurementRequests;
   const suppliers = appData.suppliers;
@@ -710,8 +715,6 @@ function createApp(options = {}) {
   });
   const stocktakeRolePermissions = {
     Admin: stocktakePermissions,
-    Jugendvorsitzender: stocktakePermissions,
-    Jugendvorsitz: stocktakePermissions,
     Materialwart: ['stocktakes.read', 'stocktakes.create', 'stocktakes.count', 'stocktakes.export'],
     Kleiderwart: ['stocktakes.read', 'stocktakes.create', 'stocktakes.count', 'stocktakes.export'],
   };
@@ -802,6 +805,23 @@ function createApp(options = {}) {
       if (!user.permissions.includes(permission)) user.permissions.push(permission);
     });
   });
+
+  const youthAccessPermissions = [
+    'locations.read', 'material.read', 'inventory.read',
+    'calendar.read', 'reservations.create',
+    'vehicles.read', 'vehicle_reservations.create',
+    'defects.read', 'defects.report', 'dashboard.read',
+  ];
+  if (!roles.some((role) => role.name === 'Jugendmitglied')) {
+    roles.push({
+      id: 'role-jugendmitglied', name: 'Jugendmitglied',
+      permissions: [...youthAccessPermissions],
+    });
+  }
+  for (const roleName of ['Jugendmitglied', 'Jugendvorsitzender']) {
+    const role = roles.find((entry) => entry.name === roleName);
+    if (role) role.permissions = [...youthAccessPermissions];
+  }
 
   if (!permissions.includes('offline.access')) permissions.push('offline.access');
   const offlineRoles = new Set([
@@ -1419,6 +1439,14 @@ function createApp(options = {}) {
 
   app.get('/api/legal', (_req, res) => res.json(legalInformation()));
 
+  registerSystemMessageRoutes({
+    app,
+    authMiddleware,
+    publicRateLimit,
+    acknowledgements: systemMessageAcknowledgements,
+    filePath: options.systemMessagesPath,
+  });
+
   app.get('/api/downloads', publicRateLimit, (req, res) => res.json(clientPlatforms.map((platform) => {
     const download = desktopDownload(platform);
     return {
@@ -1581,6 +1609,7 @@ function createApp(options = {}) {
         } : null,
         unit: unit ? {
           id: unit.id, name: unit.name, type: unit.type, parentId: unit.parentId,
+          unitKind: unit.unitKind || 'standard', baseUnitId: unit.baseUnitId || null,
           edvNumber: unit.edvNumber,
           dataIsolation: unit.dataIsolation || 'strict',
         } : null,
@@ -1661,13 +1690,37 @@ function createApp(options = {}) {
     }
   };
 
+  const withYouthStorageReadAccess = (req, callback) => {
+    const linkedUnitId = youthCounterpartUnitId(
+      organizationUnits, req.tenant.organizationId, req.tenant.unitId,
+    );
+    if (!linkedUnitId) return callback();
+    return runWithTenant({
+      ...req.tenant,
+      allowedUnitIds: new Set([...req.tenant.allowedUnitIds, linkedUnitId]),
+    }, callback);
+  };
+  const publicStorageEntry = (req, entry) => ({
+    ...entry,
+    readOnly: entry.unitId !== req.tenant.unitId,
+    sourceUnitName: organizationUnits.find((unit) => unit.id === entry.unitId
+      && unit.organizationId === entry.organizationId)?.name || null,
+  });
+
   app.get('/api/storage-hierarchy', authMiddleware, requirePermission('locations.read'), (req, res) => {
     refreshStoragePaths(appData);
-    res.json({ locations, shelves, storageLevels, stockStructures });
+    return withYouthStorageReadAccess(req, () => res.json({
+      locations: locations.map((entry) => publicStorageEntry(req, entry)),
+      shelves: shelves.map((entry) => publicStorageEntry(req, entry)),
+      storageLevels: storageLevels.map((entry) => publicStorageEntry(req, entry)),
+      stockStructures: stockStructures.map((entry) => publicStorageEntry(req, entry)),
+    }));
   });
 
   app.get('/api/locations', authMiddleware, requirePermission('locations.read'), (req, res) => {
-    res.json(locations);
+    return withYouthStorageReadAccess(req, () => res.json(
+      locations.map((entry) => publicStorageEntry(req, entry)),
+    ));
   });
 
   app.post('/api/locations', authMiddleware, requirePermission('locations.write'), (req, res) => {
@@ -1731,7 +1784,9 @@ function createApp(options = {}) {
   });
 
   app.get('/api/shelves', authMiddleware, requirePermission('locations.read'), (req, res) => {
-    res.json(shelves);
+    return withYouthStorageReadAccess(req, () => res.json(
+      shelves.map((entry) => publicStorageEntry(req, entry)),
+    ));
   });
 
   app.post('/api/shelves', authMiddleware, requirePermission('locations.write'), (req, res) => {
@@ -1792,7 +1847,9 @@ function createApp(options = {}) {
   });
 
   app.get('/api/storage-levels', authMiddleware, requirePermission('locations.read'), (req, res) => {
-    res.json(storageLevels);
+    return withYouthStorageReadAccess(req, () => res.json(
+      storageLevels.map((entry) => publicStorageEntry(req, entry)),
+    ));
   });
 
   app.post('/api/storage-levels', authMiddleware, requirePermission('locations.write'), (req, res) => {
@@ -1853,7 +1910,9 @@ function createApp(options = {}) {
 
   app.get('/api/stock-structures', authMiddleware, requirePermission('locations.read'), (req, res) => {
     refreshStoragePaths(appData);
-    res.json(stockStructures);
+    return withYouthStorageReadAccess(req, () => res.json(
+      stockStructures.map((entry) => publicStorageEntry(req, entry)),
+    ));
   });
 
   app.post('/api/stock-structures', authMiddleware, requirePermission('locations.write'), (req, res) => {
@@ -2134,6 +2193,7 @@ function createApp(options = {}) {
     app, authMiddleware, requirePermission, hasPermission, defectReports,
     materials, clothingItems, vehicles, users, notifications, logEvent, nextId, XLSX,
     categories, departments, procurementRequests, locations, stockStructures,
+    organizationUnits,
   });
   app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
   const defectEmailService = createDefectEmailService({
@@ -2854,10 +2914,18 @@ function createApp(options = {}) {
     }
 
     if (hasPermission(req.user, 'defects.read')) {
+      const visibleDefects = rawCollection(defectReports).filter((item) =>
+        item.organizationId === req.tenant.organizationId
+        && ((item.unitId === req.tenant.unitId
+          && defectManagement.canScope(req.user, item.entityType))
+          || (item.reportedBy === req.user.id
+            && (item.unitId === req.tenant.unitId
+              || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+                req.tenant.unitId, item.unitId)))));
       Object.assign(summary, {
-        defectCount: defectReports.filter((item) => !item.archivedAt).length,
-        openDefectCount: defectReports.filter((item) => !item.archivedAt && item.status !== 'Geprüft/Geschlossen').length,
-        defectsInProgressCount: defectReports.filter((item) => !item.archivedAt && item.status === 'In Bearbeitung').length,
+        defectCount: visibleDefects.filter((item) => !item.archivedAt).length,
+        openDefectCount: visibleDefects.filter((item) => !item.archivedAt && item.status !== 'Geprüft/Geschlossen').length,
+        defectsInProgressCount: visibleDefects.filter((item) => !item.archivedAt && item.status === 'In Bearbeitung').length,
         unreadNotificationCount: notifications.filter((item) => item.userId === req.user.id && !item.readAt).length,
         pendingDefectEmailCount: defectEmailImports.filter((item) => {
           if (item.status !== 'pending') return false;
@@ -2885,11 +2953,15 @@ function createApp(options = {}) {
     if (hasPermission(req.user, 'calendar.read')) {
       const now = Date.now();
       const warning = now + 7 * 24 * 60 * 60 * 1000;
-      summary.pendingReservationCount = reservations.filter((entry) =>
+      const visibleReservations = rawCollection(reservations).filter((entry) =>
+        entry.organizationId === req.tenant.organizationId
+        && (entry.unitId === req.tenant.unitId
+          || (entry.items || []).some((item) => item.materialUnitId === req.tenant.unitId)));
+      summary.pendingReservationCount = visibleReservations.filter((entry) =>
         entry.status === 'Ausstehend'
         && (hasPermission(req.user, 'reservations.manage')
           || entry.requesterUserId === req.user.id)).length;
-      summary.upcomingCalendarCount = reservations.filter((entry) =>
+      summary.upcomingCalendarCount = visibleReservations.filter((entry) =>
         ['Ausstehend', 'Freigegeben'].includes(entry.status)
         && new Date(entry.startAt).getTime() >= now
         && new Date(entry.startAt).getTime() <= warning).length
@@ -2902,6 +2974,8 @@ function createApp(options = {}) {
       const visibleVehicles = rawCollection(vehicles).filter((entry) =>
         entry.organizationId === req.tenant.organizationId
         && (entry.unitId === req.tenant.unitId
+          || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+            req.tenant.unitId, entry.unitId)
           || entry.viewAllowedUnitIds?.includes(req.tenant.unitId)
           || entry.reservationAllowedUnitIds?.includes(req.tenant.unitId)));
       summary.vehicleCount = visibleVehicles.filter((entry) => !entry.archivedAt).length;

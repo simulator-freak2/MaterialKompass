@@ -36,7 +36,8 @@ const roles = [
   { id: 'role-fachbereichsleiter', name: 'Fachbereichsleiter', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'inventory.transactions', 'inventory.relocate', 'inventory.export', 'procurement.read', 'procurement.request', 'procurement.export', 'reports.read', 'dashboard.read'] },
   { id: 'role-vorsitz', name: 'Vorsitz', permissions: ['categories.read', 'categories.write', 'locations.read', 'locations.write', 'material.read', 'material.write', 'inventory.read', 'inventory.write', 'inventory.transactions', 'inventory.relocate', 'inventory.archive', 'inventory.import', 'inventory.export', 'defects.read', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
   { id: 'role-schatzmeister', name: 'Schatzmeister', permissions: ['categories.read', 'locations.read', 'material.read', 'inventory.read', 'procurement.read', 'procurement.request', 'procurement.approve', 'procurement.export', 'suppliers.write', 'reports.read', 'dashboard.read'] },
-  { id: 'role-jugendvorsitzender', name: 'Jugendvorsitzender', permissions: ['material.read', 'dashboard.read'] },
+  { id: 'role-jugendmitglied', name: 'Jugendmitglied', permissions: ['locations.read', 'material.read', 'inventory.read', 'calendar.read', 'reservations.create', 'vehicles.read', 'vehicle_reservations.create', 'defects.read', 'defects.report', 'dashboard.read'] },
+  { id: 'role-jugendvorsitzender', name: 'Jugendvorsitzender', permissions: ['locations.read', 'material.read', 'inventory.read', 'calendar.read', 'reservations.create', 'vehicles.read', 'vehicle_reservations.create', 'defects.read', 'defects.report', 'dashboard.read'] },
   { id: 'role-sachkundiger', name: 'Sachkundiger PSAgE', permissions: ['material.read', 'clothing.read', 'clothing.inspect', 'defects.read'] },
   { id: 'role-fahrzeugwart', name: 'Fahrzeugwart', permissions: ['calendar.read', 'vehicles.read', 'vehicles.write', 'vehicles.share', 'vehicles.load.read', 'vehicles.load.manage', 'vehicles.print', 'vehicle_reservations.create', 'vehicle_reservations.manage', 'vehicle_maintenance.manage', 'inventory.read', 'defects.read', 'defects.report', 'defects.edit', 'dashboard.read'] },
 ];
@@ -177,6 +178,7 @@ const clothingItems = [
 const issueTransactions = [];
 const defectReports = [];
 const notifications = [];
+const systemMessageAcknowledgements = [];
 const defectEmailImports = [];
 const procurementRequests = [];
 const procurementOffers = [];
@@ -237,6 +239,7 @@ module.exports = {
     issueTransactions,
     defectReports,
     notifications,
+    systemMessageAcknowledgements,
     defectEmailImports,
     procurementRequests,
     procurementOffers,

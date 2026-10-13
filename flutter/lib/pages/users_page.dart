@@ -2455,6 +2455,32 @@ class _UserDialogState extends State<UserDialog> {
       )
       .toList();
 
+  Map<String, dynamic>? _unit(String unitId) {
+    for (final unit in widget.organizationUnits) {
+      if (unit['id']?.toString() == unitId) return unit;
+    }
+    return null;
+  }
+
+  List<String> _rolesForUnit(String unitId) {
+    final youth = _unit(unitId)?['unitKind'] == 'youth';
+    return widget.roles.where((role) {
+      if (youth && role == 'Jugendvorsitzender') return false;
+      if (!youth && role == 'Jugendmitglied') return false;
+      return true;
+    }).toList();
+  }
+
+  void _removeInvalidRoles(_AccessScopeDraft scope) {
+    final allowed = _rolesForUnit(scope.unitId).toSet();
+    scope.roles.removeWhere((role) => !allowed.contains(role));
+    if (scope.roles.isEmpty) {
+      scope.roles.add(_unit(scope.unitId)?['unitKind'] == 'youth'
+          ? 'Jugendmitglied'
+          : 'Nutzer');
+    }
+  }
+
   void applyTemplate(String? id) {
     setState(() {
       selectedTemplateId = id;
@@ -2678,6 +2704,7 @@ class _UserDialogState extends State<UserDialog> {
                                 if (value == null) return;
                                 final oldId = accessScopes[index].unitId;
                                 accessScopes[index].unitId = value;
+                                _removeInvalidRoles(accessScopes[index]);
                                 if (defaultUnitId == oldId) {
                                   defaultUnitId = value;
                                 }
@@ -2715,7 +2742,7 @@ class _UserDialogState extends State<UserDialog> {
                       ),
                       Wrap(
                         spacing: 8,
-                        children: widget.roles
+                        children: _rolesForUnit(accessScopes[index].unitId)
                             .map(
                               (role) => FilterChip(
                                 label: Text(role),
@@ -2733,6 +2760,17 @@ class _UserDialogState extends State<UserDialog> {
                             )
                             .toList(),
                       ),
+                      if (_unit(accessScopes[index].unitId)?['unitKind'] ==
+                          'youth')
+                        const Padding(
+                          padding: EdgeInsets.only(top: 8),
+                          child: Text(
+                            'Die Rolle „Vorsitz“ wirkt in der '
+                            'Stammgliederung automatisch als '
+                            '„Jugendvorsitzender“. Diese Rolle wird in der '
+                            'Jugendorganisation nicht separat vergeben.',
+                          ),
+                        ),
                       if (widget.departments.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Text(
@@ -2786,7 +2824,11 @@ class _UserDialogState extends State<UserDialog> {
                         accessScopes.add(
                           _AccessScopeDraft(
                             unitId: available.first['id'].toString(),
-                            roles: {'Nutzer'},
+                            roles: {
+                              available.first['unitKind'] == 'youth'
+                                  ? 'Jugendmitglied'
+                                  : 'Nutzer',
+                            },
                             departmentIds: {},
                           ),
                         );

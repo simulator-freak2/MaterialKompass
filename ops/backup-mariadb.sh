@@ -6,6 +6,7 @@ BACKUP_DIR=${BACKUP_DIR:-/backups}
 BACKUP_HOUR_UTC=${BACKUP_HOUR_UTC:-2}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
 BACKUP_PREFIX=${BACKUP_PREFIX:-materialkompass}
+BACKUP_ONCE=${BACKUP_ONCE:-false}
 LAST_SUCCESS_FILE="$BACKUP_DIR/.last-successful-backup-date"
 
 case "$BACKUP_HOUR_UTC" in
@@ -103,6 +104,18 @@ run_backup() {
   trap - EXIT HUP INT TERM
   echo "Database backup completed: $final_file"
 }
+
+case "$BACKUP_ONCE" in
+  true|1|yes)
+    run_backup
+    exit 0
+    ;;
+  false|0|no|'') ;;
+  *)
+    echo "BACKUP_ONCE must be true or false" >&2
+    exit 1
+    ;;
+esac
 
 while :; do
   current_date=$(date -u '+%Y-%m-%d')

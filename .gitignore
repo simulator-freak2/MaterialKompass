@@ -3,6 +3,8 @@
 build/
 **/.dart_tool/
 **/build/
+**/bin/
+**/obj/
 .flutter-plugins
 .flutter-plugins-dependencies
 
@@ -36,6 +38,8 @@ tmp/
 
 # Lokale bzw. produktive Datenbanksicherungen
 backups/
+.deployments/
+/web-current/
 
 # Desktop-Releases werden separat gebaut und nicht in Git eingecheckt.
 releases/*

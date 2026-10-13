@@ -2,7 +2,8 @@
 set -euo pipefail
 
 API_BASE_URL="${1:-https://materialkompass.org}"
-VERSION="${2:-1.5.0}"
+VERSION="${2:-1.5.1}"
+BUILD_NUMBER="${3:-1}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 FLUTTER_ROOT="$REPOSITORY_ROOT/flutter"
@@ -14,7 +15,8 @@ command -v dpkg-deb >/dev/null || { echo "dpkg-deb fehlt." >&2; exit 1; }
 
 cd "$FLUTTER_ROOT"
 flutter pub get
-flutter build linux --release --dart-define="API_BASE_URL=$API_BASE_URL"
+flutter build linux --release --build-name="$VERSION" --build-number="$BUILD_NUMBER" \
+  --dart-define="API_BASE_URL=$API_BASE_URL"
 
 if [[ "$PACKAGE_ROOT" != "$FLUTTER_ROOT/build/linux-package" ]]; then
   echo "Unerwarteter Paketpfad: $PACKAGE_ROOT" >&2

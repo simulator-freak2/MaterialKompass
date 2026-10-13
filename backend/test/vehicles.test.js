@@ -27,6 +27,8 @@ function vehicleBody(overrides = {}) {
     registrationNumber: 'DLRG 1',
     vin: 'WVWZZZ1JZXW000001',
     radioCallName: 'Pelikan Musterstadt 1/11-1',
+    vehicleKind: 'Kraftfahrzeug',
+    usage: 'Einsatzfahrt',
     type: 'Einsatzfahrzeug',
     manufacturer: 'Volkswagen',
     model: 'Transporter',
@@ -47,7 +49,9 @@ test('vehicle master data is validated and creates a protected inventory locatio
       false,
     );
     const missing = await fetch(`${baseUrl}/api/vehicles`, {
-      method: 'POST', headers, body: JSON.stringify({ registrationNumber: 'DLRG 1' }),
+      method: 'POST', headers, body: JSON.stringify({
+        vehicleKind: 'Kraftfahrzeug', usage: 'Einsatzfahrt', type: 'Einsatzfahrzeug',
+      }),
     });
     assert.equal(missing.status, 400);
 
@@ -74,6 +78,102 @@ test('vehicle master data is validated and creates a protected inventory locatio
     const stored = app.locals.appData.locations.find((entry) => entry.id === vehicle.loadLocationId);
     assert.equal(stored.type, 'Fahrzeug');
     assert.equal(stored.vehicleId, vehicle.id);
+  } finally {
+    server.close();
+  }
+});
+
+test('vehicle classification uses managed dependent options and conditional identifiers', async () => {
+  const { app, server, baseUrl, headers } = await setup();
+  try {
+    const options = await fetch(`${baseUrl}/api/vehicles/options`, { headers })
+      .then((response) => response.json());
+    assert.deepEqual(options.vehicleKinds, [
+      'Kraftfahrzeug', 'Boot', 'Anhänger', 'Sonstige Fahrzeugart',
+    ]);
+    assert.deepEqual(options.usages, ['Einsatzfahrt', 'sonstige Verwendung']);
+    assert.deepEqual(options.vehicleTypesByUsage.Einsatzfahrt, ['Einsatzfahrzeug']);
+
+    const settingsResponse = await fetch(`${baseUrl}/api/vehicle-settings`, {
+      method: 'PUT', headers, body: JSON.stringify({
+        usages: ['Einsatzfahrt', 'sonstige Verwendung', 'Ausbildung'],
+        vehicleTypesByUsage: {
+          Einsatzfahrt: ['Kommandowagen'],
+          'sonstige Verwendung': ['Vereinsbus'],
+          Ausbildung: ['Schulungsboot'],
+        },
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+    const settings = await settingsResponse.json();
+    assert.ok(settings.usages.includes('Ausbildung'));
+    assert.deepEqual(settings.vehicleTypesByUsage.Ausbildung, ['Schulungsboot']);
+
+    const boatResponse = await fetch(`${baseUrl}/api/vehicles`, {
+      method: 'POST', headers, body: JSON.stringify(vehicleBody({
+        registrationNumber: '', vin: '', radioCallName: 'Adler Rhein',
+        vehicleKind: 'Boot', usage: 'Ausbildung', type: 'Schulungsboot',
+      })),
+    });
+    assert.equal(boatResponse.status, 201);
+    const boat = await boatResponse.json();
+    assert.equal(boat.vehicleKind, 'Boot');
+    assert.equal(boat.usage, 'Ausbildung');
+    assert.equal(boat.type, 'Schulungsboot');
+    assert.equal(boat.registrationNumber, '');
+    assert.equal(boat.vin, '');
+
+    for (const vehicleKind of ['Kraftfahrzeug', 'Anhänger']) {
+      const missingIdentifiers = await fetch(`${baseUrl}/api/vehicles`, {
+        method: 'POST', headers, body: JSON.stringify(vehicleBody({
+          registrationNumber: '', vin: '', vehicleKind,
+          usage: 'Einsatzfahrt', type: 'Kommandowagen',
+        })),
+      });
+      assert.equal(missingIdentifiers.status, 400);
+    }
+
+    const mismatchedType = await fetch(`${baseUrl}/api/vehicles`, {
+      method: 'POST', headers, body: JSON.stringify(vehicleBody({
+        registrationNumber: 'DLRG 3', vin: 'WVWZZZ1JZXW000003',
+        usage: 'sonstige Verwendung', type: 'Kommandowagen',
+      })),
+    });
+    assert.equal(mismatchedType.status, 400);
+
+    const admin = app.locals.appData.users.find((entry) => entry.id === 'user-admin');
+    admin.roles = ['Fahrzeugwart'];
+    admin.permissions = ['vehicles.read', 'vehicles.write'];
+    const membership = app.locals.appData.memberships.find(
+      (entry) => entry.userId === admin.id,
+    );
+    membership.scopes.forEach((scope) => { scope.roles = ['Fahrzeugwart']; });
+    const wardenLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'admin@materialkompass.org', password: 'MaterialKompass2026!',
+      }),
+    });
+    const wardenHeaders = {
+      ...headers,
+      Authorization: `Bearer ${(await wardenLogin.json()).token}`,
+    };
+    const wardenTypes = await fetch(`${baseUrl}/api/vehicle-settings`, {
+      method: 'PUT', headers: wardenHeaders, body: JSON.stringify({
+        vehicleTypesByUsage: {
+          Einsatzfahrt: ['Gerätewagen'],
+          'sonstige Verwendung': ['Vereinsbus'],
+          Ausbildung: ['Schulungsboot'],
+        },
+      }),
+    });
+    assert.equal(wardenTypes.status, 200);
+    const forbiddenUsage = await fetch(`${baseUrl}/api/vehicle-settings`, {
+      method: 'PUT', headers: wardenHeaders,
+      body: JSON.stringify({ usages: ['Einsatzfahrt'] }),
+    });
+    assert.equal(forbiddenUsage.status, 403);
   } finally {
     server.close();
   }

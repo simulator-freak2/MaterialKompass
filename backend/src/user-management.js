@@ -185,10 +185,15 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     };
   }
 
-  function roleNamesAreValid(names, organizationId = null) {
-    return Array.isArray(names) && names.length > 0 && names.every((name) =>
-      roles.some((role) => role.name === name
-        && (!role.organizationId || role.organizationId === organizationId)));
+  function roleNamesAreValid(names, organizationId = null, unitId = null) {
+    const unit = unitId && organizationUnits.find((entry) => entry.id === unitId
+      && entry.organizationId === organizationId);
+    return Array.isArray(names) && names.length > 0 && names.every((name) => {
+      if (unit?.unitKind === 'youth' && name === 'Jugendvorsitzender') return false;
+      if (unit?.unitKind !== 'youth' && name === 'Jugendmitglied') return false;
+      return roles.some((role) => role.name === name
+        && (!role.organizationId || role.organizationId === organizationId));
+    });
   }
 
   function departmentIdsAreValid(ids) {
@@ -210,7 +215,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     if (requested === undefined) {
       const roleNames = req.body.roles ?? fallbackRoles;
       const departmentIds = req.body.departmentIds ?? fallbackDepartmentIds;
-      if (!roleNamesAreValid(roleNames, req.tenant.organizationId)) {
+      if (!roleNamesAreValid(roleNames, req.tenant.organizationId, req.tenant.unitId)) {
         return { error: 'Mindestens eine gültige Rolle ist erforderlich.' };
       }
       const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
@@ -245,7 +250,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       const roleNames = Array.isArray(candidate.roles) ? candidate.roles : [];
       const departmentIds = Array.isArray(candidate.departmentIds)
         ? candidate.departmentIds : [];
-      if (!roleNamesAreValid(roleNames, req.tenant.organizationId)) {
+      if (!roleNamesAreValid(roleNames, req.tenant.organizationId, unitId)) {
         return { error: 'Jeder Organisationsbereich benötigt mindestens eine gültige Rolle.' };
       }
       const departmentError = validateDepartmentAssignment(roleNames, departmentIds);
@@ -418,14 +423,17 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
 
   app.get('/api/roles', authMiddleware, requirePermission('roles.read'), (req, res) =>
     res.json(roles.filter((role) =>
-      !role.organizationId || role.organizationId === req.tenant.organizationId
+      (!role.organizationId || role.organizationId === req.tenant.organizationId)
+      && !(organizationUnits.some((entry) => entry.id === req.tenant.unitId
+        && entry.organizationId === req.tenant.organizationId
+        && entry.unitKind === 'youth') && role.name === 'Jugendvorsitzender')
     )));
 
   app.post('/api/roles', authMiddleware, requirePermission('users.write'), async (req, res) => {
     const name = String(req.body.name || '').trim();
     const selectedPermissions = req.body.permissions;
     if (!name || roles.some((role) =>
-      role.organizationId === req.tenant.organizationId
+      (!role.organizationId || role.organizationId === req.tenant.organizationId)
       && normalize(role.name) === normalize(name))) {
       return res.status(409).json({ error: 'Rollenname fehlt oder ist bereits vergeben.' });
     }
@@ -452,7 +460,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     const name = String(req.body.name ?? role.name).trim();
     const selectedPermissions = req.body.permissions ?? role.permissions;
     if (!name || roles.some((entry) => entry.id !== role.id
-      && entry.organizationId === req.tenant.organizationId
+      && (!entry.organizationId || entry.organizationId === req.tenant.organizationId)
       && normalize(entry.name) === normalize(name))) {
       return res.status(409).json({ error: 'Rollenname ist bereits vergeben.' });
     }

@@ -1048,11 +1048,7 @@ function registerDefectEmailRoutes({
   });
 
   app.get('/api/defect-report-items', authMiddleware, requirePermission('defects.read'), (req, res) => {
-    const values = [
-      ...materials.map((item) => ({ item, entityType: 'MaterialItem' })),
-      ...clothingItems.map((item) => ({ item, entityType: 'ClothingItem' })),
-      ...vehicles.map((item) => ({ item, entityType: 'Vehicle' })),
-    ].filter(({ entityType }) => defectManagement.canScope(req.user, entityType))
+    const values = defectManagement.reportableItems(req)
       .map(({ item, entityType }) => ({
         id: item.id,
         entityType,

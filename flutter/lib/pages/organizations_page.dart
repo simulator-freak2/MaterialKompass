@@ -125,17 +125,35 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
   Future<void> _createUnit(
     List<Map<String, dynamic>> units, {
     String? initialParentId,
+    bool youth = false,
   }) async {
     final name = TextEditingController();
-    final type = TextEditingController(text: 'Ortsgruppe');
+    final type = TextEditingController(
+      text: youth ? 'Jugendorganisation' : 'Ortsgruppe',
+    );
     final edvNumber = TextEditingController();
+    final existingYouthBases = units
+        .where((entry) => entry['unitKind'] == 'youth')
+        .map((entry) => entry['baseUnitId']?.toString())
+        .whereType<String>()
+        .toSet();
     final possibleParents = units
         .where(
           (entry) =>
               entry['status'] == 'active' &&
-              entry['canManageStructure'] == true,
+              entry['canManageStructure'] == true &&
+              entry['unitKind'] != 'youth' &&
+              (!youth || !existingYouthBases.contains(entry['id'].toString())),
         )
         .toList();
+    if (possibleParents.isEmpty) {
+      _error(
+        youth
+            ? 'Es ist keine Stammgliederung ohne Jugendorganisation verfügbar.'
+            : 'Es ist keine geeignete übergeordnete Einheit verfügbar.',
+      );
+      return;
+    }
     var parentId =
         initialParentId ??
         possibleParents
@@ -149,7 +167,11 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
         context: context,
         builder: (dialogContext) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Organisationseinheit anlegen'),
+            title: Text(
+              youth
+                  ? 'Jugendorganisation anlegen'
+                  : 'Organisationseinheit anlegen',
+            ),
             content: SizedBox(
               width: 520,
               child: Column(
@@ -161,13 +183,15 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                     decoration: const InputDecoration(labelText: 'Name'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: type,
-                    decoration: const InputDecoration(
-                      labelText: 'Typ, z. B. Landesverband oder Ortsgruppe',
+                  if (!youth) ...[
+                    TextField(
+                      controller: type,
+                      decoration: const InputDecoration(
+                        labelText: 'Typ, z. B. Landesverband oder Ortsgruppe',
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
+                  ],
                   TextField(
                     controller: edvNumber,
                     decoration: const InputDecoration(
@@ -179,8 +203,10 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                   const SizedBox(height: 12),
                   KeyboardDropdownButtonFormField<String>(
                     initialValue: parentId,
-                    decoration: const InputDecoration(
-                      labelText: 'Übergeordnete Einheit',
+                    decoration: InputDecoration(
+                      labelText: youth
+                          ? 'Stammgliederung'
+                          : 'Übergeordnete Einheit',
                     ),
                     items: possibleParents
                         .map(
@@ -221,6 +247,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           'type': type.text,
           'edvNumber': edvNumber.text,
           'parentId': parentId,
+          'unitKind': youth ? 'youth' : 'standard',
         },
       );
       await _refresh();
@@ -418,6 +445,50 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     }
   }
 
+  Future<void> _convertToYouth(Map<String, dynamic> unit) async {
+    final parentId = unit['parentId']?.toString();
+    if (parentId == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Als Jugendorganisation kennzeichnen?'),
+        content: const Text(
+          'Die Einheit wird fest mit ihrer direkten Stammgliederung verknüpft. '
+          'Beide Seiten können gegenseitig Lagerorte suchen, Inventar und '
+          'Fahrzeuge reservieren sowie Mängel melden. Andere Zugriffe bleiben '
+          'getrennt.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Verknüpfen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _api.request(
+        '/api/organization-units/${unit['id']}',
+        method: 'PUT',
+        body: {
+          'name': unit['name'],
+          'type': 'Jugendorganisation',
+          'edvNumber': unit['edvNumber'],
+          'parentId': parentId,
+          'unitKind': 'youth',
+        },
+      );
+      await _refresh();
+    } catch (error) {
+      _error(error);
+    }
+  }
+
   Future<void> _transferAndArchive(
     Map<String, dynamic> unit,
     List<Map<String, dynamic>> units,
@@ -522,6 +593,26 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     return result;
   }
 
+  bool _canConvertToYouth(
+    Map<String, dynamic> unit,
+    List<Map<String, dynamic>> units,
+  ) {
+    final parentId = unit['parentId']?.toString();
+    if (parentId == null || unit['unitKind'] == 'youth') return false;
+    final hasChildren = units.any(
+      (entry) =>
+          entry['parentId']?.toString() == unit['id']?.toString() &&
+          entry['status'] == 'active',
+    );
+    final parentAlreadyLinked = units.any(
+      (entry) =>
+          entry['unitKind'] == 'youth' &&
+          entry['baseUnitId']?.toString() == parentId &&
+          entry['status'] == 'active',
+    );
+    return !hasChildren && !parentAlreadyLinked;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -581,6 +672,12 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                         icon: const Icon(Icons.account_tree_outlined),
                         label: const Text('Einheit anlegen'),
                       ),
+                    if (canCreateOrganizationStructure && units.isNotEmpty)
+                      FilledButton.icon(
+                        onPressed: () => _createUnit(units, youth: true),
+                        icon: const Icon(Icons.diversity_3_outlined),
+                        label: const Text('Jugendorganisation anlegen'),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -613,13 +710,16 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                     child: Card(
                       child: ListTile(
                         leading: Icon(
-                          unit['parentId'] == null
+                          unit['unitKind'] == 'youth'
+                              ? Icons.diversity_3_outlined
+                              : unit['parentId'] == null
                               ? Icons.corporate_fare_outlined
                               : Icons.account_tree_outlined,
                         ),
                         title: Text(unit['name']?.toString() ?? ''),
                         subtitle: Text(
                           '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · '
+                          '${unit['unitKind'] == 'youth' ? 'mit Stammgliederung verknüpft · ' : ''}'
                           '${((unit['inventoryVisibleToUnitIds'] as List?) ?? const []).isEmpty ? 'Inventar nicht freigegeben' : 'Inventar für ${(unit['inventoryVisibleToUnitIds'] as List).length} Ebene(n) freigegeben'} · '
                           '${unit['status'] ?? 'active'}',
                         ),
@@ -636,6 +736,9 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                       initialParentId: unit['id'].toString(),
                                     );
                                   }
+                                  if (action == 'convert-youth') {
+                                    _convertToYouth(unit);
+                                  }
                                   if (action == 'inventory-visibility') {
                                     _editInventoryVisibility(unit, units);
                                   }
@@ -645,7 +748,8 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                   }
                                 },
                                 itemBuilder: (_) => [
-                                  if (unit['canManageStructure'] == true)
+                                  if (unit['canManageStructure'] == true &&
+                                      unit['unitKind'] != 'youth')
                                     const PopupMenuItem(
                                       value: 'create-child',
                                       child: Text('Unterebene anlegen'),
@@ -654,6 +758,14 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                     const PopupMenuItem(
                                       value: 'inventory-visibility',
                                       child: Text('Inventar freigeben'),
+                                    ),
+                                  if (unit['canManageStructure'] == true &&
+                                      _canConvertToYouth(unit, units))
+                                    const PopupMenuItem(
+                                      value: 'convert-youth',
+                                      child: Text(
+                                        'Als Jugendorganisation kennzeichnen',
+                                      ),
                                     ),
                                   if (unit['canManageUnit'] == true)
                                     const PopupMenuItem(

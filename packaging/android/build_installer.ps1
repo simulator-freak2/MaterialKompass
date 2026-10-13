@@ -1,17 +1,22 @@
-param([string]$ApiBaseUrl = "https://materialkompass.org")
+param(
+    [string]$ApiBaseUrl = "https://materialkompass.org",
+    [string]$Version = "1.5.1",
+    [int]$BuildNumber = 1
+)
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $flutterRoot = Join-Path $repositoryRoot "flutter"
 $keyProperties = Join-Path $flutterRoot "android\key.properties"
 if (-not (Test-Path $keyProperties)) {
-    throw "flutter/android/key.properties fehlt. Produktive APKs müssen mit einem dauerhaften Release-Schlüssel signiert werden."
+    throw "flutter/android/key.properties fehlt. Produktive APKs muessen mit einem dauerhaften Release-Schluessel signiert werden."
 }
 
 Push-Location $flutterRoot
 try {
     flutter pub get
-    flutter build apk --release --dart-define="API_BASE_URL=$ApiBaseUrl"
+    flutter build apk --release --build-name="$Version" --build-number="$BuildNumber" `
+        --dart-define="API_BASE_URL=$ApiBaseUrl"
 } finally {
     Pop-Location
 }

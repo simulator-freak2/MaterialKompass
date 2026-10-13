@@ -1,10 +1,18 @@
 const { randomUUID } = require('node:crypto');
-const { rawCollection } = require('./tenancy');
+const { rawCollection, youthUnitsAreLinked } = require('./tenancy');
 const { assessMaterialSafety, validDateOnly } = require('./material-safety');
 
-const VEHICLE_TYPES = Object.freeze([
+const LEGACY_VEHICLE_TYPES = Object.freeze([
   'Kraftfahrzeug', 'Anhänger', 'Boot', 'Einsatzfahrzeug', 'Vereinsfahrzeug', 'Sonstiges',
 ]);
+const VEHICLE_KINDS = Object.freeze([
+  'Kraftfahrzeug', 'Boot', 'Anhänger', 'Sonstige Fahrzeugart',
+]);
+const DEFAULT_VEHICLE_USAGES = Object.freeze(['Einsatzfahrt', 'sonstige Verwendung']);
+const DEFAULT_VEHICLE_TYPES_BY_USAGE = Object.freeze({
+  Einsatzfahrt: Object.freeze(['Einsatzfahrzeug']),
+  'sonstige Verwendung': Object.freeze(['Vereinsfahrzeug', 'Sonstiger Fahrzeugtyp']),
+});
 const VEHICLE_STATUSES = Object.freeze(['Verfügbar', 'In Wartung', 'Defekt', 'Außer Dienst']);
 const RESERVATION_TERMINAL = new Set(['Abgelehnt', 'Storniert', 'Abgeschlossen']);
 const MAINTENANCE_STATUSES = Object.freeze(['Geplant', 'In Arbeit', 'Abgeschlossen', 'Abgebrochen']);
@@ -23,6 +31,23 @@ function text(value, maximum = 255) {
 
 function normalizeIdentifier(value) {
   return text(value, 64).toUpperCase().replace(/\s+/g, ' ');
+}
+
+function uniqueTexts(values, maximum = 80) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((entry) => text(entry, maximum))
+    .filter((entry) => entry && !['__proto__', 'prototype', 'constructor'].includes(entry)))]
+    .slice(0, 100);
+}
+
+function legacyVehicleKind(type) {
+  if (['Kraftfahrzeug', 'Anhänger', 'Boot'].includes(type)) return type;
+  if (['Einsatzfahrzeug', 'Vereinsfahrzeug'].includes(type)) return 'Kraftfahrzeug';
+  return 'Sonstige Fahrzeugart';
+}
+
+function legacyVehicleUsage(type) {
+  return type === 'Einsatzfahrzeug' ? 'Einsatzfahrt' : 'sonstige Verwendung';
 }
 
 function parseInstant(value, label) {
@@ -77,15 +102,56 @@ function registerVehicleRoutes({
     return organizations.find((entry) => entry.id === organizationId)?.primaryVehicleApprovalRequired === true;
   }
 
+  function vehicleClassification(vehicle) {
+    const type = text(vehicle?.type, 80) || 'Sonstiger Fahrzeugtyp';
+    const vehicleKind = VEHICLE_KINDS.includes(vehicle?.vehicleKind)
+      ? vehicle.vehicleKind : legacyVehicleKind(type);
+    const usage = text(vehicle?.usage, 80) || legacyVehicleUsage(type);
+    return { vehicleKind, usage, type };
+  }
+
+  function vehicleSettings(organizationId) {
+    const organization = organizations.find((entry) => entry.id === organizationId);
+    const usages = uniqueTexts([
+      ...DEFAULT_VEHICLE_USAGES,
+      ...(Array.isArray(organization?.vehicleUsages) ? organization.vehicleUsages : []),
+    ]);
+    const configuredTypes = organization?.vehicleTypesByUsage;
+    const vehicleTypesByUsage = Object.create(null);
+    for (const usage of usages) {
+      const configured = configuredTypes && Object.hasOwn(configuredTypes, usage)
+        ? configuredTypes[usage] : DEFAULT_VEHICLE_TYPES_BY_USAGE[usage];
+      vehicleTypesByUsage[usage] = uniqueTexts(configured || ['Sonstiger Fahrzeugtyp']);
+    }
+    for (const vehicle of all(vehicles).filter((entry) => entry.organizationId === organizationId)) {
+      const classification = vehicleClassification(vehicle);
+      if (!usages.includes(classification.usage)) usages.push(classification.usage);
+      vehicleTypesByUsage[classification.usage] ||= [];
+      if (!vehicleTypesByUsage[classification.usage].includes(classification.type)) {
+        vehicleTypesByUsage[classification.usage].push(classification.type);
+      }
+    }
+    for (const usage of usages) vehicleTypesByUsage[usage] ||= [];
+    return {
+      primaryVehicleApprovalRequired: organizationSetting(organizationId),
+      usages,
+      vehicleTypesByUsage,
+    };
+  }
+
   function visibleTo(req, vehicle) {
     if (!vehicle || vehicle.organizationId !== req.tenant.organizationId) return false;
     return vehicle.unitId === req.tenant.unitId
+      || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+        req.tenant.unitId, vehicle.unitId)
       || vehicle.viewAllowedUnitIds?.includes(req.tenant.unitId)
       || vehicle.reservationAllowedUnitIds?.includes(req.tenant.unitId);
   }
 
   function reservableBy(req, vehicle) {
     return vehicle?.unitId === req.tenant.unitId
+      || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
+        req.tenant.unitId, vehicle?.unitId)
       || vehicle?.reservationAllowedUnitIds?.includes(req.tenant.unitId);
   }
 
@@ -155,6 +221,7 @@ function registerVehicleRoutes({
       entry.vehicleId === vehicle.id && entry.status === 'Aktiv');
     return {
       ...vehicle,
+      ...vehicleClassification(vehicle),
       ownerUnitName: owner?.name || null,
       parkingLocationName: parking?.name || null,
       loadLocationName: loadLocation?.name || displayName(vehicle),
@@ -175,17 +242,27 @@ function registerVehicleRoutes({
     const year = nullableNumber(body.year ?? existing?.year, { integer: true, maximum: 9999 });
     const manufacturer = text(body.manufacturer ?? existing?.manufacturer, 120);
     const model = text(body.model ?? existing?.model, 120);
-    const type = text(body.type ?? existing?.type ?? 'Kraftfahrzeug', 80);
+    const legacyRequest = body.vehicleKind === undefined && body.usage === undefined;
+    const fallbackClassification = vehicleClassification(existing || { type: body.type });
+    const vehicleKind = text(body.vehicleKind ?? fallbackClassification.vehicleKind, 80);
+    const usage = text(body.usage ?? fallbackClassification.usage, 80);
+    const type = text(body.type ?? fallbackClassification.type, 80);
     const status = text(body.status ?? existing?.status ?? 'Verfügbar', 40);
     const mileage = nullableNumber(body.mileage ?? existing?.mileage, { maximum: 100_000_000 });
     const operatingHours = nullableNumber(body.operatingHours ?? existing?.operatingHours, { maximum: 10_000_000 });
     const notes = text(body.notes ?? existing?.notes, 5000);
-    if (!registrationNumber || !vin) return { error: 'Kennzeichen und Fahrgestellnummer sind Pflichtfelder.' };
+    const identifiersRequired = ['Kraftfahrzeug', 'Anhänger'].includes(vehicleKind);
+    if (identifiersRequired && (!registrationNumber || !vin)) {
+      return { error: 'Kennzeichen und Fahrgestellnummer sind für Kraftfahrzeuge und Anhänger Pflichtfelder.' };
+    }
     if (year === undefined || (year !== null && (year < 1800 || year > 2200))) {
       return { error: 'Das Baujahr muss vierstellig und plausibel sein.' };
     }
-    if (!VEHICLE_TYPES.includes(type) || !VEHICLE_STATUSES.includes(status)) {
-      return { error: 'Fahrzeugtyp oder Status ist ungültig.' };
+    const settings = vehicleSettings(req.tenant.organizationId);
+    if (!VEHICLE_KINDS.includes(vehicleKind) || !settings.usages.includes(usage)
+        || !type || (!legacyRequest && !settings.vehicleTypesByUsage[usage]?.includes(type))
+        || !VEHICLE_STATUSES.includes(status)) {
+      return { error: 'Fahrzeugart, Verwendung, Fahrzeugtyp oder Status ist ungültig.' };
     }
     if (mileage === undefined || operatingHours === undefined) {
       return { error: 'Kilometerstand oder Betriebsstunden sind ungültig.' };
@@ -196,12 +273,13 @@ function registerVehicleRoutes({
     }
     const duplicate = all(vehicles).find((entry) => entry.id !== existing?.id
       && entry.organizationId === req.tenant.organizationId && !entry.purgedAt
-      && (normalizeIdentifier(entry.registrationNumber) === registrationNumber
-        || normalizeIdentifier(entry.vin) === vin));
-    if (duplicate) return { error: 'Kennzeichen und Fahrgestellnummer müssen innerhalb der Organisation eindeutig sein.', status: 409 };
+      && ((registrationNumber
+          && normalizeIdentifier(entry.registrationNumber) === registrationNumber)
+        || (vin && normalizeIdentifier(entry.vin) === vin)));
+    if (duplicate) return { error: 'Kennzeichen und Fahrgestellnummer müssen, sofern angegeben, innerhalb der Organisation eindeutig sein.', status: 409 };
     return {
       registrationNumber, vin, radioCallName, parkingLocationId, parkingDetails,
-      year, manufacturer, model, type, status, mileage, operatingHours, notes,
+      year, manufacturer, model, vehicleKind, usage, type, status, mileage, operatingHours, notes,
       primaryResponseVehicle: body.primaryResponseVehicle ?? existing?.primaryResponseVehicle ?? false,
     };
   }
@@ -314,23 +392,27 @@ function registerVehicleRoutes({
     const result = all(vehicles).filter((entry) => visibleTo(req, entry)
       && (includeArchived || !entry.archivedAt)
       && (!query || [entry.registrationNumber, entry.vin, entry.radioCallName,
-        entry.manufacturer, entry.model].some((value) => String(value || '').toLowerCase().includes(query))))
+        entry.manufacturer, entry.model, entry.vehicleKind, entry.usage, entry.type]
+        .some((value) => String(value || '').toLowerCase().includes(query))))
       .slice(0, limit).map(publicVehicle);
     return res.json(result);
   });
 
   app.get('/api/vehicles/options', authMiddleware, requirePermission('vehicles.read'), (req, res) => {
+    const settings = vehicleSettings(req.tenant.organizationId);
     return res.json({
-      types: VEHICLE_TYPES,
+      // Kept for clients from before the vehicle classification split.
+      types: LEGACY_VEHICLE_TYPES,
+      vehicleKinds: VEHICLE_KINDS,
+      usages: settings.usages,
+      vehicleTypesByUsage: settings.vehicleTypesByUsage,
       statuses: VEHICLE_STATUSES,
       maintenanceStatuses: MAINTENANCE_STATUSES,
       parkingLocations: all(locations).filter((entry) => entry.organizationId === req.tenant.organizationId
         && entry.unitId === req.tenant.unitId && !entry.vehicleId).map((entry) => ({
         id: entry.id, name: entry.name, path: entry.path || entry.name,
       })),
-      organizationSettings: {
-        primaryVehicleApprovalRequired: organizationSetting(req.tenant.organizationId),
-      },
+      organizationSettings: settings,
     });
   });
 
@@ -421,17 +503,51 @@ function registerVehicleRoutes({
   });
 
   app.get('/api/vehicle-settings', authMiddleware, requirePermission('vehicles.read'), (req, res) => {
-    return res.json({ primaryVehicleApprovalRequired: organizationSetting(req.tenant.organizationId) });
+    return res.json(vehicleSettings(req.tenant.organizationId));
   });
 
-  app.put('/api/vehicle-settings', authMiddleware, requirePermission('organizations.write'), (req, res) => {
+  app.put('/api/vehicle-settings', authMiddleware, (req, res) => {
     const organization = organizations.find((entry) => entry.id === req.tenant.organizationId);
     if (!organization) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
-    organization.primaryVehicleApprovalRequired = req.body.primaryVehicleApprovalRequired === true;
+    const managesOrganization = hasPermission(req.user, 'organizations.write');
+    const managesVehicleTypes = hasPermission(req.user, 'vehicles.write');
+    const changesOrganization = Object.hasOwn(req.body, 'primaryVehicleApprovalRequired')
+      || Object.hasOwn(req.body, 'usages');
+    const changesVehicleTypes = Object.hasOwn(req.body, 'vehicleTypesByUsage');
+    if ((changesOrganization && !managesOrganization)
+        || (changesVehicleTypes && !managesVehicleTypes)
+        || (!changesOrganization && !changesVehicleTypes)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (Object.hasOwn(req.body, 'primaryVehicleApprovalRequired')) {
+      organization.primaryVehicleApprovalRequired = req.body.primaryVehicleApprovalRequired === true;
+    }
+    if (Object.hasOwn(req.body, 'usages')) {
+      organization.vehicleUsages = uniqueTexts([
+        ...DEFAULT_VEHICLE_USAGES,
+        ...uniqueTexts(req.body.usages),
+      ]);
+    }
+    if (Object.hasOwn(req.body, 'vehicleTypesByUsage')) {
+      const requested = req.body.vehicleTypesByUsage;
+      if (!requested || typeof requested !== 'object' || Array.isArray(requested)) {
+        return res.status(400).json({ error: 'Die Fahrzeugtypen sind ungültig.' });
+      }
+      const usages = vehicleSettings(req.tenant.organizationId).usages;
+      const next = {};
+      for (const usage of usages) {
+        const values = uniqueTexts(requested[usage]);
+        next[usage] = values.length > 0 ? values : ['Sonstiger Fahrzeugtyp'];
+      }
+      organization.vehicleTypesByUsage = next;
+    }
+    const settings = vehicleSettings(req.tenant.organizationId);
     logEvent('settings', 'Vehicle', {
-      primaryVehicleApprovalRequired: organization.primaryVehicleApprovalRequired,
+      primaryVehicleApprovalRequired: settings.primaryVehicleApprovalRequired,
+      usages: settings.usages,
+      vehicleTypesByUsage: settings.vehicleTypesByUsage,
     }, req.user.username);
-    return res.json({ primaryVehicleApprovalRequired: organization.primaryVehicleApprovalRequired });
+    return res.json(settings);
   });
 
   app.get('/api/vehicle-reservations', authMiddleware, requirePermission('vehicles.read'), (req, res) => {
@@ -479,7 +595,10 @@ function registerVehicleRoutes({
         status: 'Ausstehend', createdAt, updatedAt: createdAt,
       };
       all(vehicleReservations).push(entry);
-      logEvent('create', 'VehicleReservation', { id: entry.id, vehicleId: vehicle.id }, req.user.username);
+      logEvent('create', 'VehicleReservation', {
+        id: entry.id, vehicleId: vehicle.id,
+        requesterUnitId: req.tenant.unitId, ownerUnitId: vehicle.unitId,
+      }, req.user.username);
       return res.status(201).json(publicReservation(entry));
     });
 
@@ -816,7 +935,9 @@ function registerVehicleRoutes({
       };
       line('Beladungsliste', { size: 18, bold: true, gap: 25 });
       line(`Fahrzeug: ${displayName(vehicle)} | Kennzeichen: ${vehicle.registrationNumber}`, { bold: true });
-      line(`Typ: ${vehicle.type} | Stellplatz: ${vehicle.parkingDetails || vehicle.parkingLocationId || '-'}`);
+      const classification = vehicleClassification(vehicle);
+      line(`Fahrzeugart: ${classification.vehicleKind} | Verwendung: ${classification.usage}`);
+      line(`Fahrzeugtyp: ${classification.type} | Stellplatz: ${vehicle.parkingDetails || vehicle.parkingLocationId || '-'}`);
       line(`Liste: ${list.name} | Version: ${list.version} | Stand: ${new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}`);
       y -= 8;
       line('Inventarnummer | Bezeichnung | Position | Soll | Ist | Abweichung', { bold: true, gap: 18 });
@@ -834,7 +955,7 @@ function registerVehicleRoutes({
       const bytes = await pdf.save();
       logEvent('print', 'VehicleLoad', { vehicleId: vehicle.id, loadListId: list.id }, req.user.username);
       return res.json({
-        fileName: `beladungsliste-${vehicle.registrationNumber.replace(/[^A-Za-z0-9_-]/g, '-')}-v${list.version}.pdf`,
+        fileName: `beladungsliste-${displayName(vehicle).replace(/[^A-Za-z0-9_-]/g, '-')}-v${list.version}.pdf`,
         mimeType: 'application/pdf', fileBase64: Buffer.from(bytes).toString('base64'),
       });
     });
@@ -866,4 +987,9 @@ function registerVehicleRoutes({
   return { assessVehicleSafety, applyVehicleRetentionPolicy };
 }
 
-module.exports = { registerVehicleRoutes, VEHICLE_TYPES, VEHICLE_STATUSES };
+module.exports = {
+  registerVehicleRoutes,
+  VEHICLE_TYPES: LEGACY_VEHICLE_TYPES,
+  VEHICLE_KINDS,
+  VEHICLE_STATUSES,
+};

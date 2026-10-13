@@ -7,6 +7,8 @@ const ORGANIZATION_RETENTION_DAYS = 730;
 const RAW_COLLECTION = Symbol('materialkompass.rawTenantCollection');
 const tenantStorage = new AsyncLocalStorage();
 const EDV_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9._/-]{0,31}$/;
+const UNIT_KIND_STANDARD = 'standard';
+const UNIT_KIND_YOUTH = 'youth';
 
 const UNIT_SCOPED_COLLECTIONS = new Set([
   'departments', 'locations', 'shelves', 'storageLevels', 'stockStructures',
@@ -118,6 +120,27 @@ function normalizeTenancyData(data) {
       unit.edvNumber = nextLegacyEdvNumber('UNIT', usedEdvNumbers);
     }
   }
+  // A youth organization is a specially constrained unit linked one-to-one to
+  // its direct parent (the base unit). Invalid or duplicate legacy links are
+  // downgraded safely instead of broadening access accidentally.
+  const claimedBaseUnitIds = new Set();
+  for (const unit of organizationUnits) {
+    const requestedYouth = unit.unitKind === UNIT_KIND_YOUTH;
+    const baseUnitId = String(unit.baseUnitId || unit.parentId || '');
+    const base = organizationUnits.find((entry) => entry.id === baseUnitId
+      && entry.organizationId === unit.organizationId && entry.id !== unit.id
+      && entry.status !== 'purged' && entry.unitKind !== UNIT_KIND_YOUTH);
+    if (requestedYouth && base && unit.parentId === base.id
+        && !claimedBaseUnitIds.has(base.id)) {
+      unit.unitKind = UNIT_KIND_YOUTH;
+      unit.baseUnitId = base.id;
+      unit.type = 'Jugendorganisation';
+      claimedBaseUnitIds.add(base.id);
+    } else {
+      unit.unitKind = UNIT_KIND_STANDARD;
+      unit.baseUnitId = null;
+    }
+  }
   // Inventory remains isolated by default. A source unit may explicitly make
   // its inventory readable from selected ancestor or descendant units. Invalid
   // legacy references are discarded during normalization.
@@ -201,6 +224,15 @@ function normalizeTenancyData(data) {
       }
     }
     membership.scopes = [...explicitScopes.values()];
+    for (const scope of membership.scopes) {
+      const unit = organizationUnits.find((entry) => entry.id === scope.unitId
+        && entry.organizationId === membership.organizationId);
+      if (unit?.unitKind === UNIT_KIND_YOUTH
+          && (scope.roles || []).includes('Jugendvorsitzender')) {
+        scope.roles = [...new Set((scope.roles || [])
+          .map((role) => role === 'Jugendvorsitzender' ? 'Vorsitz' : role))];
+      }
+    }
     if (!membership.scopes.some((scope) => scope.unitId === membership.defaultUnitId)) {
       membership.defaultUnitId = membership.scopes[0]?.unitId || null;
     }
@@ -251,6 +283,8 @@ function ancestorsOf(units, organizationId, unitId) {
 
 function inventoryReadableUnitIds(units, organizationId, viewerUnitId) {
   const readable = new Set([viewerUnitId]);
+  const linkedUnitId = youthCounterpartUnitId(units, organizationId, viewerUnitId);
+  if (linkedUnitId) readable.add(linkedUnitId);
   for (const unit of units) {
     if (unit.organizationId !== organizationId || unit.status !== 'active') continue;
     if ((unit.inventoryVisibleToUnitIds || []).includes(viewerUnitId)) {
@@ -260,11 +294,35 @@ function inventoryReadableUnitIds(units, organizationId, viewerUnitId) {
   return readable;
 }
 
+function youthCounterpartUnitId(units, organizationId, unitId) {
+  const current = units.find((entry) => entry.id === unitId
+    && entry.organizationId === organizationId && entry.status === 'active');
+  if (!current) return null;
+  if (current.unitKind === UNIT_KIND_YOUTH) {
+    const base = units.find((entry) => entry.id === current.baseUnitId
+      && entry.organizationId === organizationId && entry.status === 'active'
+      && entry.unitKind !== UNIT_KIND_YOUTH);
+    return base?.id || null;
+  }
+  return units.find((entry) => entry.organizationId === organizationId
+    && entry.status === 'active' && entry.unitKind === UNIT_KIND_YOUTH
+    && entry.baseUnitId === current.id)?.id || null;
+}
+
+function youthUnitsAreLinked(units, organizationId, leftUnitId, rightUnitId) {
+  return Boolean(leftUnitId && rightUnitId && leftUnitId !== rightUnitId
+    && youthCounterpartUnitId(units, organizationId, leftUnitId) === rightUnitId);
+}
+
 function rolePermissions(roles, organizationId, roleNames) {
   const names = new Set(roleNames || []);
+  const systemRoleNames = new Set(roles
+    .filter((role) => !role.organizationId)
+    .map((role) => role.name));
   return [...new Set(roles
     .filter((role) => names.has(role.name)
-      && (!role.organizationId || role.organizationId === organizationId))
+      && (!role.organizationId
+        || (!systemRoleNames.has(role.name) && role.organizationId === organizationId)))
     .flatMap((role) => role.permissions || []))];
 }
 
@@ -286,17 +344,39 @@ function contextForMembership({ membership, units, roles, activeUnitId }) {
       (scope.departmentIds || []).forEach((id) => departmentIds.add(id));
     }
   }
+  let derivedFromUnitId = null;
+  if (requestedUnit.unitKind !== UNIT_KIND_YOUTH) {
+    const youthUnit = units.find((entry) => entry.organizationId === membership.organizationId
+      && entry.status === 'active' && entry.unitKind === UNIT_KIND_YOUTH
+      && entry.baseUnitId === requestedUnit.id);
+    const youthScope = youthUnit && (membership.scopes || []).find((scope) =>
+      scope.unitId === youthUnit.id && (scope.roles || []).includes('Vorsitz'));
+    if (youthScope) {
+      effectiveRoleNames.add('Jugendvorsitzender');
+      derivedFromUnitId = youthUnit.id;
+    }
+  }
   if (effectiveRoleNames.size === 0) return null;
   const roleNames = [...effectiveRoleNames];
+  const effectivePermissions = rolePermissions(
+    roles, membership.organizationId, roleNames,
+  );
+  if (requestedUnit.unitKind === UNIT_KIND_YOUTH && roleNames.includes('Vorsitz')) {
+    rolePermissions(roles, membership.organizationId, ['Jugendmitglied'])
+      .forEach((permission) => {
+        if (!effectivePermissions.includes(permission)) effectivePermissions.push(permission);
+      });
+  }
   return {
     organizationId: membership.organizationId,
     unitId: requestedUnit.id,
     allowedUnitIds,
     roles: roleNames,
-    permissions: rolePermissions(roles, membership.organizationId, roleNames),
+    permissions: effectivePermissions,
     departmentIds: [...departmentIds],
     membershipId: membership.id,
     organizationAdmin: roleNames.includes('Admin'),
+    derivedFromUnitId,
     system: false,
   };
 }
@@ -561,6 +641,7 @@ function registerTenancyRoutes({
       name, type: 'Organisation', edvNumber: organizationEdvNumber,
       status: 'active', createdAt: nowIso(),
       archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
+      unitKind: UNIT_KIND_STANDARD, baseUnitId: null,
       inventoryVisibleToUnitIds: [],
       calendarRetentionMonths: null,
     };
@@ -582,6 +663,13 @@ function registerTenancyRoutes({
   app.get('/api/organization-units', authMiddleware, (req, res) => {
     const membership = membershipFor(req.user.id, req.tenant.organizationId);
     const allowed = new Set((membership?.scopes || []).map((scope) => scope.unitId));
+    for (const scope of membership?.scopes || []) {
+      if (!(scope.roles || []).includes('Vorsitz')) continue;
+      const youthUnit = units.find((entry) => entry.id === scope.unitId
+        && entry.organizationId === req.tenant.organizationId
+        && entry.status === 'active' && entry.unitKind === UNIT_KIND_YOUTH);
+      if (youthUnit?.baseUnitId) allowed.add(youthUnit.baseUnitId);
+    }
     const manageable = canCreateOrganizationStructure(req)
       ? unitIdsForPermission(req, 'organizations.write') : new Set();
     const userManageable = unitIdsForPermission(req, 'users.write');
@@ -609,7 +697,10 @@ function registerTenancyRoutes({
       });
     }
     const name = text(req.body.name);
-    const type = text(req.body.type, 80);
+    const requestedKind = req.body.unitKind === UNIT_KIND_YOUTH
+      ? UNIT_KIND_YOUTH : UNIT_KIND_STANDARD;
+    const type = requestedKind === UNIT_KIND_YOUTH
+      ? 'Jugendorganisation' : text(req.body.type, 80);
     const unitEdvNumber = edvNumber(req.body.edvNumber);
     const parentId = text(req.body.parentId, 64) || req.tenant.unitId;
     if (!name || !type || !unitEdvNumber) {
@@ -624,6 +715,16 @@ function registerTenancyRoutes({
     if (!validateUnitTree(units, req.tenant.organizationId, parentId)) {
       return res.status(400).json({ error: 'Die übergeordnete Einheit ist ungültig.' });
     }
+    const parent = units.find((entry) => entry.id === parentId
+      && entry.organizationId === req.tenant.organizationId && entry.status === 'active');
+    if (parent?.unitKind === UNIT_KIND_YOUTH) {
+      return res.status(409).json({ error: 'Jugendorganisationen dürfen keine Untereinheiten besitzen.' });
+    }
+    if (requestedKind === UNIT_KIND_YOUTH && units.some((entry) =>
+      entry.organizationId === req.tenant.organizationId && entry.status === 'active'
+      && entry.unitKind === UNIT_KIND_YOUTH && entry.baseUnitId === parentId)) {
+      return res.status(409).json({ error: 'Diese Stammgliederung besitzt bereits eine Jugendorganisation.' });
+    }
     if (!unitIdsForPermission(req, 'organizations.write').has(parentId)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
@@ -631,6 +732,8 @@ function registerTenancyRoutes({
       id: randomUUID(), organizationId: req.tenant.organizationId, parentId,
       name, type, edvNumber: unitEdvNumber, status: 'active', createdAt: nowIso(),
       archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
+      unitKind: requestedKind,
+      baseUnitId: requestedKind === UNIT_KIND_YOUTH ? parentId : null,
       inventoryVisibleToUnitIds: [],
       calendarRetentionMonths: null,
     };
@@ -697,11 +800,33 @@ function registerTenancyRoutes({
       && manageableUnitIds.has(entry.id));
     if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
     const parentId = req.body.parentId === undefined ? unit.parentId : text(req.body.parentId, 64) || null;
+    const requestedKind = req.body.unitKind === undefined
+      ? unit.unitKind || UNIT_KIND_STANDARD
+      : req.body.unitKind === UNIT_KIND_YOUTH ? UNIT_KIND_YOUTH : UNIT_KIND_STANDARD;
     if (unit.parentId === null && parentId !== null) {
       return res.status(409).json({ error: 'Die Wurzeleinheit kann nicht verschoben werden.' });
     }
     if (!validateUnitTree(units, unit.organizationId, parentId, unit.id)) {
       return res.status(400).json({ error: 'Die Hierarchie würde ungültig oder zyklisch.' });
+    }
+    const children = units.filter((entry) => entry.organizationId === unit.organizationId
+      && entry.parentId === unit.id && entry.status === 'active');
+    const parent = units.find((entry) => entry.id === parentId
+      && entry.organizationId === unit.organizationId && entry.status === 'active');
+    if (requestedKind === UNIT_KIND_YOUTH) {
+      if (!parent || parent.unitKind === UNIT_KIND_YOUTH || children.length > 0) {
+        return res.status(409).json({ error: 'Eine Jugendorganisation benötigt eine Stammgliederung und darf keine Untereinheiten besitzen.' });
+      }
+      if (units.some((entry) => entry.id !== unit.id
+        && entry.organizationId === unit.organizationId && entry.status === 'active'
+        && entry.unitKind === UNIT_KIND_YOUTH && entry.baseUnitId === parent.id)) {
+        return res.status(409).json({ error: 'Diese Stammgliederung besitzt bereits eine Jugendorganisation.' });
+      }
+    }
+    if (requestedKind === UNIT_KIND_STANDARD && units.some((entry) =>
+      entry.organizationId === unit.organizationId && entry.status === 'active'
+      && entry.unitKind === UNIT_KIND_YOUTH && entry.baseUnitId === unit.id)) {
+      return res.status(409).json({ error: 'Eine Stammgliederung mit Jugendorganisation kann nicht selbst umgewandelt werden.' });
     }
     const nextEdvNumber = edvNumber(req.body.edvNumber ?? unit.edvNumber);
     if (!EDV_NUMBER_PATTERN.test(nextEdvNumber)) {
@@ -715,10 +840,22 @@ function registerTenancyRoutes({
     }
     Object.assign(unit, {
       name: text(req.body.name ?? unit.name),
-      type: text(req.body.type ?? unit.type, 80),
+      type: requestedKind === UNIT_KIND_YOUTH
+        ? 'Jugendorganisation' : text(req.body.type ?? unit.type, 80),
       edvNumber: nextEdvNumber,
       parentId,
+      unitKind: requestedKind,
+      baseUnitId: requestedKind === UNIT_KIND_YOUTH ? parentId : null,
     });
+    if (requestedKind === UNIT_KIND_YOUTH) {
+      for (const membership of memberships) {
+        if (membership.organizationId !== unit.organizationId) continue;
+        const scope = (membership.scopes || []).find((entry) => entry.unitId === unit.id);
+        if (!scope?.roles?.includes('Jugendvorsitzender')) continue;
+        scope.roles = [...new Set(scope.roles.map((role) =>
+          role === 'Jugendvorsitzender' ? 'Vorsitz' : role))];
+      }
+    }
     if (unit.parentId === null) {
       const organization = organizations.find((entry) => entry.id === unit.organizationId);
       if (organization) {
@@ -821,6 +958,10 @@ module.exports = {
   descendantsOf,
   ancestorsOf,
   inventoryReadableUnitIds,
+  youthCounterpartUnitId,
+  youthUnitsAreLinked,
+  UNIT_KIND_STANDARD,
+  UNIT_KIND_YOUTH,
   contextForMembership,
   rolePermissions,
   registerTenancyRoutes,

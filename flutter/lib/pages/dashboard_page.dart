@@ -10,9 +10,11 @@ import '../services/app_http_client.dart';
 import '../services/offline_http.dart' as offline_transport;
 import '../services/offline_session_service.dart';
 import '../services/offline_store.dart';
+import '../services/system_message_service.dart';
 import '../widgets/download_folder_dialog.dart';
 import '../widgets/mail_count_badge.dart';
 import '../widgets/stat_card.dart';
+import '../widgets/system_message_card.dart';
 import 'categories_page.dart' deferred as categories_page;
 import 'calendar_page.dart' deferred as calendar_page;
 import 'defects_page.dart' deferred as defects_page;
@@ -55,6 +57,7 @@ class _DashboardPageState extends State<DashboardPage>
   late String _token;
   Timer? _syncTimer;
   bool _backgroundRefreshInProgress = false;
+  final _systemMessages = SystemMessageService();
 
   @override
   void initState() {
@@ -67,10 +70,49 @@ class _DashboardPageState extends State<DashboardPage>
       const Duration(minutes: 1),
       (_) => unawaited(_refreshInBackground()),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showSystemMessages());
   }
 
   Future<void> _sync() =>
       offline_transport.flush(headers: {'Authorization': 'Bearer $_token'});
+
+  Future<void> _showSystemMessages() async {
+    try {
+      final messages = await _systemMessages.userMessages(_token);
+      for (final message in messages.where(
+        (entry) => entry.isMaintenance || !entry.acknowledged,
+      )) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(
+              message.isRelease ? 'Änderungen in MaterialKompass' : 'Hinweis',
+            ),
+            content: SingleChildScrollView(
+              child: SystemMessageCard(message: message),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Gelesen'),
+              ),
+            ],
+          ),
+        );
+        if (message.isRelease) {
+          try {
+            await _systemMessages.acknowledge(_token, message.id);
+          } catch (_) {
+            // Bei einem Fehler wird der Hinweis bei der nächsten Anmeldung erneut gezeigt.
+          }
+        }
+      }
+    } catch (_) {
+      // Die Fachanwendung bleibt auch bei einem Hinweis-Endpunktfehler nutzbar.
+    }
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -83,6 +125,7 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _systemMessages.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

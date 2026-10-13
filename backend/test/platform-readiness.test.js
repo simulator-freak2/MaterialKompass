@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createApp } = require('../src/app');
+const { version: applicationVersion } = require('../package.json');
 const {
   createCorsOptions, loadRuntimeConfig, parseOrigins, parsePort, parseTrustProxy,
 } = require('../src/config');
@@ -74,7 +75,7 @@ test('desktop downloads report availability and stream configured release files'
     const updateResponse = await fetch(`${baseUrl}/api/client-updates/windows?currentVersion=0.9.0`);
     assert.equal(updateResponse.status, 200);
     const update = await updateResponse.json();
-    assert.equal(update.version, '1.5.0');
+    assert.equal(update.version, applicationVersion);
     assert.equal(update.updateAvailable, true);
     assert.equal(update.required, false);
     assert.equal(update.downloadUrl, '/api/downloads/windows');

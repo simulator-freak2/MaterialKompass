@@ -9,6 +9,43 @@ import '../services/download_service.dart';
 typedef VehicleRequest =
     Future<dynamic> Function(String path, {String method, Object? body});
 
+const _vehicleKinds = <String>[
+  'Kraftfahrzeug',
+  'Boot',
+  'Anhänger',
+  'Sonstige Fahrzeugart',
+];
+const _defaultVehicleUsages = <String>['Einsatzfahrt', 'sonstige Verwendung'];
+
+String _vehicleKindOf(Map<String, dynamic> vehicle) {
+  final stored = vehicle['vehicleKind']?.toString();
+  if (_vehicleKinds.contains(stored)) return stored!;
+  final legacyType = vehicle['type']?.toString();
+  if (const ['Kraftfahrzeug', 'Boot', 'Anhänger'].contains(legacyType)) {
+    return legacyType!;
+  }
+  if (const ['Einsatzfahrzeug', 'Vereinsfahrzeug'].contains(legacyType)) {
+    return 'Kraftfahrzeug';
+  }
+  return 'Sonstige Fahrzeugart';
+}
+
+String _vehicleUsageOf(Map<String, dynamic> vehicle) {
+  final stored = vehicle['usage']?.toString().trim() ?? '';
+  if (stored.isNotEmpty) return stored;
+  return vehicle['type'] == 'Einsatzfahrzeug'
+      ? 'Einsatzfahrt'
+      : 'sonstige Verwendung';
+}
+
+String _vehicleDisplayName(Map<String, dynamic> vehicle) {
+  for (final key in ['registrationNumber', 'radioCallName', 'type']) {
+    final value = vehicle[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty) return value;
+  }
+  return 'Fahrzeug';
+}
+
 class VehiclesPage extends StatefulWidget {
   const VehiclesPage({required this.token, this.request, super.key});
 
@@ -110,6 +147,9 @@ class _VehiclesPageState extends State<VehiclesPage> {
         vehicle['radioCallName'],
         vehicle['manufacturer'],
         vehicle['model'],
+        vehicle['vehicleKind'],
+        vehicle['usage'],
+        vehicle['type'],
         vehicle['ownerUnitName'],
       ].any((entry) => entry.toString().toLowerCase().contains(needle));
     }).toList();
@@ -150,46 +190,22 @@ class _VehiclesPageState extends State<VehiclesPage> {
   }
 
   Future<void> _settings() async {
-    final current =
-        (options['organizationSettings']
-            as Map?)?['primaryVehicleApprovalRequired'] ==
-        true;
-    var enabled = current;
-    final save = await showDialog<bool>(
+    final settings = Map<String, dynamic>.from(
+      options['organizationSettings'] as Map? ?? const {},
+    );
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Fahrzeug-Einstellungen'),
-          content: SizedBox(
-            width: 560,
-            child: SwitchListTile(
-              value: enabled,
-              onChanged: (value) => setDialogState(() => enabled = value),
-              title: const Text('TLE-Zweitfreigabe'),
-              subtitle: const Text(
-                'Reservierungen primär ausrückender Fahrzeuge benötigen '
-                'zusätzlich die Zustimmung des Technischen Leiters Einsatz.',
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Abbrechen'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Speichern'),
-            ),
-          ],
-        ),
+      builder: (_) => _VehicleSettingsDialog(
+        settings: settings,
+        canManageUsages: can('organizations.write'),
+        canManageVehicleTypes: can('vehicles.write'),
       ),
     );
-    if (save != true) return;
+    if (result == null) return;
     final response = await _request(
       '/api/vehicle-settings',
       method: 'PUT',
-      body: {'primaryVehicleApprovalRequired': enabled},
+      body: result,
     );
     if (response != null) await _load();
   }
@@ -200,7 +216,7 @@ class _VehiclesPageState extends State<VehiclesPage> {
       appBar: AppBar(
         title: const Text('Fahrzeugverwaltung'),
         actions: [
-          if (can('organizations.write'))
+          if (can('organizations.write') || can('vehicles.write'))
             IconButton(
               onPressed: _settings,
               tooltip: 'Fahrzeug-Einstellungen',
@@ -297,8 +313,9 @@ class _VehiclesPageState extends State<VehiclesPage> {
     final subtitle = [
       if (vehicle['radioCallName'].toString().isNotEmpty)
         vehicle['radioCallName'],
-      '${vehicle['type']} · ${vehicle['manufacturer']} ${vehicle['model']}'
+      '${_vehicleKindOf(vehicle)} · ${_vehicleUsageOf(vehicle)} · ${vehicle['type']}'
           .trim(),
+      '${vehicle['manufacturer']} ${vehicle['model']}'.trim(),
       'Stellplatz: ${vehicle['parkingDetails'].toString().isNotEmpty ? vehicle['parkingDetails'] : vehicle['parkingLocationName'] ?? '-'}',
       if (vehicle['unitId'] != activeUnitId)
         'Freigegeben durch ${vehicle['ownerUnitName'] ?? 'andere Gliederung'}',
@@ -311,15 +328,15 @@ class _VehiclesPageState extends State<VehiclesPage> {
               ? Theme.of(context).colorScheme.errorContainer
               : Theme.of(context).colorScheme.primaryContainer,
           child: Icon(
-            vehicle['type'] == 'Boot'
+            _vehicleKindOf(vehicle) == 'Boot'
                 ? Icons.directions_boat_outlined
-                : vehicle['type'] == 'Anhänger'
+                : _vehicleKindOf(vehicle) == 'Anhänger'
                 ? Icons.rv_hookup_outlined
                 : Icons.directions_car_outlined,
           ),
         ),
         title: Text(
-          vehicle['registrationNumber']?.toString() ?? '',
+          _vehicleDisplayName(vehicle),
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         subtitle: Text(subtitle),
@@ -332,6 +349,241 @@ class _VehiclesPageState extends State<VehiclesPage> {
             : const Icon(Icons.chevron_right),
         onTap: () => _openVehicle(vehicle),
       ),
+    );
+  }
+}
+
+class _VehicleSettingsDialog extends StatefulWidget {
+  const _VehicleSettingsDialog({
+    required this.settings,
+    required this.canManageUsages,
+    required this.canManageVehicleTypes,
+  });
+
+  final Map<String, dynamic> settings;
+  final bool canManageUsages;
+  final bool canManageVehicleTypes;
+
+  @override
+  State<_VehicleSettingsDialog> createState() => _VehicleSettingsDialogState();
+}
+
+class _VehicleSettingsDialogState extends State<_VehicleSettingsDialog> {
+  late bool approvalRequired =
+      widget.settings['primaryVehicleApprovalRequired'] == true;
+  late final List<String> usages = {
+    ..._defaultVehicleUsages,
+    ...(widget.settings['usages'] as List? ?? const []).map(
+      (entry) => entry.toString(),
+    ),
+  }.toList();
+  late final Map<String, List<String>> typesByUsage = {
+    for (final usage in usages)
+      usage:
+          ((widget.settings['vehicleTypesByUsage'] as Map?)?[usage] as List? ??
+                  const [])
+              .map((entry) => entry.toString())
+              .toSet()
+              .toList(),
+  };
+  late String selectedUsage = usages.first;
+  final usageController = TextEditingController();
+  final typeController = TextEditingController();
+
+  @override
+  void dispose() {
+    usageController.dispose();
+    typeController.dispose();
+    super.dispose();
+  }
+
+  void _addUsage() {
+    final value = usageController.text.trim();
+    if (value.isEmpty || usages.contains(value)) return;
+    setState(() {
+      usages.add(value);
+      typesByUsage[value] = ['Sonstiger Fahrzeugtyp'];
+      selectedUsage = value;
+      usageController.clear();
+    });
+  }
+
+  void _removeUsage(String usage) {
+    if (_defaultVehicleUsages.contains(usage)) return;
+    setState(() {
+      usages.remove(usage);
+      typesByUsage.remove(usage);
+      if (selectedUsage == usage) selectedUsage = usages.first;
+    });
+  }
+
+  void _addType() {
+    final value = typeController.text.trim();
+    final values = typesByUsage[selectedUsage] ??= [];
+    if (value.isEmpty || values.contains(value)) return;
+    setState(() {
+      values.add(value);
+      typeController.clear();
+    });
+  }
+
+  void _removeType(String type) {
+    final values = typesByUsage[selectedUsage] ??= [];
+    if (values.length <= 1) return;
+    setState(() => values.remove(type));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeTypes = typesByUsage[selectedUsage] ?? const <String>[];
+    return AlertDialog(
+      title: const Text('Fahrzeug-Einstellungen'),
+      content: SizedBox(
+        width: 680,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.canManageUsages)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: approvalRequired,
+                  onChanged: (value) =>
+                      setState(() => approvalRequired = value),
+                  title: const Text('TLE-Zweitfreigabe'),
+                  subtitle: const Text(
+                    'Reservierungen primär ausrückender Fahrzeuge benötigen '
+                    'zusätzlich die Zustimmung des Technischen Leiters Einsatz.',
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Text(
+                'Verwendungen',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: usages
+                    .map(
+                      (usage) => InputChip(
+                        label: Text(usage),
+                        onDeleted:
+                            widget.canManageUsages &&
+                                !_defaultVehicleUsages.contains(usage)
+                            ? () => _removeUsage(usage)
+                            : null,
+                      ),
+                    )
+                    .toList(),
+              ),
+              if (widget.canManageUsages) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: usageController,
+                        decoration: const InputDecoration(
+                          labelText: 'Verwendung ergänzen',
+                        ),
+                        onSubmitted: (_) => _addUsage(),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _addUsage,
+                      tooltip: 'Verwendung hinzufügen',
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 24),
+              Text(
+                'Fahrzeugtypen nach Verwendung',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: ValueKey('settings-usage-$selectedUsage-${usages.length}'),
+                isExpanded: true,
+                initialValue: selectedUsage,
+                decoration: const InputDecoration(labelText: 'Verwendung'),
+                items: usages
+                    .map(
+                      (usage) =>
+                          DropdownMenuItem(value: usage, child: Text(usage)),
+                    )
+                    .toList(),
+                onChanged: (value) =>
+                    setState(() => selectedUsage = value ?? selectedUsage),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: activeTypes
+                    .map(
+                      (type) => InputChip(
+                        label: Text(type),
+                        onDeleted:
+                            widget.canManageVehicleTypes &&
+                                activeTypes.length > 1
+                            ? () => _removeType(type)
+                            : null,
+                      ),
+                    )
+                    .toList(),
+              ),
+              if (widget.canManageVehicleTypes) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: typeController,
+                        decoration: const InputDecoration(
+                          labelText: 'Fahrzeugtyp ergänzen',
+                        ),
+                        onSubmitted: (_) => _addType(),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _addType,
+                      tooltip: 'Fahrzeugtyp hinzufügen',
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final result = <String, dynamic>{};
+            if (widget.canManageUsages) {
+              result['primaryVehicleApprovalRequired'] = approvalRequired;
+              result['usages'] = usages;
+            }
+            if (widget.canManageVehicleTypes) {
+              result['vehicleTypesByUsage'] = {
+                for (final usage in usages) usage: typesByUsage[usage] ?? [],
+              };
+            }
+            Navigator.pop(context, result);
+          },
+          child: const Text('Speichern'),
+        ),
+      ],
     );
   }
 }
@@ -378,11 +630,42 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
   late final notes = TextEditingController(
     text: widget.vehicle?['notes']?.toString(),
   );
-  late String type = widget.vehicle?['type']?.toString() ?? 'Kraftfahrzeug';
+  late String vehicleKind = widget.vehicle == null
+      ? 'Kraftfahrzeug'
+      : _vehicleKindOf(widget.vehicle!);
+  late String usage = widget.vehicle == null
+      ? 'Einsatzfahrt'
+      : _vehicleUsageOf(widget.vehicle!);
+  late String type = widget.vehicle?['type']?.toString() ?? 'Einsatzfahrzeug';
   late String status = widget.vehicle?['status']?.toString() ?? 'Verfügbar';
   late String? parkingLocationId = widget.vehicle?['parkingLocationId']
       ?.toString();
   late bool primary = widget.vehicle?['primaryResponseVehicle'] == true;
+
+  List<String> get availableUsages {
+    final configured = (widget.options['usages'] as List? ?? const [])
+        .map((entry) => entry.toString())
+        .where((entry) => entry.trim().isNotEmpty)
+        .toList();
+    return configured.isEmpty ? [..._defaultVehicleUsages] : configured;
+  }
+
+  List<String> availableTypes(String selectedUsage) {
+    final configured = widget.options['vehicleTypesByUsage'] as Map?;
+    final values = (configured?[selectedUsage] as List? ?? const [])
+        .map((entry) => entry.toString())
+        .where((entry) => entry.trim().isNotEmpty)
+        .toList();
+    if (values.isNotEmpty) return values;
+    final legacy = (widget.options['types'] as List? ?? const [])
+        .map((entry) => entry.toString())
+        .where((entry) => entry.trim().isNotEmpty)
+        .toList();
+    return legacy.isEmpty ? ['Sonstiger Fahrzeugtyp'] : legacy;
+  }
+
+  bool get identifiersRequired =>
+      vehicleKind == 'Kraftfahrzeug' || vehicleKind == 'Anhänger';
 
   @override
   void dispose() {
@@ -405,9 +688,14 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final types = (widget.options['types'] as List? ?? const [])
+    final kinds = (widget.options['vehicleKinds'] as List? ?? _vehicleKinds)
         .map((entry) => entry.toString())
         .toList();
+    final usages = availableUsages;
+    if (!kinds.contains(vehicleKind)) vehicleKind = kinds.first;
+    if (!usages.contains(usage)) usage = usages.first;
+    final types = availableTypes(usage);
+    if (!types.contains(type)) type = types.first;
     final statuses = (widget.options['statuses'] as List? ?? const [])
         .map((entry) => entry.toString())
         .toList();
@@ -427,15 +715,68 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
               spacing: 12,
               runSpacing: 12,
               children: [
-                _field(registration, 'Kennzeichen *', required: true),
-                _field(vin, 'Fahrgestellnummer *', required: true),
+                _field(
+                  registration,
+                  identifiersRequired ? 'Kennzeichen *' : 'Kennzeichen',
+                  required: identifiersRequired,
+                ),
+                _field(
+                  vin,
+                  identifiersRequired
+                      ? 'Fahrgestellnummer *'
+                      : 'Fahrgestellnummer',
+                  required: identifiersRequired,
+                ),
                 _field(radio, 'Funkrufname'),
                 SizedBox(
                   width: 330,
                   child: DropdownButtonFormField<String>(
-                    initialValue: types.contains(type)
-                        ? type
-                        : types.firstOrNull,
+                    key: const ValueKey('vehicle-kind'),
+                    isExpanded: true,
+                    initialValue: vehicleKind,
+                    decoration: const InputDecoration(labelText: 'Fahrzeugart'),
+                    items: kinds
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) =>
+                        setState(() => vehicleKind = value ?? vehicleKind),
+                  ),
+                ),
+                SizedBox(
+                  width: 330,
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey('vehicle-usage'),
+                    isExpanded: true,
+                    initialValue: usage,
+                    decoration: const InputDecoration(labelText: 'Verwendung'),
+                    items: usages
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        usage = value;
+                        type = availableTypes(value).first;
+                      });
+                    },
+                  ),
+                ),
+                SizedBox(
+                  width: 330,
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey('vehicle-type-$usage'),
+                    isExpanded: true,
+                    initialValue: type,
                     decoration: const InputDecoration(labelText: 'Fahrzeugtyp'),
                     items: types
                         .map(
@@ -534,6 +875,8 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
               'registrationNumber': registration.text,
               'vin': vin.text,
               'radioCallName': radio.text,
+              'vehicleKind': vehicleKind,
+              'usage': usage,
               'type': type,
               'manufacturer': manufacturer.text,
               'model': model.text,
@@ -757,9 +1100,7 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
             tooltip: 'Schließen',
           ),
           title: Text(
-            vehicle == null
-                ? 'Fahrzeug'
-                : '${vehicle!['registrationNumber']} · ${vehicle!['radioCallName'] ?? ''}',
+            vehicle == null ? 'Fahrzeug' : _vehicleDisplayName(vehicle!),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -832,6 +1173,8 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                     'Kennzeichen': value['registrationNumber'],
                     'Funkrufname': value['radioCallName'],
                     'Fahrgestellnummer': value['vin'],
+                    'Fahrzeugart': _vehicleKindOf(value),
+                    'Verwendung': _vehicleUsageOf(value),
                     'Fahrzeugtyp': value['type'],
                     'Hersteller/Modell':
                         '${value['manufacturer']} ${value['model']}',

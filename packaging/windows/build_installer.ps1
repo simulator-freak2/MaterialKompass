@@ -1,6 +1,7 @@
 param(
     [string]$ApiBaseUrl = "https://materialkompass.org",
-    [string]$Version = "1.5.0",
+    [string]$Version = "1.5.1",
+    [int]$BuildNumber = 1,
     [string]$CertificateThumbprint = $env:WINDOWS_CERT_THUMBPRINT,
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$AllowUnsigned
@@ -34,7 +35,7 @@ function Find-SignTool {
 $signTool = Find-SignTool
 if (-not $AllowUnsigned) {
     if ($CertificateThumbprint -notmatch '^[A-Fa-f0-9]{40}$') {
-        throw "WINDOWS_CERT_THUMBPRINT fehlt oder ist ungültig. Für einen lokalen Prüf-Build kann -AllowUnsigned verwendet werden."
+        throw "WINDOWS_CERT_THUMBPRINT fehlt oder ist ungueltig. Fuer einen lokalen Pruef-Build kann -AllowUnsigned verwendet werden."
     }
     if (-not $signTool) {
         throw "signtool.exe wurde nicht gefunden. Installiere das Windows SDK."
@@ -46,13 +47,14 @@ function Sign-Artifact([string]$Path) {
     & $signTool sign /sha1 $CertificateThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $Path
     if ($LASTEXITCODE -ne 0) { throw "Codesignierung fehlgeschlagen: $Path" }
     & $signTool verify /pa /all $Path
-    if ($LASTEXITCODE -ne 0) { throw "Signaturprüfung fehlgeschlagen: $Path" }
+    if ($LASTEXITCODE -ne 0) { throw "Signaturpruefung fehlgeschlagen: $Path" }
 }
 
 Push-Location $flutterRoot
 try {
     flutter pub get
-    flutter build windows --release --dart-define="API_BASE_URL=$ApiBaseUrl"
+    flutter build windows --release --build-name="$Version" --build-number="$BuildNumber" `
+        --dart-define="API_BASE_URL=$ApiBaseUrl"
 } finally {
     Pop-Location
 }

@@ -774,7 +774,7 @@ class _InventoryPageState extends State<InventoryPage> {
           locations: locations,
           stocks: stocks,
           canWrite: can('inventory.write') && fresh['readOnly'] != true,
-          canReportDefect: can('defects.write') && fresh['readOnly'] != true,
+          canReportDefect: can('defects.report'),
           canPrintDefectTemplate: can('defects.read'),
           canPrint: canPrintLabels,
         ),

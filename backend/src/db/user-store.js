@@ -4,6 +4,7 @@ const { DEFAULT_ORGANIZATION_ID } = require('../tenancy');
 
 const PLATFORM_COLLECTIONS = new Set([
   'organizations', 'organizationUnits', 'memberships', 'permissions',
+  'systemMessageAcknowledgements',
 ]);
 const PLATFORM_SCOPE = '__platform__';
 

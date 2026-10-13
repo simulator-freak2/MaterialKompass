@@ -1,6 +1,6 @@
 # Performance- und Kompatibilitätsbericht
 
-Stand: 6. September 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
+Stand: 11. Oktober 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
 als Release-Build beziehungsweise frischer Node-Prozess auf der lokalen
 Windows-Entwicklungsumgebung durchgeführt.
 Sie dienen als reproduzierbare Vergleichswerte, nicht als Garantie für jede
@@ -74,11 +74,18 @@ Web-Druckbrücke; PDF- und Fachoberflächen bleiben weiterhin verzögert geladen
 - Konfigurierte native Download-Ziele werden mit temporärer Datei und abschließendem
   Umbenennen beschrieben. Namenskonflikte überschreiben keine bestehenden Daten.
   Programmupdates verbleiben im separaten, prüfsummenkontrollierten Updatepfad.
+- Die Jugend-/Stammverknüpfung erweitert nicht den allgemeinen Mandantenkontext. Pro
+  Anfrage wird höchstens eine direkt verknüpfte Gegeneinheit gezielt berücksichtigt;
+  Listen bleiben organisationsgebunden und bestehende Ergebnisgrenzen gelten weiter.
+- Die Auswahl meldbarer Inventar- und Fahrzeugobjekte prüft jeden Datensatz in einem
+  linearen Durchlauf, ohne für jeden Treffer erneut die gesamte Sammlung zu durchsuchen.
+  Reservierungs- und Mängelobergrenzen werden je Organisation statt systemweit gezählt,
+  damit eine große Organisation andere Mandanten nicht ausbremst.
 
 ## Prüfstatus
 
 - `flutter analyze`: keine Fehler oder Warnungen
-- Flutter-Tests: 55 von 55 bestanden, einschließlich Vorlagenauswahl sowie Dateinamen-,
+- Flutter-Tests: 67 von 67 bestanden, einschließlich Vorlagenauswahl sowie Dateinamen-,
   Base64- und MIME-Prüfungen
 - Windows-Release-Build: bestanden; native Passkey-, Datei- und Druckintegration
   kompiliert
@@ -91,7 +98,10 @@ Web-Druckbrücke; PDF- und Fachoberflächen bleiben weiterhin verzögert geladen
 - macOS, Linux und iOS: Plattformcode und Pluginregistrierung sind erzeugt; native Builds
   benötigen weiterhin den jeweiligen Betriebssystem-Runner beziehungsweise die Apple-
   Signierumgebung. macOS besitzt die erforderliche Druckberechtigung in Debug und Release.
-- Backend-Tests: 135 von 135 bestanden
+- Jugend-/Stamm-Fachtests: 3 von 3 bestanden; das serielle Backend-Performance-Budget
+  wurde eingehalten. Im vollständigen Windows-Lauf bestanden alle fachlichen
+  Assertions. Vier Test-Worker meldeten beim Beenden weiterhin einen libuv-Fehler
+  (`UV_HANDLE_CLOSING`), der unabhängig von den Jugendfunktionen untersucht wird.
 
 ## Betriebsgrenzen
 

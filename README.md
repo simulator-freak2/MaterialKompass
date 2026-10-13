@@ -174,6 +174,34 @@ weiterhin höchstens sieben Tage gültige gerätegebundene Offlinefreigabe wird 
 Serverkontakt automatisch verlängert. Nach Ablauf der Jahresfrist ist vor einer
 weiteren Verlängerung wieder eine interaktive 2-FA-Anmeldung erforderlich.
 
+## Jugendorganisationen
+
+Administratoren können unter **Organisationen & Einheiten** für eine aktive
+Stammgliederung genau eine Jugendorganisation anlegen oder eine geeignete bestehende
+Untereinheit entsprechend kennzeichnen. Eine Jugendorganisation ist fest mit ihrer
+direkten Stammgliederung verbunden, darf keine Untereinheiten besitzen und kann nicht
+selbst Stammgliederung einer weiteren Jugendorganisation werden.
+
+Die Verknüpfung stellt ausschließlich folgende gegenseitige Funktionen bereit:
+
+- Lagerorte einschließlich Adresse und vollständigem Lagerpfad durchsuchen;
+- aktive Einzelinventargegenstände mit Inventarnummer reservieren;
+- sichtbare Fahrzeuge reservieren;
+- Mängel zu Inventar oder Fahrzeugen melden und den Status eigener Meldungen lesen.
+
+Fremde Ressourcen bleiben schreibgeschützt. Insbesondere sind Bearbeiten, Löschen,
+Ausgabe, Rücknahme, Umlagerung, Wartung, Fahrzeugbeladung, Freigabeverwaltung und
+Export über die Verknüpfung nicht erlaubt. Verknüpfte Reservierungen benötigen immer
+die Freigabe der besitzenden Gliederung; bestehende Sicherheits-, Konflikt- und
+TLE-Prüfungen gelten unverändert. Mängel werden in der besitzenden Gliederung geführt.
+
+Für normale Mitglieder steht in Jugendorganisationen die minimale Rolle
+**Jugendmitglied** bereit. Die vorsitzende Person erhält dort die Rolle **Vorsitz**.
+Beim Wechsel in die verknüpfte Stammgliederung wirkt diese Zuordnung automatisch als
+eingeschränkte Rolle **Jugendvorsitzender**. `Jugendvorsitzender` ist deshalb in der
+Jugendorganisation nicht separat zuweisbar. Innerhalb der eigenen Gliederung gelten
+weiterhin die normalen Rollenrechte.
+
 ## Reservierungs- und Wartungskalender
 
 Der Dashboard-Bereich **Kalender** zeigt Reservierungen, Wartungen sowie die am
@@ -385,11 +413,20 @@ Vor der Übernahme einer vorhandenen Docker-Installation muss `docker volume ls`
 und deren bestehender Volume-Name als `DB_VOLUME_NAME` in `.env` eingetragen werden.
 Dadurch verwendet Compose die vorhandene Datenbank weiter.
 
-Spätere Aktualisierungen benötigen nur:
+Spätere Aktualisierungen werden vom lokalen Windows-Rechner mit dem geprüften,
+wiederholbaren Updateprozess ausgeführt (Standardserver `31.70.106.152`):
+
+```powershell
+.\ops\update-server.ps1
+```
+
+Das Skript übernimmt lokale Tests, Push, Vorab-Backup, Migrationen, Container-Neubau,
+Readiness-Prüfung und Anwendungs-Rollback. Die einmalige Einrichtung, SSH-Parameter,
+der optionale Installer-Upload und das Verhalten bei Fehlern stehen in
+[`DEPLOYMENT.md`](DEPLOYMENT.md). Für eine rein manuelle Diagnose gelten weiterhin:
 
 ```bash
 cd /opt/materialkompass
-git pull --ff-only
 docker compose up -d --build --remove-orphans
 docker compose ps
 docker compose logs --tail=100 backend
@@ -399,8 +436,9 @@ curl --fail -H "X-Forwarded-Proto: https" http://127.0.0.1:3001/ready
 
 MariaDB-Daten liegen im benannten Docker-Volume `materialkompass_db` und bleiben beim
 Neuaufbau des Backend-Containers erhalten. Das Schema wird bei einer leeren Datenbank
-automatisch angelegt; Migrationen für bestehende Datenbanken werden weiterhin gezielt
-aus `backend/src/db/migrations` ausgeführt.
+automatisch angelegt. Der Updateprozess protokolliert bestehende Migrationen als
+Ausgangsstand und führt neue Dateien aus `backend/src/db/migrations` danach genau einmal
+aus. Bereits angewendete Migrationsdateien dürfen nicht verändert werden.
 
 ### Automatische Datenbanksicherungen
 
@@ -507,6 +545,8 @@ für die erste Organisation wird dabei `GLIEDERUNGSNUMMER` verwendet. Die fachli
 Werte können anschließend unter **Organisationen & Einheiten** angepasst werden. Da
 Organisationen, Einheiten und ihre Nutzerfreigaben in den transaktionalen
 Fachsammlungen liegen, ist dafür keine zusätzliche SQL-Migration erforderlich.
+Auch die Jugend-/Stammverknüpfung wird rückwärtskompatibel in diesen Sammlungen
+gespeichert; ungültige oder doppelte Verknüpfungen werden beim Laden nicht aktiviert.
 `DB_CONNECTION_LIMIT` muss deshalb mindestens 2 sein. `/health` ist der reine
 Prozess-Livenesscheck; `/ready` prüft zusätzlich die Datenbankverbindung.
 
@@ -736,7 +776,7 @@ gebaut. Windows benötigt Flutter, Visual Studio mit C++-Desktop-Tools und Inno 
 
 ```powershell
 $env:WINDOWS_CERT_THUMBPRINT = "40-STELLIGER-ZERTIFIKAT-FINGERABDRUCK"
-.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.5.0
+.\packaging\windows\build_installer.ps1 -ApiBaseUrl https://materialkompass.org -Version 1.5.1
 ```
 
 Das Windows-Skript signiert und prüft Anwendung und Installer mit Authenticode.
@@ -744,7 +784,7 @@ Nur ausdrücklich mit `-AllowUnsigned` erzeugte lokale Prüf-Builds dürfen unsi
 sein.
 
 ```bash
-bash packaging/linux/build_deb.sh https://materialkompass.org 1.5.0
+bash packaging/linux/build_deb.sh https://materialkompass.org 1.5.1
 ```
 
 macOS wird auf einem Mac als DMG gebaut:
