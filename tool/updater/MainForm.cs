@@ -433,7 +433,8 @@ internal sealed class MainForm : Form
     private async Task PrepareReleaseAsync()
     {
         ValidateRelease();
-        if (string.IsNullOrWhiteSpace(_changelog.Text)) throw new InvalidOperationException("Bitte einen Changelog eingeben.");
+        if (string.IsNullOrWhiteSpace(_changelog.Text) || _changelog.Text.Trim() == "-")
+            throw new InvalidOperationException("Bitte einen aussagekraeftigen Changelog eingeben.");
         var temp = Path.Combine(Path.GetTempPath(), $"materialkompass-changelog-{Guid.NewGuid():N}.txt");
         try
         {
@@ -676,6 +677,8 @@ internal sealed class MainForm : Form
         if (!Regex.IsMatch(_version.Text.Trim(), @"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"))
             throw new InvalidOperationException("Die Version muss SemVer entsprechen, zum Beispiel 1.6.0.");
         if (_changelog.TextLength > 4000) throw new InvalidOperationException("Der Changelog darf höchstens 4000 Zeichen enthalten.");
+        if (_publishNotes.Checked && (string.IsNullOrWhiteSpace(_changelog.Text) || _changelog.Text.Trim() == "-"))
+            throw new InvalidOperationException("Zum Veröffentlichen muss ein aussagekräftiger Changelog eingetragen sein.");
     }
 
     private List<string> SshArguments()
