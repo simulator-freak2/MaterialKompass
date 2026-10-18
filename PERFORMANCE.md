@@ -1,6 +1,6 @@
 # Performance- und Kompatibilitätsbericht
 
-Stand: 11. Oktober 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
+Stand: 18. Oktober 2026. Die Größen- und Startzeitmessungen vom 16. August 2026 wurden
 als Release-Build beziehungsweise frischer Node-Prozess auf der lokalen
 Windows-Entwicklungsumgebung durchgeführt.
 Sie dienen als reproduzierbare Vergleichswerte, nicht als Garantie für jede
@@ -26,6 +26,11 @@ Nach Ergänzung des plattformübergreifenden Systemdrucks wurde der Web-Release-
 Ausgabeordner 46.160.409 Bytes. Die rund 1,2 % größere Hauptdatei ist der Preis für die
 Web-Druckbrücke; PDF- und Fachoberflächen bleiben weiterhin verzögert geladen.
 
+Seit dem 18. Oktober werden die vom Dashboard erreichbaren Fachoberflächen bewusst im
+Haupt-Bundle ausgeliefert. Damit sind Anwendungscode und Navigation bei einem Deployment
+atomar und können nicht mehr durch alte, unter stabilen Dateinamen gecachte Dart-Chunks
+auseinanderlaufen. Die historischen Größenwerte oben bilden diese Änderung noch nicht ab.
+
 ## Umgesetzte Maßnahmen
 
 - OCR, PDF-Rendering, Bildverarbeitung, Mailparser und XLSX werden serverseitig erst
@@ -39,8 +44,9 @@ Web-Druckbrücke; PDF- und Fachoberflächen bleiben weiterhin verzögert geladen
   28 Sammlungen.
 - Die Persistenzkoordination liegt in einem eigenen Modul und vereinigt gleichzeitige
   Speicheranforderungen weiterhin in höchstens einem vollständigen Snapshot.
-- Dashboard-Fachmodule werden im Web verzögert geladen. Ein Ladeindikator und eine
-  verständliche Fehlermeldung decken langsame oder unterbrochene Downloads ab.
+- Dashboard-Fachmodule werden im Web gemeinsam mit dem Haupt-Bundle ausgeliefert. Der
+  Webserver markiert zusätzlich eventuell vorhandene Dart-Teilpakete als nicht cachebar,
+  damit spätere Code-Splitting-Änderungen keine gemischten Buildstände erzeugen.
 - Der gemeinsame HTTP-Client verwendet Verbindungen wieder, begrenzt hängende Aufrufe
   auf 30 Sekunden und wiederholt ausschließlich sichere GET-Anfragen einmal bei
   Netzwerkfehlern oder HTTP 502/503/504. Nur ausdrücklich freigegebene Mutationen

@@ -15,20 +15,20 @@ import '../widgets/download_folder_dialog.dart';
 import '../widgets/mail_count_badge.dart';
 import '../widgets/stat_card.dart';
 import '../widgets/system_message_card.dart';
-import 'categories_page.dart' deferred as categories_page;
-import 'calendar_page.dart' deferred as calendar_page;
-import 'defects_page.dart' deferred as defects_page;
+import 'categories_page.dart' as categories_page;
+import 'calendar_page.dart' as calendar_page;
+import 'defects_page.dart' as defects_page;
 import 'login_page.dart';
-import 'inventory_page.dart' deferred as inventory_page;
-import 'knowledge_base_page.dart' deferred as knowledge_base_page;
-import 'locations_page.dart' deferred as locations_page;
-import 'organizations_page.dart' deferred as organizations_page;
-import 'procurement_page.dart' deferred as procurement_page;
-import 'profile_page.dart' deferred as profile_page;
-import 'stocktakes_page.dart' deferred as stocktakes_page;
-import 'users_page.dart' deferred as users_page;
-import 'wardrobe_page.dart' deferred as wardrobe_page;
-import 'vehicles_page.dart' deferred as vehicles_page;
+import 'inventory_page.dart' as inventory_page;
+import 'knowledge_base_page.dart' as knowledge_base_page;
+import 'locations_page.dart' as locations_page;
+import 'organizations_page.dart' as organizations_page;
+import 'procurement_page.dart' as procurement_page;
+import 'profile_page.dart' as profile_page;
+import 'stocktakes_page.dart' as stocktakes_page;
+import 'users_page.dart' as users_page;
+import 'wardrobe_page.dart' as wardrobe_page;
+import 'vehicles_page.dart' as vehicles_page;
 
 typedef DashboardLoader = Future<Map<String, dynamic>> Function();
 typedef AppExit = Future<void> Function();
@@ -458,36 +458,18 @@ class _DashboardPageState extends State<DashboardPage>
     }
   }
 
-  Future<void> _loadAndOpen(
-    Future<void> Function() loadLibrary,
-    Widget Function() pageBuilder,
-  ) async {
-    final rootNavigator = Navigator.of(context, rootNavigator: true);
-    final messenger = ScaffoldMessenger.of(context);
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const PopScope(
-        canPop: false,
-        child: Center(child: CircularProgressIndicator()),
-      ),
-    );
+  Future<void> _loadAndOpen(Widget Function() pageBuilder) async {
     try {
-      await loadLibrary();
-      if (rootNavigator.mounted) rootNavigator.pop();
       if (!mounted) return;
       await Navigator.of(
         context,
       ).push(MaterialPageRoute(builder: (_) => pageBuilder()));
       unawaited(_refreshInBackground());
     } catch (_) {
-      if (rootNavigator.mounted) rootNavigator.pop();
       if (mounted) {
-        messenger.showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Der Bereich konnte nicht geladen werden. Bitte die Verbindung prüfen.',
-            ),
+            content: Text('Der Bereich konnte nicht geöffnet werden.'),
           ),
         );
       }
@@ -764,7 +746,6 @@ class _DashboardPageState extends State<DashboardPage>
             icon: const Icon(Icons.account_circle_outlined),
             tooltip: 'Mein Account',
             onPressed: () => _loadAndOpen(
-              profile_page.loadLibrary,
               () => profile_page.ProfilePage(
                 token: _token,
                 onAccountDeleted: () => _logout(context),
@@ -873,7 +854,6 @@ class _DashboardPageState extends State<DashboardPage>
                   label: 'Handbuch',
                   description: 'Anleitungen und Antworten durchsuchen',
                   onTap: () => _loadAndOpen(
-                    knowledge_base_page.loadLibrary,
                     () => knowledge_base_page.KnowledgeBasePage(),
                   ),
                 ),
@@ -883,7 +863,6 @@ class _DashboardPageState extends State<DashboardPage>
                     label: 'Inventar',
                     description: 'Bestände und Material verwalten',
                     onTap: () => _loadAndOpen(
-                      inventory_page.loadLibrary,
                       () => inventory_page.InventoryPage(
                         token: _token,
                         onLogout: () => _logout(context),
@@ -897,7 +876,6 @@ class _DashboardPageState extends State<DashboardPage>
                     description:
                         'Einzelstücke reservieren und Wartungen planen',
                     onTap: () => _loadAndOpen(
-                      calendar_page.loadLibrary,
                       () => calendar_page.CalendarPage(token: _token),
                     ),
                   ),
@@ -908,7 +886,6 @@ class _DashboardPageState extends State<DashboardPage>
                     description:
                         'Fahrzeuge, Wartung, Reservierung und Beladung',
                     onTap: () => _loadAndOpen(
-                      vehicles_page.loadLibrary,
                       () => vehicles_page.VehiclesPage(token: _token),
                     ),
                   ),
@@ -918,7 +895,6 @@ class _DashboardPageState extends State<DashboardPage>
                     label: 'Kleiderkammer',
                     description: 'Kleidung und Ausgaben einsehen',
                     onTap: () => _loadAndOpen(
-                      wardrobe_page.loadLibrary,
                       () => wardrobe_page.WardrobePage(
                         token: _token,
                         onLogout: () => _logout(context),
@@ -935,7 +911,6 @@ class _DashboardPageState extends State<DashboardPage>
                     description:
                         'Bestände digital oder mit Zähllisten aufnehmen',
                     onTap: () => _loadAndOpen(
-                      stocktakes_page.loadLibrary,
                       () => stocktakes_page.StocktakesPage(
                         token: _token,
                         onLogout: () => _logout(context),
@@ -951,7 +926,6 @@ class _DashboardPageState extends State<DashboardPage>
                         : 0,
                     description: 'Mängel und E-Mail-Meldungen bearbeiten',
                     onTap: () => _loadAndOpen(
-                      defects_page.loadLibrary,
                       () => defects_page.DefectsPage(token: _token),
                     ),
                   ),
@@ -964,7 +938,6 @@ class _DashboardPageState extends State<DashboardPage>
                         : 0,
                     description: 'Anträge, Freigaben und Bestellungen',
                     onTap: () => _loadAndOpen(
-                      procurement_page.loadLibrary,
                       () => procurement_page.ProcurementPage(
                         token: _token,
                         onLogout: () => _logout(context),
@@ -977,7 +950,6 @@ class _DashboardPageState extends State<DashboardPage>
                     label: 'Kategorien',
                     description: 'Materialstruktur einsehen',
                     onTap: () => _loadAndOpen(
-                      categories_page.loadLibrary,
                       () => categories_page.CategoriesPage(token: _token),
                     ),
                   ),
@@ -987,7 +959,6 @@ class _DashboardPageState extends State<DashboardPage>
                     label: 'Lagerorte',
                     description: 'Lager und Lagerplätze öffnen',
                     onTap: () => _loadAndOpen(
-                      locations_page.loadLibrary,
                       () => locations_page.LocationsPage(token: _token),
                     ),
                   ),
@@ -996,10 +967,8 @@ class _DashboardPageState extends State<DashboardPage>
                     icon: Icons.manage_accounts_outlined,
                     label: 'Nutzerverwaltung',
                     description: 'Konten, Rollen und Fachbereiche',
-                    onTap: () => _loadAndOpen(
-                      users_page.loadLibrary,
-                      () => users_page.UsersPage(token: _token),
-                    ),
+                    onTap: () =>
+                        _loadAndOpen(() => users_page.UsersPage(token: _token)),
                   ),
                 if (roles.contains('Admin') && can('organizations.write'))
                   _DashboardAction(
@@ -1007,7 +976,6 @@ class _DashboardPageState extends State<DashboardPage>
                     label: 'Organisationen',
                     description: 'Organisationen und Einheiten verwalten',
                     onTap: () => _loadAndOpen(
-                      organizations_page.loadLibrary,
                       () => organizations_page.OrganizationsPage(token: _token),
                     ),
                   ),

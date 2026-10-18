@@ -66,6 +66,7 @@ jobs:
         with:
           node-version: 22
       - run: node tool/secret_scan.js
+      - run: node --test tool/nginx_cache_policy.test.js
       - run: sh -n ops/backup-mariadb.sh
       - run: sh -n ops/restore-test.sh
       - run: sh -n ops/apply-migrations.sh

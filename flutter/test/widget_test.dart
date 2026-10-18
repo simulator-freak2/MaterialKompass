@@ -285,6 +285,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Dashboard opens the handbook from quick access', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage(
+          token: 'demo',
+          dashboardLoader: () async => {
+            'summary': const <String, dynamic>{},
+            'currentUser': {
+              'name': 'Testnutzer',
+              'roles': ['Nutzer'],
+              'permissions': ['dashboard.read'],
+            },
+            'context': const <String, dynamic>{},
+            'recentActivity': const <dynamic>[],
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Handbuch'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Handbuch durchsuchen …'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Dashboard asks for confirmation before exiting the software', (
     WidgetTester tester,
   ) async {
