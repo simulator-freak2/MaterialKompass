@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -734,6 +735,12 @@ internal sealed class MainForm : Form
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/updater/authorization");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await client.SendAsync(request, Token);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            await AuthorizeLegacyServerAsync(client, token);
+            credentials.ClearSecrets();
+            return;
+        }
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(Token);
@@ -741,6 +748,63 @@ internal sealed class MainForm : Form
                 $"Update-Autorisierung fehlgeschlagen ({(int)response.StatusCode}): {SafeServerError(body)}");
         }
         Log("Update wurde durch ein berechtigtes Administratorkonto autorisiert.");
+        credentials.ClearSecrets();
+    }
+
+    private async Task AuthorizeLegacyServerAsync(HttpClient client, string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request, Token);
+        var body = await response.Content.ReadAsStringAsync(Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Der alte Server konnte das Administratorkonto nicht verifizieren ({(int)response.StatusCode}): {SafeServerError(body)}");
+        }
+
+        JsonElement user;
+        try
+        {
+            var root = JsonDocument.Parse(body).RootElement;
+            if (!root.TryGetProperty("user", out user) || user.ValueKind != JsonValueKind.Object)
+                throw new JsonException("Benutzerobjekt fehlt.");
+        }
+        catch (JsonException)
+        {
+            throw new InvalidOperationException("Der alte Server lieferte keine prüfbare Benutzeridentität.");
+        }
+
+        var isAdmin = user.TryGetProperty("roles", out var roles)
+            && roles.ValueKind == JsonValueKind.Array
+            && roles.EnumerateArray().Any(role =>
+                role.ValueKind == JsonValueKind.String
+                && string.Equals(role.GetString(), "Admin", StringComparison.Ordinal));
+        if (!isAdmin)
+            throw new InvalidOperationException("Der Legacy-Fallback ist ausschließlich für ein Admin-Konto zulässig.");
+
+        if (user.TryGetProperty("platformAdmin", out var platformAdmin))
+        {
+            var hasOrganizationPermission = user.TryGetProperty("permissions", out var permissions)
+                && permissions.ValueKind == JsonValueKind.Array
+                && permissions.EnumerateArray().Any(permission =>
+                    permission.ValueKind == JsonValueKind.String
+                    && string.Equals(permission.GetString(), "organizations.write", StringComparison.Ordinal));
+            if (platformAdmin.ValueKind != JsonValueKind.True || !hasOrganizationPermission)
+            {
+                throw new InvalidOperationException(
+                    "Das Konto ist kein Plattformadministrator mit organizations.write.");
+            }
+        }
+
+        const string warning =
+            "Der laufende Server kennt die neue Update-Autorisierungsroute noch nicht. "
+            + "Das angemeldete Admin-Konto wurde über die bestehende Profilroute geprüft.\n\n"
+            + "Dieser einmalige Kompatibilitätsmodus wird nach dem Backend-Update nicht mehr verwendet. "
+            + "Deployment jetzt fortsetzen?";
+        if (MessageBox.Show(this, warning, "Alten Server aktualisieren", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            throw new OperationCanceledException();
+        Log("WARNUNG: Update über den einmaligen Legacy-Autorisierungsmodus freigegeben; /api/updater/authorization war noch nicht vorhanden.");
     }
 
     private async Task PublishReleaseNotesAsync()

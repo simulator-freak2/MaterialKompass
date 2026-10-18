@@ -166,6 +166,14 @@ Laufzeitmeldungen und Downloads werden nie in das Serverpaket aufgenommen. Nativ
 Installer sind ohne Codesignatur standardmäßig gesperrt. Die Option für unsignierte
 Dateien ist ausschließlich für interne Prüf-Builds vorgesehen.
 
+Beim einmaligen Update eines älteren Servers kann die neue Autorisierungsroute noch
+fehlen. Nur bei deren Antwort `404` prüft der Updater das angemeldete Konto zusätzlich
+über `GET /api/auth/me`: Auf Legacy-Ständen muss es die Rolle `Admin` besitzen; kennt
+der Server bereits Plattformadministratoren, werden außerdem `platformAdmin=true` und
+`organizations.write` verlangt. Vor dem Fortsetzen ist eine weitere ausdrückliche
+Bestätigung nötig. Andere Fehler – insbesondere `401` und `403` – brechen das
+Deployment unverändert ab. Nach dem Backend-Update wird wieder die neue Route genutzt.
+
 ## Codesignaturen
 
 Für öffentliche Direktdownloads werden mindestens benötigt:
