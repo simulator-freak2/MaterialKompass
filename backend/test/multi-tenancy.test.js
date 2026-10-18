@@ -347,6 +347,73 @@ test('only admins with organization permission create organizations and suborgan
   }
 });
 
+test('updater authorization matches the permission to create organizations', async () => {
+  const authorized = await start();
+  try {
+    const withoutLogin = await request(
+      authorized.baseUrl, '/api/updater/authorization', { method: 'POST' }
+    );
+    assert.equal(withoutLogin.response.status, 401);
+
+    const token = await login(authorized.baseUrl, 'admin', 'MaterialKompass2026!');
+    const result = await request(authorized.baseUrl, '/api/updater/authorization', {
+      token, method: 'POST',
+    });
+    assert.equal(result.response.status, 204);
+    assert.equal(result.data, null);
+  } finally {
+    await new Promise((resolve) => authorized.server.close(resolve));
+  }
+
+  const deniedFixtures = [];
+
+  const notPlatformAdmin = tenantData();
+  notPlatformAdmin.users.find((user) => user.id === 'user-admin').platformAdmin = false;
+  deniedFixtures.push({ data: notPlatformAdmin, identifier: 'admin', password: 'MaterialKompass2026!' });
+
+  const notOrganizationAdmin = tenantData();
+  notOrganizationAdmin.users.find((user) => user.id === 'user-materialwart').platformAdmin = true;
+  notOrganizationAdmin.roles.push({
+    id: 'role-organization-creator',
+    name: 'Organisationsstruktur-Ersteller',
+    permissions: ['organizations.write'],
+  });
+  notOrganizationAdmin.memberships.find((entry) =>
+    entry.id === 'membership-warden-a'
+  ).scopes[0].roles = ['Organisationsstruktur-Ersteller'];
+  deniedFixtures.push({
+    data: notOrganizationAdmin, identifier: 'materialwart', password: 'Material123!',
+  });
+
+  const missingPermission = tenantData();
+  missingPermission.roles.find((role) => role.name === 'Admin').permissions =
+    missingPermission.roles.find((role) => role.name === 'Admin').permissions
+      .filter((permission) => permission !== 'organizations.write');
+  deniedFixtures.push({
+    data: missingPermission, identifier: 'admin', password: 'MaterialKompass2026!',
+  });
+
+  for (const fixture of deniedFixtures) {
+    const denied = await start(fixture.data);
+    try {
+      const token = await login(denied.baseUrl, fixture.identifier, fixture.password);
+      const result = await request(denied.baseUrl, '/api/updater/authorization', {
+        token, method: 'POST',
+      });
+      assert.equal(result.response.status, 403);
+      assert.match(result.data.error, /Plattformadministratoren/);
+      const organization = await request(denied.baseUrl, '/api/organizations', {
+        token,
+        method: 'POST',
+        body: { name: 'Nicht erlaubt', shortName: 'NE', edvNumber: '19999999' },
+      });
+      assert.equal(organization.response.status, result.response.status);
+    } finally {
+      await new Promise((resolve) => denied.server.close(resolve));
+    }
+  }
+});
+
 test('youth organizations are one-to-one linked units without child units', async () => {
   const { server, baseUrl } = await start();
   try {

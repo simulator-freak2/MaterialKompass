@@ -103,13 +103,54 @@ function createUserMfa({
       securityVersion: securityVersion(user),
       complete,
     });
+    const passkeyAvailable = Number(user.passkeyCount || 0) > 0;
     return {
       mfaRequired: true,
-      error: 'Zwei-Faktor-Authentifizierung erforderlich. Bitte verwenden Sie eine aktuelle App-Version.',
+      error: passkeyAvailable
+        ? 'Zwei-Faktor-Authentifizierung erforderlich. Bestätigen Sie die Anmeldung auf einem Passkey-Gerät oder verwenden Sie einen Code.'
+        : 'Zwei-Faktor-Authentifizierung erforderlich. Verwenden Sie einen aktuellen Code.',
       challenge: token,
       expiresIn: CHALLENGE_TTL_MS / 1000,
-      methods: ['totp', 'recovery_code'],
+      methods: [
+        ...(passkeyAvailable ? ['passkey'] : []),
+        'totp',
+        'recovery_code',
+      ],
     };
+  }
+
+  function pendingChallenge(token) {
+    if (typeof token !== 'string' || token.length > 256) return null;
+    cleanChallenges();
+    const id = challengeHash(token);
+    const challenge = challenges.get(id);
+    if (!challenge) return null;
+    const user = users.find((entry) => entry.id === challenge.userId);
+    if (!user?.active || !user.emailVerifiedAt || !mfaEnabled(user)
+        || challenge.securityVersion !== securityVersion(user)) {
+      challenges.delete(id);
+      return null;
+    }
+    return { id, challenge, user };
+  }
+
+  async function completeChallenge(id, expectedUser, res, verification, req) {
+    cleanChallenges();
+    const challenge = challenges.get(id);
+    if (!challenge || challenge.userId !== expectedUser?.id
+        || challenge.securityVersion !== securityVersion(expectedUser)
+        || verification?.valid !== true) {
+      if (challenge) challenges.delete(id);
+      return res.status(401).json({ error: 'Die 2-FA-Anfrage ist ungültig oder abgelaufen.' });
+    }
+    challenges.delete(id);
+    expectedUser.mfaLastVerifiedAt = new Date(now()).toISOString();
+    await saveUser(expectedUser);
+    logEvent('mfa_verified', 'User', {
+      id: expectedUser.id,
+      method: verification.recovery ? 'recovery_code' : verification.method,
+    }, expectedUser.username);
+    return challenge.complete(expectedUser, res, verification, req);
   }
 
   async function verifyUserCode(user, code, { allowRecovery = true } = {}) {
@@ -131,33 +172,22 @@ function createUserMfa({
   }
 
   app.post('/api/auth/mfa/verify', authRateLimit, async (req, res) => {
-    cleanChallenges();
-    const hash = challengeHash(req.body.challenge);
-    const challenge = challenges.get(hash);
-    if (!challenge) {
+    const pending = pendingChallenge(req.body.challenge);
+    if (!pending) {
       return res.status(401).json({ error: 'Die 2-FA-Anfrage ist ungültig oder abgelaufen.' });
     }
-    const user = users.find((entry) => entry.id === challenge.userId);
-    if (!user?.active || !user.emailVerifiedAt || !mfaEnabled(user)
-        || challenge.securityVersion !== securityVersion(user)) {
-      challenges.delete(hash);
-      return res.status(401).json({ error: 'Die 2-FA-Anfrage ist ungültig oder abgelaufen.' });
-    }
+    const { id, challenge, user } = pending;
     challenge.attempts += 1;
     const verification = await verifyUserCode(user, req.body.code);
     if (!verification.valid) {
-      if (challenge.attempts >= CHALLENGE_MAX_ATTEMPTS) challenges.delete(hash);
+      if (challenge.attempts >= CHALLENGE_MAX_ATTEMPTS) challenges.delete(id);
       logEvent('mfa_failed', 'User', { id: user.id }, user.username);
       return res.status(401).json({ error: 'Der 2-FA-Code ist ungültig.' });
     }
-    challenges.delete(hash);
-    user.mfaLastVerifiedAt = new Date(now()).toISOString();
-    await saveUser(user);
-    logEvent('mfa_verified', 'User', {
-      id: user.id,
-      method: verification.recovery ? 'recovery_code' : 'totp',
-    }, user.username);
-    return challenge.complete(user, res, verification, req);
+    return completeChallenge(id, user, res, {
+      ...verification,
+      method: 'totp',
+    }, req);
   });
 
   app.get('/api/users/me/mfa', authMiddleware, (req, res) => {
@@ -317,10 +347,12 @@ function createUserMfa({
   });
 
   return {
+    completeChallenge,
     enrollmentRequired: (user) => enrollmentRequired(user, now()),
     issueChallenge,
     mfaEnabled,
     offlineMfaEligible: (user) => offlineMfaEligible(user, now()),
+    pendingChallenge,
     passkeyRequired: (user) => user?.mfaRequired === true
       && !mfaEnabled(user) && Number(user?.passkeyCount || 0) > 0,
     publicMfa,

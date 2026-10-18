@@ -51,6 +51,13 @@ deployment_id=$(date -u '+%Y%m%dT%H%M%SZ')-$$
 archive_dir="$project_dir/.deployments/archive/$deployment_id"
 mkdir -p "$archive_dir" "$project_dir/releases" "$project_dir/web-current"
 chmod 700 "$project_dir/.deployments" "$project_dir/.deployments/archive" "$archive_dir"
+public_web_backup=
+public_web_changed=false
+if [ "$publish_web" = 1 ]; then
+  public_web_backup="$archive_dir/public-web"
+  mkdir "$public_web_backup"
+  chmod 0777 "$public_web_backup"
+fi
 
 web_prepared=
 if [ "$publish_web" = 1 ]; then
@@ -68,6 +75,8 @@ if [ "$publish_web" = 1 ]; then
     echo "Web archive must not contain symbolic links." >&2
     exit 1
   fi
+  find "$web_prepared" -type d -exec chmod 0755 {} \;
+  find "$web_prepared" -type f -exec chmod 0644 {} \;
 fi
 
 env_backup="$archive_dir/env.before"
@@ -85,6 +94,9 @@ fi
 rollback() {
   echo "Asset publication failed; restoring previous files." >&2
   cp -p "$env_backup" .env || true
+  if [ "$public_web_changed" = true ] && [ -n "$public_web_backup" ]; then
+    sh ops/sync-public-web.sh restore "$public_web_backup" || true
+  fi
   if [ -d "$archive_dir/web-current" ]; then
     rm -rf web-current
     mv "$archive_dir/web-current" web-current || true
@@ -97,7 +109,12 @@ rollback() {
       fi
     done
   fi
-  docker compose up -d backend web || true
+  docker compose up -d backend || true
+  if [ "$publish_web" = 1 ]; then
+    docker compose up -d --force-recreate web || true
+  else
+    docker compose up -d web || true
+  fi
   exit 1
 }
 
@@ -126,7 +143,16 @@ if [ "$publish_releases" = 1 ]; then
   mv "$env_tmp" .env
 fi
 
-docker compose up -d backend web || rollback
+chmod 0755 "$project_dir/ops" "$project_dir/web-current"
+chmod 0644 "$project_dir/ops/nginx-web.conf"
+docker compose up -d backend || rollback
+if [ "$publish_web" = 1 ]; then
+  # web-current wird atomar als kompletter Ordner ausgetauscht. Ein bereits
+  # laufender Container behaelt sonst den Mount auf dem alten Verzeichnis.
+  docker compose up -d --force-recreate web || rollback
+else
+  docker compose up -d web || rollback
+fi
 attempt=1
 while [ "$attempt" -le 30 ]; do
   backend_ok=false
@@ -139,6 +165,12 @@ while [ "$attempt" -le 30 ]; do
   attempt=$((attempt + 1))
   sleep 2
 done
+
+if [ "$publish_web" = 1 ]; then
+  public_web_changed=true
+  sh ops/sync-public-web.sh publish "$public_web_backup" || rollback
+  chmod 0700 "$public_web_backup"
+fi
 
 rm -rf -- "$stage_dir"
 printf '%s\tassets\t%s\tweb=%s\treleases=%s\n' \

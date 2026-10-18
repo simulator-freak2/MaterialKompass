@@ -1,6 +1,7 @@
 services:
   web:
     image: nginx:1.28-alpine
+    user: "101:101"
     restart: unless-stopped
     init: true
     mem_limit: 128m
@@ -13,9 +14,9 @@ services:
       - "127.0.0.1:8080:8080"
     read_only: true
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
-      - /tmp
+      - /var/cache/nginx:uid=101,gid=101,mode=0700
+      - /var/run:uid=101,gid=101,mode=0700
+      - /tmp:uid=101,gid=101,mode=1777
     cap_drop:
       - ALL
     security_opt:
@@ -50,6 +51,7 @@ services:
 
   backup:
     image: mariadb:11.4
+    user: "${BACKUP_UID:-1000}:${BACKUP_GID:-1000}"
     restart: unless-stopped
     init: true
     mem_limit: 512m
@@ -120,6 +122,8 @@ services:
       MAILBOX_PROVISIONER_TOKEN: ${MAILBOX_PROVISIONER_TOKEN}
       MAILBOX_PASSWORD_ENCRYPTION_KEY: ${MAILBOX_PASSWORD_ENCRYPTION_KEY}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
+      IDENTITY_KEYRING_MASTER_KEY: ${IDENTITY_KEYRING_MASTER_KEY}
+      IDENTITY_KEYRING_PATH: /var/lib/materialkompass-identity/keyring.enc
       MAILBOX_SERVER_HOST: ${MAILBOX_SERVER_HOST}
       SCANNER_EMAIL_DOMAIN: ${SCANNER_EMAIL_DOMAIN}
       DEFECT_IMAP_HOST: ${DEFECT_IMAP_HOST}
@@ -189,11 +193,11 @@ services:
       DOWNLOAD_ANDROID_PATH: /app/downloads/MaterialKompass-Android.apk
       DOWNLOAD_IOS_PATH: /app/downloads/MaterialKompass-iOS.ipa
       DOWNLOAD_MACOS_PATH: /app/downloads/MaterialKompass-macOS.dmg
-      CLIENT_WINDOWS_VERSION: ${CLIENT_WINDOWS_VERSION:-1.5.2}
-      CLIENT_MACOS_VERSION: ${CLIENT_MACOS_VERSION:-1.5.2}
-      CLIENT_LINUX_VERSION: ${CLIENT_LINUX_VERSION:-1.5.2}
-      CLIENT_ANDROID_VERSION: ${CLIENT_ANDROID_VERSION:-1.5.2}
-      CLIENT_IOS_VERSION: ${CLIENT_IOS_VERSION:-1.5.2}
+      CLIENT_WINDOWS_VERSION: ${CLIENT_WINDOWS_VERSION:-1.5.5}
+      CLIENT_MACOS_VERSION: ${CLIENT_MACOS_VERSION:-1.5.5}
+      CLIENT_LINUX_VERSION: ${CLIENT_LINUX_VERSION:-1.5.5}
+      CLIENT_ANDROID_VERSION: ${CLIENT_ANDROID_VERSION:-1.5.5}
+      CLIENT_IOS_VERSION: ${CLIENT_IOS_VERSION:-1.5.5}
       CLIENT_WINDOWS_MIN_VERSION: ${CLIENT_WINDOWS_MIN_VERSION:-1.0.0}
       CLIENT_LINUX_MIN_VERSION: ${CLIENT_LINUX_MIN_VERSION:-1.0.0}
       CLIENT_ANDROID_MIN_VERSION: ${CLIENT_ANDROID_MIN_VERSION:-1.0.0}
@@ -204,6 +208,7 @@ services:
       - ./releases:/app/downloads:ro
       - ./.deployments:/app/runtime:ro
       - materialkompass_mailbox_socket:/run/materialkompass
+      - materialkompass_identity_keyring:/var/lib/materialkompass-identity
     depends_on:
       db:
         condition: service_healthy
@@ -246,3 +251,5 @@ volumes:
   materialkompass_db:
     name: ${DB_VOLUME_NAME:-materialkompass_db_data}
   materialkompass_mailbox_socket:
+  materialkompass_identity_keyring:
+    name: ${IDENTITY_KEYRING_VOLUME_NAME:-materialkompass_identity_keyring}

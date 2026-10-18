@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { rawCollection, DEFAULT_ORGANIZATION_ID, DEFAULT_UNIT_ID } = require('./tenancy');
 
 const BACKUP_FORMAT = 'MaterialKompass Gesamtdatensicherung';
-const BACKUP_SCHEMA_VERSION = 1;
+const BACKUP_SCHEMA_VERSION = 2;
 const MAX_BACKUP_RECORDS = 500_000;
 
 function uniqueValues(entries, field) {
@@ -18,7 +18,7 @@ function uniqueRoleNames(roles) {
     && new Set(values).size === values.length;
 }
 
-function validatedBackup(input, collectionNames) {
+async function validatedBackup(input, collectionNames, identityProtection) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw Object.assign(new Error('Die Sicherungsdatei ist kein JSON-Objekt.'), { status: 400 });
   }
@@ -41,9 +41,19 @@ function validatedBackup(input, collectionNames) {
     throw Object.assign(new Error('Die Sicherung enthält zu viele Datensätze.'), { status: 413 });
   }
 
-  const users = input.data.users;
-  const roles = input.data.roles;
-  const passkeys = input.data.passkeys;
+  if (!identityProtection) {
+    throw Object.assign(new Error('Der Identity-Keyring ist nicht verfügbar.'), { status: 503 });
+  }
+  let data;
+  try {
+    data = identityProtection.unprotectBackupData(input.data).data;
+  } catch (_) {
+    throw Object.assign(new Error('Die Identitäten der Sicherung sind beschädigt oder nicht geschützt.'), { status: 400 });
+  }
+
+  const users = data.users;
+  const roles = data.roles;
+  const passkeys = data.passkeys;
   if (!uniqueValues(users, 'id') || !uniqueValues(users, 'username') || !uniqueValues(users, 'email')) {
     throw Object.assign(new Error('Nutzer-IDs, Nutzernamen oder E-Mail-Adressen sind ungültig oder doppelt.'), { status: 400 });
   }
@@ -52,9 +62,9 @@ function validatedBackup(input, collectionNames) {
   }
   const roleNames = new Set(roles.map((role) => role.name));
   const userIds = new Set(users.map((user) => user.id));
-  const organizations = input.data.organizations;
-  const units = input.data.organizationUnits;
-  const memberships = input.data.memberships;
+  const organizations = data.organizations;
+  const units = data.organizationUnits;
+  const memberships = data.memberships;
   if (!uniqueValues(organizations, 'id') || !uniqueValues(units, 'id')
       || !uniqueValues(memberships, 'id')) {
     throw Object.assign(new Error('Organisations-, Einheiten- oder Mitgliedschafts-IDs sind ungültig oder doppelt.'), { status: 400 });
@@ -97,7 +107,7 @@ function validatedBackup(input, collectionNames) {
   }
 
   return structuredClone(Object.fromEntries(
-    requiredNames.map((name) => [name, input.data[name]]),
+    requiredNames.map((name) => [name, data[name]]),
   ));
 }
 
@@ -106,21 +116,23 @@ function replaceCollection(target, values) {
   collection.splice(0, collection.length, ...values);
 }
 
-function backupDocument(appData, collectionNames, applicationVersion) {
+async function backupDocument(appData, collectionNames, applicationVersion, identityProtection) {
+  if (!identityProtection) throw new Error('Der Identity-Keyring ist nicht verfügbar.');
+  const data = Object.fromEntries([
+    ['users', structuredClone(rawCollection(appData.users))],
+    ['roles', structuredClone(rawCollection(appData.roles))],
+    ['passkeys', structuredClone(rawCollection(appData.passkeys || []))],
+    ...collectionNames.map((name) => [
+      name,
+      structuredClone(rawCollection(appData[name] || [])),
+    ]),
+  ]);
   return {
     format: BACKUP_FORMAT,
     schemaVersion: BACKUP_SCHEMA_VERSION,
     applicationVersion,
     createdAt: new Date().toISOString(),
-    data: Object.fromEntries([
-      ['users', structuredClone(rawCollection(appData.users))],
-      ['roles', structuredClone(rawCollection(appData.roles))],
-      ['passkeys', structuredClone(rawCollection(appData.passkeys || []))],
-      ...collectionNames.map((name) => [
-        name,
-        structuredClone(rawCollection(appData[name] || [])),
-      ]),
-    ]),
+    data: await identityProtection.protectBackupData(data),
   };
 }
 
@@ -177,6 +189,7 @@ function registerDataBackupRoutes({
   verifyReauthentication,
   dataStore,
   persistData,
+  identityProtection,
 }) {
   function requireAdmin(req, res, next) {
     if (!req.user.roles?.includes('Admin')) {
@@ -185,38 +198,59 @@ function registerDataBackupRoutes({
     return next();
   }
 
-  app.post('/api/system/backup/export', authMiddleware, requireAdmin, async (req, res) => {
-    if (!await verifyReauthentication(req.user, req.body)) {
-      return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
+  function requirePlatformAdmin(req, res, next) {
+    if (req.identity?.platformAdmin !== true) {
+      return res.status(403).json({
+        error: 'Gesamtdatensicherungen sind nur für Plattformadministratoren verfügbar.',
+      });
     }
-    const createdAt = new Date().toISOString();
-    rawCollection(appData.exportLogs).push({
-      id: `export-backup-${randomUUID()}`,
-      exportType: 'complete-json-backup',
-      requestedBy: req.user.username,
-      createdAt,
-    });
-    rawCollection(appData.auditLogs).push({
-      id: `audit-backup-export-${randomUUID()}`,
-      organizationId: req.tenant?.organizationId || DEFAULT_ORGANIZATION_ID,
-      unitId: req.tenant?.unitId || DEFAULT_UNIT_ID,
-      timestamp: createdAt,
-      actor: req.user.username,
-      action: 'export',
-      entity: 'DataBackup',
-      details: { schemaVersion: BACKUP_SCHEMA_VERSION },
-    });
-    await persistData();
-    const backup = backupDocument(appData, collectionNames, applicationVersion);
-    const date = createdAt.slice(0, 10);
-    res.set('Content-Disposition', `attachment; filename="materialkompass-backup-${date}.json"`);
-    return res.json(backup);
-  });
+    return next();
+  }
+
+  app.post(
+    '/api/system/backup/export',
+    authMiddleware,
+    requireAdmin,
+    requirePlatformAdmin,
+    async (req, res) => {
+      if (!await verifyReauthentication(req.user, req.body)) {
+        return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
+      }
+      const createdAt = new Date().toISOString();
+      rawCollection(appData.exportLogs).push({
+        id: `export-backup-${randomUUID()}`,
+        exportType: 'complete-json-backup',
+        requestedBy: req.user.username,
+        createdAt,
+      });
+      rawCollection(appData.auditLogs).push({
+        id: `audit-backup-export-${randomUUID()}`,
+        organizationId: req.tenant?.organizationId || DEFAULT_ORGANIZATION_ID,
+        unitId: req.tenant?.unitId || DEFAULT_UNIT_ID,
+        timestamp: createdAt,
+        actor: req.user.username,
+        action: 'export',
+        entity: 'DataBackup',
+        details: { schemaVersion: BACKUP_SCHEMA_VERSION },
+      });
+      await persistData();
+      const backup = await backupDocument(
+        appData,
+        collectionNames,
+        applicationVersion,
+        identityProtection,
+      );
+      const date = createdAt.slice(0, 10);
+      res.set('Content-Disposition', `attachment; filename="materialkompass-backup-${date}.json"`);
+      return res.json(backup);
+    },
+  );
 
   app.post(
     '/api/system/backup/import',
     authMiddleware,
     requireAdmin,
+    requirePlatformAdmin,
     importBodyParser,
     validateImportBody,
     async (req, res) => {
@@ -226,7 +260,11 @@ function registerDataBackupRoutes({
       if (!await verifyReauthentication(req.user, req.body)) {
         return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
       }
-      const data = validatedBackup(req.body.backup, collectionNames);
+      const data = await validatedBackup(
+        req.body.backup,
+        collectionNames,
+        identityProtection,
+      );
       data.auditLogs.push(importAuditEntry(data, req.user.username));
       const collections = Object.fromEntries(
         collectionNames.map((name) => [name, data[name]]),
@@ -250,6 +288,8 @@ function registerDataBackupRoutes({
       replaceCollection(appData.roles, data.roles);
       replaceCollection(appData.passkeys, data.passkeys);
       collectionNames.forEach((name) => replaceCollection(appData[name], data[name]));
+      await (dataStore?.pruneIdentityKeys?.(data.users.map((user) => user.id))
+        || identityProtection.pruneUsers(data.users.map((user) => user.id)));
       if (!dataStore?.replaceBackupData) await persistData();
 
       return res.json({

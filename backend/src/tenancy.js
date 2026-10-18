@@ -566,6 +566,12 @@ function publicOrganization(organization) {
   };
 }
 
+function canCreateOrganizations(req) {
+  return req.identity?.platformAdmin === true
+    && req.user?.roles?.includes('Admin')
+    && req.user?.permissions?.includes('organizations.write');
+}
+
 function registerTenancyRoutes({
   app, organizations, units, memberships, users, roles, authMiddleware,
   requirePermission, logEvent, persistOrganization = async () => {},
@@ -608,7 +614,7 @@ function registerTenancyRoutes({
   });
 
   app.post('/api/organizations', authMiddleware, async (req, res) => {
-    if (!req.identity?.platformAdmin || !canCreateOrganizationStructure(req)) {
+    if (!canCreateOrganizations(req)) {
       return res.status(403).json({
         error: 'Nur Plattformadministratoren mit der Berechtigung organizations.write dürfen Organisationen anlegen.',
       });
@@ -658,6 +664,19 @@ function registerTenancyRoutes({
     await persistMembership(memberships.at(-1));
     logEvent('create', 'Organization', { id: organization.id, name }, req.user.username);
     return res.status(201).json({ ...publicOrganization(organization), rootUnitId: root.id });
+  });
+
+  app.post('/api/updater/authorization', authMiddleware, (req, res) => {
+    if (!canCreateOrganizations(req)) {
+      return res.status(403).json({
+        error: 'Nur Plattformadministratoren mit der Berechtigung organizations.write dürfen Updates durchführen.',
+      });
+    }
+    logEvent('authorize', 'Updater', {
+      organizationId: req.tenant.organizationId,
+      unitId: req.tenant.unitId,
+    }, req.user.username);
+    return res.status(204).end();
   });
 
   app.get('/api/organization-units', authMiddleware, (req, res) => {
@@ -964,5 +983,6 @@ module.exports = {
   UNIT_KIND_YOUTH,
   contextForMembership,
   rolePermissions,
+  canCreateOrganizations,
   registerTenancyRoutes,
 };

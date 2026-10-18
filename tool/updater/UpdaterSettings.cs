@@ -19,6 +19,7 @@ internal sealed class UpdaterSettings
 
     public static string SettingsPath => Path.Combine(SettingsDirectory, "settings.json");
     public static string KnownHostsPath => Path.Combine(SettingsDirectory, "known_hosts");
+    public static string LogDirectory => Path.Combine(SettingsDirectory, "logs");
 
     public static UpdaterSettings Load()
     {

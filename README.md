@@ -93,6 +93,14 @@ dieselbe kurzlebige, einmal verwendbare 2-FA-Challenge. Ist ausschließlich ein 
 eingerichtet und starke Anmeldung verpflichtend, muss die Passkey-Anmeldung verwendet
 werden. Eine gerätebezogene MFA bleibt davon unabhängig.
 
+Sind TOTP und mindestens ein Passkey eingerichtet, kann dieselbe 2-FA-Challenge ohne
+Code über **Push / Gerät bestätigen** abgeschlossen werden. Die WebAuthn-Systemabfrage
+verlangt Gerätepasswort, PIN, Biometrie oder einen Sicherheitsschlüssel. Je nach
+Passkey-Anbieter kann dabei auch ein verbundenes Smartphone per System-Push zur
+Freigabe angeboten werden. MaterialKompass selbst versendet keine freigebbaren Links
+und akzeptiert nur einen zum Konto gehörenden Passkey; Challenge und WebAuthn-Anfrage
+sind kurzlebig, einmal verwendbar und an die aktuelle Sicherheitsversion gebunden.
+
 2-FA-Geheimnisse werden mit AES-256-GCM und einem eigenen, zufälligen
 `MFA_ENCRYPTION_KEY` verschlüsselt. Aktivierung, Deaktivierung, Richtlinienänderungen,
 neue Wiederherstellungscodes und administrative Resets werden protokolliert und per
@@ -393,13 +401,11 @@ docker run --env-file .env -p 3001:3001 materialkompass-backend
 
 ### GitHub-basierte Server-Bereitstellung
 
-Die produktive Installation wird aus dem GitHub-Repository aktualisiert. Beim ersten
-Setup wird das Repository geklont und die nicht versionierte Server-Konfiguration
-angelegt:
+Die produktive Installation wird als geprüftes Paket direkt vom Windows-Updater
+aktualisiert. Beim ersten Setup werden die Startdateien einmalig nach
+`/opt/materialkompass` kopiert und die nicht paketierte Server-Konfiguration angelegt:
 
 ```bash
-cd /opt
-git clone https://github.com/simulator-freak2/MaterialKompass.git materialkompass
 cd /opt/materialkompass
 cp backend/.env.example .env
 nano .env
@@ -417,11 +423,12 @@ Spätere Aktualisierungen werden vom lokalen Windows-Rechner mit dem geprüften,
 wiederholbaren Updateprozess ausgeführt (Standardserver `31.70.106.152`):
 
 ```powershell
-.\ops\update-server.ps1
+.\ops\deploy-package.ps1
 ```
 
-Das Skript übernimmt lokale Tests, Push, Vorab-Backup, Migrationen, Container-Neubau,
-Readiness-Prüfung und Anwendungs-Rollback. Die einmalige Einrichtung, SSH-Parameter,
+Das Skript übernimmt lokale Tests, Paketbildung, SHA-256-Prüfung, Vorab-Backup,
+Migrationen, Container-Neubau, Readiness-Prüfung und Anwendungs-Rollback. Git wird für
+das Update weder lokal noch auf dem Server benötigt. Die einmalige Einrichtung, SSH-Parameter,
 der optionale Installer-Upload und das Verhalten bei Fehlern stehen in
 [`DEPLOYMENT.md`](DEPLOYMENT.md). Für eine rein manuelle Diagnose gelten weiterhin:
 
@@ -444,6 +451,10 @@ aus. Bereits angewendete Migrationsdateien dürfen nicht verändert werden.
 
 Der Compose-Dienst `backup` erstellt einmal täglich ab der in `BACKUP_HOUR_UTC`
 festgelegten UTC-Stunde einen transaktionskonsistenten, komprimierten MariaDB-Dump.
+Kontonamen, Nutzernamen und Konto-E-Mail-Adressen liegen darin ausschließlich als
+authentifizierte Chiffrate vor. Die individuellen Kontoschlüssel befinden sich im
+separaten Volume `materialkompass_identity_keyring` und werden nie in einen Dump oder
+eine JSON-Gesamtsicherung aufgenommen.
 Ein erfolgreicher Lauf wird für den jeweiligen UTC-Tag markiert, sodass Container-
 Neustarts keine unnötigen Mehrfachsicherungen erzeugen. Fehlgeschlagene Läufe werden
 alle 15 Minuten wiederholt. Standardmäßig liegen die Sicherungen im Serververzeichnis
@@ -463,7 +474,7 @@ prüfen:
 ```bash
 docker compose logs --tail=100 backup
 ls -la backups
-cd backups && sha256sum -c materialkompass-*.sql.gz.sha256
+cd backups && sha256sum -c materialkompass-v2-*.sql.gz.sha256
 ```
 
 Vor dem ersten Produktiveinsatz und danach regelmäßig muss eine Wiederherstellung in
@@ -473,10 +484,16 @@ anpassen):
 ```bash
 docker compose exec db sh -c \
   'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -u root -e "CREATE DATABASE materialkompass_restore_test"'
-gunzip -c backups/materialkompass-20260701T020000Z.sql.gz \
+gunzip -c backups/materialkompass-v2-20261017T020000Z.sql.gz \
   | docker compose exec -T db sh -c \
       'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb -u root materialkompass_restore_test'
 ```
+
+Eine Wiederherstellung aktiver Identitäten benötigt zusätzlich den aktuellen Keyring
+und den unveränderten `IDENTITY_KEYRING_MASTER_KEY`. Fehlt nur der individuelle
+Schlüssel eines gelöschten Kontos, wird es beim Restore als deaktivierter Tombstone
+ohne Passwort, MFA oder Passkeys geladen. Fehlt dagegen der gesamte Keyring, bricht
+das Backend ab, statt alle Konten irrtümlich zu tombstonisieren.
 
 Die Sicherungen liegen auf demselben Server und schützen damit vor Datenbankfehlern,
 nicht vor dem Ausfall oder Verlust des gesamten Servers. Für vollständige
@@ -484,7 +501,8 @@ Ausfallsicherheit muss `BACKUP_DIR` zusätzlich verschlüsselt auf ein getrennte
 repliziert werden.
 
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
-`JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`,
+`JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `IDENTITY_KEYRING_MASTER_KEY`,
+`INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`,
 die Passkey-, MariaDB-,
 IONOS-SMTP- und `DEFECT_IMAP_*`-Werte müssen als Server-Umgebungsvariablen gesetzt werden. Der
 erste Administrator lautet `admin@materialkompass.org`; das einmalige Startpasswort
@@ -516,6 +534,12 @@ zufälliger Hex-Wert erzeugt und gesichert werden. Ein Verlust macht bestehende
 TOTP-Einrichtungen unlesbar; ein unkoordiniertes Austauschen des Schlüssels ist daher
 nicht zulässig.
 
+`IDENTITY_KEYRING_MASTER_KEY` muss ein weiterer unabhängiger 64-stelliger Hexwert sein.
+Der verschlüsselte Keyring darf extern ausschließlich als ein überschreibender,
+aktueller Stand repliziert werden. Versionierte oder historische Keyring-Kopien würden
+die kryptografische Löschung rückgängig machen. Der Verlust von Keyring oder Master-Key
+macht alle geschützten Kontoidentitäten dauerhaft unlesbar.
+
 Das MariaDB-Volume enthält fachliche Daten im Datenbankformat. Der Serverdatenträger
 einschließlich Backups muss deshalb betriebssystemseitig verschlüsselt und nur für die
 zuständigen Administratoren zugänglich sein. Datenbank- und Root-Kennwörter müssen
@@ -540,6 +564,27 @@ ausgeführt werden.
 Anschließend kann `node src/scripts/grant-organization-management.js` die Konten
 `nils.wiedenhaus` und `admin` idempotent als Organisations- und Plattformadministratoren
 freischalten. Das Backend muss während dieses einmaligen Laufs gestoppt sein.
+
+Nach dem erstmaligen Einspielen von
+`20261017_identity_crypto_erasure.sql` werden bestehende Identitäten einmalig und
+explizit verschlüsselt. Bis zum erfolgreichen Abschluss verweigert der Backupdienst
+reguläre Sicherungen. Der vor dem Update erstellte Legacy-Dump bleibt als Rollback
+erhalten:
+
+```bash
+docker compose stop backend backup
+docker compose run --rm --no-deps backend npm run migrate:identities -- \
+  --apply --confirmation="IDENTITAETEN VERSCHLUESSELN"
+docker compose up -d backend backup
+docker compose run --rm -e BACKUP_ONCE=true backup
+```
+
+Erst der letzte Befehl veröffentlicht eine geprüfte `materialkompass-v2-…`-Sicherung
+und entfernt anschließend die früheren Klartext-Dumps. Vorher darf der Keyring weder
+gelöscht noch durch eine leere Datei ersetzt werden.
+Bereits heruntergeladene JSON-Gesamtsicherungen mit `schemaVersion: 1` liegen außerhalb
+der Server-Aufbewahrung und müssen nach der ersten geprüften v2-Sicherung manuell aus
+allen Ablagen entfernt werden; der Import akzeptiert nur noch Schema 2.
 Bestehende Organisationsdaten erhalten beim Start automatisch eindeutige EDV-Nummern;
 für die erste Organisation wird dabei `GLIEDERUNGSNUMMER` verwendet. Die fachlichen
 Werte können anschließend unter **Organisationen & Einheiten** angepasst werden. Da

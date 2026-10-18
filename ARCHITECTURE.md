@@ -98,9 +98,14 @@ im getrennten, prüfsummenkontrollierten Updatepfad.
 
 Bei aktivierter Konto-2-FA liefert der erste Faktor kein Anwendungs-JWT, sondern eine
 fünf Minuten gültige, serverseitig einmal verwendbare Challenge. Erst TOTP oder ein
-noch unbenutzter Wiederherstellungscode schließt die Anmeldung ab. TOTP-Geheimnisse
-liegen AES-256-GCM-verschlüsselt, Wiederherstellungscodes nur als Prüfsummen vor.
-Änderungen an Faktor oder Richtlinie fließen in die JWT-Sicherheitsversion ein.
+noch unbenutzter Wiederherstellungscode schließt die Anmeldung ab. Konten mit Passkey
+können dieselbe Challenge alternativ durch eine zweite, kontogebundene
+WebAuthn-Zeremonie abschließen. Dadurch liefert der Authenticator die Gerätefreigabe
+per Passwort, PIN oder Biometrie; eine vom Passkey-Ökosystem angebotene Freigabe auf
+einem verbundenen Telefon bleibt kryptografisch an Credential, RP-ID, Origin und
+Challenge gebunden. TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt,
+Wiederherstellungscodes nur als Prüfsummen vor. Änderungen an Faktor oder Richtlinie
+fließen in die JWT-Sicherheitsversion ein.
 
 Passkeys verwenden WebAuthn mit discoverable Credentials und verpflichtender lokaler
 Nutzerprüfung. Registrierungs- und Anmelde-Challenges liegen nur gehasht, einmal

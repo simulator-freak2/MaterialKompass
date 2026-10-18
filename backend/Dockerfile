@@ -8,9 +8,12 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3001
 WORKDIR /app
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY package.json server.js ./
-COPY src ./src
+COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json server.js ./
+COPY --chown=node:node src ./src
+RUN mkdir -p /var/lib/materialkompass-identity \
+    && chown node:node /var/lib/materialkompass-identity \
+    && chmod 0700 /var/lib/materialkompass-identity
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

@@ -95,7 +95,11 @@ class SystemMessageService {
     final response = await _client
         .get(Uri.parse(apiBaseUrl).resolve(path), headers: headers)
         .timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) return const [];
+    if (response.statusCode != 200) {
+      throw StateError(
+        'Systemhinweise konnten nicht geladen werden (${response.statusCode}).',
+      );
+    }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map || decoded['messages'] is! List) return const [];
     return (decoded['messages'] as List)

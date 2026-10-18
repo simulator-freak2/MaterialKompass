@@ -32,18 +32,24 @@ import 'vehicles_page.dart' deferred as vehicles_page;
 
 typedef DashboardLoader = Future<Map<String, dynamic>> Function();
 typedef AppExit = Future<void> Function();
+typedef SystemMessageLoader = Future<List<SystemMessage>> Function();
+typedef SystemMessageAcknowledger = Future<void> Function(String messageId);
 
 class DashboardPage extends StatefulWidget {
   final String token;
   final DashboardLoader? dashboardLoader;
   final AppExit? appExit;
   final WidgetBuilder? logoutPageBuilder;
+  final SystemMessageLoader? systemMessageLoader;
+  final SystemMessageAcknowledger? systemMessageAcknowledger;
 
   const DashboardPage({
     required this.token,
     this.dashboardLoader,
     this.appExit,
     this.logoutPageBuilder,
+    this.systemMessageLoader,
+    this.systemMessageAcknowledger,
     super.key,
   });
 
@@ -56,7 +62,11 @@ class _DashboardPageState extends State<DashboardPage>
   late Future<Map<String, dynamic>> _dashboardFuture;
   late String _token;
   Timer? _syncTimer;
+  Timer? _systemMessageTimer;
   bool _backgroundRefreshInProgress = false;
+  bool _systemMessageCheckInProgress = false;
+  int _systemMessageFailures = 0;
+  final Set<String> _shownSystemMessageIds = {};
   final _systemMessages = SystemMessageService();
 
   @override
@@ -70,19 +80,47 @@ class _DashboardPageState extends State<DashboardPage>
       const Duration(minutes: 1),
       (_) => unawaited(_refreshInBackground()),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showSystemMessages());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _scheduleSystemMessageCheck(),
+    );
   }
 
   Future<void> _sync() =>
       offline_transport.flush(headers: {'Authorization': 'Bearer $_token'});
 
+  void _scheduleSystemMessageCheck({
+    Duration delay = const Duration(milliseconds: 500),
+  }) {
+    if (!mounted) return;
+    _systemMessageTimer?.cancel();
+    _systemMessageTimer = Timer(delay, () => unawaited(_showSystemMessages()));
+  }
+
   Future<void> _showSystemMessages() async {
+    if (!mounted || _systemMessageCheckInProgress) return;
+
+    // Im Web kann der erste Frame noch waehrend des Austauschs der Login-Route
+    // entstehen. Ein Dialog auf dieser Route wuerde beim Abschluss der
+    // Navigation direkt wieder entfernt. Deshalb erst auf der aktiven
+    // Dashboard-Route anzeigen.
+    if (ModalRoute.of(context)?.isCurrent != true) {
+      _scheduleSystemMessageCheck(delay: const Duration(milliseconds: 250));
+      return;
+    }
+
+    _systemMessageCheckInProgress = true;
     try {
-      final messages = await _systemMessages.userMessages(_token);
+      final messages =
+          await (widget.systemMessageLoader?.call() ??
+              _systemMessages.userMessages(_token));
+      _systemMessageFailures = 0;
       for (final message in messages.where(
-        (entry) => entry.isMaintenance || !entry.acknowledged,
+        (entry) =>
+            (entry.isMaintenance || !entry.acknowledged) &&
+            !_shownSystemMessageIds.contains(entry.id),
       )) {
         if (!mounted) return;
+        _shownSystemMessageIds.add(message.id);
         await showDialog<void>(
           context: context,
           barrierDismissible: false,
@@ -103,14 +141,37 @@ class _DashboardPageState extends State<DashboardPage>
         );
         if (message.isRelease) {
           try {
-            await _systemMessages.acknowledge(_token, message.id);
+            await (widget.systemMessageAcknowledger?.call(message.id) ??
+                _systemMessages.acknowledge(_token, message.id));
           } catch (_) {
             // Bei einem Fehler wird der Hinweis bei der nächsten Anmeldung erneut gezeigt.
           }
         }
       }
     } catch (_) {
-      // Die Fachanwendung bleibt auch bei einem Hinweis-Endpunktfehler nutzbar.
+      _systemMessageFailures += 1;
+      if (_systemMessageFailures < 3) {
+        _scheduleSystemMessageCheck(
+          delay: Duration(seconds: _systemMessageFailures),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Versionshinweise konnten nicht geladen werden.',
+            ),
+            action: SnackBarAction(
+              label: 'Erneut versuchen',
+              onPressed: () {
+                _systemMessageFailures = 0;
+                _scheduleSystemMessageCheck(delay: Duration.zero);
+              },
+            ),
+          ),
+        );
+      }
+    } finally {
+      _systemMessageCheckInProgress = false;
     }
   }
 
@@ -119,12 +180,14 @@ class _DashboardPageState extends State<DashboardPage>
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshInBackground());
       unawaited(OfflineSessionService.prepare(_token));
+      _scheduleSystemMessageCheck(delay: const Duration(seconds: 1));
     }
   }
 
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _systemMessageTimer?.cancel();
     _systemMessages.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -137,6 +200,9 @@ class _DashboardPageState extends State<DashboardPage>
         oldWidget.dashboardLoader != widget.dashboardLoader) {
       _token = widget.token;
       _dashboardFuture = _loadDashboard();
+      _shownSystemMessageIds.clear();
+      _systemMessageFailures = 0;
+      _scheduleSystemMessageCheck();
       unawaited(OfflineSessionService.prepare(_token));
     }
   }

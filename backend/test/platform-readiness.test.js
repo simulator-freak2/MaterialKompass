@@ -113,7 +113,7 @@ test('runtime configuration validates network settings', () => {
     'https://one.example',
     'https://two.example',
   ]);
-  assert.deepEqual(loadRuntimeConfig({
+  const validProductionEnvironment = {
     NODE_ENV: 'production',
     JWT_SECRET: 'a-secure-random-secret-with-32-characters',
     CORS_ORIGIN: 'https://app.example.org',
@@ -132,6 +132,8 @@ test('runtime configuration validates network settings', () => {
     MAILBOX_PROVISIONER_TOKEN: 'b'.repeat(64),
     MAILBOX_PASSWORD_ENCRYPTION_KEY: 'c'.repeat(64),
     MFA_ENCRYPTION_KEY: 'd'.repeat(64),
+    IDENTITY_KEYRING_MASTER_KEY: 'e'.repeat(64),
+    IDENTITY_KEYRING_PATH: '/var/lib/materialkompass-identity/keyring.enc',
     MAILBOX_PROVISIONER_SOCKET: '/run/materialkompass/provisioner.sock',
     LEGAL_CONTROLLER_NAME: 'Example Organisation',
     LEGAL_LEGAL_FORM: 'e. V.',
@@ -149,12 +151,21 @@ test('runtime configuration validates network settings', () => {
     LEGAL_LEGITIMATE_INTERESTS: 'Sichere interne Materialverwaltung',
     DB_HOST: 'database',
     PORT: '4000',
-  }), {
+  };
+  assert.deepEqual(loadRuntimeConfig(validProductionEnvironment), {
     nodeEnv: 'production',
     host: '0.0.0.0',
     port: 4000,
     shutdownTimeoutMs: 10000,
   });
+  assert.throws(() => loadRuntimeConfig({
+    ...validProductionEnvironment,
+    INVENTORY_IMAP_SECURE: 'false',
+  }), /E-Mail-Postfächer/);
+  assert.throws(() => loadRuntimeConfig({
+    ...validProductionEnvironment,
+    INVENTORY_IMAP_TLS_REJECT_UNAUTHORIZED: 'false',
+  }), /E-Mail-Postfächer/);
   assert.equal(parseTrustProxy('1'), 1);
   assert.equal(parseTrustProxy('loopback'), 'loopback');
   assert.throws(() => parseTrustProxy('true'), /TRUST_PROXY/);

@@ -141,6 +141,8 @@ function loadRuntimeConfig(env = process.env) {
     }
     if (env.DEFECT_IMAP_SECURE === 'false'
       || env.DEFECT_IMAP_TLS_REJECT_UNAUTHORIZED === 'false'
+      || env.INVENTORY_IMAP_SECURE === 'false'
+      || env.INVENTORY_IMAP_TLS_REJECT_UNAUTHORIZED === 'false'
       || env.PROCUREMENT_IMAP_SECURE === 'false'
       || env.PROCUREMENT_IMAP_TLS_REJECT_UNAUTHORIZED === 'false') {
       throw new Error(
@@ -194,6 +196,14 @@ function loadRuntimeConfig(env = process.env) {
       throw new Error(
         'MFA_ENCRYPTION_KEY muss ein zufälliger 64-stelliger Hex-Wert sein.',
       );
+    }
+    if (!/^[a-f0-9]{64}$/i.test(env.IDENTITY_KEYRING_MASTER_KEY || '')) {
+      throw new Error(
+        'IDENTITY_KEYRING_MASTER_KEY muss ein eigener zufälliger 64-stelliger Hex-Wert sein.',
+      );
+    }
+    if (!env.IDENTITY_KEYRING_PATH) {
+      throw new Error('IDENTITY_KEYRING_PATH muss im Produktivbetrieb gesetzt sein.');
     }
     if (!env.MAILBOX_PROVISIONER_SOCKET) {
       let provisionerUrl;

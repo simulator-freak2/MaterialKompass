@@ -1,6 +1,16 @@
 # Aenderungsprotokoll
 
-## [1.5.2] - 2026-10-13
+## [1.5.5] - 2026-10-18
+
+-2FA
+
+## [1.5.4] - 2026-10-17
+
+-Datenschutzupdate## [1.5.3] - 2026-10-17
+
+-Sicherheitsupdate
+
+## [1.5.2] - 2026-10-17
 
 - Sicheres Updatewerkzeug hinzugefügt
 - Versionsverwaltung für Backend, Web und Apps vereinheitlicht
@@ -8,4 +18,6 @@
 - Wartungshinweise vor der Anmeldung hinzugefügt
 - Server-Deployment mit Backup und Rollback abgesichert
 - SSH-Hostschlüsselprüfung verbessert
+- Changelog-Anzeige im Web nach der Anmeldung stabilisiert
+- Aktualisierte Web-App wird nach einem Service-Worker-Wechsel zuverlässig geladen
 - Allgemeine Sicherheits- und Stabilitätsverbesserungen

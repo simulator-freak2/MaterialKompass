@@ -1,9 +1,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
+const { seedData } = require('../src/data/seed');
 
-async function setup() {
-  const app = createApp();
+async function setup({ platformAdmin = true } = {}) {
+  const data = structuredClone(seedData);
+  data.users.find((user) => user.id === 'user-admin').platformAdmin = platformAdmin;
+  const app = createApp({ data });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -28,6 +31,33 @@ async function setup() {
   });
   return { server, baseUrl, request, token: login.data.token };
 }
+
+test('organization administrators cannot export or replace platform-wide backups', async () => {
+  const { server, request, token } = await setup({ platformAdmin: false });
+  try {
+    const exported = await request('/api/system/backup/export', {
+      method: 'POST',
+      token,
+      body: { currentPassword: 'MaterialKompass2026!' },
+    });
+    assert.equal(exported.response.status, 403);
+    assert.match(exported.data.error, /Plattformadministratoren/);
+
+    const imported = await request('/api/system/backup/import', {
+      method: 'POST',
+      token,
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        confirmation: 'ALLE DATEN ERSETZEN',
+        backup: {},
+      },
+    });
+    assert.equal(imported.response.status, 403);
+    assert.match(imported.data.error, /Plattformadministratoren/);
+  } finally {
+    server.close();
+  }
+});
 
 test('backup import authenticates before parsing the large JSON body', async () => {
   const { server, baseUrl } = await setup();
@@ -60,8 +90,12 @@ test('admin can export and restore the complete application data', async () => {
     });
     assert.equal(exported.response.status, 200);
     assert.equal(exported.data.format, 'MaterialKompass Gesamtdatensicherung');
-    assert.equal(exported.data.schemaVersion, 1);
+    assert.equal(exported.data.schemaVersion, 2);
     assert.ok(exported.data.data.users[0].passwordHash);
+    const serializedBackup = JSON.stringify(exported.data);
+    assert.doesNotMatch(serializedBackup, /admin@materialkompass\.org/);
+    assert.doesNotMatch(serializedBackup, /Admin User/);
+    assert.doesNotMatch(serializedBackup, /"username":"admin"/);
     assert.ok(exported.data.data.materials.some((entry) => entry.id === 'material-1'));
     assert.ok(exported.data.data.auditLogs.some((entry) => entry.entity === 'DataBackup'));
 

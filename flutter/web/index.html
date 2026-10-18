@@ -35,6 +35,18 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // Uebernimmt einen aktualisierten Service-Worker und den zugehoerigen
+    // Flutter-Build sofort. Bei der ersten Installation wird nicht neu geladen.
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      let reloadingForUpdate = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (reloadingForUpdate) return;
+        reloadingForUpdate = true;
+        window.location.reload();
+      });
+    }
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

@@ -17,6 +17,13 @@ Verbindung wird der fest gespeicherte SSH-Hostschlüssel geprüft.
 - optionaler vollständiger Datenimport mit frischem Serverbackup, Adminpasswort,
   2-FA und zusätzlichem Bestätigungssatz
 - lokale Prüf-Builds oder Start des GitHub-Actions-Workflows
+- optionales Committen und direktes Pushen lokaler Änderungen aus dem Updater
+- direkter, SHA-256-geprüfter Serverupload ohne Git-Push oder Git-Abruf
+- verpflichtende Anmeldung vor jedem echten Deployment; zugelassen sind ausschließlich
+  Plattformadministratoren, die als Admin die Berechtigung `organizations.write`
+  besitzen und damit auch neue Organisationen anlegen dürfen
+- sichtbares Live-Protokoll mit Zeitstempeln, Prozessnamen und Exit-Codes sowie
+  dauerhafte lokale Logdateien ohne Passwörter oder private Schlüssel
 
 ## EXE bauen und starten
 
@@ -42,6 +49,11 @@ ausreichend freiem Speicher als selbstenthaltendes .NET-Publish erzeugt werden.
 Der Ordner muss innerhalb des MaterialKompass-Repositorys bleiben, weil die EXE die
 geprüften Skripte aus `ops` und `packaging` verwendet. Das ZIP daher in
 `releases\MaterialKompass-Updater` des Repositorys entpacken.
+
+Das Protokoll wird im unteren Bereich des Fensters live angezeigt. Über
+**Logdatei öffnen** gelangt man zur vollständigen Sitzungsdatei unter
+`%LOCALAPPDATA%\MaterialKompass\Updater\logs`. Fehlermeldungen zeigen diesen Pfad
+ebenfalls an, damit auch lange Ausgaben vollständig erhalten bleiben.
 
 ## SSH-Schlüssel erstmalig erstellen
 
@@ -79,7 +91,7 @@ angezeigt. Niemals den privaten Schlüssel übertragen.
 
 ```bash
 apt-get update
-apt-get install -y git curl unzip docker-compose-plugin
+apt-get install -y curl unzip docker-compose-plugin
 adduser --disabled-password --gecos "" materialkompass-deploy
 install -d -m 700 -o materialkompass-deploy -g materialkompass-deploy \
   /home/materialkompass-deploy/.ssh
@@ -135,15 +147,24 @@ einem Provider-Proxy gelten dieselben beiden lokalen Ziele.
 
 1. Im Updater Version, Buildnummer und Changelog eintragen.
 2. **Release vorbereiten** ausführen.
-3. Git-Diff prüfen, Backend- und Fluttertests ausführen und die Änderungen committen.
-4. Plattformpakete lokal oder über GitHub Actions bauen.
-5. **Sicherheitsvorschau** kontrollieren.
-6. Gewünschte Bereiche auswählen und das Deployment starten.
-7. Status, Changeloganzeige, Web-App und Downloads kontrollieren.
+3. Die Änderungen prüfen; das Tool führt Backend-, Mailbox- und Fluttertests aus.
+4. Optional eine Commitnachricht eintragen und **Git committen & pushen** ausführen.
+   Der Updater zeigt Zielbranch und Dateien vorab an, blockiert typische
+   Geheimdateinamen und führt ausschließlich einen normalen Push ohne Force aus.
+5. Plattformpakete lokal oder über GitHub Actions bauen.
+6. **Sicherheitsvorschau** kontrollieren.
+7. Gewünschte Bereiche auswählen und das Deployment starten. Vor der ersten
+   Serveränderung fordert der Updater eine frische Anmeldung einschließlich der
+   vorhandenen 2-FA bzw. eines Recovery-Codes an und lässt die Berechtigung durch
+   `POST /api/updater/authorization` serverseitig prüfen.
+8. Status, Changeloganzeige, Web-App und Downloads kontrollieren.
 
-Der Updater veröffentlicht nur einen sauberen, committed Branch. Native Installer
-sind ohne Codesignatur standardmäßig gesperrt. Die Option für unsignierte Dateien ist
-ausschließlich für interne Prüf-Builds vorgesehen.
+Der Updater erstellt aus dem lokalen Projekt eine feste, allowlist-basierte
+Serverdatei und überträgt sie direkt per SSH. Der optionale Git-Push ist vom Deployment
+getrennt; Git bleibt auf dem Server unnötig. `.env`, Datenbankdateien, Backups,
+Laufzeitmeldungen und Downloads werden nie in das Serverpaket aufgenommen. Native
+Installer sind ohne Codesignatur standardmäßig gesperrt. Die Option für unsignierte
+Dateien ist ausschließlich für interne Prüf-Builds vorgesehen.
 
 ## Codesignaturen
 
@@ -161,7 +182,8 @@ vertrauenswürdig beziehungsweise auf normalen Geräten nicht installierbar.
 ## Backups und Rollback
 
 Vor Codeänderungen und Datenimporten wird ein MariaDB-Dump mit SHA-256-Prüfsumme
-erzeugt. Anwendungscode, Webdateien und Downloads besitzen eigene Rückfallpfade.
+erzeugt. Der bisherige Anwendungscode wird unter `.deployments/archive` gesichert;
+Webdateien und Downloads besitzen eigene Rückfallpfade.
 SQL-Migrationen werden absichtlich nicht automatisch rückwärts ausgeführt; bei einer
 nicht kompatiblen Migration wird der vorherige Dump nach `OPERATIONS.md` in eine
 kontrollierte Wiederherstellung einbezogen.

@@ -2,7 +2,7 @@
 
 set -eu
 
-backup_file=${1:?"Aufruf: ops/restore-test.sh backups/materialkompass-<zeit>.sql.gz"}
+backup_file=${1:?"Aufruf: ops/restore-test.sh backups/materialkompass-v2-<zeit>.sql.gz"}
 test_database=${RESTORE_TEST_DB:-materialkompass_restore_test}
 
 case "$test_database" in

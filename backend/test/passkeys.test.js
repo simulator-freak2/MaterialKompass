@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
 const { seedData } = require('../src/data/seed');
+const { totp } = require('../src/totp');
 
 const credentialId = 'Y3JlZGVudGlhbC0x';
 const publicKey = Buffer.from('test-public-key');
@@ -44,19 +45,27 @@ function fakeWebAuthn() {
     },
     async generateAuthenticationOptions(options) {
       assert.equal(options.userVerification, 'required');
-      assert.equal(options.allowCredentials, undefined);
+      if (options.allowCredentials !== undefined) {
+        assert.equal(options.allowCredentials.length, 1);
+        assert.equal(options.allowCredentials[0].id, credentialId);
+      }
       return {
         challenge: 'YXV0aGVudGljYXRpb24tY2hhbGxlbmdl',
         rpId: options.rpID,
         timeout: options.timeout,
         userVerification: options.userVerification,
+        ...(options.allowCredentials === undefined
+          ? {}
+          : { allowCredentials: options.allowCredentials }),
       };
     },
     async verifyAuthenticationResponse(options) {
       assert.equal(options.requireUserVerification, true);
+      assert.equal(options.expectedChallenge, 'YXV0aGVudGljYXRpb24tY2hhbGxlbmdl');
       assert.deepEqual(options.expectedOrigin, ['https://materialkompass.org']);
       assert.equal(options.expectedRPID, 'materialkompass.org');
       assert.equal(options.advancedFIDOConfig.userVerification, 'required');
+      assert.equal(options.credential.id, credentialId);
       assert.deepEqual(Buffer.from(options.credential.publicKey), publicKey);
       return {
         verified: true,
@@ -243,6 +252,82 @@ test('passkey challenges are single-use and require the discoverable user handle
         credential: { id: credentialId, response: {} },
       },
     })).response.status, 401);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('an MFA challenge can be approved without a code using device verification', async () => {
+  const { server, request, token } = await start();
+  try {
+    const registration = await request('/api/users/me/passkeys/options', {
+      method: 'POST', token,
+      body: { name: 'Freigabegerät', currentPassword: 'MaterialKompass2026!' },
+    });
+    const registered = await request('/api/users/me/passkeys/verify', {
+      method: 'POST', token,
+      body: {
+        challengeId: registration.data.challengeId,
+        credential: {
+          id: credentialId,
+          response: { userHandle: registration.data.options.user.id },
+        },
+      },
+    });
+    assert.equal(registered.response.status, 201);
+
+    const setup = await request('/api/users/me/mfa/setup', {
+      method: 'POST', token: registered.data.token,
+      body: { currentPassword: 'MaterialKompass2026!' },
+    });
+    const confirmed = await request('/api/users/me/mfa/confirm', {
+      method: 'POST', token: registered.data.token,
+      body: { code: totp(setup.data.secret) },
+    });
+    assert.equal(confirmed.response.status, 200);
+
+    const login = await request('/api/auth/login', {
+      method: 'POST',
+      body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    assert.equal(login.response.status, 202);
+    assert.deepEqual(login.data.methods, ['passkey', 'totp', 'recovery_code']);
+
+    const approval = await request('/api/auth/mfa/passkey/options', {
+      method: 'POST', body: { challenge: login.data.challenge },
+    });
+    assert.equal(approval.response.status, 200);
+    assert.equal(approval.data.options.allowCredentials[0].id, credentialId);
+
+    const approved = await request('/api/auth/mfa/passkey/verify', {
+      method: 'POST',
+      body: {
+        challengeId: approval.data.challengeId,
+        credential: { id: credentialId, response: {} },
+      },
+    });
+    assert.equal(approved.response.status, 200);
+    assert.ok(approved.data.token);
+
+    const reusedApproval = await request('/api/auth/mfa/passkey/verify', {
+      method: 'POST',
+      body: {
+        challengeId: approval.data.challengeId,
+        credential: { id: credentialId, response: {} },
+      },
+    });
+    assert.equal(reusedApproval.response.status, 401);
+
+    const reused = await request('/api/auth/mfa/passkey/options', {
+      method: 'POST', body: { challenge: login.data.challenge },
+    });
+    assert.equal(reused.response.status, 401);
+
+    const reusedWithCode = await request('/api/auth/mfa/verify', {
+      method: 'POST',
+      body: { challenge: login.data.challenge, code: totp(setup.data.secret) },
+    });
+    assert.equal(reusedWithCode.response.status, 401);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

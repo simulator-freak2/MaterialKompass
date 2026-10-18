@@ -17,6 +17,10 @@ internal static class CommandRunner
         Action<string> log,
         CancellationToken cancellationToken = default)
     {
+        if (!Directory.Exists(workingDirectory))
+            throw new DirectoryNotFoundException($"Arbeitsordner wurde nicht gefunden: {workingDirectory}");
+        log($"Starte Prozess: {executable}");
+        log($"Arbeitsordner: {workingDirectory}");
         var startInfo = new ProcessStartInfo(executable)
         {
             WorkingDirectory = workingDirectory,
@@ -50,9 +54,11 @@ internal static class CommandRunner
         }
         catch (OperationCanceledException)
         {
+            log($"Prozess wird abgebrochen: {executable}");
             try { process.Kill(entireProcessTree: true); } catch { }
             throw;
         }
+        log($"Prozess beendet: {executable} (Exit-Code {process.ExitCode})");
         return new CommandResult(process.ExitCode, output.ToString());
     }
 }

@@ -1,27 +1,26 @@
 # Wiederholbarer Updateprozess
 
-Der produktive Server ist standardmäßig `31.70.106.152`. Nach der einmaligen
-Einrichtung wird jede Änderung aus einem sauberen, committed `main` mit einem Befehl
-ausgerollt:
+Der produktive Server ist standardmäßig `31.70.106.152`. Der Updater erstellt aus dem
+lokalen Projekt ein geprüftes Serverpaket und überträgt es direkt per SSH. Ein Commit,
+Push, GitHub-Abruf oder Git-Repository auf dem Server ist dafür nicht erforderlich:
 
 ```powershell
-.\ops\update-server.ps1
+.\ops\deploy-package.ps1
 ```
 
-Der Ablauf prüft lokal Backend, Mailbox-Provisioner und Flutter, pusht den aktuellen
-Commit zu GitHub und startet das Update per SSH. Auf dem Server wird exklusiv genau ein
-Update ausgeführt. Es akzeptiert ausschließlich einen Fast-Forward von `main`, baut die
-Container, erstellt vor jeder tatsächlichen Änderung einen MariaDB-Dump samt SHA-256,
-führt neue SQL-Migrationen genau einmal aus, startet Compose und wartet auf `/ready`.
-Schlägt Build, Start oder Readiness fehl, wird die Anwendung auf den vorherigen Commit
-zurückgesetzt; das Datenbank-Backup bleibt erhalten.
+Der Ablauf prüft lokal Backend, Mailbox-Provisioner und Flutter, packt nur freigegebene
+Serverpfade und prüft jede Übertragung per SHA-256. Auf dem Server wird exklusiv genau
+ein Update ausgeführt. Vor jeder Codeänderung entstehen ein MariaDB-Dump und ein
+vollständiges Codearchiv. Danach werden Container gebaut, neue SQL-Migrationen genau
+einmal ausgeführt und `/ready` geprüft. Schlägt Paketprüfung, Build, Start oder
+Readiness fehl, wird der vorherige Code wiederhergestellt; das Datenbank-Backup bleibt
+erhalten.
 
 ## Einmalige Einrichtung
 
 Voraussetzungen auf dem lokalen Windows-Rechner:
 
-- Git, Node.js, Flutter sowie OpenSSH (`ssh` und `scp`)
-- Schreibzugriff auf den GitHub-Branch `main`
+- Node.js, Flutter, `tar` sowie OpenSSH (`ssh` und `scp`)
 - ein SSH-Schlüssel für den Server
 
 Der öffentliche Schlüssel muss beim gewünschten Serverkonto hinterlegt sein. Das
@@ -29,53 +28,64 @@ Skript verwendet standardmäßig `root`; ein anderes Konto kann mit `-SshUser` a
 werden. Das Konto benötigt Zugriff auf Docker und Schreibrechte in
 `/opt/materialkompass`.
 
-Auf dem Server muss das Repository bereits wie im README beschrieben eingerichtet sein:
+Auf dem Server muss eine bestehende MaterialKompass-Installation mit produktiver
+`.env` vorhanden sein. Git wird nicht benötigt. Für eine neue Installation werden die
+Startdateien einmalig nach `/opt/materialkompass` kopiert und Compose gestartet:
 
 ```bash
-cd /opt
-git clone https://github.com/simulator-freak2/MaterialKompass.git materialkompass
 cd /opt/materialkompass
 cp backend/.env.example .env
 nano .env
 docker compose up -d --build
 ```
 
-Die produktive `.env`, `backups/`, `releases/` und `.deployments/` bleiben lokal auf dem
-Server und werden nicht von Git überschrieben. Vor der ersten Aktualisierung sollten
+Die produktive `.env`, `backups/`, `releases/`, `web-current/` und `.deployments/`
+bleiben lokal auf dem Server und werden vom Paket nicht überschrieben. Vor der ersten Aktualisierung sollten
 `docker compose ps` und `curl -H 'X-Forwarded-Proto: https' http://127.0.0.1:3001/ready`
 erfolgreich sein.
 
+Der Installer erzeugt bei der ersten Aktualisierung einen eigenen
+`IDENTITY_KEYRING_MASTER_KEY`, falls die `.env` noch den Platzhalter enthält. Der
+verschlüsselte Keyring liegt im separaten Docker-Volume
+`materialkompass_identity_keyring`; er ist weder Teil des Serverpakets noch eines
+MariaDB-Dumps.
+
 ## Normales Update
 
-1. Änderungen testen, committen und sicherstellen, dass `git status` sauber ist.
-2. Im Repository ausführen:
+1. Änderungen lokal prüfen.
+2. Im Projektordner ausführen:
 
    ```powershell
-   .\ops\update-server.ps1
+   .\ops\deploy-package.ps1
    ```
 
 3. Das Skript endet erst erfolgreich, wenn der neue Backend-Container bereit ist.
 
+Beim ersten Update mit `20261017_identity_crypto_erasure.sql` ist danach einmalig die
+explizite Identitätsmigration auszuführen. Der genaue Stopp-, Migrations-, Neustart-
+und v2-Backup-Ablauf steht im README. Reguläre Backups bleiben bis dahin gesperrt; der
+vom Installer angelegte Legacy-Dump dient ausschließlich dem Rollback.
+
 Abweichende SSH-Einstellungen werden als Parameter übergeben:
 
 ```powershell
-.\ops\update-server.ps1 -SshUser deploy -IdentityFile "$env:USERPROFILE\.ssh\materialkompass"
+.\ops\deploy-package.ps1 -SshUser deploy -IdentityFile "$env:USERPROFILE\.ssh\materialkompass"
 ```
 
-Lokale Prüfungen lassen sich für einen bereits vollständig geprüften Commit bewusst mit
-`-SkipChecks` überspringen. `-SkipPush` ist nur sinnvoll, wenn exakt derselbe Commit
-bereits auf `origin/main` liegt.
+Lokale Prüfungen lassen sich für ein bereits vollständig geprüftes Paket bewusst mit
+`-SkipChecks` überspringen. Der Updater bietet diese Ausnahme in der normalen
+Oberfläche nicht an.
 
 ## Client-Installer mit aktualisieren
 
-Installer sind absichtlich nicht in Git. Die Option `-UploadReleases` überträgt nach
+Die Option `-UploadReleases` überträgt nach
 einem erfolgreichen Serverupdate ausschließlich die freigegebenen Dateinamen für
 Windows, Linux, Android, iOS und macOS aus `releases/`. Schlüsseldateien, Quellarchive
 und beliebige weitere Dateien werden nie übertragen. Jede Datei wird vor der
 Veröffentlichung per SHA-256 geprüft.
 
 ```powershell
-.\ops\update-server.ps1 -UploadReleases
+.\ops\deploy-package.ps1 -Version 1.5.2 -UploadReleases
 ```
 
 Die Versionswerte in `.env` müssen zu den hochgeladenen Installern passen. Flutter Web
@@ -100,8 +110,8 @@ Wiederherstellungsverfahren in `OPERATIONS.md` verwendet werden. Bereits angewen
 Migrationsdateien dürfen nicht nachträglich verändert werden; Korrekturen gehören in
 eine neue, aufsteigend benannte `.sql`-Datei.
 
-Beim allerersten Lauf werden alle Migrationsdateien des bisher auf dem Server
-ausgecheckten Commits als vorhandener Ausgangsstand registriert. Dieser Commit muss
-daher dem tatsächlich betriebenen Datenbankschema entsprechen. Bei einer historisch
+Beim allerersten Paketlauf werden alle Migrationsdateien des bisher auf dem Server
+installierten Codearchivs als vorhandener Ausgangsstand registriert. Dieser Stand muss
+dem tatsächlich betriebenen Datenbankschema entsprechen. Bei einer historisch
 nur teilweise migrierten Installation ist der Datenbankstand vor dem ersten Lauf
 manuell mit den Dateien unter `backend/src/db/migrations` abzugleichen.

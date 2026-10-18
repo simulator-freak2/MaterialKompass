@@ -1,11 +1,15 @@
 #!/bin/sh
 
+# This file is mounted into a Linux container and must use LF line endings.
+
 set -eu
 
 BACKUP_DIR=${BACKUP_DIR:-/backups}
 BACKUP_HOUR_UTC=${BACKUP_HOUR_UTC:-2}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
-BACKUP_PREFIX=${BACKUP_PREFIX:-materialkompass}
+BACKUP_PREFIX=${BACKUP_PREFIX:-materialkompass-v2}
+LEGACY_BACKUP_PREFIX=${LEGACY_BACKUP_PREFIX:-materialkompass}
+ALLOW_LEGACY_BACKUP=${ALLOW_LEGACY_BACKUP:-false}
 BACKUP_ONCE=${BACKUP_ONCE:-false}
 LAST_SUCCESS_FILE="$BACKUP_DIR/.last-successful-backup-date"
 
@@ -45,16 +49,41 @@ mkdir -p "$BACKUP_DIR"
 run_backup() {
   backup_date=$(date -u '+%Y-%m-%d')
   timestamp=$(date -u '+%Y%m%dT%H%M%SZ')
-  final_file="$BACKUP_DIR/$BACKUP_PREFIX-$timestamp.sql.gz"
-  temporary_sql_file="$BACKUP_DIR/.$BACKUP_PREFIX-$timestamp.sql.tmp"
-  temporary_gzip_file="$BACKUP_DIR/.$BACKUP_PREFIX-$timestamp.sql.gz.tmp"
+
+  identity_protection_version=$(MYSQL_PWD="$DB_PASSWORD" mariadb \
+    --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" \
+    --batch --skip-column-names "$DB_NAME" \
+    -e "SELECT CASE WHEN
+      (SELECT state_value FROM identity_protection_state WHERE state_key = 'backup_format') = '2'
+      AND NOT EXISTS (
+        SELECT 1 FROM users WHERE identity_ciphertext IS NULL AND identity_erased = 0
+      ) THEN '2' ELSE '' END" \
+    2>/dev/null || true)
+  effective_prefix=$BACKUP_PREFIX
+  if [ "$identity_protection_version" != "2" ]; then
+    case "$ALLOW_LEGACY_BACKUP" in
+      true|1|yes) effective_prefix=$LEGACY_BACKUP_PREFIX ;;
+      *)
+        echo "Database backup blocked: identity protection migration is not complete" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  final_file="$BACKUP_DIR/$effective_prefix-$timestamp.sql.gz"
+  temporary_sql_file="$BACKUP_DIR/.$effective_prefix-$timestamp.sql.tmp"
+  temporary_gzip_file="$BACKUP_DIR/.$effective_prefix-$timestamp.sql.gz.tmp"
 
   remove_temporary_files() {
     rm -f "$temporary_sql_file" "$temporary_gzip_file"
   }
   trap remove_temporary_files EXIT HUP INT TERM
 
-  echo "Creating database backup $final_file"
+  if [ "$identity_protection_version" = "2" ]; then
+    echo "Creating identity-protected database backup $final_file"
+  else
+    echo "Creating one-time legacy rollback backup $final_file"
+  fi
   if ! MYSQL_PWD="$DB_PASSWORD" mariadb-dump \
     --host="$DB_HOST" \
     --port="$DB_PORT" \
@@ -90,15 +119,27 @@ run_backup() {
     echo "Creating the backup checksum failed" >&2
     return 1
   fi
-  if ! printf '%s\n' "$backup_date" > "$LAST_SUCCESS_FILE"; then
-    echo "Writing the backup success marker failed" >&2
-    return 1
+  # A pre-v2 dump contains plaintext account identities. It is removed only
+  # after a complete, validated v2 dump and checksum have been published.
+  if [ "$identity_protection_version" = "2" ]; then
+    if ! find "$BACKUP_DIR" -maxdepth 1 -type f \
+      \( -name "$LEGACY_BACKUP_PREFIX-[0-9]*.sql.gz" \
+         -o -name "$LEGACY_BACKUP_PREFIX-[0-9]*.sql.gz.sha256" \) \
+      -delete; then
+      echo "Legacy plaintext backups could not be removed" >&2
+      return 1
+    fi
   fi
 
   if ! find "$BACKUP_DIR" -maxdepth 1 -type f \
     \( -name "$BACKUP_PREFIX-*.sql.gz" -o -name "$BACKUP_PREFIX-*.sql.gz.sha256" \) \
     -mtime "+$BACKUP_RETENTION_DAYS" -delete; then
     echo "Warning: pruning expired backups failed" >&2
+  fi
+
+  if ! printf '%s\n' "$backup_date" > "$LAST_SUCCESS_FILE"; then
+    echo "Writing the backup success marker failed" >&2
+    return 1
   fi
 
   trap - EXIT HUP INT TERM

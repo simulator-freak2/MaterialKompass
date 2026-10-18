@@ -109,7 +109,7 @@ for (const filePath of [packagePath, packageLockPath]) {
         [IO.File]::WriteAllText($changelogPath, $updatedChangelog, [Text.UTF8Encoding]::new($false))
     }
 
-    Write-Host "Release $Version+$BuildNumber wurde vorbereitet. Aenderungen jetzt pruefen, testen und committen."
+    Write-Host "Release $Version+$BuildNumber wurde vorbereitet. Aenderungen jetzt pruefen und testen."
 }
 finally {
     Pop-Location

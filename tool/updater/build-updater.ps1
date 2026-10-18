@@ -8,6 +8,7 @@ $projectDirectory = $PSScriptRoot
 $repositoryRoot = (Resolve-Path (Join-Path $projectDirectory '..\..')).Path
 $project = Join-Path $projectDirectory 'MaterialKompass.Updater.csproj'
 $output = Join-Path $repositoryRoot 'releases\MaterialKompass-Updater'
+$archive = Join-Path $repositoryRoot 'releases\MaterialKompass-Updater.zip'
 
 & dotnet restore $project --configfile (Join-Path $projectDirectory 'NuGet.Config')
 if ($LASTEXITCODE -ne 0) { throw 'Wiederherstellung des Updaterprojekts fehlgeschlagen.' }
@@ -24,4 +25,7 @@ Copy-Item -LiteralPath (Join-Path $source 'MaterialKompass-Updater.dll') -Destin
 Copy-Item -LiteralPath (Join-Path $source 'MaterialKompass-Updater.deps.json') -Destination $output
 Copy-Item -LiteralPath (Join-Path $source 'MaterialKompass-Updater.runtimeconfig.json') -Destination $output
 
+Compress-Archive -Path (Join-Path $output '*') -DestinationPath $archive -CompressionLevel Optimal -Force
+
 Write-Host "Updater: $(Join-Path $output 'MaterialKompass-Updater.exe')"
+Write-Host "Archiv: $archive"

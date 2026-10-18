@@ -2039,6 +2039,7 @@ const _articles = [
       'Gib den aktuellen sechsstelligen Code ein und aktiviere 2-FA.',
       'Sichere die zehn einmal verwendbaren Wiederherstellungscodes. Diese Codes werden nur bei der Erstellung vollständig angezeigt.',
       'Bei späteren Anmeldungen bestätigst du nach Passwort, QR-Code oder Dienstgeräte-Anmeldung zusätzlich den kurzlebigen 2-FA-Code.',
+      'Wenn dein Konto außerdem einen Passkey besitzt, kannst du stattdessen „Per Push / Gerät bestätigen“ wählen und die Systemabfrage mit Gerätepasswort, PIN, Biometrie oder Sicherheitsschlüssel freigeben. Ein verbundenes Smartphone kann dabei je nach Passkey-Anbieter eine System-Push-Nachricht anzeigen.',
       'Erzeuge bei Bedarf neue Recovery-Codes; alle alten Codes werden dadurch ungültig.',
     ],
     tip:

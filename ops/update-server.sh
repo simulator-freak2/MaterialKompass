@@ -98,7 +98,10 @@ docker compose config --quiet || rollback "invalid Compose configuration"
 docker compose build --pull || rollback "container build failed"
 
 if [ "$old_ref" != "$target_ref" ]; then
-  docker compose run --rm -e BACKUP_ONCE=true backup \
+  docker compose run --rm \
+    -e BACKUP_ONCE=true \
+    -e ALLOW_LEGACY_BACKUP=true \
+    backup \
     || rollback "pre-update database backup failed"
 
   docker compose stop -t 30 backend || rollback "backend could not be stopped"

@@ -108,7 +108,10 @@ Anwendung zu dokumentieren.
 
 - TLS-Zertifikate, Betriebssystem, Container und Abhängigkeiten aktuell halten.
 - Backups verschlüsseln, Wiederherstellung testen und dieselben Löschfristen
-  anwenden; Zugriff auf Produktionsbackups protokollieren.
+  anwenden; Kontoidentitäten werden mit individuellen, separat aufbewahrten
+  Schlüsseln geschützt, die bei Löschung oder Identitätsänderung vernichtet werden.
+  Historische Keyring-Versionen sind unzulässig; Zugriff auf Produktionsbackups und
+  den aktuellen Keyring ist zu protokollieren.
 - Adminrechte regelmäßig rezertifizieren und ausgeschiedene Personen sofort
   deaktivieren.
 - Datenschutzverletzungen intern unverzüglich eskalieren. Die 72-Stunden-

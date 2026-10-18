@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,7 +10,16 @@ namespace MaterialKompass.Updater;
 internal sealed class MainForm : Form
 {
     private readonly string _repositoryRoot;
-    private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
+    private readonly string _logFilePath;
+    private readonly TextBox _log = new()
+    {
+        Dock = DockStyle.Fill,
+        Multiline = true,
+        ReadOnly = true,
+        ScrollBars = ScrollBars.Both,
+        WordWrap = false,
+        Font = new Font("Consolas", 9F),
+    };
     private readonly ComboBox _environment = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox _server = new();
     private readonly TextBox _sshUser = new();
@@ -22,6 +32,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _version = new();
     private readonly NumericUpDown _buildNumber = new() { Minimum = 1, Maximum = int.MaxValue };
     private readonly TextBox _changelog = new() { Multiline = true, ScrollBars = ScrollBars.Vertical };
+    private readonly TextBox _gitCommitMessage = new();
     private readonly ComboBox _buildMode = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly CheckBox _backend = new() { Text = "Backend und Datenbankmigrationen", Checked = true, AutoSize = true };
     private readonly CheckBox _web = new() { Text = "Web-App", Checked = true, AutoSize = true };
@@ -42,6 +53,10 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         _repositoryRoot = FindRepositoryRoot();
+        Directory.CreateDirectory(UpdaterSettings.LogDirectory);
+        _logFilePath = Path.Combine(
+            UpdaterSettings.LogDirectory,
+            $"updater-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         Text = "MaterialKompass-Updater";
         Width = 1060;
         Height = 820;
@@ -50,8 +65,8 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 10F);
 
         _environment.Items.AddRange(["Produktion", "Staging"]);
-        _buildMode.Items.AddRange(["GitHub Actions (alle Plattformen)", "Lokal (Windows/Web/Android)"]);
-        _buildMode.SelectedIndex = 0;
+        _buildMode.Items.AddRange(["GitHub Actions (optional, externe Plattform-Builds)", "Lokal ohne Git (Windows/Web/Android)"]);
+        _buildMode.SelectedIndex = 1;
         _maintenanceStart.Value = DateTime.Now.AddDays(1).Date.AddHours(20);
         _maintenanceEnd.Value = _maintenanceStart.Value.AddHours(2);
 
@@ -66,7 +81,7 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 32));
         layout.Controls.Add(tabs, 0, 0);
         layout.Controls.Add(_cancelButton, 0, 1);
-        layout.Controls.Add(_log, 0, 2);
+        layout.Controls.Add(BuildLogPanel(), 0, 2);
         Controls.Add(layout);
 
         _cancelButton.Click += (_, _) => _operationCancellation?.Cancel();
@@ -74,7 +89,9 @@ internal sealed class MainForm : Form
         LoadSettings();
         LoadCurrentVersion();
         UpdateTrustState();
+        Log("MaterialKompass-Updater gestartet.");
         Log($"Repository: {_repositoryRoot}");
+        Log($"Logdatei: {_logFilePath}");
     }
 
     private TabPage BuildConfigurationTab()
@@ -113,6 +130,7 @@ internal sealed class MainForm : Form
         AddRow(panel, "Buildnummer", _buildNumber);
         _changelog.Height = 130;
         AddRow(panel, "Changelog", _changelog);
+        AddRow(panel, "Git-Commitnachricht", _gitCommitMessage);
         AddRow(panel, "Buildquelle", _buildMode);
         AddRow(panel, "Umfang", Flow(_backend, _web, _native, _dataImport));
         AddRow(panel, "Nutzerinformation", _publishNotes);
@@ -120,17 +138,18 @@ internal sealed class MainForm : Form
         AddRow(panel, "Gesamtsicherung", WithBrowse(_backupFile, "MaterialKompass-Gesamtsicherung auswählen", false, "JSON (*.json)|*.json"));
 
         var prepare = ActionButton("1. Release vorbereiten", PrepareReleaseAsync);
-        var build = ActionButton("2. Apps bauen", BuildAppsAsync);
-        var preview = ActionButton("3. Sicherheitsvorschau", () => DeployAsync(dryRun: true));
-        var deploy = ActionButton("4. Deployment starten", () => DeployAsync(dryRun: false));
-        AddRow(panel, string.Empty, Buttons(prepare, build, preview, deploy));
+        var push = ActionButton("2. Git committen & pushen", CommitAndPushGitAsync);
+        var build = ActionButton("3. Apps bauen", BuildAppsAsync);
+        var preview = ActionButton("4. Sicherheitsvorschau", () => DeployAsync(dryRun: true));
+        var deploy = ActionButton("5. Deployment starten", () => DeployAsync(dryRun: false));
+        AddRow(panel, string.Empty, Buttons(prepare, push, build, preview, deploy));
 
         var warning = new Label
         {
             AutoSize = true,
             MaximumSize = new Size(820, 0),
             ForeColor = Color.DarkRed,
-            Text = "Ohne Codesignatur sind native Installer nur Prüf-Builds. Für Produktion bleiben sie standardmäßig gesperrt. Backend und Web können unabhängig davon sicher aktualisiert werden.",
+            Text = "Der Git-Push ist optional und unabhängig vom direkten SSH-Deployment. Vor dem Commit werden Zielbranch und alle Dateien zur Bestätigung angezeigt; Force-Push wird nicht verwendet. Ohne Codesignatur bleiben native Produktionsinstaller gesperrt.",
         };
         AddRow(panel, string.Empty, warning);
         page.Controls.Add(panel);
@@ -187,6 +206,50 @@ internal sealed class MainForm : Form
 
     private static FlowLayoutPanel Buttons(params Control[] controls) => Flow(controls);
 
+    private Control BuildLogPanel()
+    {
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3 };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.Controls.Add(new Label
+        {
+            Text = $"Protokoll – {_logFilePath}",
+            AutoEllipsis = true,
+            Dock = DockStyle.Fill,
+            Padding = new Padding(3, 7, 3, 0),
+        }, 0, 0);
+        var copy = new Button { Text = "Protokoll kopieren", AutoSize = true };
+        copy.Click += (_, _) =>
+        {
+            if (_log.TextLength > 0) Clipboard.SetText(_log.Text);
+        };
+        var open = new Button { Text = "Logdatei öffnen", AutoSize = true };
+        open.Click += (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_logFilePath}\"")
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception exception)
+            {
+                Log($"Logordner konnte nicht geöffnet werden: {exception.Message}");
+            }
+        };
+        header.Controls.Add(copy, 1, 0);
+        header.Controls.Add(open, 2, 0);
+        panel.Controls.Add(header, 0, 0);
+        panel.Controls.Add(_log, 0, 1);
+        return panel;
+    }
+
     private Control WithBrowse(TextBox target, string title, bool folder, string filter = "Alle Dateien (*.*)|*.*")
     {
         var button = new Button { Text = "Durchsuchen …", AutoSize = true };
@@ -216,11 +279,11 @@ internal sealed class MainForm : Form
     {
         var button = new Button { Text = text, AutoSize = true };
         _actionControls.Add(button);
-        button.Click += async (_, _) => await RunGuardedAsync(action);
+        button.Click += async (_, _) => await RunGuardedAsync(text, action);
         return button;
     }
 
-    private async Task RunGuardedAsync(Func<Task> action)
+    private async Task RunGuardedAsync(string operationName, Func<Task> action)
     {
         if (_operationCancellation is not null) return;
         _operationCancellation = new CancellationTokenSource();
@@ -228,8 +291,10 @@ internal sealed class MainForm : Form
         _cancelButton.Enabled = true;
         try
         {
+            Log($"=== START: {operationName} ===");
             SaveSettings();
             await action();
+            Log($"=== ERFOLGREICH: {operationName} ===");
         }
         catch (OperationCanceledException)
         {
@@ -237,8 +302,12 @@ internal sealed class MainForm : Form
         }
         catch (Exception exception)
         {
-            Log($"FEHLER: {exception.Message}");
-            MessageBox.Show(this, exception.Message, "Vorgang fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Log($"FEHLER: {exception}");
+            var message = exception.Message;
+            const int maximumDialogLength = 900;
+            if (message.Length > maximumDialogLength) message = "..." + message[^maximumDialogLength..];
+            message += $"\n\nVollständiges Protokoll:\n{_logFilePath}";
+            MessageBox.Show(this, message, "Vorgang fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
@@ -298,6 +367,7 @@ internal sealed class MainForm : Form
         _buildNumber.Value = match.Success && int.TryParse(match.Groups[2].Value, out var build)
             ? build
             : 1;
+        _gitCommitMessage.Text = $"Release {_version.Text}";
 
         var changelogPath = Path.Combine(_repositoryRoot, "CHANGELOG.md");
         if (match.Success && File.Exists(changelogPath))
@@ -447,9 +517,99 @@ internal sealed class MainForm : Form
             ]);
             if (!result.Success)
                 throw new InvalidOperationException(CommandFailure("Releasevorbereitung fehlgeschlagen.", result));
-            MessageBox.Show(this, "Versions- und Changelogdateien wurden geändert. Bitte Diff prüfen, Tests ausführen und committen, bevor du veröffentlichst.", "Release vorbereitet", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _gitCommitMessage.Text = $"Release {_version.Text.Trim()}";
+            MessageBox.Show(this, "Versions- und Changelogdateien wurden geändert. Bitte Diff und Tests prüfen. Anschließend kannst du die Änderungen mit Schritt 2 direkt committen und pushen.", "Release vorbereitet", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         finally { try { File.Delete(temp); } catch { } }
+    }
+
+    private async Task CommitAndPushGitAsync()
+    {
+        var branch = _branch.Text.Trim();
+        if (!Regex.IsMatch(branch, @"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+            || branch.Contains("..", StringComparison.Ordinal)
+            || branch.Contains("//", StringComparison.Ordinal)
+            || branch.EndsWith('/'))
+        {
+            throw new InvalidOperationException("Der Git-Branchname ist nicht sicher.");
+        }
+
+        var commitMessage = _gitCommitMessage.Text.Trim();
+        if (commitMessage.Length is < 3 or > 120 || commitMessage.Contains('\n') || commitMessage.Contains('\r'))
+            throw new InvalidOperationException("Die Git-Commitnachricht muss 3 bis 120 Zeichen lang und einzeilig sein.");
+
+        var currentBranchResult = await RunGitAsync("branch", "--show-current");
+        if (!currentBranchResult.Success)
+            throw new InvalidOperationException(CommandFailure("Der aktuelle Git-Branch konnte nicht gelesen werden.", currentBranchResult));
+        var currentBranch = currentBranchResult.Output.Trim();
+        if (!string.Equals(currentBranch, branch, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Erwarteter Branch: {branch}; aktueller Branch: {currentBranch}.");
+
+        var statusResult = await RunGitAsync("status", "--porcelain=v1", "--untracked-files=all");
+        if (!statusResult.Success)
+            throw new InvalidOperationException(CommandFailure("Der Git-Status konnte nicht gelesen werden.", statusResult));
+        var statusLines = statusResult.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var sensitivePaths = statusLines
+            .Select(GitStatusPath)
+            .Where(IsSensitiveGitPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (sensitivePaths.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "Der Git-Push wurde blockiert, weil typische Geheimdateinamen betroffen sind:\n\n"
+                + string.Join(Environment.NewLine, sensitivePaths));
+        }
+
+        var statusPreview = statusLines.Length == 0
+            ? "Keine lokalen Änderungen; bereits vorhandene Commits werden gepusht."
+            : string.Join(Environment.NewLine, statusLines.Take(35))
+                + (statusLines.Length > 35 ? $"\n… und {statusLines.Length - 35} weitere" : string.Empty);
+        var confirmation = $"Ziel: origin/{branch}\n\nCommit: {commitMessage}\n\n{statusPreview}\n\n"
+            + "Alle angezeigten lokalen Änderungen committen und anschließend ohne Force-Push übertragen?";
+        if (MessageBox.Show(this, confirmation, "Git-Commit und Push bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            Log("Git-Commit und Push wurden nicht gestartet.");
+            return;
+        }
+
+        if (statusLines.Length > 0)
+        {
+            var addResult = await RunGitAsync("add", "--all");
+            if (!addResult.Success)
+                throw new InvalidOperationException(CommandFailure("Die Git-Änderungen konnten nicht vorgemerkt werden.", addResult));
+            var checkResult = await RunGitAsync("diff", "--cached", "--check");
+            if (!checkResult.Success)
+                throw new InvalidOperationException(CommandFailure("Der Commit enthält Git-Diff-Fehler. Die Dateien bleiben zur Prüfung vorgemerkt.", checkResult));
+            var commitResult = await RunGitAsync("commit", "-m", commitMessage);
+            if (!commitResult.Success)
+                throw new InvalidOperationException(CommandFailure("Der Git-Commit konnte nicht erstellt werden.", commitResult));
+        }
+
+        var pushResult = await RunGitAsync("push", "origin", $"HEAD:refs/heads/{branch}");
+        if (!pushResult.Success)
+            throw new InvalidOperationException(CommandFailure("Der Git-Push ist fehlgeschlagen. Ein erstellter Commit bleibt lokal erhalten.", pushResult));
+        Log($"Git-Push zu origin/{branch} wurde erfolgreich abgeschlossen.");
+        MessageBox.Show(this, $"Die Änderungen wurden zu origin/{branch} gepusht.", "Git-Push erfolgreich", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private static string GitStatusPath(string statusLine)
+    {
+        var path = statusLine.Length > 3 ? statusLine[3..].Trim() : string.Empty;
+        var renameSeparator = path.LastIndexOf(" -> ", StringComparison.Ordinal);
+        if (renameSeparator >= 0) path = path[(renameSeparator + 4)..];
+        return path.Trim('"').Replace('\\', '/');
+    }
+
+    private static bool IsSensitiveGitPath(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        if (fileName.Equals(".env", StringComparison.OrdinalIgnoreCase)) return true;
+        if (fileName.StartsWith(".env.", StringComparison.OrdinalIgnoreCase)
+            && !fileName.Equals(".env.example", StringComparison.OrdinalIgnoreCase)
+            && !fileName.Equals(".env.sample", StringComparison.OrdinalIgnoreCase)) return true;
+        return Regex.IsMatch(fileName, @"^(?:id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|secrets?(?:\.json)?)$", RegexOptions.IgnoreCase)
+            || Regex.IsMatch(fileName, @"\.(?:key|pem|pfx|p12|jks|keystore)$", RegexOptions.IgnoreCase);
     }
 
     private async Task BuildAppsAsync()
@@ -467,11 +627,12 @@ internal sealed class MainForm : Form
             return;
         }
 
-        var webBuild = await CommandRunner.RunAsync("flutter.bat",
+        var webBuild = await RunPowerShellAsync("ops/build-web.ps1",
         [
-            "build", "web", "--release", $"--build-name={_version.Text.Trim()}",
-            $"--build-number={(int)_buildNumber.Value}", $"--dart-define=API_BASE_URL={_apiUrl.Text.Trim()}",
-        ], Path.Combine(_repositoryRoot, "flutter"), Log, Token);
+            "-Version", _version.Text.Trim(),
+            "-BuildNumber", ((int)_buildNumber.Value).ToString(),
+            "-ApiBaseUrl", _apiUrl.Text.Trim(),
+        ]);
         if (!webBuild.Success)
             throw new InvalidOperationException(CommandFailure("Web-Build fehlgeschlagen.", webBuild));
         Directory.CreateDirectory(Path.Combine(_repositoryRoot, "releases"));
@@ -525,13 +686,14 @@ internal sealed class MainForm : Form
         }
         if (_dataImport.Checked && !File.Exists(_backupFile.Text))
             throw new FileNotFoundException("Für den Datenimport muss eine Gesamtsicherung ausgewählt werden.");
+        if (!dryRun) await AuthorizeUpdateAsync();
 
         if (_backend.Checked || _web.Checked || _native.Checked)
         {
             var arguments = new List<string>
             {
                 "-Server", _server.Text.Trim(), "-SshUser", _sshUser.Text.Trim(),
-                "-RemotePath", _remotePath.Text.Trim(), "-Branch", _branch.Text.Trim(),
+                "-RemotePath", _remotePath.Text.Trim(),
                 "-KnownHostsFile", UpdaterSettings.KnownHostsPath,
                 "-Version", _version.Text.Trim(),
             };
@@ -541,7 +703,7 @@ internal sealed class MainForm : Form
             if (_native.Checked) arguments.Add("-UploadReleases");
             if (_allowUnsigned.Checked) arguments.Add("-AllowUnsigned");
             if (dryRun) arguments.Add("-DryRun");
-            var result = await RunPowerShellAsync("ops/update-server.ps1", arguments);
+            var result = await RunPowerShellAsync("ops/deploy-package.ps1", arguments);
             if (!result.Success)
                 throw new InvalidOperationException(CommandFailure("Deployment fehlgeschlagen.", result));
         }
@@ -553,6 +715,32 @@ internal sealed class MainForm : Form
         if (_publishNotes.Checked && !string.IsNullOrWhiteSpace(_changelog.Text)) await PublishReleaseNotesAsync();
         if (_dataImport.Checked) await ImportProductionDataAsync();
         MessageBox.Show(this, "Der gewählte Vorgang wurde erfolgreich abgeschlossen.", "MaterialKompass", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private async Task AuthorizeUpdateAsync()
+    {
+        using var credentials = new ImportCredentialsDialog(
+            "Update autorisieren",
+            "Update autorisieren",
+            "Melde dich mit einem Plattformadministratorkonto an, das neue Organisationen anlegen darf.");
+        if (credentials.ShowDialog(this) != DialogResult.OK) throw new OperationCanceledException();
+
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(_apiUrl.Text.Trim()),
+            Timeout = TimeSpan.FromMinutes(2),
+        };
+        var token = await AuthenticateAdminAsync(client, credentials, "Update-Autorisierung");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/updater/authorization");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request, Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(Token);
+            throw new InvalidOperationException(
+                $"Update-Autorisierung fehlgeschlagen ({(int)response.StatusCode}): {SafeServerError(body)}");
+        }
+        Log("Update wurde durch ein berechtigtes Administratorkonto autorisiert.");
     }
 
     private async Task PublishReleaseNotesAsync()
@@ -606,58 +794,78 @@ internal sealed class MainForm : Form
         if (credentials.ShowDialog(this) != DialogResult.OK) throw new OperationCanceledException();
         var api = new Uri(_apiUrl.Text.Trim());
         using var client = new HttpClient { BaseAddress = api, Timeout = TimeSpan.FromMinutes(10) };
+        var token = await AuthenticateAdminAsync(client, credentials, "Datenimport");
+        using var backupDocument = JsonDocument.Parse(await File.ReadAllTextAsync(_backupFile.Text, Token));
+        var importBody = new Dictionary<string, object?>
+        {
+            ["confirmation"] = "ALLE DATEN ERSETZEN",
+            ["currentPassword"] = credentials.Password,
+            ["mfaCode"] = credentials.MfaCode,
+            ["backup"] = backupDocument.RootElement.Clone(),
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/system/backup/import")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(importBody), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request, Token);
+        var body = await response.Content.ReadAsStringAsync(Token);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Datenimport fehlgeschlagen ({(int)response.StatusCode}): {SafeServerError(body)}");
+        Log("Produktionsdaten wurden importiert. Alle bestehenden Anmeldesitzungen müssen erneuert werden.");
+        credentials.ClearSecrets();
+    }
+
+    private async Task<string> AuthenticateAdminAsync(
+        HttpClient client,
+        ImportCredentialsDialog credentials,
+        string purpose)
+    {
         var loginResponse = await PostJsonAsync(client, "/api/auth/login", new
         {
             identifier = credentials.Identifier,
             password = credentials.Password,
-        });
-        var loginBody = await ReadJsonAsync(loginResponse);
+        }, Token);
+        var loginBody = await ReadJsonAsync(loginResponse, Token);
         if ((int)loginResponse.StatusCode == 202 && loginBody.TryGetProperty("challenge", out var challenge))
         {
-            if (string.IsNullOrWhiteSpace(credentials.MfaCode)) throw new InvalidOperationException("Für dieses Konto ist ein 2-FA-Code erforderlich.");
+            if (string.IsNullOrWhiteSpace(credentials.MfaCode))
+            {
+                loginResponse.Dispose();
+                throw new InvalidOperationException("Für dieses Konto ist ein 2-FA- oder Recovery-Code erforderlich.");
+            }
             loginResponse.Dispose();
             loginResponse = await PostJsonAsync(client, "/api/auth/mfa/verify", new
             {
                 challenge = challenge.GetString(),
                 code = credentials.MfaCode,
-            });
-            loginBody = await ReadJsonAsync(loginResponse);
+            }, Token);
+            loginBody = await ReadJsonAsync(loginResponse, Token);
         }
         using (loginResponse)
         {
             if (!loginResponse.IsSuccessStatusCode || !loginBody.TryGetProperty("token", out var tokenElement))
-                throw new InvalidOperationException("Admin-Anmeldung für den Datenimport fehlgeschlagen.");
-            var token = tokenElement.GetString() ?? throw new InvalidOperationException("Der Server lieferte kein Anmeldetoken.");
-            using var backupDocument = JsonDocument.Parse(await File.ReadAllTextAsync(_backupFile.Text, Token));
-            var importBody = new Dictionary<string, object?>
-            {
-                ["confirmation"] = "ALLE DATEN ERSETZEN",
-                ["currentPassword"] = credentials.Password,
-                ["mfaCode"] = credentials.MfaCode,
-                ["backup"] = backupDocument.RootElement.Clone(),
-            };
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/system/backup/import")
-            {
-                Content = new StringContent(JsonSerializer.Serialize(importBody), Encoding.UTF8, "application/json"),
-            };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            using var response = await client.SendAsync(request, Token);
-            var body = await response.Content.ReadAsStringAsync(Token);
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Datenimport fehlgeschlagen ({(int)response.StatusCode}): {SafeServerError(body)}");
-            Log("Produktionsdaten wurden importiert. Alle bestehenden Anmeldesitzungen müssen erneuert werden.");
+                throw new InvalidOperationException($"Admin-Anmeldung für {purpose} fehlgeschlagen.");
+            return tokenElement.GetString()
+                ?? throw new InvalidOperationException("Der Server lieferte kein Anmeldetoken.");
         }
-        credentials.ClearSecrets();
     }
 
-    private static async Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string path, object body)
+    private static async Task<HttpResponseMessage> PostJsonAsync(
+        HttpClient client,
+        string path,
+        object body,
+        CancellationToken cancellationToken)
     {
-        var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        return await client.PostAsync(path, content);
+        using var content = new StringContent(
+            JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        return await client.PostAsync(path, content, cancellationToken);
     }
 
-    private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response)
+    private static async Task<JsonElement> ReadJsonAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
     {
-        var text = await response.Content.ReadAsStringAsync();
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
         try { return JsonDocument.Parse(text).RootElement.Clone(); }
         catch { throw new InvalidOperationException($"Ungültige Serverantwort ({(int)response.StatusCode})."); }
     }
@@ -705,6 +913,9 @@ internal sealed class MainForm : Form
         return CommandRunner.RunAsync("powershell.exe", all, _repositoryRoot, Log, Token);
     }
 
+    private Task<CommandResult> RunGitAsync(params string[] arguments) =>
+        CommandRunner.RunAsync("git.exe", arguments, _repositoryRoot, Log, Token);
+
     private static string CommandFailure(string heading, CommandResult result)
     {
         var output = result.Output.Trim();
@@ -719,7 +930,14 @@ internal sealed class MainForm : Form
     private void Log(string message)
     {
         if (InvokeRequired) { BeginInvoke(() => Log(message)); return; }
-        _log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+        var normalized = message.Replace("\0", string.Empty);
+        var lines = normalized.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var rendered = string.Join(
+            Environment.NewLine,
+            lines.Select(line => $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {line}")) + Environment.NewLine;
+        _log.AppendText(rendered);
+        try { File.AppendAllText(_logFilePath, rendered, new UTF8Encoding(false)); }
+        catch { /* Logging must never abort an update. */ }
     }
 
     private static string FindRepositoryRoot()
@@ -777,11 +995,14 @@ internal sealed class ImportCredentialsDialog : Form
     public string Password => _password.Text;
     public string MfaCode => _mfa.Text.Trim();
 
-    public ImportCredentialsDialog()
+    public ImportCredentialsDialog(
+        string title = "Admin-Bestätigung",
+        string actionText = "Import autorisieren",
+        string? description = null)
     {
-        Text = "Admin-Bestätigung";
+        Text = title;
         Width = 520;
-        Height = 300;
+        Height = description is null ? 300 : 350;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -789,13 +1010,26 @@ internal sealed class ImportCredentialsDialog : Form
         var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 2, AutoSize = true };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        Add("Admin-Nutzer/E-Mail", _identifier, 0);
-        Add("Aktuelles Passwort", _password, 1);
-        Add("2-FA-/Recovery-Code", _mfa, 2);
-        var ok = new Button { Text = "Import autorisieren", DialogResult = DialogResult.OK, AutoSize = true };
+        var rowOffset = 0;
+        if (description is not null)
+        {
+            var descriptionLabel = new Label
+            {
+                Text = description,
+                AutoSize = true,
+                MaximumSize = new Size(460, 0),
+            };
+            panel.Controls.Add(descriptionLabel, 0, 0);
+            panel.SetColumnSpan(descriptionLabel, 2);
+            rowOffset = 1;
+        }
+        Add("Admin-Nutzer/E-Mail", _identifier, rowOffset);
+        Add("Aktuelles Passwort", _password, rowOffset + 1);
+        Add("2-FA-/Recovery-Code", _mfa, rowOffset + 2);
+        var ok = new Button { Text = actionText, DialogResult = DialogResult.OK, AutoSize = true };
         var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
         var buttons = new FlowLayoutPanel { AutoSize = true, Controls = { cancel, ok } };
-        panel.Controls.Add(buttons, 1, 3);
+        panel.Controls.Add(buttons, 1, rowOffset + 3);
         Controls.Add(panel);
         AcceptButton = ok;
         CancelButton = cancel;

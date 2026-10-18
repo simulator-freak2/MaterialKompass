@@ -36,10 +36,13 @@ test('saveUser converts every timestamp before sending it to MariaDB', async () 
   });
 
   assert.equal(poolOptions.timezone, 'Z');
-  assert.equal(queryValues[12], '2026-01-01 00:00:00');
-  assert.equal(queryValues[29], '2026-01-01 00:00:00');
-  assert.equal(queryValues[10], null);
-  assert.equal(queryValues[11], null);
+  assert.equal(queryValues[14], '2026-01-01 00:00:00');
+  assert.equal(queryValues[31], '2026-01-01 00:00:00');
+  assert.equal(queryValues[12], null);
+  assert.equal(queryValues[13], null);
+  assert.doesNotMatch(queryValues[2], /^admin$/);
+  assert.doesNotMatch(queryValues[3], /admin@materialkompass\.org/);
+  assert.match(queryValues[4], /^mkid:v1:/);
   await store.close();
 });
 

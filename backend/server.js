@@ -24,6 +24,7 @@ async function start() {
     await store.initialize();
     const userData = await store.load();
     const storedCollections = await store.loadCollections();
+    await store.prepareIdentityKeys(userData.users);
     const data = structuredClone(seedData);
     for (const [name, values] of Object.entries(storedCollections)) data[name] = values;
 
@@ -70,6 +71,11 @@ async function start() {
       await app.locals.purgeExpiredOrganizationUnits();
     });
     await app.locals.persistData();
+    if (!await store.markIdentityProtectionReadyIfComplete()) {
+      console.warn(
+        'Datenbankbackups bleiben gesperrt, bis die einmalige Identity-Migration ausgeführt wurde.',
+      );
+    }
     console.log(`Alle Anwendungsdaten aus MariaDB geladen (${userData.users.length} Accounts).`);
 
     const retentionTimer = setInterval(() => {

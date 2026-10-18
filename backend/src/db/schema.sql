@@ -3,6 +3,8 @@ CREATE TABLE users (
   name VARCHAR(255) NOT NULL,
   username VARCHAR(100) UNIQUE NOT NULL,
   email VARCHAR(255) UNIQUE NOT NULL,
+  identity_ciphertext LONGTEXT NULL,
+  identity_erased TINYINT(1) NOT NULL DEFAULT 0,
   password_hash VARCHAR(255) NOT NULL,
   roles JSON NOT NULL,
   department_ids JSON NOT NULL,
@@ -505,6 +507,13 @@ CREATE TABLE application_collections (
   PRIMARY KEY (organization_id, name),
   INDEX idx_application_collections_name (name),
   CHECK (JSON_VALID(data_json))
+);
+
+CREATE TABLE identity_protection_state (
+  state_key VARCHAR(64) PRIMARY KEY,
+  state_value VARCHAR(255) NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ON UPDATE CURRENT_TIMESTAMP(3)
 );
 
 CREATE TABLE mailbox_processing_state (

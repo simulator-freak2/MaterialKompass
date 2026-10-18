@@ -105,6 +105,20 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     return users.find((user) => normalize(user.email) === key || normalize(user.username) === key);
   }
 
+  async function eraseUser(user, action, actor) {
+    await onBeforeUserDelete?.(user);
+    for (let index = memberships.length - 1; index >= 0; index -= 1) {
+      if (memberships[index].userId === user.id) memberships.splice(index, 1);
+    }
+    const index = users.findIndex((entry) => entry.id === user.id);
+    if (index >= 0) users.splice(index, 1);
+    await deleteStoredUser(user.id);
+    const auditActor = actor === user.username
+      ? `deleted-${crypto.createHash('sha256').update(user.id).digest('hex').slice(0, 12)}`
+      : actor;
+    logEvent(action, 'User', { id: user.id }, auditActor);
+  }
+
   function organizationMembership(userId, organizationId) {
     return memberships.find((entry) => entry.userId === userId
       && entry.organizationId === organizationId && entry.status === 'active');
@@ -358,9 +372,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       deletionDate.setUTCMonth(deletionDate.getUTCMonth() + 36);
       if (now >= deletionDate.getTime() && user.roles?.includes('Admin') && isLastAdmin(user)) continue;
       if (now >= deletionDate.getTime()) {
-        logEvent('retention_delete', 'User', { id: user.id }, 'system');
-        users.splice(index, 1);
-        await deleteStoredUser(user.id);
+        await eraseUser(user, 'retention_delete', 'system');
       } else if (now >= deactivationDate.getTime() && user.active) {
         user.active = false;
         user.deactivatedAt = new Date().toISOString();
@@ -736,13 +748,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       logEvent('membership_delete', 'User', { id: selected.id }, req.user.username);
       return res.status(204).end();
     }
-    const [deleted] = users.splice(index, 1);
-    for (let membershipIndex = memberships.length - 1; membershipIndex >= 0; membershipIndex -= 1) {
-      if (memberships[membershipIndex].userId === deleted.id) memberships.splice(membershipIndex, 1);
-    }
-    await onBeforeUserDelete?.(deleted);
-    await deleteStoredUser(deleted.id);
-    logEvent('delete', 'User', { id: deleted.id }, req.user.username);
+    await eraseUser(users[index], 'delete', req.user.username);
     return res.status(204).end();
   });
 
@@ -791,10 +797,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       if (!mfaVerification?.valid) return res.status(403).json({ error: 'Der 2-FA-Code ist ungültig.' });
     }
     if (isLastAdmin(req.user, req.tenant?.organizationId)) return res.status(409).json({ error: 'Der letzte aktive Admin kann sein Konto nicht löschen.' });
-    await onBeforeUserDelete?.(req.user);
-    users.splice(users.findIndex((entry) => entry.id === req.user.id), 1);
-    await deleteStoredUser(req.user.id);
-    logEvent('self_delete', 'User', { id: req.user.id }, req.user.username);
+    await eraseUser(req.user, 'self_delete', req.user.username);
     return res.status(204).end();
   });
 

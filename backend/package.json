@@ -1,6 +1,6 @@
 {
   "name": "materialkompass-backend",
-  "version": "1.5.2",
+  "version": "1.5.5",
   "description": "REST backend for MaterialKompass",
   "main": "server.js",
   "engines": {
@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "migrate:identities": "node src/scripts/migrate-identity-protection.js",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80",
     "test:performance": "node --test --test-concurrency=1 quality/performance-budget.js"

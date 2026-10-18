@@ -9,6 +9,7 @@ import 'package:materialkompass/pages/inventory_page.dart';
 import 'package:materialkompass/pages/procurement_page.dart';
 import 'package:materialkompass/pages/users_page.dart';
 import 'package:materialkompass/pages/wardrobe_page.dart';
+import 'package:materialkompass/services/system_message_service.dart';
 import 'package:materialkompass/widgets/address_input.dart';
 import 'package:materialkompass/widgets/mail_count_badge.dart';
 import 'package:materialkompass/widgets/stat_card.dart';
@@ -189,6 +190,48 @@ void main() {
     );
     expect(find.textContaining('Rettungsweste'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Dashboard displays and acknowledges a release message', (
+    WidgetTester tester,
+  ) async {
+    var acknowledgements = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage(
+          token: 'demo',
+          dashboardLoader: () async => {
+            'summary': const {},
+            'currentUser': {
+              'name': 'Testnutzer',
+              'roles': ['Nutzer'],
+              'permissions': const [],
+            },
+            'recentActivity': const [],
+          },
+          systemMessageLoader: () async => [
+            SystemMessage(
+              id: 'release-1.5.2',
+              type: 'release',
+              title: 'Version 1.5.2',
+              message: 'Web-Changelog ist sichtbar.',
+              publishedAt: DateTime.utc(2026, 10, 17),
+              version: '1.5.2',
+            ),
+          ],
+          systemMessageAcknowledger: (_) async => acknowledgements += 1,
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Änderungen in MaterialKompass'), findsOneWidget);
+    expect(find.text('Web-Changelog ist sichtbar.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Gelesen'));
+    await tester.pumpAndSettle();
+    expect(acknowledgements, 1);
   });
 
   testWidgets('Dashboard hides areas and metrics without permission', (

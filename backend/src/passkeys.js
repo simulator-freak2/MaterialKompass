@@ -137,6 +137,52 @@ function createPasskeyAuth({
     return passkeys.filter((entry) => entry.userId === userId);
   }
 
+  async function verifyPasskeyAssertion(challenge, credential, {
+    expectedUserId,
+    requireUserHandle = false,
+  } = {}) {
+    const credentialId = String(credential?.id || '');
+    if (!credentialId || credentialId.length > MAX_CREDENTIAL_ID_LENGTH) return null;
+    const passkey = passkeysByCredentialId.get(credentialId);
+    const user = passkey && users.find((entry) => entry.id === passkey.userId);
+    if (!challenge || !passkey || !user?.active || !user.emailVerifiedAt
+        || (expectedUserId && user.id !== expectedUserId)) return null;
+    const returnedUserHandle = credential?.response?.userHandle;
+    if ((requireUserHandle && !returnedUserHandle)
+        || (returnedUserHandle && !safeEqual(returnedUserHandle, passkey.userHandle))) return null;
+    let verification;
+    try {
+      verification = await webauthn.verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: challenge.challenge,
+        expectedOrigin: config.expectedOrigins,
+        expectedRPID: config.rpID,
+        credential: {
+          id: passkey.credentialId,
+          publicKey: Buffer.from(passkey.publicKey, 'base64url'),
+          counter: Number(passkey.counter || 0),
+          transports: passkey.transports || [],
+        },
+        requireUserVerification: true,
+        advancedFIDOConfig: { userVerification: 'required' },
+      });
+    } catch (_) {
+      return null;
+    }
+    if (!verification.verified || !verification.authenticationInfo?.userVerified) return null;
+    return { passkey, user, authenticationInfo: verification.authenticationInfo };
+  }
+
+  async function recordPasskeyUse(result) {
+    const timestamp = new Date(now()).toISOString();
+    result.passkey.counter = result.authenticationInfo.newCounter;
+    result.passkey.deviceType = result.authenticationInfo.credentialDeviceType;
+    result.passkey.backedUp = result.authenticationInfo.credentialBackedUp;
+    result.passkey.lastUsedAt = timestamp;
+    await savePasskey(result.passkey);
+    return timestamp;
+  }
+
   app.get('/.well-known/assetlinks.json', (_req, res) => {
     const fingerprints = String(process.env.PASSKEY_ANDROID_SHA256_FINGERPRINTS || '')
       .split(',').map((value) => value.trim()).filter(Boolean);
@@ -315,6 +361,54 @@ function createPasskeyAuth({
     return res.status(204).end();
   });
 
+  app.post('/api/auth/mfa/passkey/options', authRateLimit, async (req, res) => {
+    const pending = userMfa.pendingChallenge(req.body.challenge);
+    if (!pending) return res.status(401).json({ error: GENERIC_AUTH_ERROR });
+    const userPasskeys = passkeysFor(pending.user.id);
+    if (userPasskeys.length === 0) {
+      return res.status(409).json({ error: 'Für dieses Konto ist kein Passkey-Gerät eingerichtet.' });
+    }
+    const options = await webauthn.generateAuthenticationOptions({
+      rpID: config.rpID,
+      timeout: CEREMONY_TIMEOUT_MS,
+      userVerification: 'required',
+      allowCredentials: userPasskeys.map((entry) => ({
+        id: entry.credentialId,
+        transports: entry.transports || [],
+      })),
+    });
+    const challengeId = issueChallenge({
+      purpose: 'mfa-authentication',
+      challenge: options.challenge,
+      userId: pending.user.id,
+      mfaChallengeId: pending.id,
+      securityVersion: securityVersion(pending.user),
+    });
+    logEvent('mfa_passkey_prompted', 'User', { id: pending.user.id }, pending.user.username);
+    return res.json({ challengeId, options, expiresIn: CHALLENGE_TTL_MS / 1000 });
+  });
+
+  app.post('/api/auth/mfa/passkey/verify', authRateLimit, async (req, res) => {
+    const challenge = consumeChallenge(req.body.challengeId, 'mfa-authentication');
+    const user = challenge && users.find((entry) => entry.id === challenge.userId);
+    if (!challenge || !user || challenge.securityVersion !== securityVersion(user)) {
+      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
+    }
+    const result = await verifyPasskeyAssertion(challenge, req.body.credential, {
+      expectedUserId: user.id,
+    });
+    if (!result) {
+      logEvent('mfa_passkey_failed', 'User', { id: user.id }, user.username);
+      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
+    }
+    await recordPasskeyUse(result);
+    return userMfa.completeChallenge(challenge.mfaChallengeId, user, res, {
+      valid: true,
+      recovery: false,
+      method: 'passkey',
+    }, req);
+  });
+
   app.post('/api/auth/passkey/options', authRateLimit, async (_req, res) => {
     const options = await webauthn.generateAuthenticationOptions({
       rpID: config.rpID,
@@ -330,52 +424,24 @@ function createPasskeyAuth({
 
   app.post('/api/auth/passkey/verify', authRateLimit, async (req, res) => {
     const challenge = consumeChallenge(req.body.challengeId, 'authentication');
-    const credentialId = String(req.body.credential?.id || '');
-    if (!credentialId || credentialId.length > MAX_CREDENTIAL_ID_LENGTH) {
+    const result = await verifyPasskeyAssertion(challenge, req.body.credential, {
+      requireUserHandle: true,
+    });
+    if (!result) {
+      const attemptedPasskey = passkeysByCredentialId.get(String(req.body.credential?.id || ''));
+      const attemptedUser = attemptedPasskey
+        && users.find((entry) => entry.id === attemptedPasskey.userId);
+      if (attemptedUser) {
+        logEvent('passkey_login_failed', 'User', { id: attemptedUser.id }, attemptedUser.username);
+      }
       return res.status(401).json({ error: GENERIC_AUTH_ERROR });
     }
-    const passkey = passkeysByCredentialId.get(credentialId);
-    const user = passkey && users.find((entry) => entry.id === passkey.userId);
-    if (!challenge || !passkey || !user?.active || !user.emailVerifiedAt) {
-      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    }
-    const returnedUserHandle = req.body.credential?.response?.userHandle;
-    if (!returnedUserHandle || !safeEqual(returnedUserHandle, passkey.userHandle)) {
-      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    }
-    let verification;
-    try {
-      verification = await webauthn.verifyAuthenticationResponse({
-        response: req.body.credential,
-        expectedChallenge: challenge.challenge,
-        expectedOrigin: config.expectedOrigins,
-        expectedRPID: config.rpID,
-        credential: {
-          id: passkey.credentialId,
-          publicKey: Buffer.from(passkey.publicKey, 'base64url'),
-          counter: Number(passkey.counter || 0),
-          transports: passkey.transports || [],
-        },
-        requireUserVerification: true,
-        advancedFIDOConfig: { userVerification: 'required' },
-      });
-    } catch (_) {
-      logEvent('passkey_login_failed', 'User', { id: user.id }, user.username);
-      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    }
-    if (!verification.verified || !verification.authenticationInfo.userVerified) {
-      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    }
-    const timestamp = new Date(now()).toISOString();
-    passkey.counter = verification.authenticationInfo.newCounter;
-    passkey.deviceType = verification.authenticationInfo.credentialDeviceType;
-    passkey.backedUp = verification.authenticationInfo.credentialBackedUp;
-    passkey.lastUsedAt = timestamp;
+    const { passkey, user } = result;
+    const timestamp = await recordPasskeyUse(result);
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
     user.lastLoginAt = timestamp;
     user.mfaLastVerifiedAt = timestamp;
-    await savePasskey(passkey);
     await saveUser(user);
     logEvent('passkey_login', 'User', {
       id: user.id, passkeyId: passkey.id,

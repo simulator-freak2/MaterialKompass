@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/api_client.dart';
+import '../services/passkey_service.dart';
 
 Map<String, dynamic> _object(http.Response response) {
   if (response.body.isEmpty) return {};
@@ -18,6 +20,13 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
   Map<String, dynamic> challenge,
 ) async {
   final code = TextEditingController();
+  final methods = (challenge['methods'] as List? ?? const [])
+      .map((entry) => entry.toString())
+      .toSet();
+  final passkeys =
+      methods.contains('passkey') && PasskeyService.platformSupported
+      ? PasskeyService()
+      : null;
   String? error;
   var submitting = false;
   try {
@@ -32,10 +41,49 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  'Geben Sie den sechsstelligen Code Ihrer Authenticator-App '
-                  'oder einen Wiederherstellungscode ein.',
+                Text(
+                  passkeys == null
+                      ? 'Geben Sie den sechsstelligen Code Ihrer Authenticator-App '
+                            'oder einen Wiederherstellungscode ein.'
+                      : 'Bestätigen Sie die Anmeldung per Push-/Gerätefreigabe mit '
+                            'Passwort, PIN oder Biometrie. Alternativ können Sie einen '
+                            'Code verwenden.',
                 ),
+                if (passkeys != null) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              setDialogState(() {
+                                submitting = true;
+                                error = null;
+                              });
+                              try {
+                                final data = await passkeys.approveMfa(
+                                  challenge: challenge['challenge'].toString(),
+                                );
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext, data);
+                                }
+                              } on ApiException catch (exception) {
+                                if (dialogContext.mounted) {
+                                  setDialogState(() {
+                                    error = exception.message;
+                                    submitting = false;
+                                  });
+                                }
+                              }
+                            },
+                      icon: const Icon(Icons.phonelink_lock_outlined),
+                      label: const Text('Per Push / Gerät bestätigen'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(),
+                ],
                 const SizedBox(height: 16),
                 TextField(
                   controller: code,
@@ -60,7 +108,7 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
               onPressed: submitting ? null : () => Navigator.pop(dialogContext),
               child: const Text('Abbrechen'),
             ),
-            FilledButton(
+            OutlinedButton(
               onPressed: submitting
                   ? null
                   : () async {
@@ -110,6 +158,7 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
       ),
     );
   } finally {
+    passkeys?.close();
     code.dispose();
   }
 }

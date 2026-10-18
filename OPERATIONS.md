@@ -1,6 +1,6 @@
 # Betriebs- und Wiederherstellungshandbuch
 
-Stand: 11. September 2026
+Stand: 17. Oktober 2026
 
 ## Serviceziele und Überwachung
 
@@ -17,7 +17,9 @@ Stand: 11. September 2026
 1. Containerzustand und `/ready` prüfen.
 2. Zeitstempel des letzten erfolgreichen Backups kontrollieren.
 3. SHA-256 des neuesten Backups prüfen und externen Replikationsstatus kontrollieren.
-4. 5xx-/Rate-Limit-/Anmeldeanomalien und freien Speicher sichten.
+4. Prüfen, dass der neueste Dateiname mit `materialkompass-v2-` beginnt und keine
+   `materialkompass-<Zeitstempel>`-Legacy-Dumps mehr vorhanden sind.
+5. 5xx-/Rate-Limit-/Anmeldeanomalien und freien Speicher sichten.
 
 ## Wiederherstellungstest
 
@@ -28,11 +30,18 @@ Der Test erfolgt nie über der Produktionsdatenbank.
 3. Eine neue, isolierte MariaDB-Testdatenbank mit derselben Hauptversion starten.
 4. Dump importieren; alle Fehler und Dauer erfassen.
 5. Tabellenanzahl und Stichproben für Nutzer, Materialien, Prüfungen und Auditlog prüfen.
-6. Ein Backend mit separaten Test-Secrets gegen die Testdatenbank starten.
-7. `/health`, `/ready`, Anmeldung, lesenden Materialabruf und eine rücknehmbare
+6. Den aktuellen verschlüsselten Identity-Keyring und denselben
+   `IDENTITY_KEYRING_MASTER_KEY` ausschließlich in die isolierte Testumgebung geben.
+7. Ein Backend mit ansonsten separaten Test-Secrets gegen die Testdatenbank starten.
+8. `/health`, `/ready`, Anmeldung, lesenden Materialabruf und eine rücknehmbare
    Testmutation prüfen.
-8. Testdatenbank sicher entfernen und Ergebnis, tatsächliches RPO/RTO sowie Abweichungen
+9. Testdatenbank, Test-Keyring und Secrets sicher entfernen und Ergebnis, tatsächliches RPO/RTO sowie Abweichungen
    protokollieren.
+
+Der Keyring darf extern nur als überschreibender aktueller Stand ohne Versionierung
+repliziert werden. Ein fehlender gesamter Keyring ist ein Wiederherstellungsfehler;
+ein absichtlich fehlender einzelner Kontoschlüssel muss dagegen einen deaktivierten
+Tombstone ohne Passwort, MFA und Passkeys ergeben.
 
 Ein fehlgeschlagener Restore ist ein betrieblicher Incident. Bis zur Behebung darf kein
 Release als wiederherstellbar freigegeben werden.

@@ -50,6 +50,7 @@ const { inspectZipArchive, neutralizeSpreadsheetCell } = require('./security-uti
 const { configurePersistence } = require('./persistence-coordinator');
 const { createRateLimiter } = require('./request-rate-limiter');
 const { registerDataBackupRoutes } = require('./data-backup');
+const { createMemoryIdentityProtection } = require('./identity-protection');
 const { registerSystemMessageRoutes } = require('./system-messages');
 const {
   normalizeTenancyData,
@@ -147,6 +148,9 @@ function createApp(options = {}) {
     throw new Error('JWT_SECRET muss im Produktivbetrieb mindestens 32 Zeichen lang sein.');
   }
   const app = express();
+  const identityProtection = options.identityProtection
+    || options.userStore?.identityProtection
+    || createMemoryIdentityProtection();
   // Express 4 does not forward rejected promises from async route handlers to
   // the error middleware. Wrap every route handler centrally so a transient
   // database, SMTP or file-processing failure cannot become an unhandled
@@ -1283,7 +1287,12 @@ function createApp(options = {}) {
 
   function anonymizeDataSubject(user) {
     const pseudonym = `deleted-${createHash('sha256').update(user.id).digest('hex').slice(0, 12)}`;
+    const identityReplacements = (identityProtection.identityValues?.(user.id) || [])
+      .map(({ field, value }) => [String(value).toLowerCase(), field === 'name'
+        ? 'Gelöschte Person'
+        : field === 'email' ? `${pseudonym}@example.invalid` : pseudonym]);
     const replacements = new Map([
+      ...identityReplacements,
       [String(user.id).toLowerCase(), pseudonym],
       [String(user.name || '').toLowerCase(), 'Gelöschte Person'],
       [String(user.username || '').toLowerCase(), pseudonym],
@@ -1326,6 +1335,9 @@ function createApp(options = {}) {
     onBeforeUserDelete: async (user) => {
       anonymizeDataSubject(user);
       passkeyAuth?.removeUser(user.id);
+      await app.locals.persistData();
+      await (options.userStore?.destroyUserIdentity(user.id)
+        || identityProtection.destroyUser(user.id));
     },
     now: options.now,
     defaultMailMessageFor: mailManagement.defaultMessageFor,
@@ -1394,6 +1406,7 @@ function createApp(options = {}) {
     importBodyParser: backupJsonParser,
     dataStore: options.dataStore,
     persistData: () => app.locals.persistData(),
+    identityProtection,
     verifyReauthentication: async (user, body) => {
       if (!await bcrypt.compare(String(body.currentPassword || ''), user.passwordHash)) {
         return false;

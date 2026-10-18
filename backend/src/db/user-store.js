@@ -1,6 +1,10 @@
 const mariadb = require('mariadb');
 const crypto = require('node:crypto');
 const { DEFAULT_ORGANIZATION_ID } = require('../tenancy');
+const {
+  createIdentityProtection,
+  createMemoryIdentityProtection,
+} = require('../identity-protection');
 
 const PLATFORM_COLLECTIONS = new Set([
   'organizations', 'organizationUnits', 'memberships', 'permissions',
@@ -23,7 +27,11 @@ function sqlDateTime(value) {
   return new Date(value).toISOString().slice(0, 19).replace('T', ' ');
 }
 
-function createUserStore(database = mariadb) {
+function createUserStore(database = mariadb, options = {}) {
+  const identityProtection = options.identityProtection
+    || (process.env.IDENTITY_KEYRING_MASTER_KEY
+      ? createIdentityProtection()
+      : createMemoryIdentityProtection());
   const connectionLimit = Number(process.env.DB_CONNECTION_LIMIT || 5);
   if (!Number.isInteger(connectionLimit) || connectionLimit < 2) {
     throw new Error(
@@ -43,6 +51,46 @@ function createUserStore(database = mariadb) {
   let processLockConnection;
   let processLockName;
   const serializedCollections = new Map();
+
+  function protectedPlaceholder(userId) {
+    const suffix = crypto.createHash('sha256').update(String(userId)).digest('hex').slice(0, 32);
+    return {
+      name: '',
+      username: `protected-${suffix}`,
+      email: `protected-${suffix}@identity.invalid`,
+    };
+  }
+
+  async function protectedUserRecord(user) {
+    if (!user.identityErased) {
+      if (identityProtection.hasUserKey(user.id)
+        && identityProtection.identityChanged(user)) {
+        await identityProtection.rotateUser(user);
+        // The old key also protects denormalized identity references in
+        // collections. Re-encrypt them even if their plaintext is unchanged.
+        serializedCollections.clear();
+      } else {
+        await identityProtection.ensureUser(user);
+      }
+    }
+    const protectedIdentity = identityProtection.protectUserRecord(user);
+    const placeholder = protectedPlaceholder(user.id);
+    return {
+      user,
+      placeholder,
+      identityCiphertext: protectedIdentity.identityCiphertext,
+      identityErased: protectedIdentity.identityErased,
+    };
+  }
+
+  function protectedCollectionJson(name, value) {
+    const allowGenericIdentityFields = [
+      'procurementRequests', 'serviceDevices', 'qrLoginCredentials',
+    ].includes(name);
+    return JSON.stringify(identityProtection.protectValue(value, '', {
+      allowGenericIdentityFields,
+    }));
+  }
 
   return {
     async acquireProcessLock(
@@ -70,6 +118,7 @@ function createUserStore(database = mariadb) {
     },
 
     async initialize() {
+      await identityProtection.initialize();
       await pool.query(`CREATE TABLE IF NOT EXISTS application_collections (
         organization_id VARCHAR(64) NOT NULL,
         name VARCHAR(64) NOT NULL,
@@ -86,6 +135,12 @@ function createUserStore(database = mariadb) {
         last_uid BIGINT UNSIGNED NOT NULL,
         initialized_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL
+      )`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS identity_protection_state (
+        state_key VARCHAR(64) PRIMARY KEY,
+        state_value VARCHAR(255) NOT NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+          ON UPDATE CURRENT_TIMESTAMP(3)
       )`);
       await pool.query(`CREATE TABLE IF NOT EXISTS user_passkeys (
         id CHAR(36) PRIMARY KEY,
@@ -112,13 +167,23 @@ function createUserStore(database = mariadb) {
     },
 
     async load() {
-      const [userRows, roleRows, passkeyRows] = await Promise.all([
+      const [userRows, roleRows, passkeyRows, protectionRows] = await Promise.all([
         pool.query('SELECT * FROM users'),
         pool.query('SELECT * FROM roles'),
         pool.query('SELECT * FROM user_passkeys'),
+        pool.query(`SELECT state_value FROM identity_protection_state
+          WHERE state_key = 'backup_format'`),
       ]);
+      if (!identityProtection.existedAtInitialization
+        && (userRows.some((row) => row.identity_ciphertext)
+          || protectionRows.some((row) => String(row.state_value) === '2'))) {
+        throw new Error(
+          'Die Datenbank enthält geschützte Identitäten, aber der Identity-Keyring fehlt. '
+          + 'Start abgebrochen, damit keine Konten irrtümlich tombstonisiert werden.',
+        );
+      }
       return {
-        users: userRows.map((row) => ({
+        users: userRows.map((row) => identityProtection.unprotectUserRecord({
           id: row.id, name: row.name, username: row.username, email: row.email,
           passwordHash: row.password_hash, roles: parseJson(row.roles),
           platformAdmin: Boolean(row.platform_admin),
@@ -136,7 +201,7 @@ function createUserStore(database = mariadb) {
           mfaGraceEndsAt: iso(row.mfa_grace_ends_at), mfaVersion: Number(row.mfa_version || 0),
           deactivatedAt: iso(row.deactivated_at), deactivationReason: row.deactivation_reason,
           scheduledDeletionAt: iso(row.scheduled_deletion_at), createdAt: iso(row.created_at),
-        })),
+        }, row.identity_ciphertext, Boolean(row.identity_erased))),
         roles: roleRows.map((row) => ({
           id: row.id,
           organizationId: row.organization_id || null,
@@ -162,8 +227,10 @@ function createUserStore(database = mariadb) {
 
     async saveUser(user) {
       user = user?.__identity || user;
+      const protectedRecord = await protectedUserRecord(user);
       await pool.query(`INSERT INTO users (
-        id, name, username, email, password_hash, roles, permissions, platform_admin, active,
+        id, name, username, email, identity_ciphertext, identity_erased,
+        password_hash, roles, permissions, platform_admin, active,
         failed_login_attempts, locked_until, last_login_at, email_verified_at,
         verification_token_hash, verification_expires_at, password_reset_token_hash,
         password_reset_expires_at, mfa_required, mfa_secret_encrypted,
@@ -171,8 +238,9 @@ function createUserStore(database = mariadb) {
         mfa_recovery_code_hashes, mfa_enabled_at,
         mfa_last_verified_at, mfa_grace_ends_at, mfa_version,
         deactivated_at, deactivation_reason, scheduled_deletion_at, created_at, department_ids
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
+        identity_ciphertext=VALUES(identity_ciphertext), identity_erased=VALUES(identity_erased),
         password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
         permissions=VALUES(permissions), platform_admin=VALUES(platform_admin),
         active=VALUES(active), failed_login_attempts=VALUES(failed_login_attempts),
@@ -188,7 +256,10 @@ function createUserStore(database = mariadb) {
         mfa_grace_ends_at=VALUES(mfa_grace_ends_at), mfa_version=VALUES(mfa_version),
         deactivated_at=VALUES(deactivated_at),
         deactivation_reason=VALUES(deactivation_reason), scheduled_deletion_at=VALUES(scheduled_deletion_at)`, [
-        user.id, user.name, user.username, user.email, user.passwordHash,
+        user.id, protectedRecord.placeholder.name, protectedRecord.placeholder.username,
+        protectedRecord.placeholder.email, protectedRecord.identityCiphertext,
+        protectedRecord.identityErased ? 1 : 0,
+        user.passwordHash,
         JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
         user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
         user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
@@ -205,6 +276,22 @@ function createUserStore(database = mariadb) {
     },
 
     async deleteUser(id) { await pool.query('DELETE FROM users WHERE id = ?', [id]); },
+    async destroyUserIdentity(id) { return identityProtection.destroyUser(id); },
+    async pruneIdentityKeys(userIds) { return identityProtection.pruneUsers(userIds); },
+    invalidateCollectionCache() { serializedCollections.clear(); },
+    async prepareIdentityKeys(users) {
+      await identityProtection.ensureUsers(users);
+    },
+    async markIdentityProtectionReadyIfComplete() {
+      const rows = await pool.query(`SELECT COUNT(*) AS legacy_count FROM users
+        WHERE identity_ciphertext IS NULL AND identity_erased = 0`);
+      if (Number(rows[0]?.legacy_count || 0) !== 0) return false;
+      await pool.query(`INSERT INTO identity_protection_state (state_key, state_value)
+        VALUES ('backup_format', '2')
+        ON DUPLICATE KEY UPDATE state_value=VALUES(state_value)`);
+      return true;
+    },
+    identityProtection,
     async savePasskey(passkey) {
       const credentialHash = crypto.createHash('sha256')
         .update(passkey.credentialId).digest();
@@ -283,7 +370,8 @@ function createUserStore(database = mariadb) {
       );
       const collections = {};
       rows.forEach((row) => {
-        const data = parseJson(row.data_json);
+        const protectedData = parseJson(row.data_json);
+        const data = identityProtection.unprotectValue(protectedData);
         const scope = row.organization_id || DEFAULT_ORGANIZATION_ID;
         serializedCollections.set(`${scope}:${row.name}`, JSON.stringify(data));
         collections[row.name] ||= [];
@@ -298,7 +386,7 @@ function createUserStore(database = mariadb) {
       const partitions = [];
       for (const [name, data] of Object.entries(collections)) {
         if (PLATFORM_COLLECTIONS.has(name)) {
-          partitions.push([PLATFORM_SCOPE, name, JSON.stringify(data)]);
+          partitions.push([PLATFORM_SCOPE, name, data]);
           continue;
         }
         const grouped = new Map();
@@ -309,26 +397,31 @@ function createUserStore(database = mariadb) {
         }
         if (grouped.size === 0) grouped.set(DEFAULT_ORGANIZATION_ID, []);
         grouped.forEach((values, organizationId) => {
-          partitions.push([organizationId, name, JSON.stringify(values)]);
+          partitions.push([organizationId, name, values]);
         });
       }
-      const entries = partitions.filter(([organizationId, name, serialized]) =>
-        serializedCollections.get(`${organizationId}:${name}`) !== serialized
+      const entries = partitions.map(([organizationId, name, values]) => [
+        organizationId,
+        name,
+        JSON.stringify(values),
+        protectedCollectionJson(name, values),
+      ]).filter(([organizationId, name, plaintext]) =>
+        serializedCollections.get(`${organizationId}:${name}`) !== plaintext
       );
       if (entries.length === 0) return;
       let connection;
       try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        for (const [organizationId, name, serialized] of entries) {
+        for (const [organizationId, name, _plaintext, protectedJson] of entries) {
           await connection.query(`INSERT INTO application_collections
             (organization_id, name, data_json) VALUES (?, ?, ?)
             ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)`,
-          [organizationId, name, serialized]);
+          [organizationId, name, protectedJson]);
         }
         await connection.commit();
-        entries.forEach(([organizationId, name, serialized]) => {
-          serializedCollections.set(`${organizationId}:${name}`, serialized);
+        entries.forEach(([organizationId, name, plaintext]) => {
+          serializedCollections.set(`${organizationId}:${name}`, plaintext);
         });
       } catch (error) {
         if (connection) await connection.rollback();
@@ -349,7 +442,7 @@ function createUserStore(database = mariadb) {
           throw new TypeError(`Die Sammlung ${name} muss ein Array sein.`);
         }
         if (PLATFORM_COLLECTIONS.has(name)) {
-          partitions.push([PLATFORM_SCOPE, name, JSON.stringify(data)]);
+          partitions.push([PLATFORM_SCOPE, name, data]);
           continue;
         }
         const grouped = new Map();
@@ -360,7 +453,7 @@ function createUserStore(database = mariadb) {
         }
         if (grouped.size === 0) grouped.set(DEFAULT_ORGANIZATION_ID, []);
         grouped.forEach((values, organizationId) => {
-          partitions.push([organizationId, name, JSON.stringify(values)]);
+          partitions.push([organizationId, name, values]);
         });
       }
 
@@ -376,7 +469,9 @@ function createUserStore(database = mariadb) {
         if (partitions.length > 0) {
           await connection.batch(
             'INSERT INTO application_collections (organization_id, name, data_json) VALUES (?, ?, ?)',
-            partitions,
+            partitions.map(([organizationId, name, values]) => [
+              organizationId, name, protectedCollectionJson(name, values),
+            ]),
           );
         }
         await connection.commit();
@@ -384,8 +479,8 @@ function createUserStore(database = mariadb) {
           const separator = key.indexOf(':');
           if (names.includes(key.slice(separator + 1))) serializedCollections.delete(key);
         }
-        partitions.forEach(([organizationId, name, serialized]) => {
-          serializedCollections.set(`${organizationId}:${name}`, serialized);
+        partitions.forEach(([organizationId, name, values]) => {
+          serializedCollections.set(`${organizationId}:${name}`, JSON.stringify(values));
         });
       } catch (error) {
         if (connection) await connection.rollback();
@@ -396,10 +491,12 @@ function createUserStore(database = mariadb) {
     },
     async replaceBackupData({ users, roles, passkeys, collections }) {
       let connection;
+      let committed = false;
+      const protectedUsers = await Promise.all(users.map(protectedUserRecord));
       const serialized = [];
       for (const [name, data] of Object.entries(collections)) {
         if (PLATFORM_COLLECTIONS.has(name)) {
-          serialized.push([PLATFORM_SCOPE, name, JSON.stringify(data)]);
+          serialized.push([PLATFORM_SCOPE, name, data]);
           continue;
         }
         const grouped = new Map();
@@ -410,7 +507,7 @@ function createUserStore(database = mariadb) {
         }
         if (grouped.size === 0) grouped.set(DEFAULT_ORGANIZATION_ID, []);
         grouped.forEach((values, organizationId) => {
-          serialized.push([organizationId, name, JSON.stringify(values)]);
+          serialized.push([organizationId, name, values]);
         });
       }
       try {
@@ -432,7 +529,8 @@ function createUserStore(database = mariadb) {
         }
         if (users.length > 0) {
           await connection.batch(`INSERT INTO users (
-            id, name, username, email, password_hash, roles, permissions, active,
+            id, name, username, email, identity_ciphertext, identity_erased,
+            password_hash, roles, permissions, platform_admin, active,
             failed_login_attempts, locked_until, last_login_at, email_verified_at,
             verification_token_hash, verification_expires_at, password_reset_token_hash,
             password_reset_expires_at, mfa_required, mfa_secret_encrypted,
@@ -440,10 +538,15 @@ function createUserStore(database = mariadb) {
             mfa_recovery_code_hashes, mfa_enabled_at, mfa_last_verified_at,
             mfa_grace_ends_at, mfa_version, deactivated_at, deactivation_reason,
             scheduled_deletion_at, created_at, department_ids
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          users.map((user) => [
-            user.id, user.name || '', user.username, user.email, user.passwordHash,
-            JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []), user.active ? 1 : 0,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          protectedUsers.map((record) => {
+            const { user } = record;
+            return [
+            user.id, record.placeholder.name, record.placeholder.username,
+            record.placeholder.email, record.identityCiphertext, record.identityErased ? 1 : 0,
+            user.passwordHash,
+            JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
+            user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
             user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
             sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null,
             sqlDateTime(user.verificationExpiresAt), user.passwordResetTokenHash || null,
@@ -455,7 +558,8 @@ function createUserStore(database = mariadb) {
             sqlDateTime(user.deactivatedAt), user.deactivationReason || null,
             sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt || new Date()),
             JSON.stringify(user.departmentIds || []),
-          ]));
+          ];
+          }));
         }
         if (passkeys.length > 0) {
           await connection.batch(`INSERT INTO user_passkeys (
@@ -474,16 +578,19 @@ function createUserStore(database = mariadb) {
         if (serialized.length > 0) {
           await connection.batch(
             'INSERT INTO application_collections (organization_id, name, data_json) VALUES (?, ?, ?)',
-            serialized,
+            serialized.map(([organizationId, name, values]) => [
+              organizationId, name, protectedCollectionJson(name, values),
+            ]),
           );
         }
         await connection.commit();
+        committed = true;
         serializedCollections.clear();
         serialized.forEach(([organizationId, name, data]) => {
-          serializedCollections.set(`${organizationId}:${name}`, data);
+          serializedCollections.set(`${organizationId}:${name}`, JSON.stringify(data));
         });
       } catch (error) {
-        if (connection) await connection.rollback();
+        if (connection && !committed) await connection.rollback();
         throw error;
       } finally {
         if (connection) connection.release();
