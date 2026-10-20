@@ -26,9 +26,11 @@ class PushMfaService {
   static const _projectId = String.fromEnvironment('FIREBASE_PROJECT_ID');
 
   final ApiClient _api = ApiClient();
-  StreamSubscription<String>? _tokenSubscription;
+  StreamSubscription<String>? _registrationSubscription;
   StreamSubscription<RemoteMessage>? _messageSubscription;
   StreamSubscription<RemoteMessage>? _openedSubscription;
+  Completer<String>? _registrationCompleter;
+  String? _registrationId;
   PushApprovalHandler? _approvalHandler;
   bool _initialized = false;
 
@@ -79,15 +81,44 @@ class PushMfaService {
     _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen(
       _handleMessage,
     );
-    _tokenSubscription = FirebaseMessaging.instance.onTokenRefresh.listen(
-      _refreshToken,
+    final messaging = FirebaseMessaging.instance;
+    _registrationCompleter = Completer<String>();
+    _registrationSubscription = messaging.onRegistered.listen(
+      _handleRegistration,
     );
-    final currentToken = await FirebaseMessaging.instance.getToken();
-    if (currentToken != null && currentToken.isNotEmpty) {
-      await _refreshToken(currentToken);
-    }
+    await messaging.register();
     final initial = await FirebaseMessaging.instance.getInitialMessage();
     if (initial != null) await _handleMessage(initial);
+  }
+
+  Future<void> _handleRegistration(String registrationId) async {
+    if (registrationId.isEmpty) return;
+    _registrationId = registrationId;
+    final completer = _registrationCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(registrationId);
+    }
+    await _refreshToken(registrationId);
+  }
+
+  Future<String> _registeredPushTarget() async {
+    final registrationId = _registrationId;
+    if (registrationId != null && registrationId.isNotEmpty) {
+      return registrationId;
+    }
+    final completer = _registrationCompleter;
+    if (completer == null) {
+      throw const ApiException(
+        'Der Push-Dienst konnte nicht initialisiert werden. Bitte starte die App neu.',
+      );
+    }
+    try {
+      return await completer.future.timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      throw const ApiException(
+        'Die Push-Registrierung hat zu lange gedauert. Bitte versuche es erneut.',
+      );
+    }
   }
 
   Future<void> _handleMessage(RemoteMessage message) async {
@@ -146,12 +177,7 @@ class PushMfaService {
         'Benachrichtigungen wurden abgelehnt. Bitte erlaube sie in den Systemeinstellungen.',
       );
     }
-    final pushToken = await FirebaseMessaging.instance.getToken();
-    if (pushToken == null || pushToken.isEmpty) {
-      throw const ApiException(
-        'Für dieses Gerät konnte kein Push-Token erstellt werden.',
-      );
-    }
+    final pushToken = await _registeredPushTarget();
     final response = await _api.post(
       '/api/users/me/mfa/push-devices',
       headers: {
@@ -223,8 +249,9 @@ class PushMfaService {
       );
     }
     final credentials = await _credentials();
-    if (credentials.remove(deviceId) != null)
+    if (credentials.remove(deviceId) != null) {
       await _saveCredentials(credentials);
+    }
   }
 
   Future<void> respond(
@@ -282,7 +309,7 @@ class PushMfaService {
   }
 
   void dispose() {
-    _tokenSubscription?.cancel();
+    _registrationSubscription?.cancel();
     _messageSubscription?.cancel();
     _openedSubscription?.cancel();
     _api.close();

@@ -471,10 +471,20 @@ class _LoginPageState extends State<LoginPage> {
                           onSubmitted: login,
                         ),
                         TextButton(
+                          style: TextButton.styleFrom(
+                            foregroundColor: Theme.of(
+                              context,
+                            ).colorScheme.onSurface,
+                          ),
                           onPressed: loading ? null : requestPasswordReset,
                           child: const Text('Passwort vergessen?'),
                         ),
                         TextButton(
+                          style: TextButton.styleFrom(
+                            foregroundColor: Theme.of(
+                              context,
+                            ).colorScheme.onSurface,
+                          ),
                           onPressed: loading ? null : resendEmailVerification,
                           child: const Text(
                             'Bestätigungs-E-Mail erneut senden',
