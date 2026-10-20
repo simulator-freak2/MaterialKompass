@@ -51,6 +51,12 @@ class ApiClient {
     Map<String, String>? headers,
   }) => _request('PATCH', path, body: body, headers: headers);
 
+  Future<ApiResponse> put(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) => _request('PUT', path, body: body, headers: headers);
+
   Future<ApiResponse> delete(
     String path, {
     Object? body,
@@ -86,6 +92,14 @@ class ApiClient {
         'PATCH' =>
           await _client
               .patch(
+                uri,
+                headers: requestHeaders,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(timeout),
+        'PUT' =>
+          await _client
+              .put(
                 uri,
                 headers: requestHeaders,
                 body: body == null ? null : jsonEncode(body),

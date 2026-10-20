@@ -563,7 +563,7 @@ function registerServiceDeviceRoutes({
         });
       });
     };
-    if (userMfa?.mfaEnabled(user)) {
+    if (userMfa?.authenticationEnabled(user)) {
       return res.status(202).json(userMfa.issueChallenge(
         user,
         (verifiedUser, response, _verification, verifyRequest) => finishLogin(

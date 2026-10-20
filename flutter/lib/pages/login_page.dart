@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../services/passkey_service.dart';
+import '../services/push_mfa_service.dart';
 import '../services/system_message_service.dart';
 import '../widgets/system_message_card.dart';
 import '../widgets/password_login_form.dart';
@@ -212,25 +213,32 @@ class _LoginPageState extends State<LoginPage> {
     Map<String, dynamic> loginData,
   ) async {
     String method = 'totp';
-    if (PasskeyService.platformSupported) {
+    if (PasskeyService.platformSupported || PushMfaService.configured) {
       final selected = await showDialog<String>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Starke Anmeldung einrichten'),
           content: const Text(
             'Für dieses Konto ist eine starke Anmeldung verpflichtend. '
-            'Richten Sie einen Passkey oder eine Authenticator-App ein.',
+            'Richten Sie Push-2-FA, einen Passkey oder eine Authenticator-App ein.',
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, 'totp'),
               child: const Text('Authenticator-App'),
             ),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, 'passkey'),
-              icon: const Icon(Icons.key_outlined),
-              label: const Text('Passkey'),
-            ),
+            if (PushMfaService.configured)
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'push'),
+                icon: const Icon(Icons.notifications_active_outlined),
+                label: const Text('Push-2-FA'),
+              ),
+            if (PasskeyService.platformSupported)
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'passkey'),
+                icon: const Icon(Icons.key_outlined),
+                label: const Text('Passkey'),
+              ),
           ],
         ),
       );
@@ -242,6 +250,18 @@ class _LoginPageState extends State<LoginPage> {
         return await passkeys.register(
           token: loginData['token'].toString(),
           name: 'Passkey auf diesem Gerät',
+          currentPassword: passwordController.text,
+        );
+      } on ApiException catch (error) {
+        if (mounted) _showError(error.message);
+        return null;
+      }
+    }
+    if (method == 'push') {
+      try {
+        return await PushMfaService.instance.enroll(
+          token: loginData['token'].toString(),
+          name: PushMfaService.defaultDeviceName,
           currentPassword: passwordController.text,
         );
       } on ApiException catch (error) {
@@ -268,6 +288,10 @@ class _LoginPageState extends State<LoginPage> {
       );
       if (!mounted) return;
       var data = response.object;
+      if (response.statusCode == 403 && data['passkeyRequired'] == true) {
+        await loginWithPasskey();
+        return;
+      }
       if (response.statusCode == 202 && data['mfaRequired'] == true) {
         final verified = await verifyMfaChallenge(context, data);
         if (verified == null || !mounted) return;
@@ -287,7 +311,8 @@ class _LoginPageState extends State<LoginPage> {
           final mfa = data['user'] is Map
               ? (data['user'] as Map)['mfa'] as Map?
               : null;
-          if (mfa?['required'] == true && mfa?['enabled'] != true) {
+          if (mfa?['required'] == true &&
+              mfa?['strongAuthenticationConfigured'] != true) {
             final configureNow = await showDialog<bool>(
               context: context,
               builder: (dialogContext) => AlertDialog(
@@ -295,7 +320,7 @@ class _LoginPageState extends State<LoginPage> {
                 content: Text(
                   'Ein Administrator hat eine starke Anmeldung für dieses '
                   'Konto verpflichtend gemacht. Bitte richten Sie innerhalb '
-                  'der Einrichtungsfrist einen Passkey oder 2-FA ein. Frist: '
+                  'der Einrichtungsfrist Push-2-FA, einen Passkey oder Codes ein. Frist: '
                   '${mfa?['graceEndsAt'] ?? '14 Tage'}.',
                 ),
                 actions: [
@@ -353,7 +378,7 @@ class _LoginPageState extends State<LoginPage> {
       if (response.statusCode == 200 || data['token'] != null) {
         if (data['mfaSetupRequired'] == true) {
           _showError(
-            'Melden Sie sich einmal mit Ihrem Passwort an, um einen Passkey oder 2-FA einzurichten.',
+            'Melden Sie sich einmal mit Ihrem Passwort an, um Push-2-FA, einen Passkey oder Codes einzurichten.',
           );
           return;
         }
@@ -445,14 +470,6 @@ class _LoginPageState extends State<LoginPage> {
                           loading: loading,
                           onSubmitted: login,
                         ),
-                        if (PasskeyService.platformSupported) ...[
-                          const SizedBox(height: 8),
-                          FilledButton.tonalIcon(
-                            onPressed: loading ? null : loginWithPasskey,
-                            icon: const Icon(Icons.key_outlined),
-                            label: const Text('Mit Passkey anmelden'),
-                          ),
-                        ],
                         TextButton(
                           onPressed: loading ? null : requestPasswordReset,
                           child: const Text('Passwort vergessen?'),

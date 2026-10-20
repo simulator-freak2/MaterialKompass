@@ -15,6 +15,7 @@ class OrganizationsPage extends StatefulWidget {
 class _OrganizationsPageState extends State<OrganizationsPage> {
   late final AuthenticatedApiClient _api;
   late Future<Map<String, dynamic>> _future;
+  bool _dataResetRunning = false;
 
   @override
   void initState() {
@@ -51,6 +52,120 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(error.toString())));
+  }
+
+  Future<void> _resetData({
+    required String endpoint,
+    required String title,
+    required String targetName,
+    required String edvNumber,
+    required String scopeDescription,
+  }) async {
+    final password = TextEditingController();
+    final mfaCode = TextEditingController();
+    final confirmation = TextEditingController();
+    final expectedConfirmation = 'DATEN $edvNumber LÖSCHEN';
+    try {
+      final credentials = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '$scopeDescription Organisationsstruktur, Konten, Rollen, '
+                      'Passkeys und Nutzerfreigaben bleiben erhalten.',
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Exportiere vorher eine Datensicherung. Diese Aktion ist '
+                      'nicht rückgängig zu machen.',
+                      style: TextStyle(
+                        color: Theme.of(dialogContext).colorScheme.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: password,
+                      obscureText: true,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Aktuelles Admin-Passwort',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: mfaCode,
+                      decoration: const InputDecoration(
+                        labelText: '2-FA-Code (falls aktiviert)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: confirmation,
+                      decoration: InputDecoration(
+                        labelText:
+                            'Zur Bestätigung „$expectedConfirmation“ eingeben',
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed:
+                    password.text.isEmpty ||
+                        confirmation.text != expectedConfirmation
+                    ? null
+                    : () => Navigator.pop(dialogContext, {
+                        'currentPassword': password.text,
+                        'mfaCode': mfaCode.text.trim(),
+                        'confirmation': confirmation.text,
+                      }),
+                child: const Text('Daten endgültig löschen'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (credentials == null || !mounted) return;
+      setState(() => _dataResetRunning = true);
+      final result = Map<String, dynamic>.from(
+        await _api.request(endpoint, method: 'POST', body: credentials) as Map,
+      );
+      await _refresh();
+      if (!mounted) return;
+      final deleted = result['deleted'] ?? 0;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$targetName: $deleted Datensätze wurden gelöscht.'),
+        ),
+      );
+    } catch (error) {
+      _error(error);
+    } finally {
+      password.dispose();
+      mfaCode.dispose();
+      confirmation.dispose();
+      if (mounted) setState(() => _dataResetRunning = false);
+    }
   }
 
   Future<void> _createOrganization() async {
@@ -647,6 +762,12 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
               .map((entry) => entry.toString())
               .toSet();
           final platformAdmin = user['platformAdmin'] == true;
+          final activeContext = Map<String, dynamic>.from(
+            me['context'] as Map? ?? const {},
+          );
+          final activeOrganization = Map<String, dynamic>.from(
+            activeContext['organization'] as Map? ?? const {},
+          );
           final canCreateOrganizationStructure =
               roles.contains('Admin') &&
               permissions.contains('organizations.write');
@@ -694,6 +815,43 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                       subtitle: Text(
                         '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}',
                       ),
+                      trailing:
+                          canCreateOrganizationStructure &&
+                              organization['id'] == activeOrganization['id']
+                          ? PopupMenuButton<String>(
+                              enabled: !_dataResetRunning,
+                              tooltip: 'Aktionen für diese Organisation',
+                              onSelected: (action) {
+                                if (action == 'reset-data') {
+                                  _resetData(
+                                    endpoint:
+                                        '/api/organizations/${organization['id']}/data-reset',
+                                    title: 'Organisationsdaten zurücksetzen',
+                                    targetName:
+                                        organization['name']?.toString() ??
+                                        'Organisation',
+                                    edvNumber:
+                                        organization['edvNumber']?.toString() ??
+                                        '',
+                                    scopeDescription:
+                                        'Alle fachlichen Daten dieser Organisation und aller Unterorganisationen werden gelöscht.',
+                                  );
+                                }
+                              },
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: 'reset-data',
+                                  child: ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Icon(Icons.delete_sweep_outlined),
+                                    title: Text(
+                                      'Alle Organisationsdaten löschen',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : null,
                     ),
                   ),
                 const SizedBox(height: 24),
@@ -746,6 +904,21 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                   if (action == 'archive') {
                                     _transferAndArchive(unit, units);
                                   }
+                                  if (action == 'reset-data') {
+                                    _resetData(
+                                      endpoint:
+                                          '/api/organization-units/${unit['id']}/data-reset',
+                                      title:
+                                          'Daten der Unterorganisation zurücksetzen',
+                                      targetName:
+                                          unit['name']?.toString() ??
+                                          'Organisationseinheit',
+                                      edvNumber:
+                                          unit['edvNumber']?.toString() ?? '',
+                                      scopeDescription:
+                                          'Alle fachlichen Daten dieser Organisationseinheit und ihrer Untereinheiten werden gelöscht.',
+                                    );
+                                  }
                                 },
                                 itemBuilder: (_) => [
                                   if (unit['canManageStructure'] == true &&
@@ -777,6 +950,12 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                     const PopupMenuItem(
                                       value: 'archive',
                                       child: Text('Übertragen und archivieren'),
+                                    ),
+                                  if (unit['canManageStructure'] == true &&
+                                      unit['parentId'] != null)
+                                    const PopupMenuItem(
+                                      value: 'reset-data',
+                                      child: Text('Alle Daten löschen'),
                                     ),
                                 ],
                               )

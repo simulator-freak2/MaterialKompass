@@ -22,8 +22,12 @@ fi
 
 cd "$FLUTTER_ROOT"
 flutter pub get
+FIREBASE_DEFINES=()
+for name in FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_PROJECT_ID; do
+  if [[ -n "${!name:-}" ]]; then FIREBASE_DEFINES+=("--dart-define=$name=${!name}"); fi
+done
 flutter build macos --release --build-name="$VERSION" --build-number="$BUILD_NUMBER" \
-  --dart-define="API_BASE_URL=$API_BASE_URL"
+  --dart-define="API_BASE_URL=$API_BASE_URL" "${FIREBASE_DEFINES[@]}"
 
 if [[ "$SIGNED_BUILD" == true ]]; then
   codesign --force --deep --options runtime --timestamp \

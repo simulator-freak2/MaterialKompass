@@ -149,6 +149,7 @@ test('runtime configuration validates network settings', () => {
     LEGAL_ACCOUNT_BASIS: 'Art. 6 Abs. 1 lit. b DSGVO',
     LEGAL_OPERATIONS_BASIS: 'Art. 6 Abs. 1 lit. f DSGVO',
     LEGAL_LEGITIMATE_INTERESTS: 'Sichere interne Materialverwaltung',
+    LEGAL_TRANSFERS: 'Firebase-Übermittlung und geeignete Garantien sind dokumentiert.',
     DB_HOST: 'database',
     PORT: '4000',
   };

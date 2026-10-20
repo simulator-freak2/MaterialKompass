@@ -361,54 +361,6 @@ function createPasskeyAuth({
     return res.status(204).end();
   });
 
-  app.post('/api/auth/mfa/passkey/options', authRateLimit, async (req, res) => {
-    const pending = userMfa.pendingChallenge(req.body.challenge);
-    if (!pending) return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    const userPasskeys = passkeysFor(pending.user.id);
-    if (userPasskeys.length === 0) {
-      return res.status(409).json({ error: 'Für dieses Konto ist kein Passkey-Gerät eingerichtet.' });
-    }
-    const options = await webauthn.generateAuthenticationOptions({
-      rpID: config.rpID,
-      timeout: CEREMONY_TIMEOUT_MS,
-      userVerification: 'required',
-      allowCredentials: userPasskeys.map((entry) => ({
-        id: entry.credentialId,
-        transports: entry.transports || [],
-      })),
-    });
-    const challengeId = issueChallenge({
-      purpose: 'mfa-authentication',
-      challenge: options.challenge,
-      userId: pending.user.id,
-      mfaChallengeId: pending.id,
-      securityVersion: securityVersion(pending.user),
-    });
-    logEvent('mfa_passkey_prompted', 'User', { id: pending.user.id }, pending.user.username);
-    return res.json({ challengeId, options, expiresIn: CHALLENGE_TTL_MS / 1000 });
-  });
-
-  app.post('/api/auth/mfa/passkey/verify', authRateLimit, async (req, res) => {
-    const challenge = consumeChallenge(req.body.challengeId, 'mfa-authentication');
-    const user = challenge && users.find((entry) => entry.id === challenge.userId);
-    if (!challenge || !user || challenge.securityVersion !== securityVersion(user)) {
-      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    }
-    const result = await verifyPasskeyAssertion(challenge, req.body.credential, {
-      expectedUserId: user.id,
-    });
-    if (!result) {
-      logEvent('mfa_passkey_failed', 'User', { id: user.id }, user.username);
-      return res.status(401).json({ error: GENERIC_AUTH_ERROR });
-    }
-    await recordPasskeyUse(result);
-    return userMfa.completeChallenge(challenge.mfaChallengeId, user, res, {
-      valid: true,
-      recovery: false,
-      method: 'passkey',
-    }, req);
-  });
-
   app.post('/api/auth/passkey/options', authRateLimit, async (_req, res) => {
     const options = await webauthn.generateAuthenticationOptions({
       rpID: config.rpID,

@@ -59,6 +59,7 @@ async function start() {
     data.users = userData.users;
     data.roles = userData.roles;
     data.passkeys = userData.passkeys || [];
+    data.mfaPushDevices = userData.mfaPushDevices || [];
 
     const app = createApp({ userStore: store, userData, data, dataStore: store });
     await app.locals.runAsSystem(async () => {

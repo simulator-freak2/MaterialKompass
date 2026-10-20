@@ -7,6 +7,7 @@ import '../widgets/mfa_dialogs.dart';
 import '../services/api_client.dart';
 import '../services/download_service.dart';
 import '../services/passkey_service.dart';
+import '../services/push_mfa_service.dart';
 import 'legal_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -30,6 +31,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic>? user;
   List<Map<String, dynamic>> qrCredentials = [];
   List<Map<String, dynamic>> passkeyCredentials = [];
+  List<Map<String, dynamic>> pushMfaDevices = [];
   Map<String, String> get headers => {
     'Authorization': 'Bearer ${widget.token}',
     'Content-Type': 'application/json',
@@ -60,7 +62,11 @@ class _ProfilePageState extends State<ProfilePage> {
       user = jsonDecode(response.body)['user'];
       email.text = user!['email'];
       setState(() {});
-      await Future.wait([loadQrCredentials(), loadPasskeys()]);
+      await Future.wait([
+        loadQrCredentials(),
+        loadPasskeys(),
+        loadPushMfaDevices(),
+      ]);
     }
   }
 
@@ -83,6 +89,17 @@ class _ProfilePageState extends State<ProfilePage> {
       final loaded = await passkeyService.list(token: widget.token);
       if (!mounted) return;
       passkeyCredentials = loaded;
+      setState(() {});
+    } on ApiException catch (error) {
+      if (mounted) message(error.message);
+    }
+  }
+
+  Future<void> loadPushMfaDevices() async {
+    try {
+      final loaded = await PushMfaService.instance.list(token: widget.token);
+      if (!mounted) return;
+      pushMfaDevices = loaded;
       setState(() {});
     } on ApiException catch (error) {
       if (mounted) message(error.message);
@@ -450,6 +467,47 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> registerPushMfaDevice() async {
+    final confirmation = await passkeyConfirmation(
+      title: 'Dieses Gerät für Push-2-FA registrieren',
+      includeName: true,
+    );
+    if (confirmation == null) return;
+    try {
+      await PushMfaService.instance.enroll(
+        token: widget.token,
+        name: confirmation['name']!,
+        currentPassword: confirmation['currentPassword']!,
+        code: confirmation['code'] ?? '',
+      );
+      if (!mounted) return;
+      message('Push-2-FA wurde eingerichtet. Melden Sie sich erneut an.');
+      widget.onAccountDeleted();
+    } on ApiException catch (error) {
+      if (mounted) message(error.message);
+    }
+  }
+
+  Future<void> revokePushMfaDevice(Map<String, dynamic> device) async {
+    final confirmation = await passkeyConfirmation(
+      title: 'Push-Gerät „${device['name']}“ entfernen?',
+    );
+    if (confirmation == null) return;
+    try {
+      await PushMfaService.instance.revoke(
+        token: widget.token,
+        deviceId: device['id'].toString(),
+        currentPassword: confirmation['currentPassword']!,
+        code: confirmation['code'] ?? '',
+      );
+      if (!mounted) return;
+      message('Push-Gerät entfernt. Melden Sie sich erneut an.');
+      widget.onAccountDeleted();
+    } on ApiException catch (error) {
+      if (mounted) message(error.message);
+    }
+  }
+
   String passkeyDate(Object? value) {
     final parsed = DateTime.tryParse(value?.toString() ?? '');
     if (parsed == null) return 'nie';
@@ -669,6 +727,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     user!['mfa'] as Map? ?? const {},
                   );
                   final enabled = mfa['enabled'] == true;
+                  final pushEnabled = mfa['pushEnabled'] == true;
                   final required = mfa['required'] == true;
                   final strongConfigured =
                       mfa['strongAuthenticationConfigured'] == true;
@@ -676,7 +735,11 @@ class _ProfilePageState extends State<ProfilePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        enabled
+                        enabled && pushEnabled
+                            ? 'Authenticator-Codes und Push-Bestätigung aktiv${required ? ' · verpflichtend' : ''}'
+                            : pushEnabled
+                            ? 'Push-Bestätigung aktiv${required ? ' · verpflichtend' : ''}'
+                            : enabled
                             ? 'Aktiv · ${mfa['recoveryCodesRemaining'] ?? 0} Wiederherstellungscodes verfügbar${required ? ' · verpflichtend' : ''}'
                             : required && strongConfigured
                             ? 'Authenticator-App nicht eingerichtet · die Pflicht zur starken Anmeldung wird durch einen Passkey erfüllt'
@@ -702,7 +765,9 @@ class _ProfilePageState extends State<ProfilePage> {
                               label: const Text('Recovery-Codes erneuern'),
                             ),
                           if (enabled &&
-                              (!required || passkeyCredentials.isNotEmpty))
+                              (!required ||
+                                  passkeyCredentials.isNotEmpty ||
+                                  pushMfaDevices.isNotEmpty))
                             TextButton.icon(
                               onPressed: disableMfa,
                               icon: const Icon(Icons.no_encryption),
@@ -714,6 +779,50 @@ class _ProfilePageState extends State<ProfilePage> {
                   );
                 },
               ),
+              const SizedBox(height: 20),
+              Text(
+                'Push-Bestätigung',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const Text(
+                'Ein Anmeldeversuch sendet eine Benachrichtigung an die registrierte '
+                'MaterialKompass-App. Dort wird nur „Warst du das?“ gefragt.',
+              ),
+              const SizedBox(height: 12),
+              if (PushMfaService.configured)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    onPressed: registerPushMfaDevice,
+                    icon: const Icon(Icons.add_alert_outlined),
+                    label: const Text('Dieses Gerät registrieren'),
+                  ),
+                )
+              else
+                const Text(
+                  'Dieser App-Build enthält noch keine Firebase-Push-Konfiguration.',
+                ),
+              const SizedBox(height: 8),
+              if (pushMfaDevices.isEmpty)
+                const Text('Kein Push-Gerät registriert.')
+              else
+                ...pushMfaDevices.map(
+                  (device) => Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.phone_android_outlined),
+                      title: Text(device['name'].toString()),
+                      subtitle: Text(
+                        '${device['platform'] ?? 'App'} · zuletzt verwendet: '
+                        '${passkeyDate(device['lastUsedAt'])}',
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Push-Gerät entfernen',
+                        onPressed: () => revokePushMfaDevice(device),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ),
+                  ),
+                ),
               const Divider(height: 48),
               Text(
                 'QR-Anmeldung',

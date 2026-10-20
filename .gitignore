@@ -45,3 +45,7 @@ backups/
 releases/*
 !releases/.gitkeep
 releases-*/
+
+# Firebase-/Push-Zugangsdaten bleiben ausschließlich auf dem Zielsystem.
+secrets/*
+!secrets/.gitkeep

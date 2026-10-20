@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:barcode_widget/barcode_widget.dart' as bw;
@@ -6,8 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
-import '../services/api_client.dart';
-import '../services/passkey_service.dart';
 
 Map<String, dynamic> _object(http.Response response) {
   if (response.body.isEmpty) return {};
@@ -23,142 +22,198 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
   final methods = (challenge['methods'] as List? ?? const [])
       .map((entry) => entry.toString())
       .toSet();
-  final passkeys =
-      methods.contains('passkey') && PasskeyService.platformSupported
-      ? PasskeyService()
-      : null;
+  final pushAvailable = methods.contains('push');
+  final codeAvailable =
+      methods.contains('totp') || methods.contains('recovery_code');
   String? error;
+  String? pushStatus;
   var submitting = false;
+  var pushStarted = false;
+  var dialogClosed = false;
+
+  Future<void> startPush(
+    StateSetter setDialogState,
+    BuildContext dialogContext,
+  ) async {
+    try {
+      final startedResponse = await http.post(
+        Uri.parse('$apiBaseUrl/api/auth/mfa/push/start'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'challenge': challenge['challenge']}),
+      );
+      final started = _object(startedResponse);
+      if (startedResponse.statusCode != 200) {
+        throw started['error']?.toString() ??
+            'Die Push-Benachrichtigung konnte nicht gesendet werden.';
+      }
+      if (!dialogContext.mounted || dialogClosed) return;
+      setDialogState(() {
+        pushStatus =
+            'Push gesendet. Öffne die MaterialKompass-App auf deinem '
+            'registrierten Gerät und bestätige oder lehne die Anmeldung ab.';
+      });
+      final approvalId = started['approvalId'];
+      final expiresAt = DateTime.tryParse(
+        started['expiresAt']?.toString() ?? '',
+      );
+      while (!dialogClosed && dialogContext.mounted) {
+        if (expiresAt != null && !DateTime.now().isBefore(expiresAt)) {
+          throw 'Die Push-Anfrage ist abgelaufen.';
+        }
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (dialogClosed || !dialogContext.mounted) return;
+        final statusResponse = await http.post(
+          Uri.parse('$apiBaseUrl/api/auth/mfa/push/status'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'challenge': challenge['challenge'],
+            'approvalId': approvalId,
+          }),
+        );
+        final status = _object(statusResponse);
+        if (statusResponse.statusCode == 202) continue;
+        if (statusResponse.statusCode == 200 && status['token'] != null) {
+          if (dialogContext.mounted) Navigator.pop(dialogContext, status);
+          return;
+        }
+        throw status['error']?.toString() ??
+            'Die Push-Anfrage konnte nicht bestätigt werden.';
+      }
+    } catch (pushError) {
+      if (!dialogClosed && dialogContext.mounted) {
+        setDialogState(() {
+          error = pushError.toString();
+          pushStatus = null;
+        });
+      }
+    }
+  }
+
   try {
     return await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Zwei-Faktor-Authentifizierung'),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  passkeys == null
-                      ? 'Geben Sie den sechsstelligen Code Ihrer Authenticator-App '
-                            'oder einen Wiederherstellungscode ein.'
-                      : 'Bestätigen Sie die Anmeldung per Push-/Gerätefreigabe mit '
-                            'Passwort, PIN oder Biometrie. Alternativ können Sie einen '
-                            'Code verwenden.',
-                ),
-                if (passkeys != null) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: submitting
-                          ? null
-                          : () async {
-                              setDialogState(() {
-                                submitting = true;
-                                error = null;
-                              });
-                              try {
-                                final data = await passkeys.approveMfa(
-                                  challenge: challenge['challenge'].toString(),
-                                );
-                                if (dialogContext.mounted) {
-                                  Navigator.pop(dialogContext, data);
-                                }
-                              } on ApiException catch (exception) {
-                                if (dialogContext.mounted) {
-                                  setDialogState(() {
-                                    error = exception.message;
-                                    submitting = false;
-                                  });
-                                }
-                              }
-                            },
-                      icon: const Icon(Icons.phonelink_lock_outlined),
-                      label: const Text('Per Push / Gerät bestätigen'),
+        builder: (dialogContext, setDialogState) {
+          if (pushAvailable && !pushStarted) {
+            pushStarted = true;
+            pushStatus = 'Push-Benachrichtigung wird gesendet …';
+            unawaited(startPush(setDialogState, dialogContext));
+          }
+          return AlertDialog(
+            title: const Text('Zwei-Faktor-Authentifizierung'),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    !pushAvailable
+                        ? 'Geben Sie den sechsstelligen Code Ihrer Authenticator-App '
+                              'oder einen Wiederherstellungscode ein.'
+                        : 'Bestätige in der MaterialKompass-App auf deinem registrierten '
+                              'Gerät, ob du diese Anmeldung gestartet hast.',
+                  ),
+                  if (pushAvailable) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.only(top: 2),
+                          child: Icon(Icons.notifications_active_outlined),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(pushStatus ?? error ?? '')),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Divider(),
+                    if (codeAvailable) ...[
+                      const SizedBox(height: 12),
+                      const Divider(),
+                      const Text('Alternativ kannst du einen Code verwenden.'),
+                    ],
+                  ],
+                  if (codeAvailable) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: code,
+                      autofocus: !pushAvailable,
+                      autofillHints: const [AutofillHints.oneTimeCode],
+                      keyboardType: TextInputType.text,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      textCapitalization: TextCapitalization.characters,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        labelText: '2-FA-Code',
+                        errorText: error,
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
                 ],
-                const SizedBox(height: 16),
-                TextField(
-                  controller: code,
-                  autofocus: true,
-                  autofillHints: const [AutofillHints.oneTimeCode],
-                  keyboardType: TextInputType.text,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  textCapitalization: TextCapitalization.characters,
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    labelText: '2-FA-Code',
-                    errorText: error,
-                    border: const OutlineInputBorder(),
-                  ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: submitting
+                    ? null
+                    : () => Navigator.pop(dialogContext),
+                child: const Text('Abbrechen'),
+              ),
+              if (codeAvailable)
+                OutlinedButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            submitting = true;
+                            error = null;
+                          });
+                          try {
+                            final response = await http.post(
+                              Uri.parse('$apiBaseUrl/api/auth/mfa/verify'),
+                              headers: {'Content-Type': 'application/json'},
+                              body: jsonEncode({
+                                'challenge': challenge['challenge'],
+                                'code': code.text.trim(),
+                              }),
+                            );
+                            final data = _object(response);
+                            if (!dialogContext.mounted) return;
+                            if (response.statusCode == 200) {
+                              Navigator.pop(dialogContext, data);
+                            } else {
+                              setDialogState(() {
+                                error =
+                                    data['error']?.toString() ??
+                                    'Der Code konnte nicht geprüft werden.';
+                                submitting = false;
+                              });
+                            }
+                          } catch (_) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                error = 'Keine Verbindung zum Server.';
+                                submitting = false;
+                              });
+                            }
+                          }
+                        },
+                  child: submitting
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Bestätigen'),
                 ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Abbrechen'),
-            ),
-            OutlinedButton(
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      setDialogState(() {
-                        submitting = true;
-                        error = null;
-                      });
-                      try {
-                        final response = await http.post(
-                          Uri.parse('$apiBaseUrl/api/auth/mfa/verify'),
-                          headers: {'Content-Type': 'application/json'},
-                          body: jsonEncode({
-                            'challenge': challenge['challenge'],
-                            'code': code.text.trim(),
-                          }),
-                        );
-                        final data = _object(response);
-                        if (!dialogContext.mounted) return;
-                        if (response.statusCode == 200) {
-                          Navigator.pop(dialogContext, data);
-                        } else {
-                          setDialogState(() {
-                            error =
-                                data['error']?.toString() ??
-                                'Der Code konnte nicht geprüft werden.';
-                            submitting = false;
-                          });
-                        }
-                      } catch (_) {
-                        if (dialogContext.mounted) {
-                          setDialogState(() {
-                            error = 'Keine Verbindung zum Server.';
-                            submitting = false;
-                          });
-                        }
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Bestätigen'),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   } finally {
-    passkeys?.close();
+    dialogClosed = true;
     code.dispose();
   }
 }

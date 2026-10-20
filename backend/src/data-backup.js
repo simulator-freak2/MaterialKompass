@@ -2,8 +2,21 @@ const { randomUUID } = require('node:crypto');
 const { rawCollection, DEFAULT_ORGANIZATION_ID, DEFAULT_UNIT_ID } = require('./tenancy');
 
 const BACKUP_FORMAT = 'MaterialKompass Gesamtdatensicherung';
-const BACKUP_SCHEMA_VERSION = 2;
+const BACKUP_SCHEMA_VERSION = 3;
+const LEGACY_BACKUP_SCHEMA_VERSION = 2;
 const MAX_BACKUP_RECORDS = 500_000;
+const REQUIRED_BACKUP_SECTIONS = new Set([
+  'users', 'roles', 'organizations', 'organizationUnits', 'memberships',
+]);
+
+const BACKUP_SECTION_DESCRIPTIONS = Object.freeze({
+  users: 'Konten und Anmeldedaten (Identitätsfelder bleiben verschlüsselt)',
+  roles: 'Rollen und Berechtigungen',
+  passkeys: 'Öffentliche Passkey-Anmeldedaten',
+  organizations: 'Organisationen',
+  organizationUnits: 'Organisationseinheiten und Hierarchie',
+  memberships: 'Organisationszuordnungen der Konten',
+});
 
 function uniqueValues(entries, field) {
   const values = entries.map((entry) => String(entry?.[field] || '').trim().toLowerCase());
@@ -18,24 +31,66 @@ function uniqueRoleNames(roles) {
     && new Set(values).size === values.length;
 }
 
+function sectionData(input, requiredNames) {
+  if (input.schemaVersion === LEGACY_BACKUP_SCHEMA_VERSION) {
+    if (!input.data || typeof input.data !== 'object' || Array.isArray(input.data)) {
+      throw Object.assign(new Error('Die Sicherungsdatei enthält keinen gültigen Datenbestand.'), { status: 400 });
+    }
+    return input.data;
+  }
+  if (!Array.isArray(input.sections)) {
+    throw Object.assign(new Error('Die Sicherungsdatei enthält keine gültigen Sektionen.'), { status: 400 });
+  }
+  const allowedNames = new Set(requiredNames);
+  const sections = new Map();
+  for (const section of input.sections) {
+    if (!section || typeof section !== 'object' || Array.isArray(section)) {
+      throw Object.assign(new Error('Mindestens eine Sicherungssektion ist ungültig.'), { status: 400 });
+    }
+    const name = String(section.name || '');
+    if (!allowedNames.has(name)) {
+      throw Object.assign(new Error(`Die Sicherungssektion „${name || '?'}“ ist unbekannt.`), { status: 400 });
+    }
+    if (sections.has(name)) {
+      throw Object.assign(new Error(`Die Sicherungssektion „${name}“ ist doppelt enthalten.`), { status: 400 });
+    }
+    if (section.enabled === false) {
+      if (REQUIRED_BACKUP_SECTIONS.has(name)) {
+        throw Object.assign(new Error(`Die Pflichtsektion „${name}“ darf nicht deaktiviert werden.`), { status: 400 });
+      }
+      sections.set(name, []);
+      continue;
+    }
+    if (!Array.isArray(section.records)) {
+      throw Object.assign(new Error(`Die Sicherungssektion „${name}“ enthält keine Datensatzliste.`), { status: 400 });
+    }
+    sections.set(name, section.records);
+  }
+  for (const name of REQUIRED_BACKUP_SECTIONS) {
+    if (!sections.has(name)) {
+      throw Object.assign(new Error(`Die Pflichtsektion „${name}“ fehlt.`), { status: 400 });
+    }
+  }
+  return Object.fromEntries(requiredNames.map((name) => [name, sections.get(name) || []]));
+}
+
 async function validatedBackup(input, collectionNames, identityProtection) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw Object.assign(new Error('Die Sicherungsdatei ist kein JSON-Objekt.'), { status: 400 });
   }
-  if (input.format !== BACKUP_FORMAT || input.schemaVersion !== BACKUP_SCHEMA_VERSION) {
+  if (input.format !== BACKUP_FORMAT
+      || ![LEGACY_BACKUP_SCHEMA_VERSION, BACKUP_SCHEMA_VERSION].includes(input.schemaVersion)) {
     throw Object.assign(new Error('Die Datei ist keine unterstützte MaterialKompass-Sicherung.'), { status: 400 });
-  }
-  if (!input.data || typeof input.data !== 'object' || Array.isArray(input.data)) {
-    throw Object.assign(new Error('Die Sicherungsdatei enthält keinen gültigen Datenbestand.'), { status: 400 });
   }
 
   const requiredNames = ['users', 'roles', 'passkeys', ...collectionNames];
+  const protectedData = sectionData(input, requiredNames);
   let recordCount = 0;
   for (const name of requiredNames) {
-    if (!Array.isArray(input.data[name])) {
+    if (!Array.isArray(protectedData[name])) {
       throw Object.assign(new Error(`Die Sammlung „${name}“ fehlt oder ist ungültig.`), { status: 400 });
     }
-    recordCount += input.data[name].length;
+    recordCount += protectedData[name].length;
   }
   if (recordCount > MAX_BACKUP_RECORDS) {
     throw Object.assign(new Error('Die Sicherung enthält zu viele Datensätze.'), { status: 413 });
@@ -46,7 +101,7 @@ async function validatedBackup(input, collectionNames, identityProtection) {
   }
   let data;
   try {
-    data = identityProtection.unprotectBackupData(input.data).data;
+    data = identityProtection.unprotectBackupData(protectedData).data;
   } catch (_) {
     throw Object.assign(new Error('Die Identitäten der Sicherung sind beschädigt oder nicht geschützt.'), { status: 400 });
   }
@@ -127,12 +182,25 @@ async function backupDocument(appData, collectionNames, applicationVersion, iden
       structuredClone(rawCollection(appData[name] || [])),
     ]),
   ]);
+  const protectedData = await identityProtection.protectBackupData(data);
   return {
     format: BACKUP_FORMAT,
     schemaVersion: BACKUP_SCHEMA_VERSION,
     applicationVersion,
     createdAt: new Date().toISOString(),
-    data: await identityProtection.protectBackupData(data),
+    editInstructions: [
+      'Diese UTF-8-JSON-Datei kann mit einem Texteditor bearbeitet werden.',
+      'Fehlerhafte einzelne Datensätze dürfen aus records entfernt werden.',
+      'Optionale Sektionen dürfen durch enabled=false deaktiviert oder vollständig entfernt werden.',
+      'Pflichtsektionen für Konten, Rollen und Organisationsstruktur müssen erhalten bleiben.',
+      'IDs und Verweise müssen nach einer Bearbeitung konsistent bleiben; der Import prüft dies vor dem Ersetzen.',
+    ],
+    sections: Object.entries(protectedData).map(([name, records]) => ({
+      name,
+      description: BACKUP_SECTION_DESCRIPTIONS[name] || `Datenbereich ${name}`,
+      enabled: true,
+      records,
+    })),
   };
 }
 
@@ -242,7 +310,7 @@ function registerDataBackupRoutes({
       );
       const date = createdAt.slice(0, 10);
       res.set('Content-Disposition', `attachment; filename="materialkompass-backup-${date}.json"`);
-      return res.json(backup);
+      return res.type('application/json').send(`${JSON.stringify(backup, null, 2)}\n`);
     },
   );
 
@@ -304,6 +372,7 @@ function registerDataBackupRoutes({
 module.exports = {
   BACKUP_FORMAT,
   BACKUP_SCHEMA_VERSION,
+  LEGACY_BACKUP_SCHEMA_VERSION,
   backupDocument,
   registerDataBackupRoutes,
   validatedBackup,

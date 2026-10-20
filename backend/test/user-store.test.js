@@ -125,6 +125,43 @@ test('application collections save only changed values in one transaction', asyn
   );
 });
 
+test('saving a full snapshot removes stale organization partitions', async () => {
+  const calls = [];
+  const connection = {
+    async beginTransaction() { calls.push('begin'); },
+    async query(sql, values) { calls.push({ sql, values }); },
+    async commit() { calls.push('commit'); },
+    async rollback() { calls.push('rollback'); },
+    release() { calls.push('release'); },
+  };
+  const database = {
+    createPool() {
+      return {
+        async query(sql) {
+          if (sql.startsWith('SELECT name')) {
+            return [{
+              name: 'locations', organization_id: 'org-a',
+              data_json: '[{"id":"loc-a","organizationId":"org-a"}]',
+            }];
+          }
+          return [];
+        },
+        async getConnection() { return connection; },
+        async end() {},
+      };
+    },
+  };
+  const store = createUserStore(database);
+  await store.loadCollections();
+  await store.saveCollections({ locations: [] });
+
+  const deletion = calls.find((entry) => entry?.sql?.startsWith(
+    'DELETE FROM application_collections WHERE organization_id',
+  ));
+  assert.deepEqual(deletion.values, ['org-a', 'locations']);
+  assert.deepEqual(calls.slice(-2), ['commit', 'release']);
+});
+
 test('complete backup replacement is written in one database transaction', async () => {
   const calls = [];
   const connection = {

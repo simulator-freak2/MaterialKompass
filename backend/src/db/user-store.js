@@ -164,13 +164,29 @@ function createUserStore(database = mariadb, options = {}) {
           REFERENCES users(id) ON DELETE CASCADE,
         CHECK (JSON_VALID(transports))
       )`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS user_mfa_push_devices (
+        id CHAR(36) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        platform ENUM('android', 'ios', 'macos') NOT NULL,
+        push_token TEXT CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        device_secret_hash BINARY(32) NOT NULL,
+        created_at DATETIME(3) NOT NULL,
+        last_used_at DATETIME(3) NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+          ON UPDATE CURRENT_TIMESTAMP(3),
+        INDEX idx_user_mfa_push_devices_user_id (user_id),
+        CONSTRAINT fk_user_mfa_push_devices_user FOREIGN KEY (user_id)
+          REFERENCES users(id) ON DELETE CASCADE
+      )`);
     },
 
     async load() {
-      const [userRows, roleRows, passkeyRows, protectionRows] = await Promise.all([
+      const [userRows, roleRows, passkeyRows, pushDeviceRows, protectionRows] = await Promise.all([
         pool.query('SELECT * FROM users'),
         pool.query('SELECT * FROM roles'),
         pool.query('SELECT * FROM user_passkeys'),
+        pool.query('SELECT * FROM user_mfa_push_devices'),
         pool.query(`SELECT state_value FROM identity_protection_state
           WHERE state_key = 'backup_format'`),
       ]);
@@ -219,6 +235,16 @@ function createUserStore(database = mariadb, options = {}) {
           deviceType: row.device_type,
           backedUp: Boolean(row.backed_up),
           name: row.name,
+          createdAt: iso(row.created_at),
+          lastUsedAt: iso(row.last_used_at),
+        })),
+        mfaPushDevices: pushDeviceRows.map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          name: row.name,
+          platform: row.platform,
+          pushToken: row.push_token,
+          secretHash: Buffer.from(row.device_secret_hash).toString('base64url'),
           createdAt: iso(row.created_at),
           lastUsedAt: iso(row.last_used_at),
         })),
@@ -324,6 +350,25 @@ function createUserStore(database = mariadb, options = {}) {
     async deleteUserPasskeys(userId) {
       await pool.query('DELETE FROM user_passkeys WHERE user_id = ?', [userId]);
     },
+    async saveMfaPushDevice(device) {
+      await pool.query(`INSERT INTO user_mfa_push_devices (
+        id, user_id, name, platform, push_token, device_secret_hash, created_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE name=VALUES(name), platform=VALUES(platform),
+        push_token=VALUES(push_token), last_used_at=VALUES(last_used_at)`, [
+        device.id,
+        device.userId,
+        device.name,
+        device.platform,
+        device.pushToken,
+        Buffer.from(device.secretHash, 'base64url'),
+        sqlDateTime(device.createdAt),
+        sqlDateTime(device.lastUsedAt),
+      ]);
+    },
+    async deleteMfaPushDevice(id) {
+      await pool.query('DELETE FROM user_mfa_push_devices WHERE id = ?', [id]);
+    },
     async getMailboxProcessingState(mailbox) {
       const rows = await pool.query(
         'SELECT * FROM mailbox_processing_state WHERE mailbox = ?',
@@ -408,11 +453,25 @@ function createUserStore(database = mariadb, options = {}) {
       ]).filter(([organizationId, name, plaintext]) =>
         serializedCollections.get(`${organizationId}:${name}`) !== plaintext
       );
-      if (entries.length === 0) return;
+      const currentKeys = new Set(partitions.map(([organizationId, name]) =>
+        `${organizationId}:${name}`));
+      const collectionNames = new Set(Object.keys(collections));
+      const staleKeys = [...serializedCollections.keys()].filter((key) => {
+        const separator = key.indexOf(':');
+        return collectionNames.has(key.slice(separator + 1)) && !currentKeys.has(key);
+      });
+      if (entries.length === 0 && staleKeys.length === 0) return;
       let connection;
       try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
+        for (const key of staleKeys) {
+          const separator = key.indexOf(':');
+          await connection.query(
+            'DELETE FROM application_collections WHERE organization_id = ? AND name = ?',
+            [key.slice(0, separator), key.slice(separator + 1)],
+          );
+        }
         for (const [organizationId, name, _plaintext, protectedJson] of entries) {
           await connection.query(`INSERT INTO application_collections
             (organization_id, name, data_json) VALUES (?, ?, ?)
@@ -420,6 +479,7 @@ function createUserStore(database = mariadb, options = {}) {
           [organizationId, name, protectedJson]);
         }
         await connection.commit();
+        staleKeys.forEach((key) => serializedCollections.delete(key));
         entries.forEach(([organizationId, name, plaintext]) => {
           serializedCollections.set(`${organizationId}:${name}`, plaintext);
         });

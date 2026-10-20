@@ -84,22 +84,29 @@ verwendbare Wiederherstellungscodes angezeigt. Diese Codes werden nur bei der
 Erstellung ausgegeben und serverseitig ausschließlich gehasht gespeichert.
 
 Admins entscheiden in der Nutzerverwaltung pro Konto, ob eine starke Anmeldung
-freiwillig oder verpflichtend ist. TOTP und Passkeys erfüllen diese Pflicht. Wird sie
+freiwillig oder verpflichtend ist. Push-2-FA, TOTP und Passkeys erfüllen diese Pflicht. Wird sie
 für ein noch nicht abgesichertes Konto aktiviert,
 gilt eine Einrichtungsfrist von 14 Tagen. Nach deren Ablauf erlaubt ein eingeschränktes
-Login nur noch die Einrichtung von TOTP oder eines Passkeys. Passwort-, persönliche
-QR- und persönliche Dienstgeräteanmeldungen durchlaufen bei eingerichtetem TOTP
-dieselbe kurzlebige, einmal verwendbare 2-FA-Challenge. Ist ausschließlich ein Passkey
+Login nur noch die Einrichtung von Push-2-FA, TOTP oder eines Passkeys. Passwort-, persönliche
+QR- und persönliche Dienstgeräteanmeldungen durchlaufen bei eingerichtetem Push-2-FA
+oder TOTP dieselbe kurzlebige, einmal verwendbare 2-FA-Challenge. Ist ausschließlich ein Passkey
 eingerichtet und starke Anmeldung verpflichtend, muss die Passkey-Anmeldung verwendet
 werden. Eine gerätebezogene MFA bleibt davon unabhängig.
 
-Sind TOTP und mindestens ein Passkey eingerichtet, kann dieselbe 2-FA-Challenge ohne
-Code über **Push / Gerät bestätigen** abgeschlossen werden. Die WebAuthn-Systemabfrage
-verlangt Gerätepasswort, PIN, Biometrie oder einen Sicherheitsschlüssel. Je nach
-Passkey-Anbieter kann dabei auch ein verbundenes Smartphone per System-Push zur
-Freigabe angeboten werden. MaterialKompass selbst versendet keine freigebbaren Links
-und akzeptiert nur einen zum Konto gehörenden Passkey; Challenge und WebAuthn-Anfrage
-sind kurzlebig, einmal verwendbar und an die aktuelle Sicherheitsversion gebunden.
+Unter **Mein Account → Push-Bestätigung** kann die installierte Android-, iOS- oder
+macOS-App als vertrauenswürdiges Push-Gerät registriert werden. Danach sendet
+MaterialKompass bei einer Anmeldung eine Benachrichtigung mit der Frage **„Warst du
+das?“**. Ein Tippen öffnet in der App die Auswahl **Ja, bestätigen** oder **Nein,
+ablehnen**. Dafür sind weder Passkey noch Zahlencode erforderlich. Eine Anfrage ist
+höchstens zwei Minuten gültig und kann nur einmal beantwortet werden. Ist TOTP
+zusätzlich eingerichtet, bleibt der Code als Ausweichweg verfügbar.
+
+Firebase erhält für die Zustellung nur das technische Push-Token, eine zufällige
+Geräte-ID und eine zufällige Freigabe-ID. Die App besitzt zusätzlich ein separates, zufälliges Gerätegeheimnis im
+geschützten Systemspeicher; im Backend liegt davon nur ein SHA-256-Prüfwert. Daher
+reicht eine abgefangene Benachrichtigung oder Freigabe-ID nicht zur Bestätigung aus.
+Pro Konto können höchstens fünf Push-Geräte registriert und einzeln widerrufen werden.
+Passkeys bleiben davon unabhängig eine optionale passwortlose Anmeldemethode.
 
 2-FA-Geheimnisse werden mit AES-256-GCM und einem eigenen, zufälligen
 `MFA_ENCRYPTION_KEY` verschlüsselt. Aktivierung, Deaktivierung, Richtlinienänderungen,
@@ -500,6 +507,42 @@ nicht vor dem Ausfall oder Verlust des gesamten Servers. Für vollständige
 Ausfallsicherheit muss `BACKUP_DIR` zusätzlich verschlüsselt auf ein getrenntes System
 repliziert werden.
 
+### Editierbare JSON-Gesamtsicherung und gezieltes Zurücksetzen
+
+Plattformadministratoren können unter **Nutzerverwaltung → Datensicherung** eine
+portable JSON-Gesamtsicherung exportieren und wieder importieren. Das aktuelle
+`schemaVersion: 3` wird lesbar eingerückt ausgegeben und besteht aus benannten
+`sections`. Jede Sektion besitzt `records` mit einzeln entfernbaren Datensätzen. Eine
+optionale Sektion kann vor dem Import mit `enabled: false` vollständig ausgelassen oder
+aus der Datei entfernt werden. Die Pflichtsektionen `users`, `roles`, `organizations`,
+`organizationUnits` und `memberships` müssen vorhanden und aktiviert bleiben.
+
+Identitätswerte in Konten und denormalisierten Referenzen bleiben auch in der
+editierbaren Datei authentifiziert verschlüsselt. Sie dürfen nicht umgeschrieben
+werden; ein fehlerhafter vollständiger Datensatz kann entfernt werden, sofern danach
+alle Verweise konsistent sind. Der Import prüft Dateiformat, Größenlimits, eindeutige
+IDs, Organisationshierarchie, Mitgliedschaften, Rollen, Passkeys und mindestens einen
+aktiven Administrator, bevor er den Datenbestand transaktional ersetzt. JSON-
+Sicherungen mit `schemaVersion: 2` bleiben importierbar. Schema 1 wird wegen der damals
+noch ungeschützten Identitätswerte abgelehnt.
+
+Unter **Organisationen & Einheiten** können berechtigte Administratoren fachliche
+Daten gezielt zurücksetzen:
+
+- **Alle Organisationsdaten löschen** entfernt die fachlichen Daten der aktiven
+  Organisation einschließlich aller Unterorganisationen.
+- **Alle Daten löschen** an einer Unterorganisation entfernt deren fachliche Daten
+  einschließlich aller untergeordneten Einheiten.
+- Organisationsstruktur, Konten, Rollen, Passkeys und Nutzerfreigaben bleiben in beiden
+  Fällen erhalten, damit anschließend wieder Daten eingespielt werden können.
+
+Vor dem Zurücksetzen ist eine aktuelle Sicherung anzulegen. Die Aktion verlangt das
+aktuelle Admin-Passwort, bei aktivierter 2-FA zusätzlich einen Code, sowie die exakt
+angezeigte Bestätigung `DATEN <EDV-NUMMER> LÖSCHEN`. Sie wird mit Umfang und Anzahl der
+gelöschten Datensätze im Auditlog protokolliert. Ein JSON-Gesamtimport ersetzt weiterhin
+den kompletten Plattformbestand; eine bearbeitete Datei ist deshalb vorab in einer
+isolierten Testinstanz zu validieren.
+
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
 `JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `IDENTITY_KEYRING_MASTER_KEY`,
 `INITIAL_ADMIN_PASSWORD`, `APP_BASE_URL`, `CORS_ORIGIN`,
@@ -558,6 +601,10 @@ Für Passkeys muss anschließend
 `backend/src/db/migrations/20260830_user_passkeys.sql` ausgeführt werden. Die Migration
 speichert nur öffentliche Schlüssel, zufällige Credential-IDs, Zähler und technische
 Metadaten; private Passkey-Schlüssel werden nie an MaterialKompass übertragen.
+Für Push-2-FA muss zusätzlich
+`backend/src/db/migrations/20261018_mfa_push_devices.sql` ausgeführt werden. Push-Geräte
+werden bewusst nicht in portable Anwendungsexporte übernommen und müssen nach einer
+Wiederherstellung neu registriert werden.
 Für die getrennte Berechtigung zum Anlegen von Organisationen und Unterorganisationen
 muss außerdem `backend/src/db/migrations/20260925_organization_management_permission.sql`
 ausgeführt werden.
@@ -583,8 +630,8 @@ Erst der letzte Befehl veröffentlicht eine geprüfte `materialkompass-v2-…`-S
 und entfernt anschließend die früheren Klartext-Dumps. Vorher darf der Keyring weder
 gelöscht noch durch eine leere Datei ersetzt werden.
 Bereits heruntergeladene JSON-Gesamtsicherungen mit `schemaVersion: 1` liegen außerhalb
-der Server-Aufbewahrung und müssen nach der ersten geprüften v2-Sicherung manuell aus
-allen Ablagen entfernt werden; der Import akzeptiert nur noch Schema 2.
+der Server-Aufbewahrung und müssen nach der ersten geprüften v2- oder v3-Sicherung
+manuell aus allen Ablagen entfernt werden; der Import akzeptiert nur Schema 2 und 3.
 Bestehende Organisationsdaten erhalten beim Start automatisch eindeutige EDV-Nummern;
 für die erste Organisation wird dabei `GLIEDERUNGSNUMMER` verwendet. Die fachlichen
 Werte können anschließend unter **Organisationen & Einheiten** angepasst werden. Da
@@ -629,6 +676,20 @@ Die Web-API ist beim Build konfigurierbar:
 ```bash
 flutter build web --dart-define=API_BASE_URL=https://materialkompass.org
 ```
+
+Push-2-FA verwendet Firebase Cloud Messaging. Im Firebase-Projekt muss die HTTP-v1-API
+aktiviert sein. Der Server benötigt einen ausschließlich serverseitig gespeicherten
+Service-Account unter `secrets/firebase-service-account.json`; Compose bindet ihn
+schreibgeschützt ein. Die Datei ist durch `.gitignore` vom Repository ausgeschlossen.
+Android-, iOS- und macOS-Builds erhalten die nicht geheimen Firebase-Appkennungen über
+`FIREBASE_API_KEY`, `FIREBASE_APP_ID`, `FIREBASE_MESSAGING_SENDER_ID` und
+`FIREBASE_PROJECT_ID`; die vorhandenen Packaging-Skripte reichen sie als
+`--dart-define` weiter. Für iOS und macOS müssen zusätzlich Push Notifications und
+Background Modes/Remote notifications im Apple-Developer-Profil aktiviert sowie ein
+APNs-Schlüssel in Firebase hinterlegt werden. Push ist auf einem physischen Gerät zu
+prüfen. Wegen der verwendeten Firebase-Version setzen die mobilen Clients Android 7.0
+(API 24) beziehungsweise iOS 15 oder neuer voraus. Ohne vollständige
+Firebase-Konfiguration bleibt die Registrierung im Client deaktiviert.
 
 Für Passkeys müssen RP-ID und Origins exakt zur produktiven Domain passen:
 

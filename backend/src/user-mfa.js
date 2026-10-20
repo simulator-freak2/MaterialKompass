@@ -17,9 +17,12 @@ const SETUP_TTL_MS = 10 * 60 * 1000;
 
 function publicMfa(user) {
   const enabled = Boolean(user.mfaSecretEncrypted && user.mfaEnabledAt);
+  const pushDevices = Number(user.pushMfaDeviceCount || 0);
   const lastVerifiedAt = Date.parse(user.mfaLastVerifiedAt || '');
   return {
     enabled,
+    pushEnabled: pushDevices > 0,
+    pushDevices,
     required: user.mfaRequired === true,
     strongAuthenticationConfigured: strongAuthenticationEnabled(user),
     graceEndsAt: user.mfaGraceEndsAt || null,
@@ -36,8 +39,12 @@ function mfaEnabled(user) {
   return Boolean(user?.mfaSecretEncrypted && user?.mfaEnabledAt);
 }
 
+function authenticationEnabled(user) {
+  return mfaEnabled(user) || Number(user?.pushMfaDeviceCount || 0) > 0;
+}
+
 function strongAuthenticationEnabled(user) {
-  return mfaEnabled(user) || Number(user?.passkeyCount || 0) > 0;
+  return authenticationEnabled(user) || Number(user?.passkeyCount || 0) > 0;
 }
 
 function enrollmentRequired(user, now = Date.now()) {
@@ -63,6 +70,7 @@ function createUserMfa({
   saveUser = async () => {},
   logEvent = () => {},
   accountMailSender = async () => {},
+  resetPushDevices = async () => {},
   encryptionKey,
   securityVersion = () => '',
   now = Date.now,
@@ -90,6 +98,11 @@ function createUserMfa({
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
   }
 
+  function idForChallengeToken(token) {
+    if (typeof token !== 'string' || token.length > 256) return null;
+    return challengeHash(token);
+  }
+
   function issueChallenge(user, complete) {
     cleanChallenges();
     if (challenges.size >= 10_000) {
@@ -103,18 +116,18 @@ function createUserMfa({
       securityVersion: securityVersion(user),
       complete,
     });
-    const passkeyAvailable = Number(user.passkeyCount || 0) > 0;
+    const pushAvailable = Number(user.pushMfaDeviceCount || 0) > 0;
+    const codeAvailable = mfaEnabled(user);
     return {
       mfaRequired: true,
-      error: passkeyAvailable
-        ? 'Zwei-Faktor-Authentifizierung erforderlich. Bestätigen Sie die Anmeldung auf einem Passkey-Gerät oder verwenden Sie einen Code.'
+      error: pushAvailable
+        ? 'Zwei-Faktor-Authentifizierung erforderlich. Bestätigen Sie die Push-Anfrage in der MaterialKompass-App.'
         : 'Zwei-Faktor-Authentifizierung erforderlich. Verwenden Sie einen aktuellen Code.',
       challenge: token,
       expiresIn: CHALLENGE_TTL_MS / 1000,
       methods: [
-        ...(passkeyAvailable ? ['passkey'] : []),
-        'totp',
-        'recovery_code',
+        ...(pushAvailable ? ['push'] : []),
+        ...(codeAvailable ? ['totp', 'recovery_code'] : []),
       ],
     };
   }
@@ -126,12 +139,23 @@ function createUserMfa({
     const challenge = challenges.get(id);
     if (!challenge) return null;
     const user = users.find((entry) => entry.id === challenge.userId);
-    if (!user?.active || !user.emailVerifiedAt || !mfaEnabled(user)
+    if (!user?.active || !user.emailVerifiedAt || !authenticationEnabled(user)
         || challenge.securityVersion !== securityVersion(user)) {
       challenges.delete(id);
       return null;
     }
     return { id, challenge, user };
+  }
+
+  function refreshChallengeSecurityVersion(id, user) {
+    const challenge = challenges.get(id);
+    if (!challenge || challenge.userId !== user?.id) return false;
+    challenge.securityVersion = securityVersion(user);
+    return true;
+  }
+
+  function cancelChallenge(id) {
+    return challenges.delete(id);
   }
 
   async function completeChallenge(id, expectedUser, res, verification, req) {
@@ -266,9 +290,10 @@ function createUserMfa({
   });
 
   app.post('/api/users/me/mfa/disable', authMiddleware, async (req, res) => {
-    if (req.user.mfaRequired && Number(req.user.passkeyCount || 0) === 0) {
+    if (req.user.mfaRequired && Number(req.user.passkeyCount || 0) === 0
+        && Number(req.user.pushMfaDeviceCount || 0) === 0) {
       return res.status(409).json({
-        error: 'Für dieses Konto ist eine starke Anmeldung verpflichtend. Richten Sie vor dem Deaktivieren einen Passkey ein.',
+        error: 'Für dieses Konto ist eine starke Anmeldung verpflichtend. Richten Sie vor dem Deaktivieren einen anderen Faktor ein.',
       });
     }
     if (!await bcrypt.compare(req.body.currentPassword || '', req.user.passwordHash)) {
@@ -335,6 +360,8 @@ function createUserMfa({
     user.mfaRecoveryCodeHashes = [];
     user.mfaEnabledAt = null;
     user.mfaLastVerifiedAt = null;
+    await resetPushDevices(user.id);
+    user.pushMfaDeviceCount = 0;
     user.mfaGraceEndsAt = user.mfaRequired && !strongAuthenticationEnabled(user)
       ? new Date(now() + ENROLLMENT_GRACE_DAYS * 86_400_000).toISOString()
       : null;
@@ -347,14 +374,18 @@ function createUserMfa({
   });
 
   return {
+    cancelChallenge,
     completeChallenge,
+    authenticationEnabled,
     enrollmentRequired: (user) => enrollmentRequired(user, now()),
     issueChallenge,
+    idForChallengeToken,
     mfaEnabled,
     offlineMfaEligible: (user) => offlineMfaEligible(user, now()),
     pendingChallenge,
+    refreshChallengeSecurityVersion,
     passkeyRequired: (user) => user?.mfaRequired === true
-      && !mfaEnabled(user) && Number(user?.passkeyCount || 0) > 0,
+      && !authenticationEnabled(user) && Number(user?.passkeyCount || 0) > 0,
     publicMfa,
     strongAuthenticationEnabled,
     verifyUserCode,
@@ -366,6 +397,7 @@ module.exports = {
   CHALLENGE_TTL_MS,
   ENROLLMENT_GRACE_DAYS,
   OFFLINE_MFA_MAX_AGE_MS,
+  authenticationEnabled,
   createUserMfa,
   enrollmentRequired,
   mfaEnabled,

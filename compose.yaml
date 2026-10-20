@@ -124,6 +124,7 @@ services:
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
       IDENTITY_KEYRING_MASTER_KEY: ${IDENTITY_KEYRING_MASTER_KEY}
       IDENTITY_KEYRING_PATH: /var/lib/materialkompass-identity/keyring.enc
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
       MAILBOX_SERVER_HOST: ${MAILBOX_SERVER_HOST}
       SCANNER_EMAIL_DOMAIN: ${SCANNER_EMAIL_DOMAIN}
       DEFECT_IMAP_HOST: ${DEFECT_IMAP_HOST}
@@ -188,16 +189,17 @@ services:
       LEGAL_ACCOUNT_BASIS: ${LEGAL_ACCOUNT_BASIS}
       LEGAL_OPERATIONS_BASIS: ${LEGAL_OPERATIONS_BASIS}
       LEGAL_LEGITIMATE_INTERESTS: ${LEGAL_LEGITIMATE_INTERESTS}
+      LEGAL_TRANSFERS: ${LEGAL_TRANSFERS}
       DOWNLOAD_WINDOWS_PATH: /app/downloads/MaterialKompass-Windows.exe
       DOWNLOAD_LINUX_PATH: /app/downloads/MaterialKompass-Linux.deb
       DOWNLOAD_ANDROID_PATH: /app/downloads/MaterialKompass-Android.apk
       DOWNLOAD_IOS_PATH: /app/downloads/MaterialKompass-iOS.ipa
       DOWNLOAD_MACOS_PATH: /app/downloads/MaterialKompass-macOS.dmg
-      CLIENT_WINDOWS_VERSION: ${CLIENT_WINDOWS_VERSION:-1.5.6}
-      CLIENT_MACOS_VERSION: ${CLIENT_MACOS_VERSION:-1.5.6}
-      CLIENT_LINUX_VERSION: ${CLIENT_LINUX_VERSION:-1.5.6}
-      CLIENT_ANDROID_VERSION: ${CLIENT_ANDROID_VERSION:-1.5.6}
-      CLIENT_IOS_VERSION: ${CLIENT_IOS_VERSION:-1.5.6}
+      CLIENT_WINDOWS_VERSION: ${CLIENT_WINDOWS_VERSION:-1.5.7}
+      CLIENT_MACOS_VERSION: ${CLIENT_MACOS_VERSION:-1.5.7}
+      CLIENT_LINUX_VERSION: ${CLIENT_LINUX_VERSION:-1.5.7}
+      CLIENT_ANDROID_VERSION: ${CLIENT_ANDROID_VERSION:-1.5.7}
+      CLIENT_IOS_VERSION: ${CLIENT_IOS_VERSION:-1.5.7}
       CLIENT_WINDOWS_MIN_VERSION: ${CLIENT_WINDOWS_MIN_VERSION:-1.0.0}
       CLIENT_LINUX_MIN_VERSION: ${CLIENT_LINUX_MIN_VERSION:-1.0.0}
       CLIENT_ANDROID_MIN_VERSION: ${CLIENT_ANDROID_MIN_VERSION:-1.0.0}
@@ -209,6 +211,7 @@ services:
       - ./.deployments:/app/runtime:ro
       - materialkompass_mailbox_socket:/run/materialkompass
       - materialkompass_identity_keyring:/var/lib/materialkompass-identity
+      - ./secrets:/run/secrets:ro
     depends_on:
       db:
         condition: service_healthy

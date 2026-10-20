@@ -577,6 +577,7 @@ function registerTenancyRoutes({
   requirePermission, logEvent, persistOrganization = async () => {},
   persistUnit = async () => {}, persistMembership = async () => {},
   deleteUnit = async () => {}, deleteOrganizationData = async () => {},
+  persistCollections = async () => {}, verifyReauthentication = async () => false,
 }) {
   const text = (value, maximum = 160) => String(value || '').trim().slice(0, maximum);
   const edvNumber = (value) => normalizeEdvNumber(value).slice(0, 32);
@@ -592,14 +593,60 @@ function registerTenancyRoutes({
   );
   const unitIdsForPermission = (req, permission) => {
     const membership = membershipFor(req.user.id, req.tenant.organizationId);
-    return new Set((membership?.scopes || [])
-      .filter((scope) => (scope.roles || []).includes('Admin')
-        || rolePermissions(roles, membership.organizationId, scope.roles).includes(permission))
-      .map((scope) => scope.unitId));
+    const result = new Set();
+    for (const scope of membership?.scopes || []) {
+      const allowed = (scope.roles || []).includes('Admin')
+        || rolePermissions(roles, membership.organizationId, scope.roles).includes(permission);
+      if (!allowed) continue;
+      result.add(scope.unitId);
+      if (scope.includeDescendants === true) {
+        descendantsOf(units, membership.organizationId, scope.unitId)
+          .forEach((unitId) => result.add(unitId));
+      }
+    }
+    return result;
   };
   const canCreateOrganizationStructure = (req) =>
     req.user?.roles?.includes('Admin')
       && req.user?.permissions?.includes('organizations.write');
+
+  async function resetScopedData({ organizationId, unitIds = null, actor, target }) {
+    const snapshots = new Map();
+    const deletedByCollection = {};
+    let deleted = 0;
+    for (const name of ORGANIZATION_SCOPED_COLLECTIONS) {
+      const collection = rawCollection(app.locals.appData?.[name] || []);
+      if (!Array.isArray(collection)) continue;
+      snapshots.set(name, structuredClone(collection));
+      const retained = collection.filter((entry) => {
+        if (entry?.organizationId !== organizationId) return true;
+        if (unitIds && !unitIds.has(entry?.unitId)) return true;
+        return false;
+      });
+      const count = collection.length - retained.length;
+      if (count > 0) {
+        deletedByCollection[name] = count;
+        deleted += count;
+      }
+      collection.splice(0, collection.length, ...retained);
+    }
+    logEvent('reset-data', target.type, {
+      organizationId,
+      ...(target.unitId ? { unitId: target.unitId } : {}),
+      recordCount: deleted,
+      deletedByCollection,
+    }, actor);
+    try {
+      await persistCollections();
+    } catch (error) {
+      for (const [name, values] of snapshots) {
+        const collection = rawCollection(app.locals.appData?.[name] || []);
+        collection.splice(0, collection.length, ...values);
+      }
+      throw error;
+    }
+    return { deleted, deletedByCollection };
+  }
 
   const relatedUnitIds = (unit) => new Set([
     ...ancestorsOf(units, unit.organizationId, unit.id),
@@ -664,6 +711,38 @@ function registerTenancyRoutes({
     await persistMembership(memberships.at(-1));
     logEvent('create', 'Organization', { id: organization.id, name }, req.user.username);
     return res.status(201).json({ ...publicOrganization(organization), rootUnitId: root.id });
+  });
+
+  app.post('/api/organizations/:id/data-reset', authMiddleware, async (req, res) => {
+    const organization = organizations.find((entry) => entry.id === req.params.id
+      && entry.id === req.tenant.organizationId && entry.status === 'active');
+    const root = units.find((entry) => entry.organizationId === organization?.id
+      && entry.parentId === null && entry.status === 'active');
+    if (!organization || !root) {
+      return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    }
+    if (!canCreateOrganizationStructure(req)
+        || !unitIdsForPermission(req, 'organizations.write').has(root.id)) {
+      return res.status(403).json({ error: 'Die Organisationsdaten dürfen nicht zurückgesetzt werden.' });
+    }
+    const expectedConfirmation = `DATEN ${organization.edvNumber} LÖSCHEN`;
+    if (req.body.confirmation !== expectedConfirmation) {
+      return res.status(400).json({ error: `Zur Bestätigung muss „${expectedConfirmation}“ eingegeben werden.` });
+    }
+    if (!await verifyReauthentication(req.user, req.body)) {
+      return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
+    }
+    const result = await resetScopedData({
+      organizationId: organization.id,
+      actor: req.user.username,
+      target: { type: 'OrganizationData' },
+    });
+    return res.json({
+      ...result,
+      organizationId: organization.id,
+      preserved: ['organization', 'organizationUnits', 'memberships', 'users', 'roles', 'passkeys'],
+      reauthenticationRequired: true,
+    });
   });
 
   app.post('/api/updater/authorization', authMiddleware, (req, res) => {
@@ -913,6 +992,38 @@ function registerTenancyRoutes({
     await persistUnit(unit);
     logEvent('archive', 'OrganizationUnit', { id: unit.id, purgeAfter: unit.purgeAfter }, req.user.username);
     return res.json(unit);
+  });
+
+  app.post('/api/organization-units/:id/data-reset', authMiddleware, async (req, res) => {
+    const manageableUnitIds = unitIdsForPermission(req, 'organizations.write');
+    const unit = units.find((entry) => entry.id === req.params.id
+      && entry.organizationId === req.tenant.organizationId && entry.status === 'active');
+    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    if (!canCreateOrganizationStructure(req) || !manageableUnitIds.has(unit.id)) {
+      return res.status(403).json({ error: 'Die Daten dieser Organisationseinheit dürfen nicht zurückgesetzt werden.' });
+    }
+    const expectedConfirmation = `DATEN ${unit.edvNumber} LÖSCHEN`;
+    if (req.body.confirmation !== expectedConfirmation) {
+      return res.status(400).json({ error: `Zur Bestätigung muss „${expectedConfirmation}“ eingegeben werden.` });
+    }
+    if (!await verifyReauthentication(req.user, req.body)) {
+      return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
+    }
+    const affectedUnitIds = descendantsOf(units, unit.organizationId, unit.id);
+    const result = await resetScopedData({
+      organizationId: unit.organizationId,
+      unitIds: affectedUnitIds,
+      actor: req.user.username,
+      target: { type: 'OrganizationUnitData', unitId: unit.id },
+    });
+    return res.json({
+      ...result,
+      organizationId: unit.organizationId,
+      unitId: unit.id,
+      affectedUnitIds: [...affectedUnitIds],
+      preserved: ['organization', 'organizationUnits', 'memberships', 'users', 'roles', 'passkeys'],
+      reauthenticationRequired: true,
+    });
   });
 
   app.post('/api/organization-units/:id/transfer', authMiddleware, requirePermission('users.write'), async (req, res) => {

@@ -1,6 +1,6 @@
 # Datenschutz- und Rechtsbetrieb
 
-Stand: 28. Juli 2026
+Stand: 18. Oktober 2026
 
 Dieses Dokument beschreibt den technisch vorbereiteten Rechtsbetrieb von
 MaterialKompass. Es ist keine Rechtsberatung. Ob einzelne Vorschriften
@@ -15,6 +15,8 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
    Nicht zutreffende Alternativen in `backend/src/legal-config.js` entfernen.
 3. Für Hosting, E-Mail, Backups, Support und sonstige weisungsgebundene
    Dienstleister Auftragsverarbeitungsverträge nach Art. 28 DSGVO abschließen.
+   Bei aktivierter Push-2-FA gehören Firebase Cloud Messaging, die einschlägigen
+   Übermittlungen und Garantien ausdrücklich in diese Prüfung und Dokumentation.
 4. Verzeichnis der Verarbeitungstätigkeiten, Berechtigungskonzept,
    Löschkonzept, Datenschutzvorfall-Prozess und TOM-Nachweis freigeben.
 5. Prüfen, ob ein Datenschutzbeauftragter zu benennen ist. Für
@@ -47,7 +49,8 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
 - Datenbank ist im Compose-Betrieb nur intern erreichbar; Backend-Port ist an
   Loopback gebunden und für TLS-Betrieb hinter einem Reverse Proxy vorgesehen
 - Native Offline-Snapshots, Befehlswarteschlangen und QR-Prüfwerte werden im
-  geschützten Schlüsselspeicher des Betriebssystems abgelegt; QR-Geheimnisse
+  geschützten Schlüsselspeicher des Betriebssystems abgelegt. Das gilt auch für
+  Gerätekennung und separates Gerätegeheimnis der Push-2-FA; QR-Geheimnisse
   selbst werden nicht persistiert
 - Offlinefreigaben laufen nach sieben Tagen ab, sind pro Benutzer und Gerät
   widerrufbar und werden beim nächsten Serverkontakt erneut geprüft; persönliche
@@ -58,6 +61,7 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
 | Bereich | typische personenbezogene Daten | Zweck | Löschentscheidung |
 |---|---|---|---|
 | Konten | Name, Nutzername, E-Mail, Rollen, Anmeldezeiten, 2-FA-Status und verschlüsseltes TOTP-Geheimnis | Zugang und Berechtigungen | 24/36-Monats-Automatik oder berechtigtes Löschersuchen; Faktorwerte beim Reset sofort unbrauchbar machen |
+| Push-2-FA | Gerätebezeichnung, Plattform, FCM-Token, gehashter Geräteprüfwert sowie Versand-, Bestätigungs- und Ablehnungszeitpunkte | Zustellung und Absicherung einer Anmeldefreigabe | bei Gerätewiderruf oder Kontolöschung sofort löschen; kurzlebige Freigaben nur im Arbeitsspeicher |
 | Inventar/Kleidung | Empfänger, zugewiesene Person, Prüfer | Ausgabe, Rückgabe, Prüfung | nach organisationsspezifischem Fach- und Haftungskonzept |
 | Mängel | Meldende, Kontakte, Kommunikationsinhalte | Mangelbearbeitung und Nachweis | vorhandene Mängel-Aufbewahrungsregel, fachlich freizugeben |
 | Beschaffung | Antragstellende, Genehmigende, Lieferkontakte | Beschaffungsprozess und Nachweis | Steuer-/Handels-/Vergabefristen prüfen |
@@ -89,6 +93,14 @@ Anwendungsprotokollen gespeichert; identische Anfragen werden kurzzeitig im Spei
 zwischengespeichert. Vor Produktivbetrieb sind Geoapify, dessen Datenschutzhinweise
 und die erforderliche Auftragsverarbeitung in das Verzeichnis der
 Verarbeitungstätigkeiten aufzunehmen.
+
+Push-2-FA übermittelt an Firebase Cloud Messaging ein technisches Push-Token, eine
+zufällige Geräte-ID und eine zufällige, kurzlebige Freigabe-ID, jedoch weder Passwort
+noch Gerätegeheimnis. Vor dem
+Produktivbetrieb sind Firebase als Empfänger/Auftragsverarbeiter, die tatsächlichen
+Verarbeitungsorte, geeignete Garantien für mögliche Drittlandübermittlungen und die
+Lösch- beziehungsweise Widerrufsprozesse in Datenschutzinformation, AVV und VVT zu
+dokumentieren. `LEGAL_TRANSFERS` muss diese reale Konfiguration wiedergeben.
 
 ## Betroffenenanfragen
 

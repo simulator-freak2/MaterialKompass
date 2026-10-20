@@ -29,12 +29,12 @@ function legalInformation(env = process.env) {
     'LEGAL_DPO_NAME', 'LEGAL_DPO_EMAIL', 'LEGAL_DPO_ADDRESS',
     'LEGAL_SUPERVISORY_AUTHORITY', 'LEGAL_SUPERVISORY_ADDRESS',
     'LEGAL_SUPERVISORY_WEBSITE', 'LEGAL_ACCOUNT_BASIS',
-    'LEGAL_OPERATIONS_BASIS', 'LEGAL_LEGITIMATE_INTERESTS',
+    'LEGAL_OPERATIONS_BASIS', 'LEGAL_LEGITIMATE_INTERESTS', 'LEGAL_TRANSFERS',
   ];
   const hasDummies = Object.values(controller).some((entry) => entry.includes('[DUMMY'))
     || additionalFields.some((name) => value(env, name).includes('[DUMMY'));
   return {
-    version: '2026-07-28',
+    version: '2026-10-18',
     hasDummies,
     provider: controller,
     privacy: {
@@ -54,6 +54,7 @@ function legalInformation(env = process.env) {
         'Inventar-, Kleiderkammer-, Mängel- und Beschaffungsverwaltung',
         'Nachvollziehbarkeit sicherheits- und bestandsrelevanter Änderungen',
         'Bereitstellung, Absicherung und Fehleranalyse des Dienstes',
+        'Zustellung und Bestätigung optionaler Zwei-Faktor-Pushanfragen',
       ],
       legalBases: [
         `Konten und Authentifizierung: ${value(env, 'LEGAL_ACCOUNT_BASIS')}`,
@@ -63,9 +64,10 @@ function legalInformation(env = process.env) {
       recipients: [
         'Autorisierte Beschäftigte und Funktionsträger des Betreibers',
         'Beauftragte Hosting-, E-Mail- und IT-Dienstleister auf Grundlage eines Auftragsverarbeitungsvertrags',
+        'Google Firebase Cloud Messaging, wenn Push-2-FA für ein Konto aktiviert wird',
         'Behörden oder sonstige Stellen, soweit eine gesetzliche Verpflichtung besteht',
       ],
-      transfers: 'Eine Übermittlung in Drittländer ist nicht vorgesehen. Abweichungen sind vor Produktivbetrieb zu dokumentieren.',
+      transfers: value(env, 'LEGAL_TRANSFERS'),
       retention: [
         'Aktive Kontodaten: für die Dauer der Nutzungsberechtigung',
         'Inaktive Konten: Deaktivierung nach 24 Monaten, Löschung nach 36 Monaten ohne Anmeldung',
@@ -85,7 +87,7 @@ function legalInformation(env = process.env) {
       ],
       requiredData: 'Pflichtangaben sind für Anmeldung, Berechtigungsprüfung und die jeweiligen Fachvorgänge erforderlich. Ohne sie kann der Dienst ganz oder teilweise nicht genutzt werden.',
       automatedDecisions: 'Es findet keine automatisierte Entscheidungsfindung einschließlich Profiling im Sinne von Art. 22 DSGVO statt.',
-      localStorage: 'Die Anwendung verwendet ausschließlich technisch erforderliche lokale Einstellungen, etwa für konfigurierte Etikettendrucker. Es werden keine Analyse-, Marketing- oder Tracking-Technologien eingesetzt.',
+      localStorage: 'Die Anwendung verwendet ausschließlich technisch erforderliche lokale Einstellungen und Sicherheitswerte, etwa für konfigurierte Etikettendrucker, Offlinezugänge und registrierte Push-2-FA-Geräte. Es werden keine Analyse-, Marketing- oder Tracking-Technologien eingesetzt.',
     },
   };
 }
@@ -95,7 +97,7 @@ const requiredProductionFields = [
   'LEGAL_STREET', 'LEGAL_POSTAL_CODE', 'LEGAL_CITY', 'LEGAL_COUNTRY',
   'LEGAL_EMAIL', 'LEGAL_PHONE', 'LEGAL_SUPERVISORY_AUTHORITY',
   'LEGAL_SUPERVISORY_WEBSITE', 'LEGAL_ACCOUNT_BASIS',
-  'LEGAL_OPERATIONS_BASIS', 'LEGAL_LEGITIMATE_INTERESTS',
+  'LEGAL_OPERATIONS_BASIS', 'LEGAL_LEGITIMATE_INTERESTS', 'LEGAL_TRANSFERS',
 ];
 
 function validateLegalConfig(env = process.env) {

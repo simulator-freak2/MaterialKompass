@@ -166,8 +166,8 @@ function youthTenantData() {
   return data;
 }
 
-async function start(data = tenantData()) {
-  const app = createApp({ data, skipEmailVerification: true });
+async function start(data = tenantData(), options = {}) {
+  const app = createApp({ data, skipEmailVerification: true, ...options });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -214,6 +214,65 @@ test('organization context prevents cross-tenant reads and guessed foreign IDs',
     const listB = await request(baseUrl, '/api/material', { token: tokenB });
     assert.deepEqual(listB.data.map((entry) => entry.id), ['material-b']);
     assert.equal((await request(baseUrl, '/api/material/material-1', { token: tokenB })).response.status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('login restores the last selected organization and unit after a restart', async () => {
+  let persistedCollections;
+  const first = await start(tenantData(), {
+    dataStore: {
+      async saveCollections(collections) {
+        persistedCollections = structuredClone(collections);
+      },
+    },
+  });
+  try {
+    const token = await login(first.baseUrl, 'admin', 'MaterialKompass2026!');
+    const switched = await request(first.baseUrl, '/api/auth/context', {
+      token,
+      method: 'POST',
+      body: { organizationId: 'org-b', unitId: 'unit-b' },
+    });
+    assert.equal(switched.response.status, 200);
+    assert.equal(
+      persistedCollections.memberships.find((entry) =>
+        entry.id === 'membership-admin-b').lastUnitId,
+      'unit-b',
+    );
+  } finally {
+    await new Promise((resolve) => first.server.close(resolve));
+  }
+
+  const restartedData = { ...tenantData(), ...persistedCollections };
+  const second = await start(restartedData);
+  try {
+    const token = await login(second.baseUrl, 'admin', 'MaterialKompass2026!');
+    const me = await request(second.baseUrl, '/api/auth/me', { token });
+    assert.equal(me.response.status, 200);
+    assert.equal(me.data.context.organization.id, 'org-b');
+    assert.equal(me.data.context.unit.id, 'unit-b');
+  } finally {
+    await new Promise((resolve) => second.server.close(resolve));
+  }
+});
+
+test('login ignores a remembered context after its access was revoked', async () => {
+  const data = tenantData();
+  const remembered = data.memberships.find((entry) =>
+    entry.id === 'membership-admin-b');
+  remembered.lastSelected = true;
+  remembered.lastUnitId = 'unit-b';
+  remembered.status = 'inactive';
+
+  const { server, baseUrl } = await start(data);
+  try {
+    const token = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const me = await request(baseUrl, '/api/auth/me', { token });
+    assert.equal(me.response.status, 200);
+    assert.equal(me.data.context.organization.id, 'org-a');
+    assert.equal(me.data.context.unit.id, 'unit-a');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -344,6 +403,85 @@ test('only admins with organization permission create organizations and suborgan
     assert.equal(unit.response.status, 403);
   } finally {
     await new Promise((resolve) => missingPermission.server.close(resolve));
+  }
+});
+
+test('organization data reset deletes tenant data but preserves structure and access', async () => {
+  const { app, server, baseUrl } = await start();
+  try {
+    const token = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const rejected = await request(baseUrl, '/api/organizations/org-a/data-reset', {
+      token,
+      method: 'POST',
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        confirmation: 'DATEN FALSCH LÖSCHEN',
+      },
+    });
+    assert.equal(rejected.response.status, 400);
+
+    const reset = await request(baseUrl, '/api/organizations/org-a/data-reset', {
+      token,
+      method: 'POST',
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        confirmation: 'DATEN 10000001 LÖSCHEN',
+      },
+    });
+    assert.equal(reset.response.status, 200);
+    assert.ok(reset.data.deleted > 0);
+    assert.ok(app.locals.appData.organizations.some((entry) => entry.id === 'org-a'));
+    assert.ok(app.locals.appData.organizationUnits.some((entry) => entry.id === 'unit-a-child'));
+    assert.ok(app.locals.appData.memberships.some((entry) => entry.id === 'membership-admin-a'));
+    assert.ok(app.locals.appData.users.some((entry) => entry.id === 'user-admin'));
+    assert.equal(app.locals.appData.materials.some((entry) => entry.organizationId === 'org-a'), false);
+    assert.ok(app.locals.appData.materials.some((entry) => entry.organizationId === 'org-b'));
+    assert.ok(app.locals.appData.auditLogs.some((entry) =>
+      entry.organizationId === 'org-a' && entry.action === 'reset-data'));
+
+    const relogin = await request(baseUrl, '/api/auth/login', {
+      method: 'POST',
+      body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    assert.equal(relogin.response.status, 200);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('unit data reset covers descendants, keeps sibling and organization data, and enforces permissions', async () => {
+  const { app, server, baseUrl } = await start();
+  try {
+    const materialwartToken = await login(baseUrl, 'materialwart', 'Material123!');
+    const forbidden = await request(baseUrl, '/api/organization-units/unit-a-child/data-reset', {
+      token: materialwartToken,
+      method: 'POST',
+      body: {
+        currentPassword: 'Material123!',
+        confirmation: 'DATEN 10000101 LÖSCHEN',
+      },
+    });
+    assert.equal(forbidden.response.status, 403);
+
+    const adminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const reset = await request(baseUrl, '/api/organization-units/unit-a-child/data-reset', {
+      token: adminToken,
+      method: 'POST',
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        confirmation: 'DATEN 10000101 LÖSCHEN',
+      },
+    });
+    assert.equal(reset.response.status, 200);
+    assert.deepEqual(reset.data.affectedUnitIds, ['unit-a-child']);
+    assert.equal(app.locals.appData.materials.some((entry) => entry.id === 'material-a-child'), false);
+    assert.equal(app.locals.appData.locations.some((entry) => entry.id === 'loc-a-child'), false);
+    assert.ok(app.locals.appData.materials.some((entry) => entry.id === 'material-1'));
+    assert.ok(app.locals.appData.categories.some((entry) => entry.id === 'A-SIBLING-CATEGORY'));
+    assert.equal(app.locals.appData.categories.some((entry) => entry.id === 'A-CHILD-CATEGORY'), false);
+    assert.ok(app.locals.appData.organizationUnits.some((entry) => entry.id === 'unit-a-child'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

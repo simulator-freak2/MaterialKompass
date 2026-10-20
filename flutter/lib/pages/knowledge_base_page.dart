@@ -2039,7 +2039,8 @@ const _articles = [
       'Gib den aktuellen sechsstelligen Code ein und aktiviere 2-FA.',
       'Sichere die zehn einmal verwendbaren Wiederherstellungscodes. Diese Codes werden nur bei der Erstellung vollständig angezeigt.',
       'Bei späteren Anmeldungen bestätigst du nach Passwort, QR-Code oder Dienstgeräte-Anmeldung zusätzlich den kurzlebigen 2-FA-Code.',
-      'Wenn dein Konto außerdem einen Passkey besitzt, kannst du stattdessen „Per Push / Gerät bestätigen“ wählen und die Systemabfrage mit Gerätepasswort, PIN, Biometrie oder Sicherheitsschlüssel freigeben. Ein verbundenes Smartphone kann dabei je nach Passkey-Anbieter eine System-Push-Nachricht anzeigen.',
+      'Für eine Anmeldung ganz ohne Code und ohne Passkey registrierst du unter „Mein Account → Push-Bestätigung“ die MaterialKompass-App auf deinem Telefon. Erlaube Benachrichtigungen und bestätige die Registrierung mit deinem Passwort; nur wenn TOTP bereits aktiv ist, wird dabei einmalig der aktuelle Code verlangt.',
+      'Bei späteren Anmeldungen erhältst du eine MaterialKompass-Benachrichtigung. Öffne sie und beantworte „Warst du das?“ mit „Ja, bestätigen“ oder „Nein, ablehnen“. Widerrufe verlorene oder nicht mehr verwendete Push-Geräte sofort im Accountbereich.',
       'Erzeuge bei Bedarf neue Recovery-Codes; alle alten Codes werden dadurch ungültig.',
     ],
     tip:
@@ -2119,6 +2120,65 @@ const _articles = [
       'admin',
       'konto',
       'fachbereich',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: 'Bearbeitbare Datensicherung exportieren und einspielen',
+    summary:
+        'Eine sektionierte JSON-Sicherung prüfen, gezielt bereinigen und sicher wiederherstellen.',
+    icon: Icons.settings_backup_restore,
+    readingMinutes: 6,
+    audience: 'Für Plattformadministratoren',
+    prerequisite:
+        'Du brauchst Plattformadministrationsrechte, dein aktuelles Passwort und gegebenenfalls einen 2-FA-Code.',
+    steps: [
+      'Öffne „Nutzerverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf.',
+      'Arbeite nur an einer Kopie der UTF-8-JSON-Datei. Jede benannte Sektion besitzt eine Liste „records“; entferne dort ausschließlich den nachweislich fehlerhaften vollständigen Datensatz.',
+      'Setze bei einer optionalen Sektion „enabled“ auf false oder entferne die gesamte Sektion, wenn ihr Inhalt bewusst nicht übernommen werden soll. Konten, Rollen, Organisationen, Einheiten und Mitgliedschaften sind Pflichtsektionen.',
+      'Verändere keine verschlüsselten Identitätswerte. Prüfe nach dem Entfernen eines Datensatzes, ob abhängige Datensätze mit derselben ID ebenfalls entfernt werden müssen.',
+      'Teste die bearbeitete Datei zuerst in einer isolierten Testinstanz. Der Import ersetzt den vollständigen Plattformbestand und lehnt inkonsistente Organisations-, Rollen-, Mitgliedschafts- oder Passkey-Verweise ab.',
+      'Wähle „Alle Daten importieren“, bestätige Passwort, 2-FA und „ALLE DATEN ERSETZEN“. Melde dich danach neu an und prüfe Anmeldung, Organisationen, Stichproben und Auditlog.',
+    ],
+    tip:
+        'Das Original niemals überschreiben: Eine syntaktisch gültige Bearbeitung kann fachlich trotzdem Daten entfernen, die später noch benötigt werden.',
+    keywords: [
+      'datensicherung',
+      'backup',
+      'restore',
+      'json',
+      'sektion',
+      'import',
+      'wiederherstellung',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Struktur & Lagerorte',
+    title: 'Organisationsdaten sicher zurücksetzen',
+    summary:
+        'Fachliche Daten einer Organisation oder Unterorganisation löschen, ohne Struktur und Zugänge zu verlieren.',
+    icon: Icons.delete_sweep_outlined,
+    readingMinutes: 5,
+    audience: 'Für Organisationsadministratoren',
+    prerequisite:
+        'Du brauchst Organisationsverwaltungsrechte, dein aktuelles Passwort, gegebenenfalls einen 2-FA-Code und eine geprüfte Sicherung.',
+    steps: [
+      'Erstelle zuerst unter „Nutzerverwaltung → Datensicherung“ eine aktuelle Sicherung und prüfe, dass die Datei lesbar und vollständig ist.',
+      'Öffne „Organisationen & Einheiten“. Am Eintrag der aktiven Organisation löscht „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
+      'Am Menü einer Unterorganisation löscht „Alle Daten löschen“ nur deren fachliche Daten und die Daten ihrer Untereinheiten. Geschwister- und übergeordnete Einheiten bleiben erhalten.',
+      'Prüfe Zielname, EDV-Nummer und den im Dialog beschriebenen Umfang. Gib Passwort, gegebenenfalls 2-FA und exakt „DATEN <EDV-NUMMER> LÖSCHEN“ ein.',
+      'Kontrolliere die gemeldete Datensatzanzahl. Organisationsstruktur, Konten, Rollen, Passkeys und Nutzerfreigaben bleiben erhalten.',
+      'Spiele die vorgesehenen Daten ein und prüfe danach stichprobenartig Bestände, Verknüpfungen, Berechtigungen und den Auditlog.',
+    ],
+    tip:
+        'Ein JSON-Gesamtimport ersetzt alle Plattformdaten, nicht nur die zuvor geleerte Organisation. Führe ihn deshalb zuerst in einer isolierten Testinstanz aus.',
+    keywords: [
+      'organisation',
+      'unterorganisation',
+      'daten löschen',
+      'zurücksetzen',
+      'edv-nummer',
+      'wiederherstellung',
     ],
   ),
 ];

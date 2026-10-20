@@ -770,7 +770,7 @@ class _UsersPageState extends State<UsersPage> {
       return;
     }
     if (backup['format'] != 'MaterialKompass Gesamtdatensicherung' ||
-        backup['schemaVersion'] != 1) {
+        !const [2, 3].contains(backup['schemaVersion'])) {
       _message('Die Datei ist keine unterstützte MaterialKompass-Sicherung.');
       return;
     }
@@ -828,7 +828,11 @@ class _UsersPageState extends State<UsersPage> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Die JSON-Datei enthält vertrauliche Daten und sollte verschlüsselt oder an einem geschützten Ort aufbewahrt werden.',
+                'Die lesbar formatierte JSON-Datei ist in benannte Sektionen '
+                'geteilt. Einzelne fehlerhafte Datensätze können vor dem Import '
+                'aus „records“ entfernt und optionale Sektionen mit '
+                '„enabled: false“ ausgelassen werden. Identitätsfelder bleiben '
+                'verschlüsselt. Bewahre die Datei trotzdem geschützt auf.',
               ),
               const SizedBox(height: 20),
               Wrap(

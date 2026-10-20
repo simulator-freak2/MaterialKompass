@@ -1,5 +1,5 @@
 name: materialkompass
-version: 1.5.6+15
+version: 1.5.7+16
 publish_to: 'none'
 description: MaterialKompass for DLRG material management.
 environment:
@@ -22,6 +22,8 @@ dependencies:
   passkeys: ^2.22.3
   printing: ^5.15.0
   shared_preferences: ^2.5.3
+  firebase_core: ^5.0.0
+  firebase_messaging: ^17.0.0
 
 dev_dependencies:
   flutter_lints: ^6.0.0

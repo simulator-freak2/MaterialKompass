@@ -41,6 +41,8 @@ const { registerMailManagementRoutes } = require('./mail-management');
 const { sendAccountMail } = require('./mailer');
 const { createUserMfa } = require('./user-mfa');
 const { createPasskeyAuth } = require('./passkeys');
+const { createMfaPush } = require('./mfa-push');
+const { createFcmPushSender } = require('./fcm-push');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -101,6 +103,8 @@ const DEVELOPMENT_JWT_SECRET = randomUUID() + randomUUID();
 const DUMMY_PASSWORD_HASH = '$2a$12$tEwsha9iOj5Uyyv0aMD6Xu.E4qatRuDZsHCHJPpisY/SuIk8qs52.';
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_REQUESTS = 10;
+const MFA_PUSH_STATUS_WINDOW_MS = 3 * 60 * 1000;
+const MFA_PUSH_STATUS_MAX_REQUESTS = 90;
 const PUBLIC_WINDOW_MS = 60 * 1000;
 const PUBLIC_MAX_REQUESTS = 60;
 const MUTATION_WINDOW_MS = 60 * 1000;
@@ -333,6 +337,7 @@ function createApp(options = {}) {
   const exportLogs = appData.exportLogs;
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
   const passkeys = (appData.passkeys ||= []);
+  const mfaPushDevices = (appData.mfaPushDevices ||= []);
   const serviceDevices = (appData.serviceDevices ||= []);
   const offlineClients = (appData.offlineClients ||= []);
   const offlineCommandResults = (appData.offlineCommandResults ||= []);
@@ -499,6 +504,12 @@ function createApp(options = {}) {
     maxRequests: AUTH_MAX_REQUESTS,
     exposePolicyHeaders: true,
   });
+  const mfaPushStatusRateLimit = createRateLimiter({
+    windowMs: MFA_PUSH_STATUS_WINDOW_MS,
+    maxRequests: MFA_PUSH_STATUS_MAX_REQUESTS,
+    keyFor: (req) => `${req.ip}:mfa-push-status`,
+    errorMessage: 'Zu viele Push-Statusabfragen. Bitte starten Sie die Anmeldung erneut.',
+  });
   const publicRateLimit = createRateLimiter({
     windowMs: PUBLIC_WINDOW_MS,
     maxRequests: PUBLIC_MAX_REQUESTS,
@@ -522,20 +533,47 @@ function createApp(options = {}) {
     return createHash('sha256').update(JSON.stringify([
       identity.passwordHash, identity.active, identity.emailVerifiedAt,
       identity.mfaVersion || 0, identity.mfaRequired === true, Boolean(identity.mfaEnabledAt),
-      Number(identity.passkeyCount || 0),
+      Number(identity.passkeyCount || 0), Number(identity.pushMfaDeviceCount || 0),
     ])).digest('base64url').slice(0, 22);
   }
 
   function defaultTenantContext(user, requestedOrganizationId, requestedUnitId) {
-    const membership = memberships.find((entry) => entry.userId === user.id
-      && entry.status === 'active'
-      && (!requestedOrganizationId || entry.organizationId === requestedOrganizationId));
-    return contextForMembership({
+    const activeMemberships = memberships.filter((entry) => entry.userId === user.id
+      && entry.status === 'active');
+    const contextFor = (membership, activeUnitId) => contextForMembership({
       membership,
       units: organizationUnits,
       roles,
-      activeUnitId: requestedUnitId,
+      activeUnitId,
     });
+
+    if (requestedOrganizationId) {
+      return contextFor(activeMemberships.find((entry) =>
+        entry.organizationId === requestedOrganizationId), requestedUnitId);
+    }
+
+    const rememberedMembership = activeMemberships.find((entry) =>
+      entry.lastSelected === true);
+    const rememberedContext = rememberedMembership
+      ? contextFor(rememberedMembership, rememberedMembership.lastUnitId)
+      : null;
+    if (rememberedContext) return rememberedContext;
+
+    // Access rights can change between two logins. Never restore a stale
+    // preference; fall back to the first membership with a usable default unit.
+    for (const membership of activeMemberships) {
+      const fallbackContext = contextFor(membership);
+      if (fallbackContext) return fallbackContext;
+    }
+    return null;
+  }
+
+  function rememberTenantContext(user, tenant) {
+    for (const membership of memberships) {
+      if (membership.userId !== user.id) continue;
+      membership.lastSelected = membership.id === tenant.membershipId;
+      if (membership.lastSelected) membership.lastUnitId = tenant.unitId;
+    }
   }
 
   function sessionUser(identity, tenant) {
@@ -654,7 +692,7 @@ function createApp(options = {}) {
       if (req.mfaSetupRequired
           && !['/api/auth/me', '/api/users/me/mfa', '/api/users/me/mfa/setup',
             '/api/users/me/mfa/confirm', '/api/users/me/passkeys/options',
-            '/api/users/me/passkeys/verify'].includes(req.path)) {
+            '/api/users/me/passkeys/verify', '/api/users/me/mfa/push-devices'].includes(req.path)) {
         return res.status(428).json({
           error: 'Richten Sie zuerst die verpflichtende Zwei-Faktor-Authentifizierung ein.',
           mfaSetupRequired: true,
@@ -854,6 +892,15 @@ function createApp(options = {}) {
 
   let userMfa;
   let passkeyAuth;
+  let mfaPush;
+  const verifyAdministrativeReauthentication = async (user, body) => {
+    if (!await bcrypt.compare(String(body.currentPassword || ''), user.passwordHash)) {
+      return false;
+    }
+    if (!user.mfaEnabledAt) return true;
+    const verification = await userMfa.verifyUserCode(user, body.mfaCode);
+    return verification.valid === true;
+  };
   registerOfflineSync({
     app,
     clients: offlineClients,
@@ -916,6 +963,8 @@ function createApp(options = {}) {
     authMiddleware,
     requirePermission,
     logEvent,
+    persistCollections: () => app.locals.persistData(),
+    verifyReauthentication: verifyAdministrativeReauthentication,
     deleteOrganizationData: async (organizationId, unitId) => {
       for (const name of PERSISTED_COLLECTIONS) {
         const collection = rawCollection(appData[name]);
@@ -1335,6 +1384,7 @@ function createApp(options = {}) {
     onBeforeUserDelete: async (user) => {
       anonymizeDataSubject(user);
       passkeyAuth?.removeUser(user.id);
+      await mfaPush?.removeUser(user.id);
       await app.locals.persistData();
       await (options.userStore?.destroyUserIdentity(user.id)
         || identityProtection.destroyUser(user.id));
@@ -1354,9 +1404,27 @@ function createApp(options = {}) {
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
     logEvent,
     accountMailSender: options.accountMailSender || sendAccountMail,
+    resetPushDevices: (userId) => mfaPush?.removeUser(userId) || Promise.resolve(),
     encryptionKey: process.env.MFA_ENCRYPTION_KEY
       || (process.env.NODE_ENV === 'production' ? '' : '0'.repeat(64)),
     securityVersion,
+    now: options.now || Date.now,
+  });
+
+  mfaPush = createMfaPush({
+    app,
+    users,
+    devices: mfaPushDevices,
+    userMfa,
+    authMiddleware,
+    authRateLimit,
+    statusRateLimit: mfaPushStatusRateLimit,
+    createToken,
+    pushSender: options.mfaPushSender || createFcmPushSender(),
+    saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
+    saveDevice: (device) => options.userStore?.saveMfaPushDevice?.(device) || Promise.resolve(),
+    deleteDevice: (id) => options.userStore?.deleteMfaPushDevice?.(id) || Promise.resolve(),
+    logEvent,
     now: options.now || Date.now,
   });
 
@@ -1407,14 +1475,7 @@ function createApp(options = {}) {
     dataStore: options.dataStore,
     persistData: () => app.locals.persistData(),
     identityProtection,
-    verifyReauthentication: async (user, body) => {
-      if (!await bcrypt.compare(String(body.currentPassword || ''), user.passwordHash)) {
-        return false;
-      }
-      if (!user.mfaEnabledAt) return true;
-      const verification = await userMfa.verifyUserCode(user, body.mfaCode);
-      return verification.valid === true;
-    },
+    verifyReauthentication: verifyAdministrativeReauthentication,
   });
 
   app.get('/health', (req, res) => res.json({
@@ -1567,7 +1628,7 @@ function createApp(options = {}) {
         user: publicUser(verifiedUser),
       });
     };
-    if (userMfa.mfaEnabled(user)) {
+    if (userMfa.authenticationEnabled(user)) {
       return res.status(202).json(userMfa.issueChallenge(
         user,
         (verifiedUser, response) => finishLogin(verifiedUser, response),
@@ -1642,6 +1703,7 @@ function createApp(options = {}) {
       entry.id === tenant.organizationId && entry.status === 'active'
     );
     if (!organization) return res.status(403).json({ error: 'Die Organisation ist nicht aktiv.' });
+    rememberTenantContext(identity, tenant);
     return runWithTenant(tenant, () => res.json({
       token: createToken(identity, {
         organizationId: tenant.organizationId,

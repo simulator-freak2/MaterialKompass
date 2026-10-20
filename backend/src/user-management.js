@@ -37,12 +37,15 @@ function publicUser(user) {
     mfaLastVerifiedAt,
     mfaVersion,
     passkeyCount,
+    pushMfaDeviceCount,
     ...safe
   } = user;
   return {
     ...safe,
     mfa: {
       enabled: Boolean(mfaSecretEncrypted && user.mfaEnabledAt),
+      pushEnabled: Number(pushMfaDeviceCount || 0) > 0,
+      pushDevices: Number(pushMfaDeviceCount || 0),
       required: mfaRequired === true,
       graceEndsAt: mfaGraceEndsAt || null,
       enabledAt: mfaEnabledAt || null,
@@ -51,7 +54,9 @@ function publicUser(user) {
         ? (mfaRecoveryCodeHashes || []).length
         : 0,
       strongAuthenticationConfigured:
-        Boolean(mfaSecretEncrypted && user.mfaEnabledAt) || Number(passkeyCount || 0) > 0,
+        Boolean(mfaSecretEncrypted && user.mfaEnabledAt)
+        || Number(pushMfaDeviceCount || 0) > 0
+        || Number(passkeyCount || 0) > 0,
     },
     passkeys: { count: Number(passkeyCount || 0) },
     verificationResendAvailableAt:

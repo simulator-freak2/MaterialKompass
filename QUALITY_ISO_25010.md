@@ -104,6 +104,27 @@ native Smoke-Tests nachgewiesen.
   sicherheitskritisch gelten und welche Prüf-/Wartungsintervalle rechtlich einschlägig
   sind.
 
+## Datenreset und editierbare Sicherungen
+
+Die administrativen Datenreset- und Wiederherstellungsfunktionen konkretisieren die
+Qualitätsmatrix wie folgt:
+
+| Merkmal | Umsetzung und Nachweis |
+| --- | --- |
+| Funktionale Eignung | Organisations- und Einheitenreset unterscheiden ihren Geltungsbereich; Struktur und Zugänge bleiben erhalten. Erfolgs-, Fehler-, Mandanten- und Berechtigungstests prüfen die fachliche Vollständigkeit. |
+| Leistungseffizienz | Größen- und Datensatzlimits werden vor Entschlüsselung und Persistenz geprüft. Der Reset bearbeitet nur organisationsbezogene Sammlungen und persistiert sie gesammelt. |
+| Kompatibilität | Exportformat 3 ist selbstbeschreibend und sektioniert; der Import bleibt zu Format 2 kompatibel. Unbekannte, doppelte oder deaktivierte Pflichtsektionen werden eindeutig abgelehnt. |
+| Interaktionsfähigkeit | Destruktive Aktionen nennen Ziel und Umfang, verlangen Passwort/MFA und die EDV-gebundene Bestätigungsphrase. Deutsche Fehlertexte und das integrierte Handbuch beschreiben die Wiederherstellung. |
+| Zuverlässigkeit | Der Datenbankaustausch erfolgt transaktional. Bei einem Persistenzfehler wird der In-Memory-Stand zurückgesetzt; ein Import validiert erst vollständig und ersetzt danach. |
+| Sicherheit | Mandant und administrierbare Einheit werden serverseitig geprüft. Identitätsfelder bleiben im editierbaren Export authentifiziert verschlüsselt; Reset und Import werden auditiert. |
+| Wartbarkeit | Formatkonvertierung, Validierung und Resetlogik sind in Backendmodulen gekapselt und durch fokussierte Regressionstests abgedeckt. |
+| Flexibilität | Einzelne Datensätze können entfernt und optionale Sektionen deaktiviert werden, ohne das Format oder andere Sektionen neu erzeugen zu müssen. |
+
+Vor der Freigabe ist zusätzlich ein manueller Restore einer bearbeiteten v3-Datei in
+einer isolierten Testinstanz durchzuführen. Dabei werden mindestens Anmeldung,
+Organisationswechsel, Datenumfang, Auditlog sowie das Verhalten einer deaktivierten
+optionalen Sektion geprüft.
+
 ## Fahrzeugverwaltung
 
 Die Fahrzeugverwaltung konkretisiert die Qualitätsmatrix wie folgt:
