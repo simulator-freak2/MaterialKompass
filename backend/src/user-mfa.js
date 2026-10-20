@@ -117,6 +117,7 @@ function createUserMfa({
       complete,
     });
     const pushAvailable = Number(user.pushMfaDeviceCount || 0) > 0;
+    const passkeyAvailable = Number(user.passkeyCount || 0) > 0;
     const codeAvailable = mfaEnabled(user);
     return {
       mfaRequired: true,
@@ -127,6 +128,7 @@ function createUserMfa({
       expiresIn: CHALLENGE_TTL_MS / 1000,
       methods: [
         ...(pushAvailable ? ['push'] : []),
+        ...(passkeyAvailable ? ['passkey'] : []),
         ...(codeAvailable ? ['totp', 'recovery_code'] : []),
       ],
     };

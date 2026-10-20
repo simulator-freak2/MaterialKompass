@@ -87,6 +87,74 @@ class PasskeyService {
     }
   }
 
+  Future<Map<String, dynamic>> approveMfa({required String challenge}) async {
+    if (!platformSupported) {
+      throw const ApiException(
+        'Passkeys werden auf dieser Plattform derzeit nicht unterstützt.',
+      );
+    }
+    try {
+      final started = await _api.post(
+        '/api/auth/mfa/passkey/options',
+        body: {'challenge': challenge},
+      );
+      if (started.statusCode != 200) {
+        throw ApiException(
+          _error(
+            started,
+            'Die Passkey-Bestätigung konnte nicht gestartet werden.',
+          ),
+          statusCode: started.statusCode,
+        );
+      }
+      final data = started.object;
+      final options = Map<String, dynamic>.from(data['options'] as Map);
+      final credential = await _authenticator.authenticate(
+        AuthenticateRequestType.fromJson(
+          options,
+          mediation: MediationType.Optional,
+          preferImmediatelyAvailableCredentials: false,
+        ),
+      );
+      final completed = await _api.post(
+        '/api/auth/mfa/passkey/verify',
+        body: {
+          'challengeId': data['challengeId'],
+          'credential': credential.toJson(),
+        },
+      );
+      if (completed.statusCode != 200 || completed.object['token'] == null) {
+        throw ApiException(
+          _error(completed, 'Die Passkey-Bestätigung ist fehlgeschlagen.'),
+          statusCode: completed.statusCode,
+        );
+      }
+      return completed.object;
+    } on ApiException {
+      rethrow;
+    } on PasskeyAuthCancelledException {
+      throw const ApiException('Die Passkey-Bestätigung wurde abgebrochen.');
+    } on NoCredentialsAvailableException {
+      throw const ApiException(
+        'Auf diesem oder einem verbundenen Gerät ist kein passender Passkey verfügbar.',
+      );
+    } on DomainNotAssociatedException {
+      throw const ApiException(
+        'Die App ist noch nicht sicher mit der MaterialKompass-Domain verknüpft.',
+      );
+    } on AuthenticatorException catch (error) {
+      throw ApiException('Die Passkey-Bestätigung ist fehlgeschlagen: $error');
+    } on FormatException {
+      throw const ApiException(
+        'Der Server hat ungültige Optionen für die Passkey-Bestätigung geliefert.',
+      );
+    } on TypeError {
+      throw const ApiException(
+        'Der Server hat ungültige Optionen für die Passkey-Bestätigung geliefert.',
+      );
+    }
+  }
+
   Future<Map<String, dynamic>> register({
     required String token,
     required String name,

@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
+import '../services/api_client.dart';
+import '../services/passkey_service.dart';
 
 Map<String, dynamic> _object(http.Response response) {
   if (response.body.isEmpty) return {};
@@ -23,6 +25,10 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
       .map((entry) => entry.toString())
       .toSet();
   final pushAvailable = methods.contains('push');
+  final passkeys =
+      methods.contains('passkey') && PasskeyService.platformSupported
+      ? PasskeyService()
+      : null;
   final codeAvailable =
       methods.contains('totp') || methods.contains('recovery_code');
   String? error;
@@ -84,6 +90,7 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
         setDialogState(() {
           error = pushError.toString();
           pushStatus = null;
+          pushStarted = false;
         });
       }
     }
@@ -95,11 +102,6 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) {
-          if (pushAvailable && !pushStarted) {
-            pushStarted = true;
-            pushStatus = 'Push-Benachrichtigung wird gesendet …';
-            unawaited(startPush(setDialogState, dialogContext));
-          }
           return AlertDialog(
             title: const Text('Zwei-Faktor-Authentifizierung'),
             content: SizedBox(
@@ -108,30 +110,80 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    !pushAvailable
+                    !pushAvailable && passkeys == null
                         ? 'Geben Sie den sechsstelligen Code Ihrer Authenticator-App '
                               'oder einen Wiederherstellungscode ein.'
-                        : 'Bestätige in der MaterialKompass-App auf deinem registrierten '
-                              'Gerät, ob du diese Anmeldung gestartet hast.',
+                        : 'Wählen Sie eine verfügbare Methode, um die Anmeldung zu bestätigen.',
                   ),
                   if (pushAvailable) ...[
                     const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.only(top: 2),
-                          child: Icon(Icons.notifications_active_outlined),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: submitting || pushStarted
+                            ? null
+                            : () {
+                                setDialogState(() {
+                                  pushStarted = true;
+                                  error = null;
+                                  pushStatus =
+                                      'Push-Benachrichtigung wird gesendet …';
+                                });
+                                unawaited(
+                                  startPush(setDialogState, dialogContext),
+                                );
+                              },
+                        icon: const Icon(Icons.notifications_active_outlined),
+                        label: Text(
+                          pushStarted
+                              ? 'Push-Benachrichtigung gesendet'
+                              : 'Push-Benachrichtigung senden',
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text(pushStatus ?? error ?? '')),
-                      ],
+                      ),
                     ),
-                    if (codeAvailable) ...[
-                      const SizedBox(height: 12),
-                      const Divider(),
-                      const Text('Alternativ kannst du einen Code verwenden.'),
+                    if (pushStatus != null) ...[
+                      const SizedBox(height: 8),
+                      Text(pushStatus!),
                     ],
+                  ],
+                  if (passkeys != null) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: submitting
+                            ? null
+                            : () async {
+                                setDialogState(() {
+                                  submitting = true;
+                                  error = null;
+                                });
+                                try {
+                                  final data = await passkeys.approveMfa(
+                                    challenge: challenge['challenge']
+                                        .toString(),
+                                  );
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext, data);
+                                  }
+                                } on ApiException catch (exception) {
+                                  if (dialogContext.mounted) {
+                                    setDialogState(() {
+                                      error = exception.message;
+                                      submitting = false;
+                                    });
+                                  }
+                                }
+                              },
+                        icon: const Icon(Icons.key_outlined),
+                        label: const Text('Mit Passkey bestätigen'),
+                      ),
+                    ),
+                  ],
+                  if ((pushAvailable || passkeys != null) && codeAvailable) ...[
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const Text('Alternativ können Sie einen Code verwenden.'),
                   ],
                   if (codeAvailable) ...[
                     const SizedBox(height: 16),
@@ -148,6 +200,15 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
                         labelText: '2-FA-Code',
                         errorText: error,
                         border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                  if (error != null && !codeAvailable) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
                       ),
                     ),
                   ],
@@ -214,6 +275,7 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
     );
   } finally {
     dialogClosed = true;
+    passkeys?.close();
     code.dispose();
   }
 }

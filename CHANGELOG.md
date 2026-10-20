@@ -1,5 +1,11 @@
 # Aenderungsprotokoll
 
+## [1.5.8] - 2026-10-20
+
+-Überarbeitung Loginseite
+-Überabeitung der 2FA
+-Gedächtnis der Letzten Einheit Eingeführt
+
 ## [1.5.7] - 2026-10-20
 
 -Überarbeitung Loginseite
