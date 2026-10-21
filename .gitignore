@@ -46,6 +46,10 @@ releases/*
 !releases/.gitkeep
 releases-*/
 
-# Firebase-/Push-Zugangsdaten bleiben ausschließlich auf dem Zielsystem.
+# Signatur- und Laufzeitgeheimnisse bleiben ausschließlich auf dem Zielsystem.
 secrets/*
 !secrets/.gitkeep
+**/local.properties
+**/key.properties
+*.jks
+*.keystore

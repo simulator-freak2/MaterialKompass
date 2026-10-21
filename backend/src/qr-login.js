@@ -30,6 +30,7 @@ function safeEqual(left, right) {
 function registerQrLoginRoutes({
   app, users, credentials, authMiddleware, requirePermission, authRateLimit,
   createToken, securityVersion, publicUser, logEvent, saveUser = async () => {}, userMfa,
+  loginAccessAllowed = () => true,
   tenantForUser = () => null,
 }) {
   function removeExpired() {
@@ -252,11 +253,17 @@ function registerQrLoginRoutes({
       user, credential.organizationId, credential.unitId,
     );
     if (!user || !user.active || !user.emailVerifiedAt
-        || !tenant || credential.securityVersion !== securityVersion(user)) {
+        || !tenant || credential.securityVersion !== securityVersion(user)
+        || !loginAccessAllowed(user)) {
       if (!oneTime) credentials.splice(index, 1);
       return res.status(401).json({ error: 'QR-Code ist ungültig oder abgelaufen.' });
     }
     const finishLogin = async (verifiedUser, response) => {
+      if (!loginAccessAllowed(verifiedUser)) {
+        return response.status(403).json({
+          error: 'Dieses Konto darf sich nur an einem freigegebenen Dienstgerät anmelden.',
+        });
+      }
       verifiedUser.lastLoginAt = new Date().toISOString();
       await saveUser(verifiedUser);
       return runWithTenant(tenant, () => {

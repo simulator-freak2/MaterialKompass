@@ -58,7 +58,6 @@ test('a registered app device approves a login push without TOTP or passkey', as
       body: {
         name: 'Telefon',
         platform: 'android',
-        pushToken: 'fcm-device-token',
         currentPassword: 'MaterialKompass2026!',
       },
     });
@@ -80,8 +79,19 @@ test('a registered app device approves a login push without TOTP or passkey', as
     });
     assert.equal(started.response.status, 200);
     assert.equal(deliveries.length, 1);
-    assert.equal(deliveries[0].devices[0].pushToken, 'fcm-device-token');
+    assert.equal(deliveries[0].devices[0].pushToken, 'self-hosted-long-poll');
     assert.equal(deliveries[0].approval.id, started.data.approvalId);
+    assert.match(started.data.matchingCode, /^\d{2}$/);
+
+    const pending = await request('/api/auth/mfa/push/pending', {
+      method: 'POST',
+      body: {
+        deviceId: registered.data.device.id,
+        deviceSecret: registered.data.deviceSecret,
+      },
+    });
+    assert.equal(pending.response.status, 200);
+    assert.equal(pending.data.matchingCode, started.data.matchingCode);
 
     const rejectedSecret = await request('/api/auth/mfa/push/respond', {
       method: 'POST',
@@ -100,6 +110,7 @@ test('a registered app device approves a login push without TOTP or passkey', as
         approvalId: started.data.approvalId,
         deviceId: registered.data.device.id,
         deviceSecret: registered.data.deviceSecret,
+        matchingCode: started.data.matchingCode,
         decision: 'approve',
       },
     });
@@ -140,7 +151,7 @@ test('a push approval can be denied and is not converted into a session', async 
     const registered = await request('/api/users/me/mfa/push-devices', {
       method: 'POST', token: firstLogin.data.token,
       body: {
-        name: 'Telefon', platform: 'ios', pushToken: 'fcm-ios-token',
+        name: 'Tablet', platform: 'android',
         currentPassword: 'MaterialKompass2026!',
       },
     });
@@ -174,6 +185,59 @@ test('a push approval can be denied and is not converted into a session', async 
       method: 'POST', body: { challenge: login.data.challenge },
     });
     assert.equal(restarted.response.status, 401);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('a one-time QR pairing enrolls the separate authenticator and returns a refreshed session', async () => {
+  const { server, request } = await start();
+  try {
+    const login = await request('/api/auth/login', {
+      method: 'POST',
+      body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    const pairing = await request('/api/users/me/mfa/push-pairings', {
+      method: 'POST',
+      token: login.data.token,
+      body: { currentPassword: 'MaterialKompass2026!' },
+    });
+    assert.equal(pairing.response.status, 201);
+    const pairUri = new URL(pairing.data.qrValue);
+    assert.equal(pairUri.protocol, 'materialkompass-auth:');
+    assert.equal(pairUri.hostname, 'pair');
+
+    const paired = await request('/api/auth/mfa/push/pair', {
+      method: 'POST',
+      body: {
+        pairToken: pairUri.searchParams.get('token'),
+        name: 'Separater Authenticator',
+        platform: 'android',
+      },
+    });
+    assert.equal(paired.response.status, 201);
+    assert.ok(paired.data.deviceSecret);
+    assert.equal(paired.data.device.transport, 'self_hosted');
+
+    const replay = await request('/api/auth/mfa/push/pair', {
+      method: 'POST',
+      body: {
+        pairToken: pairUri.searchParams.get('token'),
+        name: 'Replay',
+        platform: 'android',
+      },
+    });
+    assert.equal(replay.response.status, 401);
+
+    const status = await request('/api/auth/mfa/push/pairing-status', {
+      method: 'POST',
+      body: {
+        pairingId: pairing.data.pairingId,
+        statusToken: pairing.data.statusToken,
+      },
+    });
+    assert.equal(status.response.status, 200);
+    assert.ok(status.data.token);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

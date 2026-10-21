@@ -42,7 +42,6 @@ const { sendAccountMail } = require('./mailer');
 const { createUserMfa } = require('./user-mfa');
 const { createPasskeyAuth } = require('./passkeys');
 const { createMfaPush } = require('./mfa-push');
-const { createFcmPushSender } = require('./fcm-push');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -54,6 +53,7 @@ const { createRateLimiter } = require('./request-rate-limiter');
 const { registerDataBackupRoutes } = require('./data-backup');
 const { createMemoryIdentityProtection } = require('./identity-protection');
 const { registerSystemMessageRoutes } = require('./system-messages');
+const { loginAccessAllowed, loginAccessPolicy } = require('./login-access-policy');
 const {
   normalizeTenancyData,
   wrapTenantCollections,
@@ -534,6 +534,7 @@ function createApp(options = {}) {
       identity.passwordHash, identity.active, identity.emailVerifiedAt,
       identity.mfaVersion || 0, identity.mfaRequired === true, Boolean(identity.mfaEnabledAt),
       Number(identity.passkeyCount || 0), Number(identity.pushMfaDeviceCount || 0),
+      loginAccessPolicy(identity),
     ])).digest('base64url').slice(0, 22);
   }
 
@@ -689,10 +690,17 @@ function createApp(options = {}) {
       if (req.sessionType !== 'normal' && req.sessionType !== PERSONAL_DEVICE_SESSION) {
         return res.status(401).json({ error: 'Invalid token' });
       }
+      if (!loginAccessAllowed(
+        identity,
+        req.sessionType === PERSONAL_DEVICE_SESSION ? req.device?.id : null,
+      )) {
+        return res.status(403).json({ error: 'Diese Sitzung ist nach der Anmelderichtlinie nicht zulässig.' });
+      }
       if (req.mfaSetupRequired
           && !['/api/auth/me', '/api/users/me/mfa', '/api/users/me/mfa/setup',
             '/api/users/me/mfa/confirm', '/api/users/me/passkeys/options',
-            '/api/users/me/passkeys/verify', '/api/users/me/mfa/push-devices'].includes(req.path)) {
+            '/api/users/me/passkeys/verify', '/api/users/me/mfa/push-devices',
+            '/api/users/me/mfa/push-pairings'].includes(req.path)) {
         return res.status(428).json({
           error: 'Richten Sie zuerst die verpflichtende Zwei-Faktor-Authentifizierung ein.',
           mfaSetupRequired: true,
@@ -1373,6 +1381,7 @@ function createApp(options = {}) {
 
   const userManagement = registerUserRoutes({
     app, users, roles, permissions, departments, memberships, organizationUnits,
+    serviceDevices,
     authMiddleware, requirePermission, logEvent,
     departmentReferences: procurementRequests,
     authRateLimit,
@@ -1420,7 +1429,8 @@ function createApp(options = {}) {
     authRateLimit,
     statusRateLimit: mfaPushStatusRateLimit,
     createToken,
-    pushSender: options.mfaPushSender || createFcmPushSender(),
+    pushSender: options.mfaPushSender,
+    appBaseUrl: options.appBaseUrl || process.env.APP_BASE_URL || 'http://127.0.0.1:3001',
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
     saveDevice: (device) => options.userStore?.saveMfaPushDevice?.(device) || Promise.resolve(),
     deleteDevice: (id) => options.userStore?.deleteMfaPushDevice?.(id) || Promise.resolve(),
@@ -1445,6 +1455,7 @@ function createApp(options = {}) {
       || Promise.resolve(),
     logEvent,
     securityVersion,
+    loginAccessAllowed,
     now: options.now || Date.now,
     config: options.passkeyConfig,
     webauthn: options.passkeyWebAuthn,
@@ -1614,8 +1625,18 @@ function createApp(options = {}) {
 
     if (!user.active) return res.status(403).json({ error: 'Account deaktiviert.' });
     if (!user.emailVerifiedAt) return res.status(403).json({ error: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.' });
+    if (!loginAccessAllowed(user)) {
+      return res.status(403).json({
+        error: 'Dieses Konto darf sich nur an einem freigegebenen Dienstgerät anmelden.',
+      });
+    }
 
     const finishLogin = async (verifiedUser, response) => {
+      if (!loginAccessAllowed(verifiedUser)) {
+        return response.status(403).json({
+          error: 'Dieses Konto darf sich nur an einem freigegebenen Dienstgerät anmelden.',
+        });
+      }
       verifiedUser.failedLoginAttempts = 0;
       verifiedUser.lockedUntil = null;
       verifiedUser.lastLoginAt = new Date().toISOString();
@@ -1664,6 +1685,7 @@ function createApp(options = {}) {
     logEvent,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
     userMfa,
+    loginAccessAllowed,
     tenantForUser: (user, organizationId, unitId) =>
       defaultTenantContext(user.__identity || user, organizationId, unitId),
   });
@@ -2924,6 +2946,7 @@ function createApp(options = {}) {
     securityVersion,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
     userMfa,
+    loginAccessAllowed,
     tenantForUser: (user, organizationId, unitId) =>
       defaultTenantContext(user.__identity || user, organizationId, unitId),
   });

@@ -15,13 +15,8 @@ if (-not (Test-Path $keyProperties)) {
 Push-Location $flutterRoot
 try {
     flutter pub get
-    $firebaseDefines = @()
-    foreach ($name in @("FIREBASE_API_KEY", "FIREBASE_APP_ID", "FIREBASE_MESSAGING_SENDER_ID", "FIREBASE_PROJECT_ID")) {
-        $value = [Environment]::GetEnvironmentVariable($name)
-        if ($value) { $firebaseDefines += "--dart-define=$name=$value" }
-    }
     flutter build apk --release --build-name="$Version" --build-number="$BuildNumber" `
-        --dart-define="API_BASE_URL=$ApiBaseUrl" @firebaseDefines
+        --dart-define="API_BASE_URL=$ApiBaseUrl"
 } finally {
     Pop-Location
 }

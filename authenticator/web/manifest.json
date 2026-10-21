@@ -1,0 +1,11 @@
+{
+  "name": "MaterialKompass Authenticator",
+  "short_name": "MK Auth",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#075e54",
+  "description": "Eigenständiger, selbst gehosteter 2FA-Authenticator",
+  "orientation": "portrait-primary",
+  "icons": []
+}

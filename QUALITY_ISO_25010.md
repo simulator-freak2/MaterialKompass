@@ -1,6 +1,6 @@
 # Qualitätsanforderungen nach ISO/IEC 25010:2023
 
-Stand: 11. September 2026
+Stand: 20. Oktober 2026
 
 ## Zweck und Geltungsbereich
 
@@ -103,6 +103,27 @@ native Smoke-Tests nachgewiesen.
 - Fachverantwortliche müssen festlegen, welche realen Ausrüstungen als
   sicherheitskritisch gelten und welche Prüf-/Wartungsintervalle rechtlich einschlägig
   sind.
+
+## Kontobezogene Anmelderichtlinien
+
+Die Auswahl zwischen allgemeiner Anmeldung, allen Dienstgeräten und ausgewählten
+Dienstgeräten konkretisiert die Qualitätsmatrix wie folgt:
+
+| Merkmal | Umsetzung und Nachweis |
+| --- | --- |
+| Funktionale Eignung | Die drei Richtlinien werden bei Passwort-, QR-, NFC-, Passkey- und MFA-Anmeldungen sowie bei laufenden Sitzungen einheitlich ausgewertet. Integrations- und Widgettests decken erlaubte und abgelehnte Fälle ab. |
+| Leistungseffizienz | Die Entscheidung verwendet normalisierte Kontofelder und eine begrenzte Geräteliste; es entsteht keine zusätzliche Datenbankabfrage im Anfragepfad. |
+| Kompatibilität | Bestehende Konten und ältere Sicherungen erhalten additiv die Voreinstellung `all_clients`; die Migration verändert vorhandene Anmeldemöglichkeiten nicht. |
+| Interaktionsfähigkeit | Die Nutzerverwaltung benennt die drei Optionen verständlich, zeigt nur bei gezielter Auswahl die Geräte an und verhindert das Speichern einer leeren Auswahl. Fehler werden auf Deutsch und ohne unnötige Kontodetails ausgegeben. |
+| Zuverlässigkeit | Die Richtlinie ist Teil der Sicherheitsversion eines Kontos. Änderungen entwerten bestehende Sitzungen und ausstehende MFA-Anfragen; Backups validieren Geräteverweise vor der Übernahme. |
+| Sicherheit | Das Backend prüft die Richtlinie fail-closed am Anmelde- und am Sitzungs-Gate. Ausgewählte Geräte müssen zum administrierten Mandanten gehören. Änderungen werden auditiert und per Sicherheits-E-Mail angekündigt. |
+| Wartbarkeit | Normalisierung, Validierung und Entscheidung liegen im Modul `login-access-policy.js`; Routen konsumieren dieselbe Funktion statt eigener Varianten. |
+| Flexibilität | Eine additive MariaDB-Migration und stabile Moduswerte erlauben die schrittweise Einführung ohne Änderung bestehender Konten. |
+| Safety | Keine unmittelbare fachliche Safety-Wirkung; die Beschränkung reduziert jedoch unkontrollierte Zugänge zu sicherheitsrelevanten Materialdaten. |
+
+Vor einer produktiven Freigabe sind zusätzlich Tastatur- und Screenreader-Bedienung
+des Auswahldialogs sowie ein Login-Smoke-Test auf Web und einem aktivierten nativen
+Dienstgerät zu protokollieren.
 
 ## Datenreset und editierbare Sicherungen
 

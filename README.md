@@ -71,6 +71,21 @@ Auf einem aktivierten Gerät sind zwei Sitzungsarten verfügbar:
   Nutzerverwaltung. Passwort, bestehender persönlicher QR-Code oder eine am
   Gerät registrierte USB-NFC-Karte können als erster Faktor dienen.
 
+Admins legen beim Bearbeiten eines Kontos dessen Anmelderichtlinie fest:
+
+- **Web, Apps und Dienstgeräte** erlaubt die normale Anmeldung sowie die
+  persönliche Anmeldung an jedem aktivierten Dienstgerät.
+- **Nur aktivierte Dienstgeräte** sperrt Passwort-, QR- und Passkey-Anmeldungen
+  über die normale Loginseite; persönliche Anmeldungen bleiben an allen
+  aktivierten Dienstgeräten möglich.
+- **Nur ausgewählte Dienstgeräte** erlaubt die persönliche Anmeldung
+  ausschließlich an den im Konto markierten Geräten.
+
+Änderungen werden protokolliert, per Sicherheits-E-Mail angekündigt und machen
+unzulässige bestehende Sitzungen sowie ausstehende MFA-Anfragen ungültig. Die
+Prüfung erfolgt im Backend für Passwort, QR-Code, NFC, Passkey und MFA-Abschluss;
+eine ausgeblendete Clientfunktion kann die Richtlinie daher nicht umgehen.
+
 TOTP oder eine benannte USB-NFC-Karte können je Gerät für beide Sitzungsarten
 als zusätzlicher Faktor verlangt werden. IP-Adressen und IPv4-/IPv6-CIDR-Netze
 lassen sich ebenfalls pro Gerät begrenzen. Eine Sperrung oder ein Schlüsselreset

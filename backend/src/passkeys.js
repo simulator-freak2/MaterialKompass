@@ -65,6 +65,7 @@ function createPasskeyAuth({
   deleteUserPasskeys = async () => {},
   logEvent = () => {},
   securityVersion = () => '',
+  loginAccessAllowed = () => true,
   now = Date.now,
   config = passkeyConfig(),
   webauthn = defaultWebAuthn,
@@ -437,6 +438,11 @@ function createPasskeyAuth({
       return res.status(401).json({ error: GENERIC_AUTH_ERROR });
     }
     const { passkey, user } = result;
+    if (!loginAccessAllowed(user)) {
+      return res.status(403).json({
+        error: 'Dieses Konto darf sich nur an einem freigegebenen Dienstgerät anmelden.',
+      });
+    }
     const timestamp = await recordPasskeyUse(result);
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;

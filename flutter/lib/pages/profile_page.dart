@@ -28,6 +28,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final newPassword = TextEditingController();
   final mfaCode = TextEditingController();
   final passkeyService = PasskeyService();
+  final pushMfaService = PushMfaService();
   Map<String, dynamic>? user;
   List<Map<String, dynamic>> qrCredentials = [];
   List<Map<String, dynamic>> passkeyCredentials = [];
@@ -50,6 +51,7 @@ class _ProfilePageState extends State<ProfilePage> {
     newPassword.dispose();
     mfaCode.dispose();
     passkeyService.close();
+    pushMfaService.close();
     super.dispose();
   }
 
@@ -97,7 +99,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> loadPushMfaDevices() async {
     try {
-      final loaded = await PushMfaService.instance.list(token: widget.token);
+      final loaded = await pushMfaService.list(token: widget.token);
       if (!mounted) return;
       pushMfaDevices = loaded;
       setState(() {});
@@ -469,23 +471,18 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> registerPushMfaDevice() async {
     final confirmation = await passkeyConfirmation(
-      title: 'Dieses Gerät für Push-2-FA registrieren',
-      includeName: true,
+      title: 'Separate Authenticator-App koppeln',
     );
     if (confirmation == null) return;
-    try {
-      await PushMfaService.instance.enroll(
-        token: widget.token,
-        name: confirmation['name']!,
-        currentPassword: confirmation['currentPassword']!,
-        code: confirmation['code'] ?? '',
-      );
-      if (!mounted) return;
-      message('Push-2-FA wurde eingerichtet. Melden Sie sich erneut an.');
-      widget.onAccountDeleted();
-    } on ApiException catch (error) {
-      if (mounted) message(error.message);
-    }
+    final result = await setupPushMfa(
+      context,
+      token: widget.token,
+      currentPassword: confirmation['currentPassword']!,
+      code: confirmation['code'] ?? '',
+    );
+    if (result == null || !mounted) return;
+    message('Authenticator gekoppelt. Melden Sie sich erneut an.');
+    widget.onAccountDeleted();
   }
 
   Future<void> revokePushMfaDevice(Map<String, dynamic> device) async {
@@ -494,7 +491,7 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     if (confirmation == null) return;
     try {
-      await PushMfaService.instance.revoke(
+      await pushMfaService.revoke(
         token: widget.token,
         deviceId: device['id'].toString(),
         currentPassword: confirmation['currentPassword']!,
@@ -785,23 +782,19 @@ class _ProfilePageState extends State<ProfilePage> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const Text(
-                'Ein Anmeldeversuch sendet eine Benachrichtigung an die registrierte '
-                'MaterialKompass-App. Dort wird nur „Warst du das?“ gefragt.',
+                'Kopple die separat installierte MaterialKompass Authenticator-App. '
+                'Sie empfängt die Anfrage direkt von deinem eigenen Server und zeigt '
+                'zur Kontrolle denselben zweistelligen Code wie die Anmeldung.',
               ),
               const SizedBox(height: 12),
-              if (PushMfaService.configured)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton.icon(
-                    onPressed: registerPushMfaDevice,
-                    icon: const Icon(Icons.add_alert_outlined),
-                    label: const Text('Dieses Gerät registrieren'),
-                  ),
-                )
-              else
-                const Text(
-                  'Dieser App-Build enthält noch keine Firebase-Push-Konfiguration.',
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  onPressed: registerPushMfaDevice,
+                  icon: const Icon(Icons.qr_code_2_outlined),
+                  label: const Text('Authenticator koppeln'),
                 ),
+              ),
               const SizedBox(height: 8),
               if (pushMfaDevices.isEmpty)
                 const Text('Kein Push-Gerät registriert.')

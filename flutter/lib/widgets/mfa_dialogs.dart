@@ -9,11 +9,109 @@ import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../services/api_client.dart';
 import '../services/passkey_service.dart';
+import '../services/push_mfa_service.dart';
 
 Map<String, dynamic> _object(http.Response response) {
   if (response.body.isEmpty) return {};
   final decoded = jsonDecode(response.body);
   return decoded is Map ? Map<String, dynamic>.from(decoded) : {};
+}
+
+Future<Map<String, dynamic>?> setupPushMfa(
+  BuildContext context, {
+  required String token,
+  required String currentPassword,
+  String code = '',
+}) async {
+  final service = PushMfaService();
+  try {
+    final pairing = await service.createPairing(
+      token: token,
+      currentPassword: currentPassword,
+      code: code,
+    );
+    if (!context.mounted) return null;
+    var dialogClosed = false;
+    unawaited(() async {
+      try {
+        final result = await service.waitForPairing(pairing);
+        if (!dialogClosed && context.mounted) {
+          Navigator.of(context, rootNavigator: true).pop(result);
+        }
+      } on ApiException catch (error) {
+        if (!dialogClosed && context.mounted) {
+          Navigator.of(
+            context,
+            rootNavigator: true,
+          ).pop(<String, dynamic>{'error': error.message});
+        }
+      }
+    }());
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Authenticator koppeln'),
+        content: SizedBox(
+          width: 460,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Öffne die separat installierte MaterialKompass Authenticator-App '
+                  'und scanne diesen einmaligen Kopplungscode.',
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(12),
+                  child: bw.BarcodeWidget(
+                    barcode: bw.Barcode.qrCode(),
+                    data: pairing.qrValue,
+                    width: 240,
+                    height: 240,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Der Code ist fünf Minuten gültig und kann nur einmal verwendet werden.',
+                  style: Theme.of(dialogContext).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                const LinearProgressIndicator(),
+                const SizedBox(height: 8),
+                const Text('Warte auf das gekoppelte Gerät …'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+        ],
+      ),
+    );
+    dialogClosed = true;
+    if (result?['error'] != null && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result!['error'].toString())));
+      return null;
+    }
+    return result;
+  } on ApiException catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+    return null;
+  } finally {
+    service.close();
+  }
 }
 
 Future<Map<String, dynamic>?> verifyMfaChallenge(
@@ -53,10 +151,11 @@ Future<Map<String, dynamic>?> verifyMfaChallenge(
             'Die Push-Benachrichtigung konnte nicht gesendet werden.';
       }
       if (!dialogContext.mounted || dialogClosed) return;
+      final matchingCode = started['matchingCode']?.toString() ?? '';
       setDialogState(() {
         pushStatus =
-            'Push gesendet. Öffne die MaterialKompass-App auf deinem '
-            'registrierten Gerät und bestätige oder lehne die Anmeldung ab.';
+            'Öffne MaterialKompass Authenticator und vergleiche den '
+            'zweistelligen Bestätigungscode: $matchingCode';
       });
       final approvalId = started['approvalId'];
       final expiresAt = DateTime.tryParse(

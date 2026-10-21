@@ -64,7 +64,7 @@ function legalInformation(env = process.env) {
       recipients: [
         'Autorisierte Beschäftigte und Funktionsträger des Betreibers',
         'Beauftragte Hosting-, E-Mail- und IT-Dienstleister auf Grundlage eines Auftragsverarbeitungsvertrags',
-        'Google Firebase Cloud Messaging, wenn Push-2-FA für ein Konto aktiviert wird',
+        'Der selbst betriebene MaterialKompass-Server für die Zustellung optionaler Zwei-Faktor-Anfragen',
         'Behörden oder sonstige Stellen, soweit eine gesetzliche Verpflichtung besteht',
       ],
       transfers: value(env, 'LEGAL_TRANSFERS'),

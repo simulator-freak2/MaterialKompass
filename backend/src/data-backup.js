@@ -1,5 +1,9 @@
 const { randomUUID } = require('node:crypto');
 const { rawCollection, DEFAULT_ORGANIZATION_ID, DEFAULT_UNIT_ID } = require('./tenancy');
+const {
+  LOGIN_ACCESS_MODES,
+  validateLoginAccessPolicy,
+} = require('./login-access-policy');
 
 const BACKUP_FORMAT = 'MaterialKompass Gesamtdatensicherung';
 const BACKUP_SCHEMA_VERSION = 3;
@@ -109,6 +113,19 @@ async function validatedBackup(input, collectionNames, identityProtection) {
   const users = data.users;
   const roles = data.roles;
   const passkeys = data.passkeys;
+  for (const user of users) {
+    const policy = validateLoginAccessPolicy({
+      mode: user.loginAccessMode ?? LOGIN_ACCESS_MODES.ALL_CLIENTS,
+      allowedServiceDeviceIds: user.allowedServiceDeviceIds ?? [],
+    }, { devices: data.serviceDevices || [] });
+    if (policy.error) {
+      throw Object.assign(new Error(`Ungültige Anmelderichtlinie in der Sicherung: ${policy.error}`), {
+        status: 400,
+      });
+    }
+    user.loginAccessMode = policy.mode;
+    user.allowedServiceDeviceIds = policy.allowedServiceDeviceIds;
+  }
   if (!uniqueValues(users, 'id') || !uniqueValues(users, 'username') || !uniqueValues(users, 'email')) {
     throw Object.assign(new Error('Nutzer-IDs, Nutzernamen oder E-Mail-Adressen sind ungültig oder doppelt.'), { status: 400 });
   }

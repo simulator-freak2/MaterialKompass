@@ -205,6 +205,8 @@ function createUserStore(database = mariadb, options = {}) {
           platformAdmin: Boolean(row.platform_admin),
           departmentIds: parseJson(row.department_ids),
           permissions: parseJson(row.permissions), active: Boolean(row.active),
+          loginAccessMode: row.login_access_mode || 'all_clients',
+          allowedServiceDeviceIds: parseJson(row.allowed_service_device_ids),
           failedLoginAttempts: Number(row.failed_login_attempts || 0), lockedUntil: iso(row.locked_until),
           lastLoginAt: iso(row.last_login_at), emailVerifiedAt: iso(row.email_verified_at),
           verificationTokenHash: row.verification_token_hash, verificationExpiresAt: iso(row.verification_expires_at),
@@ -257,6 +259,7 @@ function createUserStore(database = mariadb, options = {}) {
       await pool.query(`INSERT INTO users (
         id, name, username, email, identity_ciphertext, identity_erased,
         password_hash, roles, permissions, platform_admin, active,
+        login_access_mode, allowed_service_device_ids,
         failed_login_attempts, locked_until, last_login_at, email_verified_at,
         verification_token_hash, verification_expires_at, password_reset_token_hash,
         password_reset_expires_at, mfa_required, mfa_secret_encrypted,
@@ -264,12 +267,14 @@ function createUserStore(database = mariadb, options = {}) {
         mfa_recovery_code_hashes, mfa_enabled_at,
         mfa_last_verified_at, mfa_grace_ends_at, mfa_version,
         deactivated_at, deactivation_reason, scheduled_deletion_at, created_at, department_ids
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
         identity_ciphertext=VALUES(identity_ciphertext), identity_erased=VALUES(identity_erased),
         password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
         permissions=VALUES(permissions), platform_admin=VALUES(platform_admin),
-        active=VALUES(active), failed_login_attempts=VALUES(failed_login_attempts),
+        active=VALUES(active), login_access_mode=VALUES(login_access_mode),
+        allowed_service_device_ids=VALUES(allowed_service_device_ids),
+        failed_login_attempts=VALUES(failed_login_attempts),
         locked_until=VALUES(locked_until), last_login_at=VALUES(last_login_at),
         email_verified_at=VALUES(email_verified_at), verification_token_hash=VALUES(verification_token_hash),
         verification_expires_at=VALUES(verification_expires_at), password_reset_token_hash=VALUES(password_reset_token_hash),
@@ -288,6 +293,7 @@ function createUserStore(database = mariadb, options = {}) {
         user.passwordHash,
         JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
         user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
+        user.loginAccessMode || 'all_clients', JSON.stringify(user.allowedServiceDeviceIds || []),
         user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
         sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
         user.passwordResetTokenHash || null, sqlDateTime(user.passwordResetExpiresAt),
@@ -591,6 +597,7 @@ function createUserStore(database = mariadb, options = {}) {
           await connection.batch(`INSERT INTO users (
             id, name, username, email, identity_ciphertext, identity_erased,
             password_hash, roles, permissions, platform_admin, active,
+            login_access_mode, allowed_service_device_ids,
             failed_login_attempts, locked_until, last_login_at, email_verified_at,
             verification_token_hash, verification_expires_at, password_reset_token_hash,
             password_reset_expires_at, mfa_required, mfa_secret_encrypted,
@@ -598,7 +605,7 @@ function createUserStore(database = mariadb, options = {}) {
             mfa_recovery_code_hashes, mfa_enabled_at, mfa_last_verified_at,
             mfa_grace_ends_at, mfa_version, deactivated_at, deactivation_reason,
             scheduled_deletion_at, created_at, department_ids
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           protectedUsers.map((record) => {
             const { user } = record;
             return [
@@ -607,6 +614,8 @@ function createUserStore(database = mariadb, options = {}) {
             user.passwordHash,
             JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
             user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
+            user.loginAccessMode || 'all_clients',
+            JSON.stringify(user.allowedServiceDeviceIds || []),
             user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
             sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null,
             sqlDateTime(user.verificationExpiresAt), user.passwordResetTokenHash || null,

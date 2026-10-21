@@ -1,6 +1,11 @@
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const { sendAccountMail } = require('./mailer');
+const {
+  LOGIN_ACCESS_MODES,
+  loginAccessPolicy,
+  validateLoginAccessPolicy,
+} = require('./login-access-policy');
 
 const VERIFY_TTL = 24 * 60 * 60 * 1000;
 const RESET_TTL = 60 * 60 * 1000;
@@ -38,10 +43,13 @@ function publicUser(user) {
     mfaVersion,
     passkeyCount,
     pushMfaDeviceCount,
+    loginAccessMode,
+    allowedServiceDeviceIds,
     ...safe
   } = user;
   return {
     ...safe,
+    loginAccess: loginAccessPolicy({ loginAccessMode, allowedServiceDeviceIds }),
     mfa: {
       enabled: Boolean(mfaSecretEncrypted && user.mfaEnabledAt),
       pushEnabled: Number(pushMfaDeviceCount || 0) > 0,
@@ -87,6 +95,7 @@ function permissionsForRoles(roleNames, roles, organizationId = null) {
 
 function registerUserRoutes({ app, users, roles, permissions, departments = [],
   memberships = [], organizationUnits = [], departmentReferences = [],
+  serviceDevices = [],
   authMiddleware, requirePermission, logEvent,
   authRateLimit = (_req, _res, next) => next(), skipEmailVerification = false,
   onTokenIssued, userStore, accountMailSender = sendAccountMail,
@@ -108,6 +117,20 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
   function findUser(identifier) {
     const key = normalize(identifier);
     return users.find((user) => normalize(user.email) === key || normalize(user.username) === key);
+  }
+
+  function requestedLoginAccess(body, existingUser, organizationId) {
+    const current = loginAccessPolicy(existingUser);
+    const requested = body.loginAccess === undefined
+      ? current
+      : {
+        mode: body.loginAccess?.mode,
+        allowedServiceDeviceIds: body.loginAccess?.allowedServiceDeviceIds,
+      };
+    return validateLoginAccessPolicy(requested, {
+      devices: serviceDevices,
+      organizationId,
+    });
   }
 
   async function eraseUser(user, action, actor) {
@@ -546,6 +569,12 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     if (hasStartPassword && !passwordIsValid(password)) return res.status(400).json({ error: 'Das Passwort muss mindestens 12 Zeichen sowie Groß-/Kleinbuchstaben, Zahl und Sonderzeichen enthalten.' });
     const access = requestedScopes(req, roleNames, departmentIds);
     if (access.error) return res.status(400).json({ error: access.error });
+    const loginAccess = requestedLoginAccess(
+      req.body,
+      { loginAccessMode: LOGIN_ACCESS_MODES.ALL_CLIENTS, allowedServiceDeviceIds: [] },
+      req.tenant?.organizationId,
+    );
+    if (loginAccess.error) return res.status(400).json({ error: loginAccess.error });
     const allRoleNames = [...new Set(access.scopes.flatMap((scope) => scope.roles))];
     const allDepartmentIds = [...new Set(access.scopes.flatMap((scope) => scope.departmentIds))];
     const mailMessage = requestedMessage(req.body.mailMessage, 'user-create');
@@ -557,6 +586,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       permissions: permissionsForRoles(allRoleNames, roles, req.tenant?.organizationId), active: req.body.active !== false,
       emailVerifiedAt: skipEmailVerification ? new Date().toISOString() : null, failedLoginAttempts: 0, lockedUntil: null,
       createdAt: new Date().toISOString(), lastLoginAt: null,
+      loginAccessMode: loginAccess.mode,
+      allowedServiceDeviceIds: loginAccess.allowedServiceDeviceIds,
       mfaRequired,
       mfaGraceEndsAt: mfaRequired
         ? new Date(now() + MFA_ENROLLMENT_GRACE_MS).toISOString()
@@ -610,6 +641,16 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     const user = usersForRequest(req).find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     const membership = organizationMembership(user.id, req.tenant?.organizationId);
+    const activeOrganizationIds = new Set(memberships
+      .filter((entry) => entry.userId === user.id && entry.status === 'active')
+      .map((entry) => entry.organizationId));
+    if (req.body.loginAccess !== undefined
+        && activeOrganizationIds.size > 1
+        && req.user.platformAdmin !== true) {
+      return res.status(403).json({
+        error: 'Die organisationsübergreifende Anmelderichtlinie darf nur durch die Plattformadministration geändert werden.',
+      });
+    }
     const email = normalize(req.body.email ?? user.email);
     const username = String(req.body.username ?? user.username).trim();
     const roleNames = req.body.roles ?? membershipRoles(membership, user.roles);
@@ -657,10 +698,18 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     }
     if (req.body.password && !passwordIsValid(req.body.password)) return res.status(400).json({ error: 'Das neue Passwort erfüllt die Sicherheitsanforderungen nicht.' });
     const emailChanged = email !== normalize(user.email);
+    const previousLoginAccess = loginAccessPolicy(user);
+    const loginAccess = requestedLoginAccess(req.body, user, req.tenant?.organizationId);
+    if (loginAccess.error) return res.status(400).json({ error: loginAccess.error });
+    const loginAccessChanged = loginAccess.mode !== previousLoginAccess.mode
+      || JSON.stringify(loginAccess.allowedServiceDeviceIds)
+        !== JSON.stringify(previousLoginAccess.allowedServiceDeviceIds);
     const mfaPolicyChanged = typeof req.body.mfaRequired === 'boolean'
       && req.body.mfaRequired !== user.mfaRequired;
     Object.assign(user, {
       name: String(req.body.name ?? user.name ?? '').trim(), username, email, active: nextActive,
+      loginAccessMode: loginAccess.mode,
+      allowedServiceDeviceIds: loginAccess.allowedServiceDeviceIds,
     });
     if (membership) {
       membership.scopes = access.scopes;
@@ -690,9 +739,24 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
           : 'Ein Administrator hat die Zwei-Faktor-Authentifizierung für Ihr MaterialKompass-Konto auf freiwillig gesetzt.',
       }).catch((error) => console.error('2-FA-Sicherheitsbenachrichtigung fehlgeschlagen:', error.message));
     }
+    if (loginAccessChanged) {
+      await accountMailSender({
+        to: user.email,
+        subject: 'Anmelderichtlinie geändert',
+        text: loginAccess.mode === LOGIN_ACCESS_MODES.ALL_CLIENTS
+          ? 'Ein Administrator hat die Anmeldung für Web, Apps und Dienstgeräte freigegeben.'
+          : loginAccess.mode === LOGIN_ACCESS_MODES.SERVICE_DEVICES
+            ? 'Ein Administrator hat die Anmeldung auf aktivierte Dienstgeräte beschränkt.'
+            : 'Ein Administrator hat die Anmeldung auf ausgewählte Dienstgeräte beschränkt.',
+      }).catch((error) => console.error('Sicherheitsbenachrichtigung fehlgeschlagen:', error.message));
+    }
     if (nextActive) { user.deactivatedAt = null; user.deactivationReason = null; user.scheduledDeletionAt = null; }
     await saveUser(user);
-    logEvent('update', 'User', { id: user.id }, req.user.username);
+    logEvent('update', 'User', {
+      id: user.id,
+      loginAccessMode: user.loginAccessMode,
+      loginAccessChanged,
+    }, req.user.username);
     return res.json(publicUserForRequest(user, req));
   });
 

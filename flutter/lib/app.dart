@@ -3,8 +3,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pages/auth_link_page.dart';
 import 'pages/service_device_pages.dart';
-import 'services/api_client.dart';
-import 'services/push_mfa_service.dart';
 
 class MaterialKompassApp extends StatefulWidget {
   const MaterialKompassApp({super.key});
@@ -15,77 +13,6 @@ class MaterialKompassApp extends StatefulWidget {
 
 class _MaterialKompassAppState extends State<MaterialKompassApp> {
   final navigatorKey = GlobalKey<NavigatorState>();
-  final Set<String> handledApprovals = {};
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      try {
-        await PushMfaService.instance.initialize(onApproval: _showApproval);
-      } catch (_) {
-        // Ohne gültige Firebase-Konfiguration bleibt nur Push-2-FA deaktiviert.
-      }
-    });
-  }
-
-  Future<void> _showApproval(String approvalId, String deviceId) async {
-    final context = navigatorKey.currentContext;
-    if (context == null || !context.mounted) return;
-    if (!handledApprovals.add(approvalId)) return;
-    final approved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Anmeldung bestätigen'),
-        content: const Text(
-          'Es wurde gerade versucht, sich bei MaterialKompass anzumelden. '
-          'Warst du das?',
-        ),
-        actions: [
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            icon: const Icon(Icons.block_outlined),
-            label: const Text('Nein, ablehnen'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.check_circle_outline),
-            label: const Text('Ja, bestätigen'),
-          ),
-        ],
-      ),
-    );
-    if (approved == null) {
-      handledApprovals.remove(approvalId);
-      return;
-    }
-    try {
-      await PushMfaService.instance.respond(
-        approvalId,
-        deviceId: deviceId,
-        approve: approved,
-      );
-      if (context.mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(
-            content: Text(
-              approved
-                  ? 'Die Anmeldung wurde bestätigt.'
-                  : 'Die Anmeldung wurde abgelehnt.',
-            ),
-          ),
-        );
-      }
-    } on ApiException catch (error) {
-      handledApprovals.remove(approvalId);
-      if (context.mounted) {
-        ScaffoldMessenger.maybeOf(
-          context,
-        )?.showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
-  }
 
   ThemeData _theme(ColorScheme colorScheme, {bool highContrast = false}) {
     return ThemeData(

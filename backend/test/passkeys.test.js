@@ -257,6 +257,53 @@ test('passkey challenges are single-use and require the discoverable user handle
   }
 });
 
+test('passkey login respects a service-device-only account policy', async () => {
+  const { server, request, token } = await start();
+  try {
+    const registration = await request('/api/users/me/passkeys/options', {
+      method: 'POST', token,
+      body: { name: 'Dienstgerätebindung', currentPassword: 'MaterialKompass2026!' },
+    });
+    const registered = await request('/api/users/me/passkeys/verify', {
+      method: 'POST', token,
+      body: {
+        challengeId: registration.data.challengeId,
+        credential: {
+          id: credentialId,
+          response: { userHandle: registration.data.options.user.id },
+        },
+      },
+    });
+    assert.equal(registered.response.status, 201);
+
+    const restricted = await request('/api/users/user-admin', {
+      method: 'PUT', token: registered.data.token,
+      body: {
+        loginAccess: { mode: 'service_devices', allowedServiceDeviceIds: [] },
+      },
+    });
+    assert.equal(restricted.response.status, 200);
+
+    const challenge = await request('/api/auth/passkey/options', {
+      method: 'POST', body: {},
+    });
+    const rejected = await request('/api/auth/passkey/verify', {
+      method: 'POST',
+      body: {
+        challengeId: challenge.data.challengeId,
+        credential: {
+          id: credentialId,
+          response: { userHandle: registration.data.options.user.id },
+        },
+      },
+    });
+    assert.equal(rejected.response.status, 403);
+    assert.match(rejected.data.error, /Dienstgerät/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('an MFA challenge can be confirmed with a passkey instead of a code', async () => {
   const { server, request, token } = await start();
   try {

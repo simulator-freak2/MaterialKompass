@@ -9,7 +9,6 @@ import '../services/api_client.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../services/passkey_service.dart';
-import '../services/push_mfa_service.dart';
 import '../services/system_message_service.dart';
 import '../widgets/system_message_card.dart';
 import '../widgets/password_login_form.dart';
@@ -213,7 +212,7 @@ class _LoginPageState extends State<LoginPage> {
     Map<String, dynamic> loginData,
   ) async {
     String method = 'totp';
-    if (PasskeyService.platformSupported || PushMfaService.configured) {
+    if (PasskeyService.platformSupported || !kIsWeb) {
       final selected = await showDialog<String>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -227,7 +226,7 @@ class _LoginPageState extends State<LoginPage> {
               onPressed: () => Navigator.pop(dialogContext, 'totp'),
               child: const Text('Authenticator-App'),
             ),
-            if (PushMfaService.configured)
+            if (!kIsWeb)
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, 'push'),
                 icon: const Icon(Icons.notifications_active_outlined),
@@ -258,16 +257,11 @@ class _LoginPageState extends State<LoginPage> {
       }
     }
     if (method == 'push') {
-      try {
-        return await PushMfaService.instance.enroll(
-          token: loginData['token'].toString(),
-          name: PushMfaService.defaultDeviceName,
-          currentPassword: passwordController.text,
-        );
-      } on ApiException catch (error) {
-        if (mounted) _showError(error.message);
-        return null;
-      }
+      return setupPushMfa(
+        context,
+        token: loginData['token'].toString(),
+        currentPassword: passwordController.text,
+      );
     }
     return setupMfa(
       context,

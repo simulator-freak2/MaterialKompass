@@ -365,6 +365,9 @@ void main() {
                 'status': 'active',
               },
             ],
+            serviceDevices: [
+              {'id': 'device-1', 'name': 'Hallenterminal', 'active': true},
+            ],
           ),
         ),
       ),
@@ -381,6 +384,16 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Account aktiv'), findsOneWidget);
+    expect(find.text('Zulässige Anmeldung'), findsOneWidget);
+    expect(find.text('Web, Apps und Dienstgeräte'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Web, Apps und Dienstgeräte'));
+    await tester.tap(find.text('Web, Apps und Dienstgeräte'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nur ausgewählte Dienstgeräte').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hallenterminal'), findsOneWidget);
   });
 
   testWidgets('Role dialog can edit name and permissions', (

@@ -49,6 +49,7 @@ function registerServiceDeviceRoutes({
   jwtSecret, qrLoginCredentials = [], securityVersion,
   saveUser = async () => {},
   userMfa,
+  loginAccessAllowed = () => true,
   tenantForUser = () => null,
 }) {
   const encryptionKey = crypto.createHash('sha256').update(jwtSecret).digest();
@@ -518,7 +519,9 @@ function registerServiceDeviceRoutes({
         && userInOrganization(entry, device.organizationId, device.unitId));
       if (nfcUser) { user = nfcUser; valid = true; method = 'personal-nfc'; }
     }
-    if (!valid || !user?.active || !user.emailVerifiedAt || !await verifySecondFactor(device, device.personalMfa, req.body)
+    if (!valid || !user?.active || !user.emailVerifiedAt
+        || !loginAccessAllowed(user, device.id)
+        || !await verifySecondFactor(device, device.personalMfa, req.body)
         || (method === 'personal-nfc' && device.personalMfa === 'nfc'
           && String(req.body.nfcLoginCredential || '') === String(req.body.nfcCredential || ''))) {
       // The IP limiter throttles guesses without allowing an attacker to lock

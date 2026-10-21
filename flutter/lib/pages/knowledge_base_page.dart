@@ -2094,6 +2094,35 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
+    title: 'Anmeldung auf Dienstgeräte beschränken',
+    summary:
+        'Festlegen, ob ein Konto überall, nur an Dienstgeräten oder nur an ausgewählten Dienstgeräten genutzt werden darf.',
+    icon: Icons.phonelink_lock_outlined,
+    readingMinutes: 4,
+    audience: 'Für Admins',
+    prerequisite:
+        'Du brauchst Verwaltungsrechte für Nutzerkonten; für eine gezielte Freigabe muss mindestens ein Dienstgerät angelegt sein.',
+    steps: [
+      'Öffne „Nutzerverwaltung → Nutzer“ und bearbeite das gewünschte Konto.',
+      'Wähle unter „Zulässige Anmeldung“ die Option „Web, Apps und Dienstgeräte“, wenn die normale Loginseite und alle aktivierten Dienstgeräte erlaubt sein sollen.',
+      'Wähle „Nur aktivierte Dienstgeräte“, um die normale Anmeldung per Passwort, QR-Code oder Passkey zu sperren und persönliche Anmeldungen an allen aktivierten Dienstgeräten zu erlauben.',
+      'Wähle „Nur ausgewählte Dienstgeräte“ und markiere mindestens ein Gerät, wenn das Konto ausschließlich dort persönlich genutzt werden darf.',
+      'Speichere die Änderung. MaterialKompass beendet beim nächsten Zugriff alle Sitzungen, die der neuen Richtlinie nicht entsprechen, und versendet eine Sicherheits-E-Mail.',
+      'Teste die Anmeldung gemeinsam mit der betroffenen Person an einem erlaubten Gerät. Prüfe außerdem, dass ein nicht erlaubter Web- oder Gerätezugang abgelehnt wird.',
+    ],
+    tip:
+        'Lege und aktiviere das Zielgerät vor der Kontobeschränkung. So vermeidest du, dass die Person ohne zulässigen Anmeldeweg bleibt.',
+    keywords: [
+      'anmelderichtlinie',
+      'web sperren',
+      'dienstgerät',
+      'gerät auswählen',
+      'login beschränken',
+      'zugang',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
     title: 'Nutzerkonto, Rollen und Fachbereiche verwalten',
     summary:
         'Konten anlegen und Zugriffe nach dem Prinzip der geringsten Rechte vergeben.',
@@ -2108,6 +2137,7 @@ const _articles = [
       'In Jugendorganisationen steht „Jugendmitglied“ für den eingeschränkten Zugriff bereit. Weise dem Jugendvorsitz dort „Vorsitz“ zu; „Jugendvorsitzender“ entsteht in der Stammgliederung automatisch und darf in der Jugend nicht separat vergeben werden.',
       'Ordne bei Bedarf geleitete Fachbereiche zu und prüfe die daraus entstehenden Bereichs- und Schreibrechte.',
       'Lege fest, ob eine starke Anmeldung per Passkey oder 2-FA verpflichtend ist, und aktiviere das Konto.',
+      'Lege unter „Zulässige Anmeldung“ fest, ob Web, alle Dienstgeräte oder nur ausgewählte Dienstgeräte verwendet werden dürfen.',
       'Informiere die Person über den vorgesehenen Anmeldeweg. Persönliche QR-Codes verwaltet sie unter „Mein Account“ oder ein Admin in der Nutzerverwaltung.',
       'Deaktiviere nicht mehr benötigte Konten zeitnah und lösche sie nur unter Beachtung der Aufbewahrungsregeln.',
     ],

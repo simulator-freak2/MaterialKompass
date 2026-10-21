@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS user_mfa_push_devices (
   id CHAR(36) PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   name VARCHAR(100) NOT NULL,
-  platform ENUM('android', 'ios', 'macos') NOT NULL,
+  platform ENUM('android', 'web') NOT NULL,
   push_token TEXT CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   device_secret_hash BINARY(32) NOT NULL,
   created_at DATETIME(3) NOT NULL,

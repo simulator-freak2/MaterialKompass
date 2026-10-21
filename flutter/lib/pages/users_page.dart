@@ -26,6 +26,7 @@ class _UsersPageState extends State<UsersPage> {
   List<Map<String, dynamic>> roles = [];
   List<Map<String, dynamic>> departments = [];
   List<Map<String, dynamic>> organizationUnits = [];
+  List<Map<String, dynamic>> serviceDevices = [];
   List<Map<String, dynamic>> scannerEmailAddresses = [];
   List<Map<String, dynamic>> mailTemplates = [];
   List<String> scannerEmailDestinations = [];
@@ -66,6 +67,7 @@ class _UsersPageState extends State<UsersPage> {
         headers: headers,
       ),
       http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: headers),
+      http.get(Uri.parse('$apiBaseUrl/api/service-devices'), headers: headers),
     ]);
     if (!mounted) return;
     if (responses.take(3).any((response) => response.statusCode != 200)) {
@@ -96,6 +98,12 @@ class _UsersPageState extends State<UsersPage> {
         );
         currentUnitId = ((me['context'] as Map?)?['unit'] as Map?)?['id']
             ?.toString();
+      }
+      if (responses[7].statusCode == 200) {
+        serviceDevices = (jsonDecode(responses[7].body) as List)
+            .cast<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList();
       }
       isAdmin = responses[3].statusCode == 200;
       if (isAdmin) {
@@ -160,6 +168,7 @@ class _UsersPageState extends State<UsersPage> {
         organizationUnits: organizationUnits,
         currentUnitId: currentUnitId,
         mailTemplates: mailTemplates,
+        serviceDevices: serviceDevices,
       ),
     );
     if (result == null) return;
@@ -1437,6 +1446,17 @@ class _UsersPageState extends State<UsersPage> {
                               ((user['passkeys'] as Map?)?['count'] as num?)
                                   ?.toInt() ??
                               0;
+                          final loginAccess = Map<String, dynamic>.from(
+                            user['loginAccess'] as Map? ?? const {},
+                          );
+                          final loginAccessLabel = switch (
+                            loginAccess['mode']?.toString()
+                          ) {
+                            'service_devices' => 'nur Dienstgeräte',
+                            'selected_service_devices' =>
+                              'ausgewählte Dienstgeräte',
+                            _ => 'Web, Apps und Dienstgeräte',
+                          };
                           return Card(
                             child: ListTile(
                               leading: CircleAvatar(
@@ -1450,7 +1470,7 @@ class _UsersPageState extends State<UsersPage> {
                                     : '${user['name']} (${user['username']})',
                               ),
                               subtitle: Text(
-                                '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · 2-FA: ${mfa['enabled'] == true ? 'aktiv' : 'nicht eingerichtet'}${mfa['required'] == true ? ' (starke Anmeldung Pflicht)' : ' (freiwillig)'} · Passkeys: $passkeyCount · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}',
+                                '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Anmeldung: $loginAccessLabel · 2-FA: ${mfa['enabled'] == true ? 'aktiv' : 'nicht eingerichtet'}${mfa['required'] == true ? ' (starke Anmeldung Pflicht)' : ' (freiwillig)'} · Passkeys: $passkeyCount · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}',
                               ),
                               isThreeLine: true,
                               trailing: Wrap(
@@ -2372,6 +2392,7 @@ class UserDialog extends StatefulWidget {
   final List<Map<String, dynamic>> organizationUnits;
   final String? currentUnitId;
   final List<Map<String, dynamic>> mailTemplates;
+  final List<Map<String, dynamic>> serviceDevices;
   final bool membershipAssignment;
   const UserDialog({
     required this.user,
@@ -2380,6 +2401,7 @@ class UserDialog extends StatefulWidget {
     this.organizationUnits = const [],
     this.currentUnitId,
     this.mailTemplates = const [],
+    this.serviceDevices = const [],
     this.membershipAssignment = false,
     super.key,
   });
@@ -2405,6 +2427,15 @@ class _UserDialogState extends State<UserDialog> {
   String? selectedTemplateId;
   late bool active = widget.user?['active'] != false;
   late bool mfaRequired = ((widget.user?['mfa'] as Map?)?['required'] == true);
+  late String loginAccessMode =
+      ((widget.user?['loginAccess'] as Map?)?['mode']?.toString() ??
+      'all_clients');
+  late Set<String> allowedServiceDeviceIds =
+      (((widget.user?['loginAccess'] as Map?)?['allowedServiceDeviceIds']
+                  as List?) ??
+              const [])
+          .map((entry) => entry.toString())
+          .toSet();
   late List<_AccessScopeDraft> accessScopes;
   late String? defaultUnitId;
 
@@ -2842,6 +2873,74 @@ class _UserDialogState extends State<UserDialog> {
               ),
             ),
             if (!widget.membershipAssignment) ...[
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                key: ValueKey(loginAccessMode),
+                initialValue: loginAccessMode,
+                decoration: const InputDecoration(
+                  labelText: 'Zulässige Anmeldung',
+                  helperText:
+                      'Beschränkungen werden serverseitig für alle Anmeldeverfahren geprüft.',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'all_clients',
+                    child: Text('Web, Apps und Dienstgeräte'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'service_devices',
+                    child: Text('Nur aktivierte Dienstgeräte'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'selected_service_devices',
+                    child: Text('Nur ausgewählte Dienstgeräte'),
+                  ),
+                ],
+                onChanged: (value) => setState(() {
+                  loginAccessMode = value ?? 'all_clients';
+                  if (loginAccessMode != 'selected_service_devices') {
+                    allowedServiceDeviceIds.clear();
+                  }
+                }),
+              ),
+              if (loginAccessMode == 'selected_service_devices') ...[
+                const SizedBox(height: 8),
+                if (widget.serviceDevices.isEmpty)
+                  const ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.warning_amber_outlined),
+                    title: Text('Keine Dienstgeräte verfügbar'),
+                    subtitle: Text(
+                      'Lege zuerst im Register „Dienstgeräte“ ein Gerät an.',
+                    ),
+                  )
+                else
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: widget.serviceDevices.map((device) {
+                        final id = device['id'].toString();
+                        final active = device['active'] != false;
+                        return FilterChip(
+                          label: Text(
+                            '${device['name'] ?? id}${active ? '' : ' (deaktiviert)'}',
+                          ),
+                          selected: allowedServiceDeviceIds.contains(id),
+                          onSelected: (selected) => setState(() {
+                            if (selected) {
+                              allowedServiceDeviceIds.add(id);
+                            } else {
+                              allowedServiceDeviceIds.remove(id);
+                            }
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+              ],
               SwitchListTile(
                 value: active,
                 title: const Text('Account aktiv'),
@@ -2872,11 +2971,16 @@ class _UserDialogState extends State<UserDialog> {
           final unitIds = accessScopes.map((scope) => scope.unitId).toList();
           if (accessScopes.isEmpty ||
               unitIds.toSet().length != unitIds.length ||
-              accessScopes.any((scope) => scope.roles.isEmpty)) {
+              accessScopes.any((scope) => scope.roles.isEmpty) ||
+              (loginAccessMode == 'selected_service_devices' &&
+                  allowedServiceDeviceIds.isEmpty)) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
+              SnackBar(
                 content: Text(
-                  'Jede Ebene darf nur einmal vorkommen und benötigt mindestens eine Rolle.',
+                  loginAccessMode == 'selected_service_devices' &&
+                          allowedServiceDeviceIds.isEmpty
+                      ? 'Wähle mindestens ein zulässiges Dienstgerät aus.'
+                      : 'Jede Ebene darf nur einmal vorkommen und benötigt mindestens eine Rolle.',
                 ),
               ),
             );
@@ -2908,6 +3012,10 @@ class _UserDialogState extends State<UserDialog> {
             'email': email.text,
             'active': active,
             'mfaRequired': mfaRequired,
+            'loginAccess': {
+              'mode': loginAccessMode,
+              'allowedServiceDeviceIds': allowedServiceDeviceIds.toList(),
+            },
           });
           if (password.text.isNotEmpty) {
             result['password'] = password.text;

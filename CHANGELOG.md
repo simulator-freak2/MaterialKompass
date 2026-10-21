@@ -1,5 +1,9 @@
 # Aenderungsprotokoll
 
+## [1.5.9] - 2026-10-21
+
+- Einschränkung der Anmeldemöglichkeiten
+
 ## [1.5.8] - 2026-10-20
 
 -Überarbeitung Loginseite
