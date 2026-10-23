@@ -1,16 +1,8 @@
 # Aenderungsprotokoll
 
-## [1.5.9] - 2026-10-21
+## [1.5.9] - 2026-10-23
 
-- Einschränkung der Anmeldemöglichkeiten
-
-## [1.5.8] - 2026-10-20
-
--Überarbeitung Loginseite
--Überabeitung der 2FA
--Gedächtnis der Letzten Einheit Eingeführt
-
-## [1.5.7] - 2026-10-20
+- Einschränkung der Anmeldemöglichkeiten## [1.5.7] - 2026-10-20
 
 -Überarbeitung Loginseite
 -Überabeitung der 2FA
