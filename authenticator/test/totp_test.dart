@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:materialkompass_authenticator/main.dart';
 
@@ -27,5 +28,53 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+
+  test('MaterialKompass pairing can carry TOTP for automatic push setup', () {
+    final totpUri = Uri.parse(
+      'otpauth://totp/MaterialKompass:user@example.org'
+      '?secret=JBSWY3DPEHPK3PXP&issuer=MaterialKompass',
+    );
+    final pairingUri = Uri.parse('materialkompass-auth://pair').replace(
+      queryParameters: {
+        'server': 'https://material.example.org',
+        'token': List.filled(43, 'a').join(),
+        'totp': totpUri.toString(),
+      },
+    );
+
+    final entry = embeddedTotpEntry(pairingUri);
+
+    expect(entry, isNotNull);
+    expect(entry!.issuer, 'MaterialKompass');
+    expect(entry.account, 'user@example.org');
+    expect(entry.secret, 'JBSWY3DPEHPK3PXP');
+  });
+
+  test('app lock is limited to supported native platforms', () {
+    expect(
+      appLockSupportedPlatform(TargetPlatform.android, isWeb: false),
+      isTrue,
+    );
+    expect(
+      appLockSupportedPlatform(TargetPlatform.windows, isWeb: false),
+      isTrue,
+    );
+    expect(
+      appLockSupportedPlatform(TargetPlatform.linux, isWeb: false),
+      isFalse,
+    );
+    expect(
+      appLockSupportedPlatform(TargetPlatform.android, isWeb: true),
+      isFalse,
+    );
+  });
+
+  test('app lock engages when the app leaves the foreground', () {
+    expect(appLockTriggeredBy(AppLifecycleState.paused), isTrue);
+    expect(appLockTriggeredBy(AppLifecycleState.hidden), isTrue);
+    expect(appLockTriggeredBy(AppLifecycleState.detached), isTrue);
+    expect(appLockTriggeredBy(AppLifecycleState.inactive), isFalse);
+    expect(appLockTriggeredBy(AppLifecycleState.resumed), isFalse);
   });
 }

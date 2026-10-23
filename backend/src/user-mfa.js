@@ -237,6 +237,37 @@ function createUserMfa({
     });
   });
 
+  app.post('/api/users/me/mfa/code-device', authMiddleware, authRateLimit, async (req, res) => {
+    if (!mfaEnabled(req.user)) {
+      return res.status(409).json({
+        error: 'Richten Sie zuerst die Zwei-Faktor-Authentifizierung ein.',
+      });
+    }
+    if (!await bcrypt.compare(req.body.currentPassword || '', req.user.passwordHash)) {
+      return res.status(403).json({ error: 'Die erneute Authentifizierung ist fehlgeschlagen.' });
+    }
+    const verification = await verifyUserCode(req.user, req.body.code);
+    if (!verification.valid) {
+      return res.status(403).json({ error: 'Die erneute Authentifizierung ist fehlgeschlagen.' });
+    }
+    const secret = vault.decrypt(req.user.mfaSecretEncrypted);
+    if (!secret) {
+      return res.status(409).json({ error: 'Der 2-FA-Schlüssel ist nicht verfügbar.' });
+    }
+    logEvent('mfa_code_device_provisioned', 'User', { id: req.user.id }, req.user.username);
+    await securityNotice(
+      req.user,
+      'Einrichtung für weiteres 2-FA-Code-Gerät gestartet',
+      'Der Einrichtungsschlüssel Ihres MaterialKompass-Kontos wurde für ein weiteres Code-Gerät abgerufen.',
+    );
+    return res.json({
+      secret,
+      provisioningUri: provisioningUri(secret, req.user.email || req.user.username),
+      issuer: 'MaterialKompass',
+      account: req.user.email || req.user.username,
+    });
+  });
+
   app.post('/api/users/me/mfa/confirm', authMiddleware, async (req, res) => {
     const secret = vault.decrypt(req.user.mfaPendingSecretEncrypted);
     const pendingExpiresAt = Date.parse(req.user.mfaPendingSecretExpiresAt || '');

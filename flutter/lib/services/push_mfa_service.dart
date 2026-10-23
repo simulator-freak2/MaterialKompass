@@ -2,6 +2,18 @@ import 'dart:async';
 
 import 'api_client.dart';
 
+String materialKompassEnrollmentUri(String pairingUri, String provisioningUri) {
+  final pairing = Uri.parse(pairingUri);
+  if (pairing.scheme != 'materialkompass-auth' || pairing.host != 'pair') {
+    throw const FormatException('Ungültiger MaterialKompass-Kopplungscode.');
+  }
+  return pairing
+      .replace(
+        queryParameters: {...pairing.queryParameters, 'totp': provisioningUri},
+      )
+      .toString();
+}
+
 class PushPairing {
   const PushPairing({
     required this.id,

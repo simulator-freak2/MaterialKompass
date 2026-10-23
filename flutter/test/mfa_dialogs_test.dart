@@ -1,8 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:materialkompass/services/push_mfa_service.dart';
 import 'package:materialkompass/widgets/mfa_dialogs.dart';
 
 void main() {
+  test('MaterialKompass enrollment QR combines TOTP and push pairing', () {
+    const provisioning =
+        'otpauth://totp/MaterialKompass:user@example.org'
+        '?secret=JBSWY3DPEHPK3PXP&issuer=MaterialKompass';
+    final combined = materialKompassEnrollmentUri(
+      'materialkompass-auth://pair?server=https%3A%2F%2Fexample.org&token=abc',
+      provisioning,
+    );
+    final parsed = Uri.parse(combined);
+
+    expect(parsed.scheme, 'materialkompass-auth');
+    expect(parsed.host, 'pair');
+    expect(parsed.queryParameters['token'], 'abc');
+    expect(parsed.queryParameters['totp'], provisioning);
+  });
+
   testWidgets('MFA dialog keeps push, passkey and code choices separate', (
     tester,
   ) async {

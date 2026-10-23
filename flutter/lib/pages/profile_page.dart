@@ -216,7 +216,10 @@ class _ProfilePageState extends State<ProfilePage> {
     widget.onAccountDeleted();
   }
 
-  Future<Map<String, String>?> mfaConfirmation(String title) async {
+  Future<Map<String, String>?> mfaConfirmation(
+    String title, {
+    bool recoveryCodeAllowed = true,
+  }) async {
     final password = TextEditingController();
     final code = TextEditingController();
     try {
@@ -237,8 +240,13 @@ class _ProfilePageState extends State<ProfilePage> {
               const SizedBox(height: 12),
               TextField(
                 controller: code,
-                decoration: const InputDecoration(
-                  labelText: '2-FA- oder Wiederherstellungscode',
+                keyboardType: recoveryCodeAllowed
+                    ? TextInputType.text
+                    : TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: recoveryCodeAllowed
+                      ? '2-FA- oder Wiederherstellungscode'
+                      : 'Aktueller sechsstelliger 2-FA-Code',
                 ),
               ),
             ],
@@ -262,6 +270,28 @@ class _ProfilePageState extends State<ProfilePage> {
       password.dispose();
       code.dispose();
     }
+  }
+
+  Future<void> addMfaCodeDevice() async {
+    final confirmation = await mfaConfirmation(
+      'Weiteres Code-Gerät hinzufügen',
+      recoveryCodeAllowed: false,
+    );
+    if (confirmation == null) return;
+    if (!RegExp(r'^\d{6}$').hasMatch(confirmation['code'] ?? '')) {
+      message('Geben Sie einen aktuellen sechsstelligen 2-FA-Code ein.');
+      return;
+    }
+    if (!mounted) return;
+    final configured = await setupAdditionalMfaCodeDevice(
+      context,
+      token: widget.token,
+      currentPassword: confirmation['currentPassword']!,
+      code: confirmation['code']!,
+    );
+    if (!configured || !mounted) return;
+    message('Weiteres Code-Gerät eingerichtet. Melden Sie sich erneut an.');
+    widget.onAccountDeleted();
   }
 
   Future<void> regenerateRecoveryCodes() async {
@@ -758,6 +788,12 @@ class _ProfilePageState extends State<ProfilePage> {
                             ),
                           if (enabled)
                             OutlinedButton.icon(
+                              onPressed: addMfaCodeDevice,
+                              icon: const Icon(Icons.add_to_home_screen),
+                              label: const Text('Weiteres Code-Gerät'),
+                            ),
+                          if (enabled)
+                            OutlinedButton.icon(
                               onPressed: regenerateRecoveryCodes,
                               icon: const Icon(Icons.key),
                               label: const Text('Recovery-Codes erneuern'),
@@ -773,6 +809,13 @@ class _ProfilePageState extends State<ProfilePage> {
                             ),
                         ],
                       ),
+                      if (enabled) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Mehrere Geräte können gleichzeitig Codes erzeugen. '
+                          'Beim Hinzufügen bleibt der bestehende Schlüssel gültig.',
+                        ),
+                      ],
                     ],
                   );
                 },

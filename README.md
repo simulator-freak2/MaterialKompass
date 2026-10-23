@@ -97,10 +97,21 @@ Persönliche Konten richten TOTP unter **Mein Account → Zwei-Faktor-Authentifi
 mit einer üblichen Authenticator-App ein. Nach der Bestätigung werden zehn einmal
 verwendbare Wiederherstellungscodes angezeigt. Diese Codes werden nur bei der
 Erstellung ausgegeben und serverseitig ausschließlich gehasht gespeichert.
+Mit **Weiteres Code-Gerät** lässt sich derselbe TOTP-Schlüssel nach erneuter
+Authentifizierung auf zusätzliche Geräte übertragen; bereits eingerichtete Geräte
+bleiben dabei gültig.
 
 Die separate MaterialKompass-Authenticator-App für Android unterstützt zusätzlich
 direkte Push-Freigaben über den eigenen Server. Die signierte APK steht auf der
-Web-Anmeldeseite unter **App herunterladen → 2FA-App (Android)** bereit.
+Web-Anmeldeseite unter **App herunterladen → 2FA-App (Android)** bereit. Wird beim
+Einrichten die MaterialKompass-App ausgewählt, enthält der einmalige QR-Code sowohl
+den TOTP-Schlüssel als auch die Push-Kopplung. Beide Funktionen werden dadurch in
+einem Scan eingerichtet. Für andere Authenticator-Apps bleibt ein standardkonformer
+TOTP-QR-Code auswählbar.
+In der Authenticator-App lässt sich zusätzlich eine lokale App-Sperre aktivieren.
+Danach werden Codes und Push-Freigaben beim Start und nach dem Wechsel in den
+Hintergrund erst nach Fingerabdruck, Gesichtserkennung oder Geräte-PIN/Passcode
+angezeigt.
 
 Admins entscheiden in der Nutzerverwaltung pro Konto, ob eine starke Anmeldung
 freiwillig oder verpflichtend ist. Push-2-FA, TOTP und Passkeys erfüllen diese Pflicht. Wird sie

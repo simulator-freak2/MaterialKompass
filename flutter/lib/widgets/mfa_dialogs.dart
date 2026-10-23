@@ -384,15 +384,16 @@ Future<Map<String, dynamic>?> setupMfa(
   required String token,
   required String currentPassword,
 }) async {
-  final headers = {
-    'Authorization': 'Bearer $token',
+  String activeToken = token;
+  Map<String, String> headers() => {
+    'Authorization': 'Bearer $activeToken',
     'Content-Type': 'application/json',
   };
   late http.Response setupResponse;
   try {
     setupResponse = await http.post(
       Uri.parse('$apiBaseUrl/api/users/me/mfa/setup'),
-      headers: headers,
+      headers: headers(),
       body: jsonEncode({'currentPassword': currentPassword}),
     );
   } catch (_) {
@@ -419,114 +420,219 @@ Future<Map<String, dynamic>?> setupMfa(
   }
   if (!context.mounted) return null;
 
+  final pushService = PushMfaService();
+  PushPairing? pairing;
+  String? pairingError;
+  try {
+    pairing = await pushService.createPairing(
+      token: token,
+      currentPassword: currentPassword,
+    );
+  } on ApiException catch (exception) {
+    pairingError = exception.message;
+  }
+  if (!context.mounted) {
+    pushService.close();
+    return null;
+  }
+
   final code = TextEditingController();
   String? error;
   var submitting = false;
+  var useMaterialKompassApp = pairing != null;
+  var pairingReady = false;
+  var dialogClosed = false;
+  StateSetter? refreshDialog;
+  final combinedQr = pairing == null
+      ? null
+      : materialKompassEnrollmentUri(
+          pairing.qrValue,
+          setup['provisioningUri'].toString(),
+        );
+  if (pairing != null) {
+    unawaited(() async {
+      try {
+        final result = await pushService.waitForPairing(pairing!);
+        activeToken = result['token']?.toString() ?? activeToken;
+        pairingReady = true;
+        if (!dialogClosed) refreshDialog?.call(() {});
+      } on ApiException catch (exception) {
+        pairingError = exception.message;
+        if (!dialogClosed) refreshDialog?.call(() {});
+      }
+    }());
+  }
   Map<String, dynamic>? confirmed;
   try {
     confirmed = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Authenticator-App einrichten'),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Scannen Sie den QR-Code mit Ihrer Authenticator-App. '
-                    'Alternativ können Sie den Schlüssel manuell eingeben.',
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    color: Colors.white,
-                    padding: const EdgeInsets.all(12),
-                    child: bw.BarcodeWidget(
-                      barcode: bw.Barcode.qrCode(),
-                      data: setup['provisioningUri'].toString(),
-                      width: 220,
-                      height: 220,
+        builder: (dialogContext, setDialogState) {
+          refreshDialog = setDialogState;
+          final qrValue = useMaterialKompassApp && combinedQr != null
+              ? combinedQr
+              : setup['provisioningUri'].toString();
+          return AlertDialog(
+            title: const Text('Authenticator-App einrichten'),
+            content: SizedBox(
+              width: 480,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (pairing != null)
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(
+                            value: true,
+                            icon: Icon(Icons.security_outlined),
+                            label: Text('MaterialKompass-App'),
+                          ),
+                          ButtonSegment(
+                            value: false,
+                            icon: Icon(Icons.password_outlined),
+                            label: Text('Andere App'),
+                          ),
+                        ],
+                        selected: {useMaterialKompassApp},
+                        onSelectionChanged: (selection) => setDialogState(
+                          () => useMaterialKompassApp = selection.first,
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    Text(
+                      useMaterialKompassApp && pairing != null
+                          ? 'Scannen Sie den QR-Code mit der MaterialKompass '
+                                'Authenticator-App. Code-Generierung und '
+                                'Push-Bestätigung werden gemeinsam eingerichtet.'
+                          : 'Scannen Sie den QR-Code mit Ihrer Authenticator-App. '
+                                'Alternativ können Sie den Schlüssel manuell eingeben.',
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  SelectableText(
-                    setup['secret'].toString(),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => Clipboard.setData(
-                      ClipboardData(text: setup['secret'].toString()),
+                    const SizedBox(height: 16),
+                    Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(12),
+                      child: bw.BarcodeWidget(
+                        barcode: bw.Barcode.qrCode(),
+                        data: qrValue,
+                        width: 220,
+                        height: 220,
+                      ),
                     ),
-                    icon: const Icon(Icons.copy),
-                    label: const Text('Schlüssel kopieren'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: code,
-                    autofocus: true,
-                    autofillHints: const [AutofillHints.oneTimeCode],
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: 'Aktueller sechsstelliger Code',
-                      errorText: error,
-                      border: const OutlineInputBorder(),
+                    if (useMaterialKompassApp && pairing != null) ...[
+                      const SizedBox(height: 12),
+                      if (pairingReady)
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle_outline),
+                            SizedBox(width: 8),
+                            Text('Push-Bestätigung gekoppelt'),
+                          ],
+                        )
+                      else if (pairingError == null)
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Warte auf die MaterialKompass-App …'),
+                          ],
+                        )
+                      else
+                        Text(
+                          pairingError!,
+                          style: TextStyle(
+                            color: Theme.of(dialogContext).colorScheme.error,
+                          ),
+                        ),
+                    ],
+                    const SizedBox(height: 12),
+                    SelectableText(
+                      setup['secret'].toString(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontFamily: 'monospace'),
                     ),
-                  ),
-                ],
+                    TextButton.icon(
+                      onPressed: () => Clipboard.setData(
+                        ClipboardData(text: setup['secret'].toString()),
+                      ),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Schlüssel kopieren'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: code,
+                      autofocus: true,
+                      autofillHints: const [AutofillHints.oneTimeCode],
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Aktueller sechsstelliger Code',
+                        errorText: error,
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Abbrechen'),
-            ),
-            FilledButton(
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      setDialogState(() {
-                        submitting = true;
-                        error = null;
-                      });
-                      try {
-                        final response = await http.post(
-                          Uri.parse('$apiBaseUrl/api/users/me/mfa/confirm'),
-                          headers: headers,
-                          body: jsonEncode({'code': code.text.trim()}),
-                        );
-                        final data = _object(response);
-                        if (!dialogContext.mounted) return;
-                        if (response.statusCode == 200) {
-                          Navigator.pop(dialogContext, data);
-                        } else {
-                          setDialogState(() {
-                            error =
-                                data['error']?.toString() ??
-                                'Der Code ist ungültig.';
-                            submitting = false;
-                          });
+            actions: [
+              TextButton(
+                onPressed: submitting
+                    ? null
+                    : () => Navigator.pop(dialogContext),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed:
+                    submitting || (useMaterialKompassApp && !pairingReady)
+                    ? null
+                    : () async {
+                        setDialogState(() {
+                          submitting = true;
+                          error = null;
+                        });
+                        try {
+                          final response = await http.post(
+                            Uri.parse('$apiBaseUrl/api/users/me/mfa/confirm'),
+                            headers: headers(),
+                            body: jsonEncode({'code': code.text.trim()}),
+                          );
+                          final data = _object(response);
+                          if (!dialogContext.mounted) return;
+                          if (response.statusCode == 200) {
+                            Navigator.pop(dialogContext, data);
+                          } else {
+                            setDialogState(() {
+                              error =
+                                  data['error']?.toString() ??
+                                  'Der Code ist ungültig.';
+                              submitting = false;
+                            });
+                          }
+                        } catch (_) {
+                          if (dialogContext.mounted) {
+                            setDialogState(() {
+                              error = 'Keine Verbindung zum Server.';
+                              submitting = false;
+                            });
+                          }
                         }
-                      } catch (_) {
-                        if (dialogContext.mounted) {
-                          setDialogState(() {
-                            error = 'Keine Verbindung zum Server.';
-                            submitting = false;
-                          });
-                        }
-                      }
-                    },
-              child: const Text('Aktivieren'),
-            ),
-          ],
-        ),
+                      },
+                child: const Text('Aktivieren'),
+              ),
+            ],
+          );
+        },
       ),
     );
   } finally {
+    dialogClosed = true;
+    pushService.close();
     code.dispose();
   }
   if (confirmed == null || !context.mounted) return null;
@@ -535,6 +641,208 @@ Future<Map<String, dynamic>?> setupMfa(
       .toList();
   await showRecoveryCodes(context, recoveryCodes);
   return confirmed;
+}
+
+Future<bool> setupAdditionalMfaCodeDevice(
+  BuildContext context, {
+  required String token,
+  required String currentPassword,
+  required String code,
+}) async {
+  final headers = {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
+  };
+  late http.Response response;
+  try {
+    response = await http.post(
+      Uri.parse('$apiBaseUrl/api/users/me/mfa/code-device'),
+      headers: headers,
+      body: jsonEncode({'currentPassword': currentPassword, 'code': code}),
+    );
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Keine Verbindung zum Server.')),
+      );
+    }
+    return false;
+  }
+  final setup = _object(response);
+  if (response.statusCode != 200) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            setup['error']?.toString() ??
+                'Das weitere Code-Gerät konnte nicht vorbereitet werden.',
+          ),
+        ),
+      );
+    }
+    return false;
+  }
+
+  final pushService = PushMfaService();
+  PushPairing? pairing;
+  String? pairingError;
+  try {
+    pairing = await pushService.createPairing(
+      token: token,
+      currentPassword: currentPassword,
+      code: code,
+    );
+  } on ApiException catch (exception) {
+    pairingError = exception.message;
+  }
+  if (!context.mounted) {
+    pushService.close();
+    return false;
+  }
+
+  var useMaterialKompassApp = pairing != null;
+  var pairingReady = false;
+  var dialogClosed = false;
+  StateSetter? refreshDialog;
+  final combinedQr = pairing == null
+      ? null
+      : materialKompassEnrollmentUri(
+          pairing.qrValue,
+          setup['provisioningUri'].toString(),
+        );
+  if (pairing != null) {
+    unawaited(() async {
+      try {
+        await pushService.waitForPairing(pairing!);
+        pairingReady = true;
+        if (!dialogClosed) refreshDialog?.call(() {});
+      } on ApiException catch (exception) {
+        pairingError = exception.message;
+        if (!dialogClosed) refreshDialog?.call(() {});
+      }
+    }());
+  }
+
+  bool? completed;
+  try {
+    completed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          refreshDialog = setDialogState;
+          final qrValue = useMaterialKompassApp && combinedQr != null
+              ? combinedQr
+              : setup['provisioningUri'].toString();
+          return AlertDialog(
+            title: const Text('Weiteres Code-Gerät hinzufügen'),
+            content: SizedBox(
+              width: 480,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (pairing != null)
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(
+                            value: true,
+                            icon: Icon(Icons.security_outlined),
+                            label: Text('MaterialKompass-App'),
+                          ),
+                          ButtonSegment(
+                            value: false,
+                            icon: Icon(Icons.password_outlined),
+                            label: Text('Andere App'),
+                          ),
+                        ],
+                        selected: {useMaterialKompassApp},
+                        onSelectionChanged: (selection) => setDialogState(
+                          () => useMaterialKompassApp = selection.first,
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    Text(
+                      useMaterialKompassApp && pairing != null
+                          ? 'Scannen Sie den QR-Code auf dem zusätzlichen Gerät. '
+                                'Die MaterialKompass-App übernimmt Codes und '
+                                'Push-Bestätigung gemeinsam.'
+                          : 'Scannen Sie den QR-Code auf dem zusätzlichen Gerät. '
+                                'Die bereits eingerichteten Geräte bleiben gültig.',
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(12),
+                      child: bw.BarcodeWidget(
+                        barcode: bw.Barcode.qrCode(),
+                        data: qrValue,
+                        width: 220,
+                        height: 220,
+                      ),
+                    ),
+                    if (useMaterialKompassApp && pairing != null) ...[
+                      const SizedBox(height: 12),
+                      if (pairingReady)
+                        const Text('Codes und Push-Bestätigung übernommen.')
+                      else if (pairingError == null)
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Warte auf das zusätzliche Gerät …'),
+                          ],
+                        )
+                      else
+                        Text(
+                          pairingError!,
+                          style: TextStyle(
+                            color: Theme.of(dialogContext).colorScheme.error,
+                          ),
+                        ),
+                    ],
+                    const SizedBox(height: 12),
+                    SelectableText(
+                      setup['secret'].toString(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontFamily: 'monospace'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => Clipboard.setData(
+                        ClipboardData(text: setup['secret'].toString()),
+                      ),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Schlüssel kopieren'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: useMaterialKompassApp && !pairingReady
+                    ? null
+                    : () => Navigator.pop(dialogContext, true),
+                child: const Text('Fertig'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  } finally {
+    dialogClosed = true;
+    pushService.close();
+  }
+  return completed == true;
 }
 
 Future<void> showRecoveryCodes(

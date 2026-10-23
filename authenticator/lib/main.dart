@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:local_auth/local_auth.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() {
@@ -125,6 +126,16 @@ class TotpEntry {
       };
 }
 
+TotpEntry? embeddedTotpEntry(Uri pairingUri) {
+  if (pairingUri.scheme != 'materialkompass-auth' ||
+      pairingUri.host != 'pair') {
+    return null;
+  }
+  final value = pairingUri.queryParameters['totp'];
+  if (value == null || value.isEmpty) return null;
+  return TotpEntry.fromUri(Uri.parse(value));
+}
+
 class PushAccount {
   const PushAccount({
     required this.id,
@@ -192,6 +203,7 @@ class Vault {
   );
   static const _totpKey = 'totp_entries_v1';
   static const _pushKey = 'push_accounts_v1';
+  static const _appLockKey = 'app_lock_enabled_v1';
 
   Future<List<TotpEntry>> loadTotp() async {
     final value = await _storage.read(key: _totpKey);
@@ -225,7 +237,27 @@ class Vault {
         key: _pushKey,
         value: jsonEncode(accounts.map((entry) => entry.toJson()).toList()),
       );
+
+  Future<bool> loadAppLock() async =>
+      await _storage.read(key: _appLockKey) == 'true';
+
+  Future<void> saveAppLock(bool enabled) =>
+      _storage.write(key: _appLockKey, value: enabled.toString());
 }
+
+bool appLockSupportedPlatform(TargetPlatform platform, {required bool isWeb}) =>
+    !isWeb &&
+    {
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+      TargetPlatform.macOS,
+      TargetPlatform.windows,
+    }.contains(platform);
+
+bool appLockTriggeredBy(AppLifecycleState state) =>
+    state == AppLifecycleState.paused ||
+    state == AppLifecycleState.hidden ||
+    state == AppLifecycleState.detached;
 
 Uint8List decodeBase32(String input) {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -388,6 +420,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   );
   final vault = Vault();
   final client = http.Client();
+  final localAuth = LocalAuthentication();
   late final api = PushApi(client);
   List<TotpEntry> totp = [];
   List<PushAccount> pushAccounts = [];
@@ -395,6 +428,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Timer? clock;
   bool loading = true;
   bool polling = false;
+  bool appLockEnabled = false;
+  bool appUnlocked = true;
+  bool unlocking = false;
+  String? unlockError;
   String? message;
 
   @override
@@ -409,20 +446,149 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _poll();
+    if (appLockEnabled && appLockTriggeredBy(state)) {
+      if (mounted) setState(() => appUnlocked = false);
+      return;
+    }
+    if (state == AppLifecycleState.resumed) {
+      if (appLockEnabled && !appUnlocked) {
+        unawaited(_unlock());
+      } else {
+        _poll();
+      }
+    }
   }
 
   Future<void> _load() async {
     try {
-      final values = await Future.wait([vault.loadTotp(), vault.loadPush()]);
+      final values = await Future.wait([
+        vault.loadTotp(),
+        vault.loadPush(),
+        vault.loadAppLock(),
+      ]);
       totp = values[0] as List<TotpEntry>;
       pushAccounts = values[1] as List<PushAccount>;
+      appLockEnabled = values[2] as bool;
+      appUnlocked = !appLockEnabled;
       await _syncNativeService();
     } catch (_) {
       message = 'Der verschlüsselte Speicher konnte nicht geöffnet werden.';
     }
     if (mounted) setState(() => loading = false);
-    _poll();
+    if (appLockEnabled) {
+      unawaited(_unlock());
+    } else {
+      _poll();
+    }
+  }
+
+  Future<bool> _authenticateDevice(String reason) async {
+    if (!appLockSupportedPlatform(defaultTargetPlatform, isWeb: kIsWeb)) {
+      if (mounted) {
+        setState(
+          () => unlockError =
+              'Die App-Sperre ist auf dieser Plattform nicht verfügbar.',
+        );
+      }
+      return false;
+    }
+    try {
+      if (!await localAuth.isDeviceSupported()) {
+        if (mounted) {
+          setState(
+            () => unlockError =
+                'Richte zuerst eine Gerätesperre mit Biometrie, PIN oder Passcode ein.',
+          );
+        }
+        return false;
+      }
+      return await localAuth.authenticate(
+        localizedReason: reason,
+        biometricOnly: false,
+        persistAcrossBackgrounding: true,
+      );
+    } on LocalAuthException {
+      if (mounted) {
+        setState(
+          () => unlockError =
+              'Die Geräteauthentifizierung ist nicht verfügbar. Prüfe Biometrie und Gerätesperre.',
+        );
+      }
+      return false;
+    } on PlatformException {
+      if (mounted) {
+        setState(() => unlockError = 'Die App konnte nicht entsperrt werden.');
+      }
+      return false;
+    }
+  }
+
+  Future<void> _unlock() async {
+    if (unlocking || !appLockEnabled || appUnlocked || !mounted) return;
+    setState(() {
+      unlocking = true;
+      unlockError = null;
+    });
+    final authenticated = await _authenticateDevice(
+      'MaterialKompass Authenticator entsperren',
+    );
+    if (!mounted) return;
+    setState(() {
+      unlocking = false;
+      appUnlocked = authenticated;
+      if (!authenticated && unlockError == null) {
+        unlockError = 'Die App bleibt gesperrt.';
+      }
+    });
+    if (authenticated) _poll();
+  }
+
+  Future<void> _setAppLock(bool enabled) async {
+    if (unlocking) return;
+    setState(() {
+      unlocking = true;
+      unlockError = null;
+    });
+    final authenticated = await _authenticateDevice(
+      enabled
+          ? 'App-Sperre für MaterialKompass aktivieren'
+          : 'App-Sperre für MaterialKompass deaktivieren',
+    );
+    if (!mounted) return;
+    if (!authenticated) {
+      setState(() {
+        unlocking = false;
+        if (unlockError == null) {
+          message = 'Die Einstellung wurde nicht geändert.';
+        }
+      });
+      return;
+    }
+    try {
+      await vault.saveAppLock(enabled);
+      if (!mounted) return;
+      setState(() {
+        appLockEnabled = enabled;
+        appUnlocked = true;
+        unlocking = false;
+        message = enabled ? 'App-Sperre aktiviert.' : 'App-Sperre deaktiviert.';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          unlocking = false;
+          message = 'Die App-Sperre konnte nicht gespeichert werden.';
+        });
+      }
+    }
+  }
+
+  void _lockNow() {
+    if (!appLockEnabled) return;
+    setState(() {
+      appUnlocked = false;
+      unlockError = null;
+    });
   }
 
   Future<void> _syncNativeService() async {
@@ -443,7 +609,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _poll() async {
-    if (polling || pushAccounts.isEmpty || !mounted) return;
+    if (polling ||
+        pushAccounts.isEmpty ||
+        !mounted ||
+        (appLockEnabled && !appUnlocked)) {
+      return;
+    }
     polling = true;
     try {
       for (final account in List<PushAccount>.of(pushAccounts)) {
@@ -461,7 +632,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } finally {
       polling = false;
       if (mounted) setState(() {});
-      if (mounted && pushAccounts.isNotEmpty) {
+      if (mounted &&
+          pushAccounts.isNotEmpty &&
+          (!appLockEnabled || appUnlocked)) {
         unawaited(Future<void>.delayed(const Duration(seconds: 1), _poll));
       }
     }
@@ -520,17 +693,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         totp.add(entry);
         await vault.saveTotp(totp);
       } else if (uri.scheme == 'materialkompass-auth') {
+        final embeddedTotp = embeddedTotpEntry(uri);
         final name = await _deviceName();
         if (name == null) return;
         final account = await api.pair(uri, name);
         pushAccounts.add(account);
         await vault.savePush(pushAccounts);
+        if (embeddedTotp != null &&
+            !totp.any(
+              (item) =>
+                  item.secret == embeddedTotp.secret &&
+                  item.account == embeddedTotp.account,
+            )) {
+          totp.add(embeddedTotp);
+          await vault.saveTotp(totp);
+        }
         await _syncNativeService();
         _poll();
       } else {
         throw const FormatException('Unbekannter QR-Code.');
       }
-      if (mounted) setState(() => message = 'Sicher importiert.');
+      if (mounted) {
+        setState(
+          () => message = uri.scheme == 'materialkompass-auth' &&
+                  uri.queryParameters.containsKey('totp')
+              ? 'Codes und Push-Bestätigung wurden sicher eingerichtet.'
+              : 'Sicher importiert.',
+        );
+      }
     } catch (error) {
       if (mounted) {
         setState(
@@ -648,129 +838,213 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('MaterialKompass Authenticator'),
         actions: [
-          IconButton(
-            onPressed: _manualImport,
-            tooltip: 'Schlüssel einfügen',
-            icon: const Icon(Icons.content_paste_outlined),
-          ),
-          IconButton(
-            onPressed: _scan,
-            tooltip: 'QR-Code scannen',
-            icon: const Icon(Icons.qr_code_scanner),
-          ),
+          if (!appLockEnabled || appUnlocked) ...[
+            if (appLockEnabled)
+              IconButton(
+                onPressed: _lockNow,
+                tooltip: 'App jetzt sperren',
+                icon: const Icon(Icons.lock_outline),
+              ),
+            IconButton(
+              onPressed: _manualImport,
+              tooltip: 'Schlüssel einfügen',
+              icon: const Icon(Icons.content_paste_outlined),
+            ),
+            IconButton(
+              onPressed: _scan,
+              tooltip: 'QR-Code scannen',
+              icon: const Icon(Icons.qr_code_scanner),
+            ),
+          ],
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _scan,
-        icon: const Icon(Icons.add),
-        label: const Text('Konto hinzufügen'),
-      ),
+      floatingActionButton: appLockEnabled && !appUnlocked
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _scan,
+              icon: const Icon(Icons.add),
+              label: const Text('Konto hinzufügen'),
+            ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
-              children: [
-                if (message != null)
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.info_outline),
-                      title: Text(message!),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => message = null),
+          : appLockEnabled && !appUnlocked
+              ? _lockedView()
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                  children: [
+                    if (message != null)
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.info_outline),
+                          title: Text(message!),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => setState(() => message = null),
+                          ),
+                        ),
+                      ),
+                    Card(
+                      child: SwitchListTile(
+                        secondary: const Icon(Icons.fingerprint),
+                        title: const Text('App-Sperre'),
+                        subtitle: Text(
+                          appLockSupportedPlatform(
+                            defaultTargetPlatform,
+                            isWeb: kIsWeb,
+                          )
+                              ? 'Beim Öffnen mit Biometrie, Geräte-PIN oder Passcode entsperren.'
+                              : 'Auf dieser Plattform nicht verfügbar.',
+                        ),
+                        value: appLockEnabled,
+                        onChanged: unlocking ||
+                                !appLockSupportedPlatform(
+                                  defaultTargetPlatform,
+                                  isWeb: kIsWeb,
+                                )
+                            ? null
+                            : _setAppLock,
                       ),
                     ),
-                  ),
-                if (pending.isNotEmpty) ...[
-                  Text(
-                    'Anmeldeanfragen',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  for (final account in pushAccounts)
-                    if (pending[account.id] case final approval?)
-                      _approvalCard(account, approval),
-                  const SizedBox(height: 20),
-                ],
-                Text(
-                  'Einmalcodes',
-                  style: Theme.of(context).textTheme.titleLarge,
+                    if (pending.isNotEmpty) ...[
+                      Text(
+                        'Anmeldeanfragen',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      for (final account in pushAccounts)
+                        if (pending[account.id] case final approval?)
+                          _approvalCard(account, approval),
+                      const SizedBox(height: 20),
+                    ],
+                    Text(
+                      'Einmalcodes',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    if (totp.isEmpty)
+                      const Card(
+                        child: ListTile(
+                          leading: Icon(Icons.password),
+                          title: Text('Noch keine TOTP-Konten'),
+                          subtitle: Text(
+                            'Scanne einen standardisierten otpauth://-QR-Code.',
+                          ),
+                        ),
+                      ),
+                    for (final entry in totp)
+                      Card(
+                        child: ListTile(
+                          title: Text(entry.issuer),
+                          subtitle: Text(
+                            '${entry.account}\n${generateTotp(entry, now)} · ${entry.period - (now.millisecondsSinceEpoch ~/ 1000) % entry.period} s',
+                          ),
+                          isThreeLine: true,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _removeTotp(entry),
+                          ),
+                          onTap: () => Clipboard.setData(
+                            ClipboardData(text: generateTotp(entry, now)),
+                          ).then((_) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Code kopiert.')),
+                            );
+                          }),
+                        ),
+                      ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Push-Kopplungen',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    if (pushAccounts.isEmpty)
+                      const Card(
+                        child: ListTile(
+                          leading: Icon(Icons.notifications_none),
+                          title: Text('Noch kein MaterialKompass-Konto'),
+                          subtitle: Text(
+                            'Erzeuge im Hauptsystem einen einmaligen Kopplungs-QR-Code.',
+                          ),
+                        ),
+                      ),
+                    for (final account in pushAccounts)
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.verified_user_outlined),
+                          title: Text(account.account),
+                          subtitle: Text(account.serverUrl),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _removePush(account),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    const Card(
+                      child: ListTile(
+                        leading: Icon(Icons.shield_outlined),
+                        title: Text('Keine US-Push-Dienste'),
+                        subtitle: Text(
+                          'Codes und Geräteschlüssel bleiben verschlüsselt auf diesem Gerät. Push-Anfragen laufen ausschließlich über den selbst gehosteten MaterialKompass-Server.',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                if (totp.isEmpty)
-                  const Card(
-                    child: ListTile(
-                      leading: Icon(Icons.password),
-                      title: Text('Noch keine TOTP-Konten'),
-                      subtitle: Text(
-                        'Scanne einen standardisierten otpauth://-QR-Code.',
-                      ),
-                    ),
-                  ),
-                for (final entry in totp)
-                  Card(
-                    child: ListTile(
-                      title: Text(entry.issuer),
-                      subtitle: Text(
-                        '${entry.account}\n${generateTotp(entry, now)} · ${entry.period - (now.millisecondsSinceEpoch ~/ 1000) % entry.period} s',
-                      ),
-                      isThreeLine: true,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _removeTotp(entry),
-                      ),
-                      onTap: () => Clipboard.setData(
-                        ClipboardData(text: generateTotp(entry, now)),
-                      ).then((_) {
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Code kopiert.')),
-                        );
-                      }),
-                    ),
-                  ),
+    );
+  }
+
+  Widget _lockedView() => Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.lock_outline,
+                  size: 72,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(height: 20),
                 Text(
-                  'Push-Kopplungen',
-                  style: Theme.of(context).textTheme.titleLarge,
+                  'Authenticator gesperrt',
+                  style: Theme.of(context).textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 8),
-                if (pushAccounts.isEmpty)
-                  const Card(
-                    child: ListTile(
-                      leading: Icon(Icons.notifications_none),
-                      title: Text('Noch kein MaterialKompass-Konto'),
-                      subtitle: Text(
-                        'Erzeuge im Hauptsystem einen einmaligen Kopplungs-QR-Code.',
-                      ),
-                    ),
+                const Text(
+                  'Entsperre die App mit Fingerabdruck, Gesichtserkennung, '
+                  'Geräte-PIN oder Passcode.',
+                  textAlign: TextAlign.center,
+                ),
+                if (unlockError != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    unlockError!,
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
-                for (final account in pushAccounts)
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.verified_user_outlined),
-                      title: Text(account.account),
-                      subtitle: Text(account.serverUrl),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _removePush(account),
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                const Card(
-                  child: ListTile(
-                    leading: Icon(Icons.shield_outlined),
-                    title: Text('Keine US-Push-Dienste'),
-                    subtitle: Text(
-                      'Codes und Geräteschlüssel bleiben verschlüsselt auf diesem Gerät. Push-Anfragen laufen ausschließlich über den selbst gehosteten MaterialKompass-Server.',
-                    ),
-                  ),
+                ],
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: unlocking ? null : _unlock,
+                  icon: unlocking
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fingerprint),
+                  label: Text(unlocking ? 'Prüfung läuft …' : 'Entsperren'),
                 ),
               ],
             ),
-    );
-  }
+          ),
+        ),
+      );
 
   Widget _approvalCard(PushAccount account, PendingApproval approval) => Card(
         color: Theme.of(context).colorScheme.primaryContainer,

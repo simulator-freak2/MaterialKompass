@@ -126,6 +126,22 @@ test('account MFA setup, challenge and one-time recovery codes are enforced', as
     assert.equal(confirmed.data.recoveryCodes.length, 10);
     assert.equal(mails.some((mail) => mail.subject.includes('aktiviert')), true);
 
+    const additionalDevice = await request('/api/users/me/mfa/code-device', {
+      method: 'POST', token: confirmed.data.token,
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        code: totp(setupResponse.data.secret),
+      },
+    });
+    assert.equal(additionalDevice.response.status, 200);
+    assert.equal(additionalDevice.data.secret, setupResponse.data.secret);
+    assert.match(additionalDevice.data.provisioningUri, /^otpauth:\/\/totp\//);
+    assert.equal(
+      new URL(additionalDevice.data.provisioningUri).searchParams.get('secret'),
+      setupResponse.data.secret,
+    );
+    assert.equal(mails.some((mail) => mail.subject.includes('Code-Gerät')), true);
+
     const publicAccount = await request('/api/auth/me', { token: confirmed.data.token });
     assert.equal(publicAccount.data.user.mfa.enabled, true);
     assert.equal(JSON.stringify(publicAccount.data).includes(setupResponse.data.secret), false);
