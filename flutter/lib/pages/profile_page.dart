@@ -474,6 +474,7 @@ class _ProfilePageState extends State<ProfilePage> {
       title: 'Separate Authenticator-App koppeln',
     );
     if (confirmation == null) return;
+    if (!mounted) return;
     final result = await setupPushMfa(
       context,
       token: widget.token,
