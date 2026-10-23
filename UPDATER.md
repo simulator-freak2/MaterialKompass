@@ -151,7 +151,10 @@ einem Provider-Proxy gelten dieselben beiden lokalen Ziele.
 4. Optional eine Commitnachricht eintragen und **Git committen & pushen** ausführen.
    Der Updater zeigt Zielbranch und Dateien vorab an, blockiert typische
    Geheimdateinamen und führt ausschließlich einen normalen Push ohne Force aus.
-5. Plattformpakete lokal oder über GitHub Actions bauen.
+5. Plattformpakete lokal oder über GitHub Actions bauen. Der Android-Build erzeugt
+   sowohl `MaterialKompass-Android.apk` als auch die separate
+   `MaterialKompass-Authenticator-Android.apk`; beide gehören für die Veröffentlichung
+   in den Ordner `releases`.
 6. **Sicherheitsvorschau** kontrollieren.
 7. Gewünschte Bereiche auswählen und das Deployment starten. Vor der ersten
    Serveränderung fordert der Updater eine frische Anmeldung einschließlich der

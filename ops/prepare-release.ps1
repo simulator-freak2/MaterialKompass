@@ -72,6 +72,9 @@ for (const filePath of [packagePath, packageLockPath]) {
     Replace-Checked -Path 'flutter/pubspec.yaml' `
         -Pattern '(^version:\s*)[^\r\n]+(\r?)$' `
         -Replacement "`${1}$Version+$BuildNumber`${2}"
+    Replace-Checked -Path 'authenticator/pubspec.yaml' `
+        -Pattern '(^version:\s*)[^\r\n]+(\r?)$' `
+        -Replacement "`${1}$Version+$BuildNumber`${2}"
     Replace-Checked -Path '.github/workflows/client-installers.yml' `
         -Pattern '(^[ \t]*default:[ \t]*)\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?[ \t]*(\r?)$' `
         -Replacement "`${1}$Version`${2}"

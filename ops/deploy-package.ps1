@@ -170,7 +170,8 @@ try {
     if ($UploadReleases) {
         $releaseNames = @(
             'MaterialKompass-Windows.exe', 'MaterialKompass-Linux.deb',
-            'MaterialKompass-Android.apk', 'MaterialKompass-iOS.ipa',
+            'MaterialKompass-Android.apk', 'MaterialKompass-Authenticator-Android.apk',
+            'MaterialKompass-iOS.ipa',
             'MaterialKompass-macOS.dmg'
         )
         $nativeCount = 0

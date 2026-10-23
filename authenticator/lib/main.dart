@@ -20,30 +20,30 @@ class AuthenticatorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'MaterialKompass Authenticator',
-    debugShowCheckedModeBanner: false,
-    localizationsDelegates: const [
-      GlobalMaterialLocalizations.delegate,
-      GlobalWidgetsLocalizations.delegate,
-      GlobalCupertinoLocalizations.delegate,
-    ],
-    supportedLocales: const [Locale('de')],
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xff075e54),
-        brightness: Brightness.light,
-      ),
-      useMaterial3: true,
-    ),
-    darkTheme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xff4bd0bd),
-        brightness: Brightness.dark,
-      ),
-      useMaterial3: true,
-    ),
-    home: const HomePage(),
-  );
+        title: 'MaterialKompass Authenticator',
+        debugShowCheckedModeBanner: false,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [Locale('de')],
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xff075e54),
+            brightness: Brightness.light,
+          ),
+          useMaterial3: true,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xff4bd0bd),
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        home: const HomePage(),
+      );
 }
 
 class TotpEntry {
@@ -80,8 +80,8 @@ class TotpEntry {
     final labelIssuer = separator < 0 ? '' : label.substring(0, separator);
     final account = separator < 0 ? label : label.substring(separator + 1);
     final issuer = (uri.queryParameters['issuer'] ?? labelIssuer).trim();
-    final algorithm = (uri.queryParameters['algorithm'] ?? 'SHA1')
-        .toUpperCase();
+    final algorithm =
+        (uri.queryParameters['algorithm'] ?? 'SHA1').toUpperCase();
     final digits = int.tryParse(uri.queryParameters['digits'] ?? '') ?? 6;
     final period = int.tryParse(uri.queryParameters['period'] ?? '') ?? 30;
     if (!{'SHA1', 'SHA256', 'SHA512'}.contains(algorithm) ||
@@ -105,24 +105,24 @@ class TotpEntry {
   }
 
   factory TotpEntry.fromJson(Map<String, dynamic> json) => TotpEntry(
-    id: json['id'].toString(),
-    issuer: json['issuer'].toString(),
-    account: json['account'].toString(),
-    secret: json['secret'].toString(),
-    algorithm: json['algorithm']?.toString() ?? 'SHA1',
-    digits: json['digits'] as int? ?? 6,
-    period: json['period'] as int? ?? 30,
-  );
+        id: json['id'].toString(),
+        issuer: json['issuer'].toString(),
+        account: json['account'].toString(),
+        secret: json['secret'].toString(),
+        algorithm: json['algorithm']?.toString() ?? 'SHA1',
+        digits: json['digits'] as int? ?? 6,
+        period: json['period'] as int? ?? 30,
+      );
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'issuer': issuer,
-    'account': account,
-    'secret': secret,
-    'algorithm': algorithm,
-    'digits': digits,
-    'period': period,
-  };
+        'id': id,
+        'issuer': issuer,
+        'account': account,
+        'secret': secret,
+        'algorithm': algorithm,
+        'digits': digits,
+        'period': period,
+      };
 }
 
 class PushAccount {
@@ -143,22 +143,22 @@ class PushAccount {
   final String name;
 
   factory PushAccount.fromJson(Map<String, dynamic> json) => PushAccount(
-    id: json['id'].toString(),
-    serverUrl: json['serverUrl'].toString(),
-    account: json['account'].toString(),
-    deviceId: json['deviceId'].toString(),
-    deviceSecret: json['deviceSecret'].toString(),
-    name: json['name']?.toString() ?? 'MaterialKompass',
-  );
+        id: json['id'].toString(),
+        serverUrl: json['serverUrl'].toString(),
+        account: json['account'].toString(),
+        deviceId: json['deviceId'].toString(),
+        deviceSecret: json['deviceSecret'].toString(),
+        name: json['name']?.toString() ?? 'MaterialKompass',
+      );
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'serverUrl': serverUrl,
-    'account': account,
-    'deviceId': deviceId,
-    'deviceSecret': deviceSecret,
-    'name': name,
-  };
+        'id': id,
+        'serverUrl': serverUrl,
+        'account': account,
+        'deviceId': deviceId,
+        'deviceSecret': deviceSecret,
+        'name': name,
+      };
 }
 
 class PendingApproval {
@@ -217,14 +217,14 @@ class Vault {
   }
 
   Future<void> saveTotp(List<TotpEntry> entries) => _storage.write(
-    key: _totpKey,
-    value: jsonEncode(entries.map((entry) => entry.toJson()).toList()),
-  );
+        key: _totpKey,
+        value: jsonEncode(entries.map((entry) => entry.toJson()).toList()),
+      );
 
   Future<void> savePush(List<PushAccount> accounts) => _storage.write(
-    key: _pushKey,
-    value: jsonEncode(accounts.map((entry) => entry.toJson()).toList()),
-  );
+        key: _pushKey,
+        value: jsonEncode(accounts.map((entry) => entry.toJson()).toList()),
+      );
 }
 
 Uint8List decodeBase32(String input) {
@@ -263,8 +263,7 @@ String generateTotp(TotpEntry entry, DateTime instant) {
     decodeBase32(entry.secret),
   ).convert(message).bytes;
   final offset = digest.last & 0x0f;
-  final binary =
-      ((digest[offset] & 0x7f) << 24) |
+  final binary = ((digest[offset] & 0x7f) << 24) |
       ((digest[offset + 1] & 0xff) << 16) |
       ((digest[offset + 2] & 0xff) << 8) |
       (digest[offset + 3] & 0xff);
@@ -357,9 +356,8 @@ class PushApi {
             'deviceId': account.deviceId,
             'deviceSecret': account.deviceSecret,
             'approvalId': approval.id,
-            'matchingCode': decision == 'approve'
-                ? approval.matchingCode
-                : null,
+            'matchingCode':
+                decision == 'approve' ? approval.matchingCode : null,
             'decision': decision,
           }),
         )
@@ -721,15 +719,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         icon: const Icon(Icons.delete_outline),
                         onPressed: () => _removeTotp(entry),
                       ),
-                      onTap: () =>
-                          Clipboard.setData(
-                            ClipboardData(text: generateTotp(entry, now)),
-                          ).then((_) {
-                            if (mounted)
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Code kopiert.')),
-                              );
-                          }),
+                      onTap: () => Clipboard.setData(
+                        ClipboardData(text: generateTotp(entry, now)),
+                      ).then((_) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Code kopiert.')),
+                        );
+                      }),
                     ),
                   ),
                 const SizedBox(height: 20),
@@ -776,59 +773,60 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _approvalCard(PushAccount account, PendingApproval approval) => Card(
-    color: Theme.of(context).colorScheme.primaryContainer,
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Anmeldung für ${account.account}',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(approval.client, maxLines: 2, overflow: TextOverflow.ellipsis),
-          if (approval.sourceIp.isNotEmpty)
-            Text('Quelle: ${approval.sourceIp}'),
-          const SizedBox(height: 16),
-          Center(
-            child: Text(
-              approval.matchingCode,
-              style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-                letterSpacing: 12,
-              ),
-            ),
-          ),
-          const Center(
-            child: Text(
-              'Nur freigeben, wenn dieser Code im Login angezeigt wird.',
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _respond(account, approval, 'deny'),
-                  icon: const Icon(Icons.close),
-                  label: const Text('Ablehnen'),
+              Text(
+                'Anmeldung für ${account.account}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(approval.client,
+                  maxLines: 2, overflow: TextOverflow.ellipsis),
+              if (approval.sourceIp.isNotEmpty)
+                Text('Quelle: ${approval.sourceIp}'),
+              const SizedBox(height: 16),
+              Center(
+                child: Text(
+                  approval.matchingCode,
+                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 12,
+                      ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _respond(account, approval, 'approve'),
-                  icon: const Icon(Icons.check),
-                  label: const Text('Freigeben'),
+              const Center(
+                child: Text(
+                  'Nur freigeben, wenn dieser Code im Login angezeigt wird.',
                 ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _respond(account, approval, 'deny'),
+                      icon: const Icon(Icons.close),
+                      label: const Text('Ablehnen'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => _respond(account, approval, 'approve'),
+                      icon: const Icon(Icons.check),
+                      label: const Text('Freigeben'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 }
 
 class ScannerPage extends StatefulWidget {
@@ -843,15 +841,15 @@ class _ScannerPageState extends State<ScannerPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('QR-Code scannen')),
-    body: MobileScanner(
-      onDetect: (capture) {
-        if (handled) return;
-        final value = capture.barcodes.firstOrNull?.rawValue;
-        if (value == null) return;
-        handled = true;
-        Navigator.pop(context, value);
-      },
-    ),
-  );
+        appBar: AppBar(title: const Text('QR-Code scannen')),
+        body: MobileScanner(
+          onDetect: (capture) {
+            if (handled) return;
+            final value = capture.barcodes.firstOrNull?.rawValue;
+            if (value == null) return;
+            handled = true;
+            Navigator.pop(context, value);
+          },
+        ),
+      );
 }

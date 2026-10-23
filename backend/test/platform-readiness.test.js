@@ -51,7 +51,7 @@ test('health and API information are available to every client platform', async 
   });
 });
 
-test('desktop downloads report availability and stream configured release files', async () => {
+test('app downloads report availability and stream configured release files', async () => {
   const fixture = path.resolve(__dirname, '..', 'package.json');
   await withServer(async (baseUrl) => {
     const metadataResponse = await fetch(`${baseUrl}/api/downloads`);
@@ -60,6 +60,7 @@ test('desktop downloads report availability and stream configured release files'
     const windows = metadata.find((entry) => entry.platform === 'windows');
     const linux = metadata.find((entry) => entry.platform === 'linux');
     const android = metadata.find((entry) => entry.platform === 'android');
+    const authenticator = metadata.find((entry) => entry.platform === 'authenticator-android');
     const ios = metadata.find((entry) => entry.platform === 'ios');
     const macos = metadata.find((entry) => entry.platform === 'macos');
     assert.equal(windows.available, true);
@@ -67,6 +68,10 @@ test('desktop downloads report availability and stream configured release files'
     assert.equal(windows.downloadUrl, '/api/downloads/windows');
     assert.equal(linux.available, false);
     assert.equal(android.available, false);
+    assert.equal(authenticator.available, true);
+    assert.equal(authenticator.label, '2FA-App (Android)');
+    assert.equal(authenticator.fileName, 'MaterialKompass-Authenticator-Android.apk');
+    assert.equal(authenticator.downloadUrl, '/api/downloads/authenticator-android');
     assert.equal(ios.available, false);
     assert.equal(macos.available, false);
     assert.equal(ios.label, 'iOS');
@@ -88,11 +93,22 @@ test('desktop downloads report availability and stream configured release files'
     assert.match(download.headers.get('content-disposition'), /MaterialKompass-Windows.exe/);
     assert.match(await download.text(), /materialkompass-backend/);
 
+    const authenticatorDownload = await fetch(`${baseUrl}${authenticator.downloadUrl}`);
+    assert.equal(authenticatorDownload.status, 200);
+    assert.match(
+      authenticatorDownload.headers.get('content-disposition'),
+      /MaterialKompass-Authenticator-Android.apk/,
+    );
+
     const unavailable = await fetch(`${baseUrl}/api/downloads/linux`);
     assert.equal(unavailable.status, 404);
   }, {
     downloads: {
       windows: { filePath: fixture, fileName: 'MaterialKompass-Windows.exe' },
+      'authenticator-android': {
+        filePath: fixture,
+        fileName: 'MaterialKompass-Authenticator-Android.apk',
+      },
       linux: { filePath: path.resolve(__dirname, 'missing-linux-release.deb') },
     },
   });

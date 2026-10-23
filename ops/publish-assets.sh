@@ -33,7 +33,7 @@ if ! mkdir "$lock_dir" 2>/dev/null; then
 fi
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT HUP INT TERM
 
-release_names='MaterialKompass-Windows.exe MaterialKompass-Linux.deb MaterialKompass-Android.apk MaterialKompass-iOS.ipa MaterialKompass-macOS.dmg'
+release_names='MaterialKompass-Windows.exe MaterialKompass-Linux.deb MaterialKompass-Android.apk MaterialKompass-Authenticator-Android.apk MaterialKompass-iOS.ipa MaterialKompass-macOS.dmg'
 for staged in "$stage_dir"/*; do
   [ -f "$staged" ] || { echo "Only regular files may be published." >&2; exit 1; }
   name=$(basename "$staged")

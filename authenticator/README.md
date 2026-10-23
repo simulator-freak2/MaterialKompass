@@ -5,6 +5,13 @@ erzeugt standardisierte TOTP-Codes (RFC 6238) und empfängt Login-Freigaben dire
 selbst gehosteten MaterialKompass-Backend. Firebase, Google Push, Microsoft, Okta und
 andere externe Zustelldienste werden nicht verwendet.
 
+## Download
+
+Die signierte Android-APK wird als `MaterialKompass-Authenticator-Android.apk`
+veröffentlicht. Nach dem Deployment steht sie auf der MaterialKompass-Anmeldeseite
+unter **App herunterladen → 2FA-App (Android)** bereit. Der öffentliche Endpunkt ist
+`/api/downloads/authenticator-android`.
+
 ## Sicherheitsmodell
 
 - TOTP-Secrets und Push-Geräteschlüssel liegen im geschützten App-Speicher.

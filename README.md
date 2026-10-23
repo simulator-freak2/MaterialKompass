@@ -98,6 +98,10 @@ mit einer üblichen Authenticator-App ein. Nach der Bestätigung werden zehn ein
 verwendbare Wiederherstellungscodes angezeigt. Diese Codes werden nur bei der
 Erstellung ausgegeben und serverseitig ausschließlich gehasht gespeichert.
 
+Die separate MaterialKompass-Authenticator-App für Android unterstützt zusätzlich
+direkte Push-Freigaben über den eigenen Server. Die signierte APK steht auf der
+Web-Anmeldeseite unter **App herunterladen → 2FA-App (Android)** bereit.
+
 Admins entscheiden in der Nutzerverwaltung pro Konto, ob eine starke Anmeldung
 freiwillig oder verpflichtend ist. Push-2-FA, TOTP und Passkeys erfüllen diese Pflicht. Wird sie
 für ein noch nicht abgesichertes Konto aktiviert,

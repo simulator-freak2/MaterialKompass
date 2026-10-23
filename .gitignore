@@ -3,6 +3,7 @@
 build/
 **/.dart_tool/
 **/build/
+**/.gradle/
 **/bin/
 **/obj/
 .flutter-plugins

@@ -669,6 +669,19 @@ internal sealed class MainForm : Form
                 throw new InvalidOperationException(CommandFailure("Android-Build fehlgeschlagen.", android));
         }
         else Log("Android wurde übersprungen: flutter/android/key.properties fehlt.");
+
+        var authenticatorKeyProperties = Path.Combine(_repositoryRoot, "authenticator", "android", "key.properties");
+        if (File.Exists(authenticatorKeyProperties))
+        {
+            var authenticator = await RunPowerShellAsync("packaging/android/build_authenticator.ps1",
+            [
+                "-Version", _version.Text.Trim(),
+                "-BuildNumber", ((int)_buildNumber.Value).ToString(),
+            ]);
+            if (!authenticator.Success)
+                throw new InvalidOperationException(CommandFailure("Authenticator-Build fehlgeschlagen.", authenticator));
+        }
+        else Log("Authenticator wurde übersprungen: authenticator/android/key.properties fehlt.");
         Log("Lokale Prüf-Builds wurden erstellt. Linux, macOS und iOS benötigen passende Buildsysteme oder GitHub Actions.");
     }
 

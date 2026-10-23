@@ -40,6 +40,11 @@ class _LoginPageState extends State<LoginPage> {
     {'platform': 'linux', 'label': 'Linux', 'available': false},
     {'platform': 'android', 'label': 'Android', 'available': false},
     {'platform': 'ios', 'label': 'iOS', 'available': false},
+    {
+      'platform': 'authenticator-android',
+      'label': '2FA-App (Android)',
+      'available': false,
+    },
   ];
 
   @override
@@ -517,7 +522,7 @@ class _LoginPageState extends State<LoginPage> {
                           Text(
                             downloadsLoading
                                 ? 'Verfügbarkeit wird geprüft …'
-                                : 'Für Windows, macOS, Linux, Android und iOS',
+                                : 'MaterialKompass-Clients und separate 2FA-App',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),
@@ -582,6 +587,7 @@ class _LoginPageState extends State<LoginPage> {
 IconData _downloadIcon(String platform) => switch (platform) {
   'windows' => Icons.desktop_windows_outlined,
   'android' => Icons.android_outlined,
+  'authenticator-android' => Icons.security_outlined,
   'ios' || 'macos' => Icons.apple,
   _ => Icons.computer_outlined,
 };

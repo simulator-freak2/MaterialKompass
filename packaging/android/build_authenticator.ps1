@@ -14,6 +14,7 @@ if (-not (Test-Path -LiteralPath $keyProperties)) {
 Push-Location $authenticatorRoot
 try {
     flutter pub get
+    flutter analyze
     flutter test
     flutter build apk --release --build-name="$Version" --build-number="$BuildNumber"
 } finally {

@@ -386,6 +386,11 @@ function createApp(options = {}) {
         || path.join(defaultDownloadsDirectory, 'MaterialKompass-Android.apk'),
       fileName: 'MaterialKompass-Android.apk',
     },
+    'authenticator-android': {
+      filePath: process.env.DOWNLOAD_AUTHENTICATOR_ANDROID_PATH
+        || path.join(defaultDownloadsDirectory, 'MaterialKompass-Authenticator-Android.apk'),
+      fileName: 'MaterialKompass-Authenticator-Android.apk',
+    },
     ios: {
       filePath: process.env.DOWNLOAD_IOS_PATH
         || path.join(defaultDownloadsDirectory, 'MaterialKompass-iOS.ipa'),
@@ -399,12 +404,14 @@ function createApp(options = {}) {
   };
   const downloadHashes = new Map();
   const clientPlatforms = ['windows', 'macos', 'linux', 'android', 'ios'];
+  const downloadPlatforms = [...clientPlatforms, 'authenticator-android'];
   const platformLabels = {
     windows: 'Windows',
     macos: 'macOS',
     linux: 'Linux',
     android: 'Android',
     ios: 'iOS',
+    'authenticator-android': '2FA-App (Android)',
   };
 
   function removeOlderThan(collection, fields, days) {
@@ -1532,7 +1539,7 @@ function createApp(options = {}) {
     filePath: options.systemMessagesPath,
   });
 
-  app.get('/api/downloads', publicRateLimit, (req, res) => res.json(clientPlatforms.map((platform) => {
+  app.get('/api/downloads', publicRateLimit, (req, res) => res.json(downloadPlatforms.map((platform) => {
     const download = desktopDownload(platform);
     return {
       platform,
@@ -1575,7 +1582,7 @@ function createApp(options = {}) {
   });
 
   app.get('/api/downloads/:platform', publicRateLimit, (req, res, next) => {
-    if (!clientPlatforms.includes(req.params.platform)) {
+    if (!downloadPlatforms.includes(req.params.platform)) {
       return res.status(404).json({ error: 'Unbekannte Plattform.' });
     }
     const download = desktopDownload(req.params.platform);
