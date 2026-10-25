@@ -25,7 +25,7 @@ class PushPollingService : Service() {
         super.onCreate()
         createChannels()
         startForeground(1, NotificationCompat.Builder(this, CHANNEL_SERVICE)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_stat_mk_auth)
             .setContentTitle("MaterialKompass Authenticator")
             .setContentText("Wartet sicher auf Anmeldeanfragen")
             .setOngoing(true)
@@ -101,7 +101,7 @@ class PushPollingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_APPROVALS)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_stat_mk_auth)
             .setContentTitle("Anmeldung für ${account.optString("account", "MaterialKompass")}")
             .setContentText("Öffnen, Code vergleichen und sicher freigeben")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
