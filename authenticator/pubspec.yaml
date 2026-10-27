@@ -1,7 +1,7 @@
 name: materialkompass_authenticator
 description: Eigenständiger, selbst gehosteter 2FA-Authenticator für MaterialKompass.
 publish_to: none
-version: 1.6.1+19
+version: 1.6.2+20
 
 environment:
   sdk: '>=3.12.0 <4.0.0'

@@ -1,5 +1,9 @@
 # Aenderungsprotokoll
 
+## [1.6.2] - 2026-10-27
+
+- Überarbeitung 2 FA
+
 ## [1.6.1] - 2026-10-25
 
 - Überarbeitung 2 FA
