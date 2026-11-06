@@ -14,9 +14,7 @@
 - Rotierende Refresh-Sitzungen, Mehrtab-Synchronisierung und kontoweiter Widerruf
   bei Logout sowie sicherheitsrelevanten Kontoaenderungen ergaenzt.
 - Push-Abfragen von Vorder- und Hintergrunddienst loesen keine gegenseitigen
-  Neustarts oder irrtuemlichen Meldungen ueber zu viele Versuche mehr aus.
-
-## [1.6.2] - 2026-10-27
+  Neustarts oder irrtuemlichen Meldungen ueber zu viele Versuche mehr aus.## [1.6.2] - 2026-10-27
 
 - Überarbeitung 2 FA
 
