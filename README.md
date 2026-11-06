@@ -22,7 +22,8 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
   eigenen Rollen und Fachbereichen; es gibt keine implizite Rechtevererbung
 - Eindeutige EDV-Nummern für Organisationen und Untergliederungen
 - Selbstverwaltung von E-Mail, Passwort und Account-Löschung
-- Automatische Sperre nach fünf Fehlversuchen und Sitzungsablauf nach 60 Minuten
+- Kurzlebige Zugriffstoken mit rotierenden, serverseitig widerrufbaren
+  Refresh-Sitzungen; Abmeldung beendet alle Sitzungen des Kontos sofort
 - DSGVO-Lebenszyklus: Deaktivierung nach 24, Löschung nach 36 Monaten ohne Login
 - Vollständige, transaktionale MariaDB-Persistenz für alle Anwendungsdaten
 - Flutter-Web-Startseite mit Login und Dashboard
@@ -142,6 +143,36 @@ Passkeys bleiben davon unabhängig eine optionale passwortlose Anmeldemethode.
 `MFA_ENCRYPTION_KEY` verschlüsselt. Aktivierung, Deaktivierung, Richtlinienänderungen,
 neue Wiederherstellungscodes und administrative Resets werden protokolliert und per
 Sicherheits-E-Mail angekündigt. Ein Reset macht bestehende Sitzungen ungültig.
+
+## Sitzungen und lokale App-Entsperrung
+
+Nach einer vollständigen Anmeldung mit Nutzername, Passwort und vorhandener 2-FA
+kann ein Nutzer im nativen Client optional **Auf diesem Gerät entsperren** aktivieren.
+Das Zugriffstoken und das rotierende Refresh-Geheimnis liegen dann ausschließlich im
+geschützten Schlüsselspeicher des Betriebssystems. Das Kontopasswort wird nicht
+gespeichert. Beim Start sowie nach Hintergrund-/Benutzerwechsel verlangt der Client
+die eingerichtete Geräteauthentifizierung. Unter Windows ist das Windows Hello; auf
+Android, iOS und macOS sind Geräte-PIN/Passcode und eingerichtete Biometrie möglich.
+Fehlt eine unterstützte Geräteauthentifizierung, wird keine lokale Sitzung gespeichert
+und die vollständige Anmeldung bleibt der Rückfallweg.
+
+Der Webclient speichert Zugriffs- und Refreshwerte ausschließlich im tabgebundenen
+`sessionStorage`. Gleichzeitige Tabs desselben Origins tauschen die laufende Sitzung
+über `BroadcastChannel` aus. Rotationen werden mit einer höchstens 18 Sekunden
+gültigen, tokenfreien `localStorage`-Sperre serialisiert. Aktualisieren eines Tabs beendet die Sitzung deshalb
+nicht; nach dem Schließen des letzten Website-Tabs bleiben keine Web-Sitzungswerte im
+Browser zurück. Diese Speicherung ist ausschließlich für die ausdrücklich gewünschte
+Anmeldung erforderlich und enthält keine Analyse-, Werbe- oder Trackingdaten. Logout
+informiert alle offenen Tabs und widerruft bei erreichbarem Server sämtliche Zugriffs-
+und Refresh-Sitzungen des Kontos. Ohne Netz endet die lokale Sitzung sofort; die
+serverseitige Sitzung kann technisch erst bei erneutem Serverkontakt oder durch Ablauf
+entwertet werden.
+
+Passwort-/2-FA-Änderungen, Kontosperren sowie Faktor- und Passkey-Widerrufe sind Teil
+der Sicherheitsversion des Kontos und entwerten vorhandene Tokens. Sensible
+Kontofunktionen verlangen weiterhin das aktuelle Kontopasswort und – falls
+eingerichtet – den bestehenden zweiten Faktor; die lokale Gerätefreigabe ersetzt
+diese erneute Kontoauthentifizierung nicht.
 
 ## Passkeys
 

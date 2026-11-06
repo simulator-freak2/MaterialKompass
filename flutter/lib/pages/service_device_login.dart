@@ -176,10 +176,12 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
         );
       }
       if (!mounted) return;
+      await AuthenticatedSessionService.saveLoginResponse(data);
+      if (!mounted) return;
       unawaited(OfflineSessionService.prepare(data['token'].toString()));
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => DashboardPage(
+          builder: (_) => DeferredDashboardPage(
             token: data['token'].toString(),
             logoutPageBuilder: (_) => ServiceDeviceLoginPage(
               deviceCredential: widget.deviceCredential,
@@ -200,7 +202,7 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
       }
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => DashboardPage(
+          builder: (_) => DeferredDashboardPage(
             token: lease['sessionToken'].toString(),
             logoutPageBuilder: (_) => ServiceDeviceLoginPage(
               deviceCredential: widget.deviceCredential,

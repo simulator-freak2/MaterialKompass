@@ -1,5 +1,21 @@
 # Aenderungsprotokoll
 
+## [1.6.3] - 2026-11-06
+
+- Überarbeitung 2 FA
+- Updater in die Installierten Apps eingebaut
+- performance verbessert
+
+## Unveroeffentlicht
+
+- Native Apps koennen vollstaendig authentifizierte Sitzungen mit Geraete-PIN,
+  Biometrie oder Windows Hello entsperren; Web-Sitzungen ueberstehen Reloads und
+  bleiben bis zum Schliessen des letzten Tabs aktiv.
+- Rotierende Refresh-Sitzungen, Mehrtab-Synchronisierung und kontoweiter Widerruf
+  bei Logout sowie sicherheitsrelevanten Kontoaenderungen ergaenzt.
+- Push-Abfragen von Vorder- und Hintergrunddienst loesen keine gegenseitigen
+  Neustarts oder irrtuemlichen Meldungen ueber zu viele Versuche mehr aus.
+
 ## [1.6.2] - 2026-10-27
 
 - Überarbeitung 2 FA

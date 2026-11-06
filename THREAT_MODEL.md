@@ -1,6 +1,6 @@
 # Bedrohungsmodell
 
-Stand: 11. Oktober 2026
+Stand: 31. Oktober 2026
 
 ## Schutzwerte und Vertrauensgrenzen
 
@@ -31,7 +31,8 @@ Schutz der CI-Signierschlüssel liegen in der Verantwortung des Betreibers.
 | Datenmanipulation/Doppelbuchung | serverseitige Validierung, Transaktionen, persist-before-response, idempotente Offline-ID | fachlich falsche, aber formal gültige Eingabe |
 | Schadanhänge/ZIP-Bomben/Formeln | Größen-, Typ-, Magic-, Archiv- und Komplexitätsgrenzen; Formelneutralisierung | unbekannte Parserlücken |
 | Secret-Abfluss | keine `.env`/Schlüssel in Git, lokaler Secret-Scan, GitHub-Secrets, getrennte Schlüssel | Host-/CI-Administratorzugriff |
-| Token-/Datendiebstahl | HTTPS-Pflicht, HSTS, restriktives CORS, No-store, OS-Schlüsselspeicher | kompromittiertes Betriebssystem |
+| Token-/Datendiebstahl | HTTPS-Pflicht, HSTS, restriktives CORS, No-store, kurzlebige JWTs, rotierende Refresh-Sitzungen, Web-`sessionStorage`, OS-Schlüsselspeicher und Geräteauthentifizierung | kompromittiertes Betriebssystem oder Same-Origin-Script |
+| Sitzungsfortsetzung nach Verlust/Logout | Sicherheitsversion, sofortiger Logout aller Kontositzungen, Faktoränderungen und Kontosperren widerrufen Zugriffs- und Refresh-Sitzungen | offline kompromittierte Geräte bis zum nächsten Serverkontakt |
 | Manipuliertes Update | HTTPS, Größenlimit, SHA-256, Plattformsignatur und OS-Bestätigung | kompromittierter Release-/Signierprozess |
 | Docker-Socket-Missbrauch | Provisioner ohne Netzwerk, enges Protokoll, Token, allowlisted Befehle | Dienst besitzt weiterhin Host-nahe Rechte |
 | Verlust/Korruption | Transaktionen, tägliche Dumps, Prüfsumme, Restore-Test, externe Replikation | RPO-Fenster und Betreiberfehler |

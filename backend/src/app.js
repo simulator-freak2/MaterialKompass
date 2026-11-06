@@ -41,7 +41,7 @@ const { registerMailManagementRoutes } = require('./mail-management');
 const { sendAccountMail } = require('./mailer');
 const { createUserMfa } = require('./user-mfa');
 const { createPasskeyAuth } = require('./passkeys');
-const { createMfaPush } = require('./mfa-push');
+const { createMfaPush, pushStatusRateLimitKey } = require('./mfa-push');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -54,6 +54,7 @@ const { registerDataBackupRoutes } = require('./data-backup');
 const { createMemoryIdentityProtection } = require('./identity-protection');
 const { registerSystemMessageRoutes } = require('./system-messages');
 const { loginAccessAllowed, loginAccessPolicy } = require('./login-access-policy');
+const { createAuthSessions } = require('./auth-sessions');
 const {
   normalizeTenancyData,
   wrapTenantCollections,
@@ -137,6 +138,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'systemMessageAcknowledgements',
+  'authSessions',
   'procurementRequests', 'procurementOffers', 'procurementOrders',
   'procurementReceipts', 'procurementDocuments', 'suppliers', 'documents',
   'procurementEmailImports',
@@ -146,6 +148,9 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'offlineClients', 'offlineCommandResults', 'offlineSyncState',
   'stocktakes', 'stocktakeEmailImports',
 ]);
+const BACKUP_COLLECTIONS = Object.freeze(
+  PERSISTED_COLLECTIONS.filter((name) => name !== 'authSessions'),
+);
 
 function createApp(options = {}) {
   if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
@@ -338,6 +343,7 @@ function createApp(options = {}) {
   const qrLoginCredentials = (appData.qrLoginCredentials ||= []);
   const passkeys = (appData.passkeys ||= []);
   const mfaPushDevices = (appData.mfaPushDevices ||= []);
+  const authSessionRecords = (appData.authSessions ||= []);
   const serviceDevices = (appData.serviceDevices ||= []);
   const offlineClients = (appData.offlineClients ||= []);
   const offlineCommandResults = (appData.offlineCommandResults ||= []);
@@ -514,7 +520,7 @@ function createApp(options = {}) {
   const mfaPushStatusRateLimit = createRateLimiter({
     windowMs: MFA_PUSH_STATUS_WINDOW_MS,
     maxRequests: MFA_PUSH_STATUS_MAX_REQUESTS,
-    keyFor: (req) => `${req.ip}:mfa-push-status`,
+    keyFor: pushStatusRateLimitKey,
     errorMessage: 'Zu viele Push-Statusabfragen. Bitte starten Sie die Anmeldung erneut.',
   });
   const publicRateLimit = createRateLimiter({
@@ -525,7 +531,12 @@ function createApp(options = {}) {
   const mutationRateLimit = createRateLimiter({
     windowMs: MUTATION_WINDOW_MS,
     maxRequests: MUTATION_MAX_REQUESTS,
-    appliesTo: (req) => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method),
+    appliesTo: (req) => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
+      && ![
+        '/api/auth/mfa/push/pending',
+        '/api/auth/mfa/push/status',
+        '/api/auth/mfa/push/pairing-status',
+      ].includes(req.path),
     errorMessage: 'Zu viele Änderungen. Bitte später erneut versuchen.',
   });
   const addressLookupRateLimit = createRateLimiter({
@@ -908,6 +919,26 @@ function createApp(options = {}) {
   let userMfa;
   let passkeyAuth;
   let mfaPush;
+  const authSessions = createAuthSessions({
+    sessions: authSessionRecords,
+    users,
+    createToken,
+    securityVersion,
+    loginAccessAllowed,
+    sessionContextAllowed: (_user, context, requestContext) => {
+      if (!context.deviceId) return true;
+      if (context.sessionType !== PERSONAL_DEVICE_SESSION) return false;
+      const device = serviceDevices.find((entry) => entry.id === context.deviceId);
+      return Boolean(device?.active
+        && device.organizationId === context.organizationId
+        && device.unitId === context.unitId
+        && ipAllowed(
+          String(requestContext.ip || '').replace(/^::ffff:/, ''),
+          device.allowedNetworks,
+        ));
+    },
+    now: options.now || Date.now,
+  });
   const verifyAdministrativeReauthentication = async (user, body) => {
     if (!await bcrypt.compare(String(body.currentPassword || ''), user.passwordHash)) {
       return false;
@@ -1330,7 +1361,7 @@ function createApp(options = {}) {
     const identities = new Set([user.id, user.name, user.username, user.email]
       .filter(Boolean).map((entry) => String(entry).trim().toLowerCase()));
     const relatedData = {};
-    for (const name of PERSISTED_COLLECTIONS) {
+    for (const name of BACKUP_COLLECTIONS) {
       const matches = (appData[name] || []).map((entry) => ({
         recordId: entry?.id || null,
         matches: personalDataMatches(entry, identities),
@@ -1398,6 +1429,7 @@ function createApp(options = {}) {
     accountMailSender: options.accountMailSender,
     dataSubjectExporter: exportDataSubject,
     onBeforeUserDelete: async (user) => {
+      authSessions.revokeAll(user.id);
       anonymizeDataSubject(user);
       passkeyAuth?.removeUser(user.id);
       await mfaPush?.removeUser(user.id);
@@ -1453,6 +1485,7 @@ function createApp(options = {}) {
     requirePermission,
     authRateLimit,
     createToken,
+    createSession: (user, context) => authSessions.issue(user, context),
     publicUser,
     userMfa,
     saveUser: (user) => options.userStore?.saveUser(user) || Promise.resolve(),
@@ -1486,7 +1519,7 @@ function createApp(options = {}) {
   registerDataBackupRoutes({
     app,
     appData,
-    collectionNames: PERSISTED_COLLECTIONS,
+    collectionNames: BACKUP_COLLECTIONS,
     applicationVersion: version,
     authMiddleware,
     importBodyParser: backupJsonParser,
@@ -1651,8 +1684,7 @@ function createApp(options = {}) {
       req.persistenceRequired = true;
       logEvent('login', 'User', { id: verifiedUser.id }, verifiedUser.username);
       return response.json({
-        token: createToken(verifiedUser),
-        expiresIn: 3600,
+        ...authSessions.issue(verifiedUser),
         user: publicUser(verifiedUser),
       });
     };
@@ -1687,6 +1719,7 @@ function createApp(options = {}) {
     requirePermission,
     authRateLimit,
     createToken,
+    createSession: (user, context) => authSessions.issue(user, context),
     securityVersion,
     publicUser,
     logEvent,
@@ -1718,6 +1751,32 @@ function createApp(options = {}) {
         } : null,
       },
     });
+  });
+
+  app.post('/api/auth/refresh', authRateLimit, (req, res) => {
+    const refreshed = authSessions.rotate(req.body.refreshToken, { ip: req.ip });
+    if (!refreshed) {
+      return res.status(401).json({ error: 'Die Sitzung ist abgelaufen oder wurde widerrufen.' });
+    }
+    req.persistenceRequired = true;
+    return res.json({
+      token: refreshed.token,
+      refreshToken: refreshed.refreshToken,
+      expiresIn: refreshed.expiresIn,
+      user: publicUser(refreshed.user),
+    });
+  });
+
+  app.post('/api/auth/logout', authMiddleware, async (req, res) => {
+    const identity = req.identity || req.user.__identity || req.user;
+    authSessions.revokeAll(identity.id);
+    // mfaVersion is part of securityVersion and therefore invalidates every
+    // already issued access token immediately, independent of its remaining TTL.
+    identity.mfaVersion = Number(identity.mfaVersion || 0) + 1;
+    await options.userStore?.saveUser(identity);
+    req.persistenceRequired = true;
+    logEvent('logout_all_sessions', 'User', { id: identity.id }, identity.username);
+    return res.status(204).end();
   });
 
   app.post('/api/auth/context', authMiddleware, (req, res) => {
@@ -2944,6 +3003,7 @@ function createApp(options = {}) {
     requirePermission,
     authRateLimit,
     createToken,
+    createSession: (user, context) => authSessions.issue(user, context),
     findUser: userManagement.findUser,
     publicUser,
     logEvent,

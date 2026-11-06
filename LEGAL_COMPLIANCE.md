@@ -1,6 +1,6 @@
 # Datenschutz- und Rechtsbetrieb
 
-Stand: 18. Oktober 2026
+Stand: 31. Oktober 2026
 
 Dieses Dokument beschreibt den technisch vorbereiteten Rechtsbetrieb von
 MaterialKompass. Es ist keine Rechtsberatung. Ob einzelne Vorschriften
@@ -46,6 +46,16 @@ Hosting, Beschäftigtenzahl und tatsächlichen Arbeitsabläufen ab.
   und abgelaufene QR-Daten sind per `RETENTION_*` konfigurierbar
 - Keine Analyse-, Werbe- oder Tracking-Komponenten; lokale Druckereinstellungen
   sind für die ausdrücklich gewünschte Funktion bestimmt
+- Web-Sitzungswerte liegen ausschließlich im tabgebundenen `sessionStorage` und
+  werden zwischen gleichzeitig geöffneten Website-Tabs ausgetauscht. Es wird kein
+  persistentes Login- oder Tracking-Cookie gesetzt. Für konkurrierende Erneuerungen
+  wird nur eine tokenfreie, spätestens nach 18 Sekunden ungültige Sperrkennung in
+  `localStorage` verwendet. Diese Speicherung ist für die
+  ausdrücklich angeforderte Anmeldung technisch erforderlich; falls der Betreiber
+  später nicht erforderliche Zwecke ergänzt, ist die Einwilligungsfrage neu zu prüfen
+- Native Zugriffs- und Refreshwerte liegen im OS-Schlüsselspeicher und werden nur
+  nach Geräte-PIN/Passcode, Biometrie oder Windows Hello freigegeben. Das
+  Kontopasswort wird nicht lokal gespeichert
 - Datenbank ist im Compose-Betrieb nur intern erreichbar; Backend-Port ist an
   Loopback gebunden und für TLS-Betrieb hinter einem Reverse Proxy vorgesehen
 - Native Offline-Snapshots, Befehlswarteschlangen und QR-Prüfwerte werden im

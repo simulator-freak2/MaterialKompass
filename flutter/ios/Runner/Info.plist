@@ -18,6 +18,8 @@
 	<string>MaterialKompass</string>
 	<key>NSCameraUsageDescription</key>
 	<string>MaterialKompass benötigt die Kamera zum Scannen von QR-Codes und Materialetiketten.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>MaterialKompass verwendet Face ID, um eine bereits angemeldete Sitzung sicher zu entsperren.</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

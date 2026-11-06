@@ -45,13 +45,15 @@ function publicDevice(device) {
 function registerServiceDeviceRoutes({
   app, devices, users, departments, locations, stockStructures, categories,
   materials, clothingItems, materialDocuments, authMiddleware, requirePermission,
-  authRateLimit, createToken, findUser, publicUser, logEvent, defectManagement,
+  authRateLimit, createToken, createSession, findUser, publicUser, logEvent, defectManagement,
   jwtSecret, qrLoginCredentials = [], securityVersion,
   saveUser = async () => {},
   userMfa,
   loginAccessAllowed = () => true,
   tenantForUser = () => null,
 }) {
+  const issueSession = createSession
+    || ((user, context) => ({ token: createToken(user, context), expiresIn: 3600 }));
   const encryptionKey = crypto.createHash('sha256').update(jwtSecret).digest();
   const nextId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
   const nowIso = () => new Date().toISOString();
@@ -546,18 +548,18 @@ function registerServiceDeviceRoutes({
       verifiedUser.lastLoginAt = nowIso();
       await saveUser(verifiedUser);
       return runWithTenant(personalTenant, () => {
-        const token = createToken(verifiedUser, {
+        const session = issueSession(verifiedUser, {
           deviceId: device.id,
           sessionType: PERSONAL_DEVICE_SESSION,
           organizationId: device.organizationId,
           unitId: personalTenant.unitId,
         });
+        verifyRequest.persistenceRequired = true;
         logEvent('login', 'ServiceDevice', {
           id: device.id, userId: verifiedUser.id, method,
         }, verifiedUser.username);
         return response.json({
-          token,
-          expiresIn: 3600,
+          ...session,
           user: publicUser(verifiedUser),
           device: publicDevice(device),
           sessionType: PERSONAL_DEVICE_SESSION,

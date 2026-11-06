@@ -8,7 +8,7 @@ const {
 
 const PLATFORM_COLLECTIONS = new Set([
   'organizations', 'organizationUnits', 'memberships', 'permissions',
-  'systemMessageAcknowledgements',
+  'systemMessageAcknowledgements', 'authSessions',
 ]);
 const PLATFORM_SCOPE = '__platform__';
 

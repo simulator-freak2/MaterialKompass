@@ -10,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../constants.dart';
 import '../services/offline_http.dart' as http;
+import '../services/authenticated_session_service.dart';
 import '../services/offline_store.dart';
 import '../services/offline_session_service.dart';
 import '../services/service_device_storage.dart';
@@ -17,7 +18,7 @@ import '../services/temporary_device_file.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
-import 'dashboard_page.dart';
+import 'deferred_dashboard_page.dart';
 import 'login_page.dart';
 
 part 'service_device_activation.dart';

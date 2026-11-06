@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../constants.dart';
 import '../services/api_client.dart';
+import '../services/authenticated_session_service.dart';
 import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../services/passkey_service.dart';
@@ -14,7 +15,7 @@ import '../widgets/system_message_card.dart';
 import '../widgets/password_login_form.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
-import 'dashboard_page.dart';
+import 'deferred_dashboard_page.dart';
 import 'legal_page.dart';
 import 'service_device_pages.dart';
 
@@ -32,6 +33,8 @@ class _LoginPageState extends State<LoginPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool loading = false;
+  bool deviceUnlockAvailable = false;
+  bool enableDeviceUnlock = true;
   bool downloadsLoading = true;
   List<SystemMessage> maintenanceMessages = const [];
   List<Map<String, dynamic>> downloads = const [
@@ -52,6 +55,12 @@ class _LoginPageState extends State<LoginPage> {
     super.initState();
     if (kIsWeb) loadDownloads();
     loadSystemMessages();
+    if (!kIsWeb) loadDeviceUnlockAvailability();
+  }
+
+  Future<void> loadDeviceUnlockAvailability() async {
+    final available = await AuthenticatedSessionService.deviceUnlockAvailable;
+    if (mounted) setState(() => deviceUnlockAvailable = available);
   }
 
   @override
@@ -342,10 +351,16 @@ class _LoginPageState extends State<LoginPage> {
         }
         if (!mounted) return;
         TextInput.finishAutofillContext(shouldSave: true);
+        await AuthenticatedSessionService.saveLoginResponse(
+          data,
+          allowNativeUnlock: enableDeviceUnlock,
+        );
+        if (!mounted) return;
         unawaited(OfflineSessionService.prepare(data['token'].toString()));
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => DashboardPage(token: data['token'].toString()),
+            builder: (_) =>
+                DeferredDashboardPage(token: data['token'].toString()),
           ),
         );
       } else {
@@ -382,9 +397,16 @@ class _LoginPageState extends State<LoginPage> {
           return;
         }
         final token = data['token'].toString();
+        await AuthenticatedSessionService.saveLoginResponse(
+          data,
+          allowNativeUnlock: enableDeviceUnlock,
+        );
+        if (!mounted) return;
         unawaited(OfflineSessionService.prepare(token));
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => DashboardPage(token: token)),
+          MaterialPageRoute(
+            builder: (_) => DeferredDashboardPage(token: token),
+          ),
         );
       } else {
         _showError(data['error']?.toString() ?? 'QR-Anmeldung fehlgeschlagen.');
@@ -402,9 +424,14 @@ class _LoginPageState extends State<LoginPage> {
       final data = await passkeys.login();
       if (!mounted) return;
       final token = data['token'].toString();
+      await AuthenticatedSessionService.saveLoginResponse(
+        data,
+        allowNativeUnlock: enableDeviceUnlock,
+      );
+      if (!mounted) return;
       unawaited(OfflineSessionService.prepare(token));
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => DashboardPage(token: token)),
+        MaterialPageRoute(builder: (_) => DeferredDashboardPage(token: token)),
       );
     } on ApiException catch (error) {
       if (mounted) _showError(error.message);
@@ -469,6 +496,23 @@ class _LoginPageState extends State<LoginPage> {
                           loading: loading,
                           onSubmitted: login,
                         ),
+                        if (deviceUnlockAvailable) ...[
+                          const SizedBox(height: 8),
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            value: enableDeviceUnlock,
+                            onChanged: loading
+                                ? null
+                                : (value) => setState(
+                                    () => enableDeviceUnlock = value ?? false,
+                                  ),
+                            title: const Text('Auf diesem Gerät entsperren'),
+                            subtitle: const Text(
+                              'Verwendet Geräte-PIN, Biometrie oder Windows Hello. Das Kontopasswort wird nicht gespeichert.',
+                            ),
+                            controlAffinity: ListTileControlAffinity.leading,
+                          ),
+                        ],
                         TextButton(
                           style: TextButton.styleFrom(
                             foregroundColor: Theme.of(

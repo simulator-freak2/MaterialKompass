@@ -17,8 +17,10 @@ Express-API
 MariaDB
 ```
 
-`JWT` ist das Anmeldetoken. Nach dem Login sendet die App es bei geschützten
-Anfragen im HTTP-Header `Authorization: Bearer …`.
+`JWT` ist das kurzlebige Zugriffstoken. Nach dem Login sendet die App es bei
+geschützten Anfragen im HTTP-Header `Authorization: Bearer …`. Rotierende,
+nur gehasht persistierte Refresh-Sitzungen erneuern es ohne erneute
+Passworteingabe und können serverseitig widerrufen werden.
 
 ## Wo gehört eine Änderung hin?
 
@@ -31,6 +33,7 @@ Anfragen im HTTP-Header `Authorization: Bearer …`.
 | Kleiderkammer | `flutter/lib/pages/wardrobe_page.dart`, Routen in `backend/src/app.js` |
 | Mängel | `flutter/lib/pages/defects_page.dart`, `backend/src/defects.js` |
 | Nutzer, Rollen, Anmeldung | `backend/src/user-management.js`, Authentifizierung in `backend/src/app.js` |
+| Refresh-Sitzungen und lokales Entsperren | `backend/src/auth-sessions.js`, `flutter/lib/services/authenticated_session_service.dart`, `flutter/lib/services/session_value_store_*.dart` |
 | Jugend-/Stammverknüpfung und Mandantengrenzen | `backend/src/tenancy.js`; gezielte Lese- und Reservierungsregeln in `backend/src/app.js`, `backend/src/calendar.js`, `backend/src/vehicles.js` und `backend/src/defects.js` |
 | Konto-2-FA und Login-Challenges | `backend/src/user-mfa.js`, `backend/src/mfa-security.js`, `backend/src/totp.js` |
 | Passkey-Zeremonien und Credential-Index | `backend/src/passkeys.js`, `flutter/lib/services/passkey_service.dart` |
@@ -71,6 +74,14 @@ direkte Top-Level-Imports in `app.js` oder `defect-email-ingestion.js` landen.
 `flutter/lib/main.dart` startet mit Anmeldung oder Dashboard. Die Fachseiten
 werden vom Dashboard verzögert geladen, damit schwächere Geräte nicht sofort
 den gesamten Anwendungscode laden und verarbeiten müssen.
+
+Beim Start prüft `authenticated_session_service.dart` eine vorhandene Sitzung.
+Native Clients lesen sie aus dem Plattform-Schlüsselspeicher erst nach erfolgreicher
+Geräteauthentifizierung (unter Windows Windows Hello). Im Web liegen die Werte nur im
+`sessionStorage`; `BroadcastChannel` stellt sie weiteren gleichzeitig geöffneten Tabs
+bereit und verteilt rotierte Werte. Eine kurzlebige, tokenfreie `localStorage`-Sperre
+serialisiert konkurrierende Refresh-Vorgänge. Das Schließen des letzten Tabs entfernt damit die Browser-Sitzung ohne
+persistentes Cookie. Ein Refresh-Geheimnis wird bei jeder Verwendung rotiert.
 
 Die Netzwerkschicht hat drei bewusst getrennte Ebenen:
 

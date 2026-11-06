@@ -77,4 +77,11 @@ void main() {
     expect(appLockTriggeredBy(AppLifecycleState.inactive), isFalse);
     expect(appLockTriggeredBy(AppLifecycleState.resumed), isFalse);
   });
+
+  test('push polling respects bounded Retry-After values', () {
+    expect(pushRetryDelay('45'), const Duration(seconds: 45));
+    expect(pushRetryDelay(null), const Duration(seconds: 30));
+    expect(pushRetryDelay('0'), const Duration(seconds: 1));
+    expect(pushRetryDelay('999'), const Duration(seconds: 300));
+  });
 }

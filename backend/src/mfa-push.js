@@ -12,6 +12,18 @@ const MAX_APPROVALS = 10_000;
 const MAX_PAIRINGS = 10_000;
 const MAX_DEVICES_PER_USER = 5;
 const MAX_DEVICE_NAME_LENGTH = 100;
+const MAX_WAITERS_PER_DEVICE = 4;
+
+function pushStatusRateLimitKey(req) {
+  const route = String(req.route?.path || req.path || 'unknown');
+  const scope = String(
+    req.body?.deviceId
+      || req.body?.pairingId
+      || req.body?.approvalId
+      || 'anonymous',
+  ).slice(0, 128);
+  return `${req.ip}:${route}:${scope}`;
+}
 
 function hashSecret(value) {
   return crypto.createHash('sha256').update(String(value || '')).digest();
@@ -127,13 +139,18 @@ function createMfaPush({
     return true;
   }
 
+  function finishDeviceWaiters(deviceId, value = null) {
+    const waiters = waitersByDevice.get(deviceId);
+    if (!waiters) return;
+    for (const waiter of [...waiters]) waiter.finish(value);
+  }
+
   async function removeInvalidDevices(ids) {
     for (const id of ids) {
       const index = devices.findIndex((entry) => entry.id === id);
       if (index < 0) continue;
       const [device] = devices.splice(index, 1);
-      const waiter = waitersByDevice.get(device.id);
-      if (waiter) waiter.finish(null);
+      finishDeviceWaiters(device.id);
       await deleteDevice(device.id);
       const user = users.find((entry) => entry.id === device.userId);
       if (user) user.pushMfaDeviceCount = devicesFor(user.id).length;
@@ -168,8 +185,7 @@ function createMfaPush({
     const approval = pendingApprovalFor(userId);
     if (!approval) return;
     for (const device of devicesFor(userId)) {
-      const waiter = waitersByDevice.get(device.id);
-      if (waiter) waiter.finish(approval);
+      finishDeviceWaiters(device.id, approval);
     }
   }
 
@@ -342,8 +358,7 @@ function createMfaPush({
       });
     }
     const [device] = devices.splice(index, 1);
-    const waiter = waitersByDevice.get(device.id);
-    if (waiter) waiter.finish(null);
+    finishDeviceWaiters(device.id);
     await deleteDevice(device.id);
     req.user.pushMfaDeviceCount = remaining;
     req.user.mfaVersion = Number(req.user.mfaVersion || 0) + 1;
@@ -368,19 +383,27 @@ function createMfaPush({
     const current = pendingApprovalFor(device.userId);
     if (current) return res.json(approvalPayload(current));
 
-    const previous = waitersByDevice.get(device.id);
-    if (previous) previous.finish(null);
     const approval = await new Promise((resolve) => {
       let completed = false;
+      let timer;
+      const waiters = waitersByDevice.get(device.id) || new Set();
+      waitersByDevice.set(device.id, waiters);
+      if (waiters.size >= MAX_WAITERS_PER_DEVICE) {
+        waiters.values().next().value?.finish(null);
+      }
+      const waiter = { finish: null };
       const finish = (value) => {
         if (completed) return;
         completed = true;
         clearTimeout(timer);
-        if (waitersByDevice.get(device.id)?.finish === finish) waitersByDevice.delete(device.id);
+        const activeWaiters = waitersByDevice.get(device.id);
+        activeWaiters?.delete(waiter);
+        if (activeWaiters?.size === 0) waitersByDevice.delete(device.id);
         resolve(value);
       };
-      const timer = setTimeout(() => finish(null), POLL_WAIT_MS);
-      waitersByDevice.set(device.id, { finish });
+      waiter.finish = finish;
+      waiters.add(waiter);
+      timer = setTimeout(() => finish(null), POLL_WAIT_MS);
       req.on('aborted', () => finish(null));
       res.on('close', () => finish(null));
     });
@@ -518,8 +541,7 @@ function createMfaPush({
       for (let index = devices.length - 1; index >= 0; index -= 1) {
         if (devices[index].userId === userId) {
           removedIds.push(devices[index].id);
-          const waiter = waitersByDevice.get(devices[index].id);
-          if (waiter) waiter.finish(null);
+          finishDeviceWaiters(devices[index].id);
           devices.splice(index, 1);
         }
       }
@@ -536,4 +558,5 @@ module.exports = {
   PAIRING_TTL_MS,
   USER_PUSH_MAX_REQUESTS,
   createMfaPush,
+  pushStatusRateLimitKey,
 };

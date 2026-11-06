@@ -87,7 +87,7 @@ function legalInformation(env = process.env) {
       ],
       requiredData: 'Pflichtangaben sind für Anmeldung, Berechtigungsprüfung und die jeweiligen Fachvorgänge erforderlich. Ohne sie kann der Dienst ganz oder teilweise nicht genutzt werden.',
       automatedDecisions: 'Es findet keine automatisierte Entscheidungsfindung einschließlich Profiling im Sinne von Art. 22 DSGVO statt.',
-      localStorage: 'Die Anwendung verwendet ausschließlich technisch erforderliche lokale Einstellungen und Sicherheitswerte, etwa für konfigurierte Etikettendrucker, Offlinezugänge und registrierte Push-2-FA-Geräte. Es werden keine Analyse-, Marketing- oder Tracking-Technologien eingesetzt.',
+      localStorage: 'Die Anwendung verwendet ausschließlich technisch erforderliche lokale Einstellungen und Sicherheitswerte. Web-Anmeldungen liegen nur im tabgebundenen Sitzungsspeicher und enden nach dem Schließen des letzten Website-Tabs oder bei Logout; eine tokenfreie, höchstens 18 Sekunden gültige lokale Sperrkennung verhindert konkurrierende Sitzungserneuerungen. Es wird kein persistentes Login- oder Tracking-Cookie gesetzt. Native Anmeldedaten liegen im geschützten Schlüsselspeicher des Betriebssystems und werden per Geräte-PIN, Biometrie oder Windows Hello freigegeben. Hinzu kommen funktionsbezogene Werte etwa für Etikettendrucker, Offlinezugänge und registrierte Push-2-FA-Geräte. Es werden keine Analyse-, Marketing- oder Tracking-Technologien eingesetzt.',
     },
   };
 }

@@ -57,6 +57,7 @@ function createPasskeyAuth({
   requirePermission,
   authRateLimit,
   createToken,
+  createSession,
   publicUser,
   userMfa,
   saveUser = async () => {},
@@ -70,6 +71,8 @@ function createPasskeyAuth({
   config = passkeyConfig(),
   webauthn = defaultWebAuthn,
 }) {
+  const issueSession = createSession
+    || ((user) => ({ token: createToken(user), expiresIn: 3600 }));
   const challenges = new Map();
   const passkeysByCredentialId = new Map();
 
@@ -452,9 +455,9 @@ function createPasskeyAuth({
     logEvent('passkey_login', 'User', {
       id: user.id, passkeyId: passkey.id,
     }, user.username);
+    req.persistenceRequired = true;
     return res.json({
-      token: createToken(user),
-      expiresIn: 3600,
+      ...issueSession(user),
       user: publicUser(user),
     });
   });

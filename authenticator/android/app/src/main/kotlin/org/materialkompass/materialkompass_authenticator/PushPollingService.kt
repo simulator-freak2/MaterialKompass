@@ -79,12 +79,22 @@ class PushPollingService : Service() {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(request.toString().toByteArray(Charsets.UTF_8)) }
-            if (connection.responseCode != 200) return
+            val responseCode = connection.responseCode
+            if (responseCode != 200) {
+                val retrySeconds = if (responseCode == 429) {
+                    connection.getHeaderField("Retry-After")?.toLongOrNull()?.coerceIn(1, 300) ?: 30
+                } else {
+                    5
+                }
+                Thread.sleep(retrySeconds * 1_000)
+                return
+            }
             val response = BufferedReader(connection.inputStream.reader()).use { it.readText() }
             val approval = JSONObject(response)
             val id = approval.getString("approvalId")
             if (notified.add(id)) showApproval(account, approval)
             if (notified.size > 100) notified.clear()
+            Thread.sleep(5_000)
         } finally {
             connection.disconnect()
         }

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
 const { seedData } = require('../src/data/seed');
+const { pushStatusRateLimitKey } = require('../src/mfa-push');
 
 async function start() {
   const data = structuredClone(seedData);
@@ -43,6 +44,67 @@ async function start() {
   }
   return { server, request, deliveries, savedDevices, deletedDevices };
 }
+
+test('push status rate limits are isolated by route and device', () => {
+  const base = { ip: '192.0.2.1', route: { path: '/api/auth/mfa/push/pending' } };
+  assert.notEqual(
+    pushStatusRateLimitKey({ ...base, body: { deviceId: 'device-a' } }),
+    pushStatusRateLimitKey({ ...base, body: { deviceId: 'device-b' } }),
+  );
+  assert.notEqual(
+    pushStatusRateLimitKey({ ...base, body: { deviceId: 'device-a' } }),
+    pushStatusRateLimitKey({
+      ...base,
+      route: { path: '/api/auth/mfa/push/status' },
+      body: { approvalId: 'device-a' },
+    }),
+  );
+});
+
+test('foreground and background polls for one device receive the same approval', async () => {
+  const { server, request } = await start();
+  try {
+    const firstLogin = await request('/api/auth/login', {
+      method: 'POST',
+      body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    const registered = await request('/api/users/me/mfa/push-devices', {
+      method: 'POST', token: firstLogin.data.token,
+      body: {
+        name: 'Telefon',
+        platform: 'android',
+        currentPassword: 'MaterialKompass2026!',
+      },
+    });
+    const pendingBody = {
+      deviceId: registered.data.device.id,
+      deviceSecret: registered.data.deviceSecret,
+    };
+    const foregroundPoll = request('/api/auth/mfa/push/pending', {
+      method: 'POST', body: pendingBody,
+    });
+    const backgroundPoll = request('/api/auth/mfa/push/pending', {
+      method: 'POST', body: pendingBody,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const login = await request('/api/auth/login', {
+      method: 'POST',
+      body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    const started = await request('/api/auth/mfa/push/start', {
+      method: 'POST', body: { challenge: login.data.challenge },
+    });
+    const polls = await Promise.all([foregroundPoll, backgroundPoll]);
+
+    assert.equal(started.response.status, 200);
+    assert.deepEqual(polls.map((entry) => entry.response.status), [200, 200]);
+    assert.equal(polls[0].data.approvalId, started.data.approvalId);
+    assert.equal(polls[1].data.approvalId, started.data.approvalId);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 test('a registered app device approves a login push without TOTP or passkey', async () => {
   const { server, request, deliveries, savedDevices } = await start();

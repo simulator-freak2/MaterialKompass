@@ -1995,6 +1995,36 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
+    title: 'App und Web-Sitzung sicher entsperren',
+    summary:
+        'Native App mit Geräte-PIN oder Biometrie öffnen und im Web angemeldet bleiben.',
+    icon: Icons.lock_open_outlined,
+    readingMinutes: 4,
+    audience: 'Für alle persönlichen Konten',
+    prerequisite:
+        'Für die App muss eine Geräte-PIN, ein Passcode, Biometrie oder Windows Hello eingerichtet sein.',
+    steps: [
+      'Melde dich vollständig mit Nutzername, Passwort und deiner vorhandenen 2-FA an.',
+      'Aktiviere in der installierten App „Auf diesem Gerät entsperren“. MaterialKompass speichert niemals dein Kontopasswort, sondern nur widerrufbare Sitzungswerte im geschützten Systemspeicher.',
+      'Entsperre die App beim nächsten Start mit Geräte-PIN, Passcode, Fingerabdruck, Gesichtserkennung oder Windows Hello. Ist keine unterstützte Geräteauthentifizierung eingerichtet, melde dich vollständig an.',
+      'Nach einem Wechsel in den Hintergrund oder zu einem anderen Benutzer zeigt die App wieder die lokale Sperre. Sensible Kontoaktionen verlangen trotzdem erneut Kontopasswort und vorhandene 2-FA.',
+      'Im Web bleibt die Anmeldung beim Aktualisieren erhalten. Gleichzeitig geöffnete MaterialKompass-Tabs teilen die laufende Sitzung; nach dem Schließen des letzten Website-Tabs ist eine neue Anmeldung erforderlich.',
+      'Wähle „Abmelden“, um alle offenen Tabs lokal zu schließen und bei erreichbarem Server alle aktiven Sitzungen des Kontos sofort zu widerrufen. Verwende dies besonders bei Geräteverlust oder Verdacht auf fremden Zugriff.',
+    ],
+    tip:
+        'Die Web-Sitzung nutzt ausschließlich technisch erforderlichen Sitzungsspeicher und keine Analyse-, Werbe- oder Tracking-Cookies.',
+    keywords: [
+      'entsperren',
+      'windows hello',
+      'geräte pin',
+      'biometrie',
+      'sitzung',
+      'tab',
+      'logout',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
     title: 'Passkey einrichten und verwenden',
     summary:
         'Passwortlos und phishing-resistent mit Gerätesperre, Biometrie oder Sicherheitsschlüssel anmelden.',

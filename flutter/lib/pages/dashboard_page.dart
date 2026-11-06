@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../constants.dart';
 import '../services/app_http_client.dart';
+import '../services/authenticated_session_service.dart';
 import '../services/offline_http.dart' as offline_transport;
 import '../services/offline_session_service.dart';
 import '../services/offline_store.dart';
@@ -62,9 +63,12 @@ class _DashboardPageState extends State<DashboardPage>
   late Future<Map<String, dynamic>> _dashboardFuture;
   late String _token;
   Timer? _syncTimer;
+  Timer? _sessionRefreshTimer;
   Timer? _systemMessageTimer;
   bool _backgroundRefreshInProgress = false;
   bool _systemMessageCheckInProgress = false;
+  bool _localUnlockRequired = false;
+  bool _localUnlockInProgress = false;
   int _systemMessageFailures = 0;
   final Set<String> _shownSystemMessageIds = {};
   final _systemMessages = SystemMessageService();
@@ -79,6 +83,10 @@ class _DashboardPageState extends State<DashboardPage>
     _syncTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => unawaited(_refreshInBackground()),
+    );
+    _sessionRefreshTimer = Timer.periodic(
+      const Duration(minutes: 45),
+      (_) => unawaited(_refreshSession()),
     );
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _scheduleSystemMessageCheck(),
@@ -177,16 +185,42 @@ class _DashboardPageState extends State<DashboardPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!kIsWeb &&
+        {
+          AppLifecycleState.inactive,
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.detached,
+        }.contains(state)) {
+      if (mounted) setState(() => _localUnlockRequired = true);
+      return;
+    }
     if (state == AppLifecycleState.resumed) {
+      if (_localUnlockRequired) {
+        unawaited(_unlockAfterResume());
+        return;
+      }
       unawaited(_refreshInBackground());
       unawaited(OfflineSessionService.prepare(_token));
       _scheduleSystemMessageCheck(delay: const Duration(seconds: 1));
     }
   }
 
+  Future<void> _unlockAfterResume() async {
+    if (_localUnlockInProgress) return;
+    _localUnlockInProgress = true;
+    final unlocked = await AuthenticatedSessionService.unlockDevice();
+    _localUnlockInProgress = false;
+    if (!mounted || !unlocked) return;
+    setState(() => _localUnlockRequired = false);
+    unawaited(_refreshInBackground());
+    unawaited(OfflineSessionService.prepare(_token));
+  }
+
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _sessionRefreshTimer?.cancel();
     _systemMessageTimer?.cancel();
     _systemMessages.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -229,6 +263,13 @@ class _DashboardPageState extends State<DashboardPage>
     } finally {
       _backgroundRefreshInProgress = false;
     }
+  }
+
+  Future<void> _refreshSession() async {
+    final refreshed = await AuthenticatedSessionService.refresh();
+    if (!mounted || refreshed == null || refreshed.isEmpty) return;
+    setState(() => _token = refreshed);
+    unawaited(OfflineSessionService.prepare(_token));
   }
 
   Future<Map<String, dynamic>> loadDashboard() async {
@@ -284,6 +325,8 @@ class _DashboardPageState extends State<DashboardPage>
       if (discard != true) return;
       await store.discardCommands(subject);
     }
+    if (!context.mounted) return;
+    await AuthenticatedSessionService.logout(_token);
     if (!context.mounted) return;
     if (widget.logoutPageBuilder != null) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -445,6 +488,7 @@ class _DashboardPageState extends State<DashboardPage>
         );
       }
       _token = result['token'].toString();
+      await AuthenticatedSessionService.updateAccessToken(_token);
       await OfflineSessionService.prepare(_token);
       if (!mounted) return;
       setState(() => _dashboardFuture = _loadDashboard());
@@ -694,6 +738,38 @@ class _DashboardPageState extends State<DashboardPage>
 
   @override
   Widget build(BuildContext context) {
+    if (_localUnlockRequired) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('MaterialKompass gesperrt')),
+        body: Center(
+          child: Card(
+            margin: const EdgeInsets.all(24),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 56),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Entsperren Sie die App mit der Geräte-PIN oder Biometrie.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _localUnlockInProgress
+                        ? null
+                        : _unlockAfterResume,
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('Mit Gerät entsperren'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dashboard'),

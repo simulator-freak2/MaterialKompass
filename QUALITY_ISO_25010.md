@@ -104,6 +104,24 @@ native Smoke-Tests nachgewiesen.
   sicherheitskritisch gelten und welche Prüf-/Wartungsintervalle rechtlich einschlägig
   sind.
 
+## Sitzungsfortsetzung und lokale Geräteentsperrung
+
+| Merkmal | Umsetzung und Nachweis |
+| --- | --- |
+| Funktionale Eignung | Web-Aktualisierungen und parallele Tabs übernehmen dieselbe Sitzung; native Clients können eine vollständig authentifizierte Sitzung mit Geräte-PIN, Biometrie oder Windows Hello entsperren. Backendtests prüfen Ausgabe, Rotation, Replay-Abwehr und Widerruf. |
+| Leistungseffizienz | Der Web-Austausch verwendet einen origin-gebundenen `BroadcastChannel`; Refresh erfolgt höchstens alle 45 Minuten. Geräteauthentifizierung und Schlüsselspeicherzugriff finden nur bei Start, Resume oder explizitem Entsperren statt. |
+| Kompatibilität | Der offizielle `local_auth`-Adapter deckt Android, iOS, macOS und Windows ab. Nicht unterstützte Plattformen fallen ohne Tokenpersistenz auf die vollständige Anmeldung zurück. Web benötigt `sessionStorage`, `BroadcastChannel` und eine kurzlebige tokenfreie `localStorage`-Sperre. |
+| Interaktionsfähigkeit | Die Option erklärt Geräteauthentifizierung und Nicht-Speicherung des Kontopassworts. Sperrseite, Abbruch und vollständige Anmeldung bleiben verständliche Rückfallwege; Touch-Ziele erfüllen die bestehende 48-Pixel-Regel. |
+| Zuverlässigkeit | Refresh-Geheimnisse werden bei jeder Nutzung rotiert. Temporäre Netzfehler löschen eine native Sitzung nicht; ungültige oder widerrufene Antworten entfernen lokale Werte. Web-Reload und Tab-Handschlag sind unabhängig vom Dashboard-Ladevorgang; parallele Tab-Erneuerungen werden serialisiert. |
+| Sicherheit | Zugriffstoken bleiben kurzlebig; Refreshwerte werden serverseitig nur als SHA-256-Prüfwert und clientseitig im Session- bzw. OS-Schlüsselspeicher gehalten. Logout, Passwort-/Faktoränderung und Kontosperre entwerten Sitzungen. Sensible Aktionen verlangen weiterhin Passwort plus vorhandene 2-FA. |
+| Wartbarkeit | Serverlogik liegt in `auth-sessions.js`, plattformspezifische Speicherung hinter bedingten `session_value_store_*`-Adaptern und Orchestrierung in `authenticated_session_service.dart`. |
+| Flexibilität | Die lokale Freigabe ist pro Anmeldung optional. Zusätzliche Plattformadapter können hinter derselben Speicher- und Entsperrschnittstelle ergänzt werden. |
+| Safety | Kein direkter fachlicher Safety-Effekt; eine gesperrte oder widerrufene Sitzung verhindert jedoch unberechtigte Änderungen an sicherheitskritischem Material. |
+
+Vor einer produktiven Freigabe sind native Smoke-Tests für Windows Hello,
+Android-Geräte-PIN, iOS Face ID/Passcode und macOS Touch ID sowie ein manueller
+Mehrtab-Test einschließlich letztem geschlossenen Website-Tab zu protokollieren.
+
 ## Kontobezogene Anmelderichtlinien
 
 Die Auswahl zwischen allgemeiner Anmeldung, allen Dienstgeräten und ausgewählten

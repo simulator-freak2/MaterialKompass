@@ -10,6 +10,7 @@ class ServiceDeviceBootstrap extends StatefulWidget {
 class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
   String? credential;
   Map<String, dynamic>? device;
+  String? restoredToken;
   bool ready = false;
 
   @override
@@ -19,6 +20,15 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
   }
 
   Future<void> _load() async {
+    // Web-Sitzungspruefungen duerfen die Loginseite nicht lange blockieren.
+    // Native Entsperrdialoge behalten Zeit fuer die Nutzereingabe.
+    restoredToken = await AuthenticatedSessionService.restore(
+      requestTimeout: kIsWeb ? const Duration(milliseconds: 1500) : null,
+    );
+    if (restoredToken != null) {
+      if (mounted) setState(() => ready = true);
+      return;
+    }
     if (kIsWeb) {
       if (mounted) setState(() => ready = true);
       return;
@@ -26,14 +36,16 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
     final stored = await ServiceDeviceStorage.readCredential();
     if (stored != null) {
       try {
-        final response = await http.post(
-          Uri.parse('$apiBaseUrl/api/service-devices/status'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'deviceCredential': stored,
-            ...await _clientInfo(),
-          }),
-        );
+        final response = await http
+            .post(
+              Uri.parse('$apiBaseUrl/api/service-devices/status'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'deviceCredential': stored,
+                ...await _clientInfo(),
+              }),
+            )
+            .timeout(const Duration(seconds: 5));
         if (response.statusCode == 200) {
           credential = stored;
           device = Map<String, dynamic>.from(
@@ -64,6 +76,12 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
             ),
           ),
         ],
+      );
+    }
+    if (restoredToken != null) {
+      return DeferredDashboardPage(
+        token: restoredToken!,
+        logoutPageBuilder: (_) => const ServiceDeviceBootstrap(),
       );
     }
     if (kIsWeb || credential == null) return const LoginPage();

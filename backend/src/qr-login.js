@@ -29,10 +29,13 @@ function safeEqual(left, right) {
 
 function registerQrLoginRoutes({
   app, users, credentials, authMiddleware, requirePermission, authRateLimit,
-  createToken, securityVersion, publicUser, logEvent, saveUser = async () => {}, userMfa,
+  createToken, createSession, securityVersion, publicUser, logEvent,
+  saveUser = async () => {}, userMfa,
   loginAccessAllowed = () => true,
   tenantForUser = () => null,
 }) {
+  const issueSession = createSession
+    || ((user, context) => ({ token: createToken(user, context), expiresIn: 3600 }));
   function removeExpired() {
     const now = Date.now();
     for (let index = credentials.length - 1; index >= 0; index -= 1) {
@@ -270,10 +273,9 @@ function registerQrLoginRoutes({
         logEvent('qr_login', 'User', { id: verifiedUser.id }, verifiedUser.username);
         req.persistenceRequired = true;
         return response.json({
-          token: createToken(verifiedUser, {
+          ...issueSession(verifiedUser, {
             organizationId: tenant.organizationId, unitId: tenant.unitId,
           }),
-          expiresIn: 3600,
           user: publicUser(verifiedUser),
         });
       });

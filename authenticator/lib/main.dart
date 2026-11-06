@@ -197,6 +197,20 @@ class PendingApproval {
       );
 }
 
+class PushRateLimitException implements Exception {
+  const PushRateLimitException(this.retryAfter);
+
+  final Duration retryAfter;
+
+  @override
+  String toString() => 'Push-Abfrage vorübergehend gedrosselt.';
+}
+
+Duration pushRetryDelay(String? retryAfter) {
+  final seconds = int.tryParse(retryAfter ?? '');
+  return Duration(seconds: (seconds ?? 30).clamp(1, 300));
+}
+
 class Vault {
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -366,6 +380,11 @@ class PushApi {
         .timeout(const Duration(seconds: 35));
     if (response.statusCode == 204) return null;
     final body = _decodeObject(response);
+    if (response.statusCode == 429) {
+      throw PushRateLimitException(
+        pushRetryDelay(response.headers['retry-after']),
+      );
+    }
     if (response.statusCode == 401) {
       throw StateError('Gerätekopplung widerrufen.');
     }
@@ -616,16 +635,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
     polling = true;
+    var nextPollDelay = const Duration(seconds: 1);
     try {
       for (final account in List<PushAccount>.of(pushAccounts)) {
         try {
           final approval = await api.pending(account);
+          if (message ==
+              'Push-Verbindung pausiert kurz und wird automatisch fortgesetzt.') {
+            message = null;
+          }
           if (approval != null && approval.expiresAt.isAfter(DateTime.now())) {
             pending[account.id] = approval;
+            nextPollDelay = const Duration(seconds: 5);
           } else {
             pending.remove(account.id);
           }
+        } on PushRateLimitException catch (error) {
+          if (error.retryAfter.compareTo(nextPollDelay) > 0) {
+            nextPollDelay = error.retryAfter;
+          }
+          message =
+              'Push-Verbindung pausiert kurz und wird automatisch fortgesetzt.';
         } catch (error) {
+          nextPollDelay = const Duration(seconds: 5);
           message = error.toString().replaceFirst('Bad state: ', '');
         }
       }
@@ -635,7 +667,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (mounted &&
           pushAccounts.isNotEmpty &&
           (!appLockEnabled || appUnlocked)) {
-        unawaited(Future<void>.delayed(const Duration(seconds: 1), _poll));
+        unawaited(Future<void>.delayed(nextPollDelay, _poll));
       }
     }
   }
