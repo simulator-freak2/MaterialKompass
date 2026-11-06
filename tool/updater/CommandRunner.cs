@@ -32,6 +32,12 @@ internal static class CommandRunner
             StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+        var temporaryDirectory = Path.Combine(workingDirectory, "tmp", "updater");
+        Directory.CreateDirectory(temporaryDirectory);
+        startInfo.Environment["TEMP"] = temporaryDirectory;
+        startInfo.Environment["TMP"] = temporaryDirectory;
+        startInfo.Environment["TMPDIR"] = temporaryDirectory;
+        log($"Temporärer Arbeitsordner: {temporaryDirectory}");
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var output = new StringBuilder();
@@ -41,7 +47,7 @@ internal static class CommandRunner
         void Append(string? line)
         {
             if (line is null) return;
-            output.AppendLine(line);
+            lock (output) output.AppendLine(line);
             log(line);
         }
 
@@ -59,6 +65,13 @@ internal static class CommandRunner
             throw;
         }
         log($"Prozess beendet: {executable} (Exit-Code {process.ExitCode})");
-        return new CommandResult(process.ExitCode, output.ToString());
+        var capturedOutput = output.ToString();
+        if (process.ExitCode != 0 && IsDiskFull(capturedOutput))
+            throw new IOException($"Zu wenig Speicherplatz beim Update. Ein Werkzeug konnte seine Dateien nicht schreiben.\n\nTemporärer Arbeitsordner: {temporaryDirectory}\nBitte auf dem im Protokoll genannten Laufwerk Speicher freigeben und den Vorgang erneut starten. Die Prüfungen wurden nicht erfolgreich abgeschlossen.");
+        return new CommandResult(process.ExitCode, capturedOutput);
     }
+
+    private static bool IsDiskFull(string output) =>
+        new[] { "errno = 112", "not enough space", "no space left on device", "device is full", "nicht genug Speicherplatz", "unzureichender Speicherplatz" }
+            .Any(marker => output.Contains(marker, StringComparison.OrdinalIgnoreCase));
 }

@@ -92,6 +92,25 @@ if ($LASTEXITCODE -ne 0 -or -not $knownHostMatch) {
 }
 $resolvedIdentity = if ($IdentityFile) { (Resolve-Path -LiteralPath $IdentityFile).Path } else { $null }
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$updateTempRoot = Join-Path $repositoryRoot 'tmp/updater'
+try {
+    [IO.Directory]::CreateDirectory($updateTempRoot) | Out-Null
+    $probe = Join-Path $updateTempRoot ([Guid]::NewGuid().ToString('N') + '.tmp')
+    [IO.File]::WriteAllText($probe, 'MaterialKompass Schreibtest')
+    Remove-Item -LiteralPath $probe -Force
+}
+catch {
+    throw "Der temporaere Updateordner ist nicht beschreibbar: $updateTempRoot. Bitte Speicherplatz und Zugriffsrechte pruefen. Ursache: $($_.Exception.Message)"
+}
+$updateDrive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($updateTempRoot))
+if ($updateDrive.AvailableFreeSpace -lt 2GB) {
+    $freeGB = [math]::Round($updateDrive.AvailableFreeSpace / 1GB, 2)
+    throw "Zu wenig Speicherplatz fuer das Update auf $($updateDrive.Name): $freeGB GB frei. Mindestens 2 GB freier Arbeitsbereich sind erforderlich; Builds koennen mehr benoetigen. Bitte Speicher freigeben und erneut starten. Updateordner: $updateTempRoot"
+}
+$env:TEMP = $updateTempRoot
+$env:TMP = $updateTempRoot
+$env:TMPDIR = $updateTempRoot
+Write-Host "Temporaerer Updateordner: $updateTempRoot"
 $sshOptions = @(
     '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', "UserKnownHostsFile=$knownHosts",

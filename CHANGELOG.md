@@ -16,13 +16,7 @@
 - Push-Abfragen von Vorder- und Hintergrunddienst loesen keine gegenseitigen
   Neustarts oder irrtuemlichen Meldungen ueber zu viele Versuche mehr aus.## [1.6.2] - 2026-10-27
 
-- Überarbeitung 2 FA
-
-## [1.6.1] - 2026-10-25
-
-- Überarbeitung 2 FA
-
-## [1.6.0] - 2026-10-23
+- Überarbeitung 2 FA## [1.6.0] - 2026-10-23
 
 - Überarbeitung 2 FA
 
