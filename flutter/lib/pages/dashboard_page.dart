@@ -932,7 +932,9 @@ class _DashboardPageState extends State<DashboardPage>
                     label: 'Etikettenvorlagen',
                     description: 'Herstellervorlagen und Freigaben verwalten',
                     onTap: () => _loadAndOpen(
-                      () => label_templates_page.LabelTemplatesPage(token: _token),
+                      () => label_templates_page.LabelTemplatesPage(
+                        token: _token,
+                      ),
                     ),
                   ),
                 _DashboardAction(
@@ -1051,8 +1053,16 @@ class _DashboardPageState extends State<DashboardPage>
                 if (can('users.read') && can('roles.read'))
                   _DashboardAction(
                     icon: Icons.manage_accounts_outlined,
-                    label: 'Nutzerverwaltung',
-                    description: 'Konten, Rollen und Fachbereiche',
+                    label:
+                        activeOrganization['systemKind'] ==
+                            'platform_administration'
+                        ? 'Zentrale Kontenverwaltung'
+                        : 'Berechtigungen dieser Ebene',
+                    description:
+                        activeOrganization['systemKind'] ==
+                            'platform_administration'
+                        ? 'Konten verwalten und Duplikate prüfen'
+                        : 'Nur Freigaben und Rollen der aktiven Ebene',
                     onTap: () =>
                         _loadAndOpen(() => users_page.UsersPage(token: _token)),
                   ),

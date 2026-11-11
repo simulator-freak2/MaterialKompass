@@ -78,6 +78,12 @@ void main() {
     expect(appLockTriggeredBy(AppLifecycleState.resumed), isFalse);
   });
 
+  test('push pairing records the actual target platform', () {
+    expect(pushPlatformName(TargetPlatform.android, isWeb: false), 'android');
+    expect(pushPlatformName(TargetPlatform.iOS, isWeb: false), 'ios');
+    expect(pushPlatformName(TargetPlatform.iOS, isWeb: true), 'web');
+  });
+
   test('push polling respects bounded Retry-After values', () {
     expect(pushRetryDelay('45'), const Duration(seconds: 45));
     expect(pushRetryDelay(null), const Duration(seconds: 30));

@@ -768,7 +768,14 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           final activeOrganization = Map<String, dynamic>.from(
             activeContext['organization'] as Map? ?? const {},
           );
+          final centralAdministration =
+              activeOrganization['systemKind'] == 'platform_administration';
+          final canCreateOrganization =
+              platformAdmin &&
+              permissions.contains('organizations.write') &&
+              (centralAdministration || roles.contains('Admin'));
           final canCreateOrganizationStructure =
+              !centralAdministration &&
               roles.contains('Admin') &&
               permissions.contains('organizations.write');
           final ordered = _orderedUnits(units);
@@ -781,7 +788,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    if (platformAdmin && canCreateOrganizationStructure)
+                    if (canCreateOrganization)
                       FilledButton.icon(
                         onPressed: _createOrganization,
                         icon: const Icon(Icons.add_business_outlined),

@@ -48,7 +48,8 @@ try {
         throw 'Die vorhandene Systemnachrichtendatei ist zu gross.'
     }
     $originalHash = (Get-FileHash -LiteralPath $localFile -Algorithm SHA256).Hash.ToLowerInvariant()
-    $document = Get-Content -LiteralPath $localFile -Raw | ConvertFrom-Json
+    # Always decode UTF-8 explicitly: Windows PowerShell otherwise uses the ANSI code page.
+    $document = Get-Content -LiteralPath $localFile -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($document.schemaVersion -ne 1 -or $null -eq $document.messages -or @($document.messages).Count -gt 100) {
         throw 'Die vorhandene Systemnachrichtendatei ist ungueltig.'
     }
@@ -75,6 +76,15 @@ try {
     }
     $messages = @($entry) + $messages | Select-Object -First 100
     $output = [ordered]@{ schemaVersion = 1; messages = @($messages) } | ConvertTo-Json -Depth 6
+    # Apply the same byte and text limits as the backend before publishing.
+    foreach ($publishedMessage in $messages) {
+        if ($publishedMessage.title.Length -gt 120 -or $publishedMessage.message.Length -gt 4000) {
+            throw 'Ein Systemhinweis ueberschreitet die erlaubte Textlaenge.'
+        }
+    }
+    if ([Text.Encoding]::UTF8.GetByteCount($output) -gt 524288) {
+        throw 'Die neue Systemnachrichtendatei ist zu gross.'
+    }
     [IO.File]::WriteAllText($localFile, $output, [Text.UTF8Encoding]::new($false))
     $stage = "$remoteFile.new-$PID"
     & scp @sshOptions $localFile "${target}:$stage"

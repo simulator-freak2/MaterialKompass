@@ -2105,7 +2105,7 @@ const _articles = [
     prerequisite:
         'Du brauchst Plattformadministrationsrechte. Organisationsadmins verwalten ausschließlich ihre Bereichsrechte.',
     steps: [
-      'Öffne die Nutzerverwaltung und bearbeite das gewünschte Konto.',
+      'Wechsle über „Organisation oder Einheit wechseln“ nach „MaterialKompass – Zentrale Verwaltung“ und öffne die zentrale Kontenverwaltung.',
       'Aktiviere „Starke Anmeldung verpflichtend“, wenn das Konto künftig einen Passkey oder 2-FA verwenden muss.',
       'Hat die Person weder Passkey noch 2-FA eingerichtet, beginnt eine Einrichtungsfrist von 14 Tagen. Danach ist nur noch eine eingeschränkte Anmeldung zur Einrichtung möglich.',
       'Nutze „2-FA zurücksetzen“ nur nach sicherer Identitätsprüfung. Der Reset entfernt die Einrichtung und beendet bestehende Sitzungen.',
@@ -2134,7 +2134,7 @@ const _articles = [
     prerequisite:
         'Du brauchst Plattformadministrationsrechte; für eine gezielte Freigabe muss mindestens ein Dienstgerät angelegt sein.',
     steps: [
-      'Öffne „Nutzerverwaltung → Nutzer“ und bearbeite das gewünschte Konto.',
+      'Wechsle nach „MaterialKompass – Zentrale Verwaltung“ und bearbeite das Konto unter „Zentrale Kontenverwaltung“. ',
       'Wähle unter „Zulässige Anmeldung“ die Option „Web, Apps und Dienstgeräte“, wenn die normale Loginseite und alle aktivierten Dienstgeräte erlaubt sein sollen.',
       'Wähle „Nur aktivierte Dienstgeräte“, um die normale Anmeldung per Passwort, QR-Code oder Passkey zu sperren und persönliche Anmeldungen an allen aktivierten Dienstgeräten zu erlauben.',
       'Wähle „Nur ausgewählte Dienstgeräte“ und markiere mindestens ein Gerät, wenn das Konto ausschließlich dort persönlich genutzt werden darf.',
@@ -2154,6 +2154,34 @@ const _articles = [
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
+    title: 'MaterialKompass – Zentrale Verwaltung verwenden',
+    summary:
+        'Die geschützte oberste Verwaltungsebene von den lokalen Organisationsfreigaben unterscheiden.',
+    icon: Icons.admin_panel_settings_outlined,
+    readingMinutes: 4,
+    audience: 'Für Plattform- und Organisationsadministratoren',
+    prerequisite:
+        'Nur MaterialKompass-Plattformadministratoren dürfen Mitglied der zentralen Verwaltung sein. Eine normale Organisationsrolle Admin genügt nicht.',
+    steps: [
+      'Plattformadministratoren wählen über „Organisation oder Einheit wechseln“ die automatisch angelegte Organisation „MaterialKompass – Zentrale Verwaltung“. Normale Nutzer und Organisationsadmins können sie nicht auswählen.',
+      'Öffne dort „Zentrale Kontenverwaltung“. Das Kontenverzeichnis enthält alle zentral verwalteten Accounts. Diese Auflistung macht normale Konten nicht zu Mitgliedern der Verwaltungsorganisation.',
+      'Lege neue Konten ausschließlich zentral an und prüfe dort Identitätskonflikte. Ein neues normales Konto erhält dabei keine Organisationsfreigabe.',
+      'Die zuständigen Organisationsadmins nehmen das vorhandene Konto anschließend in ihrer aktiven Ebene direkt oder per Einladung auf und vergeben nur die dort benötigten Rollen.',
+      'In „Berechtigungen dieser Ebene“ werden ausschließlich die Freigaben der ausgewählten Ebene gezeigt. Andere Organisationen und Ebenen bleiben ausgeblendet; ihre Freigaben bleiben bei Änderungen erhalten.',
+      'Globale Kontodaten, Sicherheitsrichtlinien und vollständige Datensicherungen werden in der Zentrale verwaltet. In normalen Organisationen stehen nur deren lokale Verwaltungsfunktionen zur Verfügung.',
+    ],
+    tip:
+        'Mitglieder der zentralen Organisation werden aus den Plattformadministrationsrechten abgeleitet. Sie können nicht über normale Freigaben oder Einladungen hinzugefügt werden.',
+    keywords: [
+      'zentrale verwaltung',
+      'plattformadministrator',
+      'oberste ebene',
+      'konten',
+      'duplikate',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
     title: 'Nutzerkonto, Rollen und Fachbereiche verwalten',
     summary:
         'Ein zentrales Konto verwenden und Rechte je Organisation und Bereich unabhängig vergeben.',
@@ -2164,15 +2192,15 @@ const _articles = [
         'Diese Funktionen stehen nur Konten mit Verwaltungsrechten zur Verfügung.',
     steps: [
       'Jede Person verwendet systemweit ein Konto. Nutzername und E-Mail-Adresse müssen eindeutig sein; Groß-/Kleinschreibung und äußere Leerzeichen werden bei der Prüfung ignoriert. Beide Angaben dienen zur Anmeldung und dürfen deshalb auch nicht mit dem jeweils anderen Feld eines fremden Kontos kollidieren.',
-      'Ist das Konto schon vorhanden, wähle „Bestehendes Konto aufnehmen“. Mit „Direkt freigeben“ gibst du die genaue E-Mail-Adresse oder den genauen Nutzernamen ein und vergibst ausschließlich Rechte für deine administrierbaren Bereiche.',
+      'Ist das Konto schon vorhanden, wähle in der zuständigen Organisation „Berechtigungen dieser Ebene → Bestehendes Konto aufnehmen“. Mit „Direkt freigeben“ gibst du die genaue E-Mail-Adresse oder den genauen Nutzernamen ein und vergibst ausschließlich Rechte für deine administrierbaren Bereiche.',
       'Alternativ wähle „Einladung mit Zustimmung“ und gib die genaue E-Mail-Adresse ein. Die Person erhält einen sieben Tage gültigen Link, prüft Organisation, Bereiche und Rollen und kann ausdrücklich zustimmen oder ablehnen. Vor der Zustimmung entstehen keine neuen Rechte.',
       'Unter „Offene Einladungen“ kannst du noch gültige Einladungen deiner Bereiche widerrufen. Nach Ablauf oder Ablehnung erstellst du bei Bedarf eine neue Einladung. Ändern sich zwischenzeitlich E-Mail-Adresse oder Verwaltungsrechte des Einladenden, kann eine neue Einladung erforderlich sein.',
-      'Nur wenn noch kein Konto existiert, wähle „Nutzer anlegen“. Nutzername und gültige E-Mail-Adresse sind Pflicht; Name ist optional. Bei einem Duplikat verwende das bestehende Konto und lege kein Ausweichkonto mit abgewandelten Angaben an.',
-      'Wähle je Organisationseinheit nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden. Weitere Organisationen und Bereiche nutzen dasselbe Konto mit unabhängigen Freigaben.',
+      'Nur wenn noch kein Konto existiert, legt die MaterialKompass-Plattformadministration es in „MaterialKompass – Zentrale Verwaltung“ über „Nutzer anlegen“ an. Nutzername und gültige E-Mail-Adresse sind Pflicht; Name ist optional. Bei einem Duplikat verwende das bestehende Konto und lege kein Ausweichkonto mit abgewandelten Angaben an.',
+      'Wähle nur die Rollen für die aktive Ebene. Andere Ebenen und Organisationen werden in dieser Nutzeransicht nicht angezeigt; wechsle den Kontext, um deren Freigaben gesondert zu verwalten. Alle verwenden dasselbe Konto.',
       'In Jugendorganisationen steht „Jugendmitglied“ für den eingeschränkten Zugriff bereit. Weise dem Jugendvorsitz dort „Vorsitz“ zu; „Jugendvorsitzender“ entsteht in der Stammgliederung automatisch und darf in der Jugend nicht separat vergeben werden.',
       'Ordne bei Bedarf geleitete Fachbereiche zu und prüfe die daraus entstehenden Bereichs- und Schreibrechte.',
-      'Bearbeite vorhandene Freigaben mit „Bereichsrechte bearbeiten“. Änderungen gelten nur für die administrierbaren Bereiche. Der letzte aktive Admin eines Bereichs darf nicht entfernt oder herabgestuft werden.',
-      'Mit „Bereichsrechte entziehen“ entfernst du alle von dir administrierbaren Freigaben dieses Kontos. Andere Bereiche, andere Organisationen und das globale Konto bleiben erhalten. Auch beim letzten Organisationsaustritt wird das Konto nicht gelöscht.',
+      'Bearbeite vorhandene Freigaben mit „Bereichsrechte bearbeiten“. Änderungen gelten ausschließlich für die gerade ausgewählte Ebene. Der letzte aktive Admin eines Bereichs darf nicht entfernt oder herabgestuft werden.',
+      'Mit „Bereichsrechte entziehen“ entfernst du nur die Freigabe dieses Kontos in der aktiven Ebene. Andere Bereiche, andere Organisationen und das globale Konto bleiben erhalten. Auch beim letzten Organisationsaustritt wird das Konto nicht gelöscht.',
       'Globale Kontodaten und persönliche Anmeldeverfahren verwaltet die Person unter „Mein Account“ oder die Plattformadministration. Organisationsadmins dürfen bestehende Passwörter, E-Mail-Adressen, MFA, Passkeys und globale Anmelderichtlinien nicht ändern.',
       'Die Plattformadministration prüft unter „Identitätskonflikte“ die betroffenen Konto-IDs. Bestehende Dubletten werden nach Identitätsprüfung manuell geklärt; Konten und Berechtigungen werden nicht automatisch zusammengeführt.',
     ],
@@ -2198,7 +2226,7 @@ const _articles = [
     prerequisite:
         'Du brauchst die Rolle Admin in der aktiven Einheit, dein aktuelles Passwort und gegebenenfalls einen 2-FA-Code. Nur Plattformadministratoren dürfen den gesamten Plattformbestand sichern.',
     steps: [
-      'Öffne „Nutzerverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf.',
+      'Öffne „MaterialKompass – Zentrale Verwaltung → Zentrale Kontenverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf.',
       'Prüfe vorher die aktive Einheit: Jugend Ingelheim sichert nur sich selbst. Die Ortsgruppe Ingelheim sichert sich und ihre direkt zugehörige Jugend. Der Bezirk sichert sich und die Bezirksjugend, keine Ortsgruppen oder deren Jugend. Weitere Untereinheiten, Bestandsfreigaben und zusätzliche Mitgliedschaften erweitern diesen Bereich nicht.',
       'Eine Bereichssicherung enthält die zugeordneten Fachdaten einschließlich Dokumenten und einheitenbezogenen Kategorien und Protokollen. Zentrale Konten, Rollen, Passkeys, Mitgliedschaften, Organisationsstruktur, Gerätezugänge und gemeinsame Einstellungen bleiben der Plattformsicherung vorbehalten und werden beim Bereichsimport nicht verändert.',
       'Arbeite nur an einer Kopie der UTF-8-JSON-Datei. Jede benannte Sektion besitzt eine Liste „records“; entferne dort ausschließlich den nachweislich fehlerhaften vollständigen Datensatz.',

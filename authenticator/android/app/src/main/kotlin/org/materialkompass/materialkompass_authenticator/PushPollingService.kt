@@ -92,7 +92,7 @@ class PushPollingService : Service() {
             val response = BufferedReader(connection.inputStream.reader()).use { it.readText() }
             val approval = JSONObject(response)
             val id = approval.getString("approvalId")
-            if (notified.add(id)) showApproval(account, approval)
+            if (notified.add(id) && !MainActivity.isVisible) showApproval(account, approval)
             if (notified.size > 100) notified.clear()
             Thread.sleep(5_000)
         } finally {
@@ -101,25 +101,40 @@ class PushPollingService : Service() {
     }
 
     private fun showApproval(account: JSONObject, approval: JSONObject) {
+        val approvalId = approval.getString("approvalId")
         val openIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(MainActivity.EXTRA_APPROVAL_ID, approvalId)
         } ?: return
         val pendingIntent = PendingIntent.getActivity(
             this,
-            approval.getString("approvalId").hashCode(),
+            approvalId.hashCode(),
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val publicNotification = NotificationCompat.Builder(this, CHANNEL_APPROVALS)
+            .setSmallIcon(R.drawable.ic_stat_mk_auth)
+            .setContentTitle("Neue Anmeldeanfrage")
+            .setContentText("Öffne den Authenticator, um sie zu prüfen.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
         val notification = NotificationCompat.Builder(this, CHANNEL_APPROVALS)
             .setSmallIcon(R.drawable.ic_stat_mk_auth)
             .setContentTitle("Anmeldung für ${account.optString("account", "MaterialKompass")}")
-            .setContentText("Öffnen, Code vergleichen und sicher freigeben")
+            .setContentText("Öffnen, Gerät und Herkunft prüfen und entscheiden")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_EVENT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicNotification)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build()
         getSystemService(NotificationManager::class.java)
-            .notify(approval.getString("approvalId").hashCode(), notification)
+            .notify(approvalId.hashCode(), notification)
     }
 
     private fun createChannels() {
@@ -134,11 +149,15 @@ class PushPollingService : Service() {
             CHANNEL_APPROVALS,
             "Anmeldeanfragen",
             NotificationManager.IMPORTANCE_HIGH,
-        ))
+        ).apply {
+            description = "Sicherheitsabfragen für MaterialKompass-Anmeldungen"
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+            enableVibration(true)
+        })
     }
 
     companion object {
         private const val CHANNEL_SERVICE = "secure_connection"
-        private const val CHANNEL_APPROVALS = "login_approvals"
+        private const val CHANNEL_APPROVALS = "login_approvals_v2"
     }
 }

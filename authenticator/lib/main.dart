@@ -268,6 +268,18 @@ bool appLockSupportedPlatform(TargetPlatform platform, {required bool isWeb}) =>
       TargetPlatform.windows,
     }.contains(platform);
 
+String pushPlatformName(TargetPlatform platform, {required bool isWeb}) {
+  if (isWeb) return 'web';
+  return switch (platform) {
+    TargetPlatform.android => 'android',
+    TargetPlatform.iOS => 'ios',
+    TargetPlatform.macOS => 'macos',
+    TargetPlatform.windows => 'windows',
+    TargetPlatform.linux => 'linux',
+    TargetPlatform.fuchsia => 'fuchsia',
+  };
+}
+
 bool appLockTriggeredBy(AppLifecycleState state) =>
     state == AppLifecycleState.paused ||
     state == AppLifecycleState.hidden ||
@@ -348,7 +360,10 @@ class PushApi {
           body: jsonEncode({
             'pairToken': token,
             'name': name.trim().isEmpty ? 'Authenticator' : name.trim(),
-            'platform': kIsWeb ? 'web' : 'android',
+            'platform': pushPlatformName(
+              defaultTargetPlatform,
+              isWeb: kIsWeb,
+            ),
           }),
         )
         .timeout(const Duration(seconds: 15));
@@ -450,6 +465,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool appLockEnabled = false;
   bool appUnlocked = true;
   bool unlocking = false;
+  bool approvalDialogOpen = false;
+  AppLifecycleState lifecycleState =
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+  BuildContext? approvalDialogContext;
+  String? requestedApprovalId;
   String? unlockError;
   String? message;
 
@@ -457,6 +477,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      nativePush.setMethodCallHandler(_handleNativePush);
+    }
     _load();
     clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -465,6 +488,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    lifecycleState = state;
+    if (appLockTriggeredBy(state)) {
+      _hideApprovalDialog();
+    }
     if (appLockEnabled && appLockTriggeredBy(state)) {
       if (mounted) setState(() => appUnlocked = false);
       return;
@@ -474,6 +501,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         unawaited(_unlock());
       } else {
         _poll();
+        _scheduleApprovalDialog();
       }
     }
   }
@@ -490,6 +518,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       appLockEnabled = values[2] as bool;
       appUnlocked = !appLockEnabled;
       await _syncNativeService();
+      await _consumeNativeApproval();
     } catch (_) {
       message = 'Der verschlüsselte Speicher konnte nicht geöffnet werden.';
     }
@@ -559,7 +588,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         unlockError = 'Die App bleibt gesperrt.';
       }
     });
-    if (authenticated) _poll();
+    if (authenticated) {
+      _poll();
+      _scheduleApprovalDialog();
+    }
   }
 
   Future<void> _setAppLock(bool enabled) async {
@@ -627,6 +659,38 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<dynamic> _handleNativePush(MethodCall call) async {
+    if (call.method != 'openApproval') return null;
+    final arguments = call.arguments;
+    if (arguments is Map) {
+      final approvalId = arguments['approvalId']?.toString();
+      if (approvalId != null && approvalId.isNotEmpty) {
+        requestedApprovalId = approvalId;
+      }
+    }
+    if (appLockEnabled && !appUnlocked) {
+      unawaited(_unlock());
+    } else {
+      _scheduleApprovalDialog();
+      unawaited(_poll());
+    }
+    return null;
+  }
+
+  Future<void> _consumeNativeApproval() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final approvalId = await nativePush.invokeMethod<String>(
+        'consumeLaunchApproval',
+      );
+      if (approvalId != null && approvalId.isNotEmpty) {
+        requestedApprovalId = approvalId;
+      }
+    } on PlatformException {
+      // Die normale Abfrage zeigt die Anfrage weiterhin an.
+    }
+  }
+
   Future<void> _poll() async {
     if (polling ||
         pushAccounts.isEmpty ||
@@ -664,11 +728,228 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } finally {
       polling = false;
       if (mounted) setState(() {});
+      _scheduleApprovalDialog();
       if (mounted &&
           pushAccounts.isNotEmpty &&
           (!appLockEnabled || appUnlocked)) {
         unawaited(Future<void>.delayed(nextPollDelay, _poll));
       }
+    }
+  }
+
+  void _hideApprovalDialog() {
+    final dialogContext = approvalDialogContext;
+    if (dialogContext != null && dialogContext.mounted) {
+      Navigator.of(dialogContext).pop(false);
+    }
+  }
+
+  void _scheduleApprovalDialog() {
+    if (!mounted ||
+        approvalDialogOpen ||
+        lifecycleState != AppLifecycleState.resumed ||
+        (appLockEnabled && !appUnlocked)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_presentNextApproval());
+    });
+  }
+
+  Future<void> _presentNextApproval() async {
+    if (!mounted ||
+        approvalDialogOpen ||
+        lifecycleState != AppLifecycleState.resumed ||
+        (appLockEnabled && !appUnlocked)) {
+      return;
+    }
+    final now = DateTime.now();
+    pending.removeWhere((_, approval) => !approval.expiresAt.isAfter(now));
+    final candidates = <({PushAccount account, PendingApproval approval})>[
+      for (final account in pushAccounts)
+        if (pending[account.id] case final approval?)
+          (account: account, approval: approval),
+    ];
+    if (candidates.isEmpty) return;
+    var selected = candidates.first;
+    final requested = requestedApprovalId;
+    if (requested != null) {
+      for (final candidate in candidates) {
+        if (candidate.approval.id == requested) {
+          selected = candidate;
+          break;
+        }
+      }
+    }
+    approvalDialogOpen = true;
+    await _showApprovalDialog(selected.account, selected.approval);
+    approvalDialogOpen = false;
+    approvalDialogContext = null;
+    if (requestedApprovalId == selected.approval.id) {
+      requestedApprovalId = null;
+    }
+    if (mounted) {
+      setState(() {});
+      _scheduleApprovalDialog();
+    }
+  }
+
+  Future<bool> _showApprovalDialog(
+    PushAccount account,
+    PendingApproval approval,
+  ) async {
+    var submitting = false;
+    String? responseError;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            approvalDialogContext = dialogContext;
+            return PopScope(
+              canPop: false,
+              child: StatefulBuilder(
+                builder: (dialogContext, setDialogState) => AlertDialog(
+                  icon: const Icon(Icons.phonelink_lock),
+                  title: Text('Anmeldung für ${account.account}'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Prüfe diese Angaben, bevor du die Anmeldung freigibst.',
+                        ),
+                        const SizedBox(height: 16),
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.devices_outlined),
+                          title: const Text('Gerät / Browser'),
+                          subtitle: Text(approval.client),
+                        ),
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.public_outlined),
+                          title: const Text('Herkunft'),
+                          subtitle: Text(
+                            approval.sourceIp.isEmpty
+                                ? 'Nicht verfügbar'
+                                : approval.sourceIp,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Center(
+                          child: Text(
+                            approval.matchingCode,
+                            style: Theme.of(context)
+                                .textTheme
+                                .displaySmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 10,
+                                ),
+                          ),
+                        ),
+                        const Center(
+                          child: Text(
+                            'Nur freigeben, wenn dieser Code im Login angezeigt wird.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        if (responseError != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            responseError!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    OutlinedButton.icon(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              setDialogState(() {
+                                submitting = true;
+                                responseError = null;
+                              });
+                              final error = await _submitApproval(
+                                account,
+                                approval,
+                                'deny',
+                              );
+                              if (!dialogContext.mounted) return;
+                              if (error == null) {
+                                Navigator.pop(dialogContext, true);
+                              } else {
+                                setDialogState(() {
+                                  submitting = false;
+                                  responseError = error;
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.close),
+                      label: const Text('Ablehnen'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              setDialogState(() {
+                                submitting = true;
+                                responseError = null;
+                              });
+                              final error = await _submitApproval(
+                                account,
+                                approval,
+                                'approve',
+                              );
+                              if (!dialogContext.mounted) return;
+                              if (error == null) {
+                                Navigator.pop(dialogContext, true);
+                              } else {
+                                setDialogState(() {
+                                  submitting = false;
+                                  responseError = error;
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.check),
+                      label: Text(submitting ? 'Wird gesendet …' : 'Freigeben'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ) ??
+        false;
+  }
+
+  Future<String?> _submitApproval(
+    PushAccount account,
+    PendingApproval approval,
+    String decision,
+  ) async {
+    if (decision == 'approve' && appLockEnabled && !appUnlocked) {
+      return 'Entsperre zuerst die App, um die Anmeldung freizugeben.';
+    }
+    try {
+      await api.respond(account, approval, decision);
+      pending.remove(account.id);
+      if (mounted) {
+        setState(
+          () => message = decision == 'approve'
+              ? 'Anmeldung freigegeben.'
+              : 'Anmeldung abgelehnt.',
+        );
+      }
+      return null;
+    } catch (error) {
+      return error.toString().replaceFirst('Bad state: ', '');
     }
   }
 
@@ -794,22 +1075,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     PendingApproval approval,
     String decision,
   ) async {
-    try {
-      await api.respond(account, approval, decision);
-      pending.remove(account.id);
-      if (mounted) {
-        setState(
-          () => message = decision == 'approve'
-              ? 'Anmeldung freigegeben.'
-              : 'Anmeldung abgelehnt.',
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(
-          () => message = error.toString().replaceFirst('Bad state: ', ''),
-        );
-      }
+    final error = await _submitApproval(account, approval, decision);
+    if (error != null && mounted) {
+      setState(() => message = error);
     }
   }
 
@@ -858,6 +1126,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      nativePush.setMethodCallHandler(null);
+    }
     clock?.cancel();
     client.close();
     super.dispose();

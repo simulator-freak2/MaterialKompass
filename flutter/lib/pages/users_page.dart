@@ -32,6 +32,7 @@ class _UsersPageState extends State<UsersPage> {
   List<String> scannerEmailDestinations = [];
   String scannerEmailDomain = 'materialkompass.org';
   bool isAdmin = false;
+  bool isCentralAdministration = false;
   bool isPlatformAdmin = false;
   bool loading = true;
   bool backupTransferRunning = false;
@@ -69,6 +70,10 @@ class _UsersPageState extends State<UsersPage> {
       ),
       http.get(Uri.parse('$apiBaseUrl/api/auth/me'), headers: headers),
       http.get(Uri.parse('$apiBaseUrl/api/service-devices'), headers: headers),
+      http.get(
+        Uri.parse('$apiBaseUrl/api/platform/service-devices'),
+        headers: headers,
+      ),
     ]);
     if (!mounted) return;
     if (responses.take(3).any((response) => response.statusCode != 200)) {
@@ -100,9 +105,19 @@ class _UsersPageState extends State<UsersPage> {
         final me = Map<String, dynamic>.from(
           jsonDecode(responses[6].body) as Map,
         );
-        isPlatformAdmin = (me['user'] as Map?)?['platformAdmin'] == true;
+        isCentralAdministration =
+            ((me['context'] as Map?)?['organization'] as Map?)?['systemKind'] ==
+            'platform_administration';
+        isPlatformAdmin =
+            isCentralAdministration &&
+            (me['user'] as Map?)?['platformAdmin'] == true;
         currentUnitId = ((me['context'] as Map?)?['unit'] as Map?)?['id']
             ?.toString();
+        if (!isCentralAdministration && currentUnitId != null) {
+          organizationUnits = organizationUnits
+              .where((unit) => unit['id'].toString() == currentUnitId)
+              .toList();
+        }
       }
       if (responses[7].statusCode == 200) {
         serviceDevices = (jsonDecode(responses[7].body) as List)
@@ -110,7 +125,13 @@ class _UsersPageState extends State<UsersPage> {
             .map((entry) => Map<String, dynamic>.from(entry))
             .toList();
       }
-      isAdmin = responses[3].statusCode == 200;
+      if (isCentralAdministration && responses[8].statusCode == 200) {
+        serviceDevices = (jsonDecode(responses[8].body) as List)
+            .cast<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList();
+      }
+      isAdmin = !isCentralAdministration && responses[3].statusCode == 200;
       if (isAdmin) {
         final scannerData = Map<String, dynamic>.from(
           jsonDecode(responses[3].body) as Map,
@@ -175,6 +196,7 @@ class _UsersPageState extends State<UsersPage> {
         mailTemplates: mailTemplates,
         serviceDevices: serviceDevices,
         canManageAccount: isPlatformAdmin,
+        centralAdministration: isCentralAdministration,
       ),
     );
     if (result == null) return;
@@ -1515,15 +1537,29 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: isAdmin ? 7 : 3,
+    length: isCentralAdministration ? 2 : (isAdmin ? 7 : 3),
     child: Scaffold(
       appBar: AppBar(
-        title: const Text('Nutzerverwaltung'),
+        title: Text(
+          isCentralAdministration
+              ? 'Zentrale Kontenverwaltung'
+              : 'Berechtigungen dieser Ebene',
+        ),
         bottom: TabBar(
           tabs: [
-            const Tab(text: 'Nutzer', icon: Icon(Icons.people)),
-            const Tab(text: 'Rollen', icon: Icon(Icons.admin_panel_settings)),
-            const Tab(text: 'Fachbereiche', icon: Icon(Icons.account_tree)),
+            Tab(
+              text: isCentralAdministration ? 'Zentrale Konten' : 'Freigaben',
+              icon: const Icon(Icons.people),
+            ),
+            if (isCentralAdministration)
+              const Tab(
+                text: 'Datensicherung',
+                icon: Icon(Icons.settings_backup_restore),
+              ),
+            if (!isCentralAdministration)
+              const Tab(text: 'Rollen', icon: Icon(Icons.admin_panel_settings)),
+            if (!isCentralAdministration)
+              const Tab(text: 'Fachbereiche', icon: Icon(Icons.account_tree)),
             if (isAdmin)
               const Tab(text: 'E-Mails', icon: Icon(Icons.mail_outline)),
             if (isAdmin)
@@ -1547,6 +1583,23 @@ class _UsersPageState extends State<UsersPage> {
               children: [
                 Column(
                   children: [
+                    ListTile(
+                      leading: Icon(
+                        isCentralAdministration
+                            ? Icons.admin_panel_settings
+                            : Icons.verified_user_outlined,
+                      ),
+                      title: Text(
+                        isCentralAdministration
+                            ? 'Geschützte MaterialKompass-Verwaltung'
+                            : 'Freigaben der aktiven Ebene',
+                      ),
+                      subtitle: Text(
+                        isCentralAdministration
+                            ? 'Nur Plattformadministratoren sind Mitglieder dieser Organisation. Das zentrale Kontenverzeichnis enthält zusätzlich die verwalteten Konten ohne Mitgliedschaft.'
+                            : 'Hier werden ausschließlich die Berechtigungen dieser Ebene angezeigt und geändert. Konten werden zentral angelegt.',
+                      ),
+                    ),
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Row(
@@ -1569,32 +1622,33 @@ class _UsersPageState extends State<UsersPage> {
                             child: const Text('Suchen'),
                           ),
                           const SizedBox(width: 12),
-                          OutlinedButton.icon(
-                            onPressed: organizationUnits.isEmpty
-                                ? null
-                                : assignExistingUser,
-                            icon: const Icon(Icons.person_add_alt_1_outlined),
-                            label: const Text('Bestehendes Konto aufnehmen'),
-                          ),
+                          if (!isCentralAdministration)
+                            OutlinedButton.icon(
+                              onPressed: organizationUnits.isEmpty
+                                  ? null
+                                  : assignExistingUser,
+                              icon: const Icon(Icons.person_add_alt_1_outlined),
+                              label: const Text('Bestehendes Konto aufnehmen'),
+                            ),
                           const SizedBox(width: 12),
-                          IconButton(
-                            tooltip: 'Offene Einladungen',
-                            onPressed: showInvitations,
-                            icon: const Icon(Icons.mail_outline),
-                          ),
+                          if (!isCentralAdministration)
+                            IconButton(
+                              tooltip: 'Offene Einladungen',
+                              onPressed: showInvitations,
+                              icon: const Icon(Icons.mail_outline),
+                            ),
                           if (isPlatformAdmin)
                             IconButton(
                               tooltip: 'Identitätskonflikte',
                               onPressed: showIdentityConflicts,
                               icon: const Icon(Icons.person_search_outlined),
                             ),
-                          FilledButton.icon(
-                            onPressed: organizationUnits.isEmpty
-                                ? null
-                                : () => editUser(),
-                            icon: const Icon(Icons.person_add),
-                            label: const Text('Nutzer anlegen'),
-                          ),
+                          if (isCentralAdministration)
+                            FilledButton.icon(
+                              onPressed: () => editUser(),
+                              icon: const Icon(Icons.person_add),
+                              label: const Text('Nutzer anlegen'),
+                            ),
                         ],
                       ),
                     ),
@@ -1648,7 +1702,9 @@ class _UsersPageState extends State<UsersPage> {
                                     : '${user['name']} (${user['username']})',
                               ),
                               subtitle: Text(
-                                '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Anmeldung: $loginAccessLabel · 2-FA: ${mfa['enabled'] == true ? 'aktiv' : 'nicht eingerichtet'}${mfa['required'] == true ? ' (starke Anmeldung Pflicht)' : ' (freiwillig)'} · Passkeys: $passkeyCount · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}',
+                                isCentralAdministration
+                                    ? '${user['email']} · ${verificationStatus(user)}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'} · Anmeldung: $loginAccessLabel · 2-FA: ${mfa['enabled'] == true ? 'aktiv' : 'nicht eingerichtet'}${mfa['required'] == true ? ' (starke Anmeldung Pflicht)' : ' (freiwillig)'} · Passkeys: $passkeyCount · Erstellt: ${date(user['createdAt'])} · Letzter Login: ${date(user['lastLoginAt'])}'
+                                    : '${user['email']}\n${(user['roles'] as List? ?? const []).join(', ')} · ${active ? 'Aktiv' : 'Deaktiviert'}',
                               ),
                               isThreeLine: true,
                               trailing: Wrap(
@@ -1683,7 +1739,8 @@ class _UsersPageState extends State<UsersPage> {
                                     ),
                                     IconButton(
                                       tooltip: 'Anmeldecodes verwalten',
-                                      onPressed: active
+                                      onPressed:
+                                          !isCentralAdministration && active
                                           ? () => manageQrLogins(user)
                                           : null,
                                       icon: const Icon(Icons.qr_code_2),
@@ -1756,111 +1813,118 @@ class _UsersPageState extends State<UsersPage> {
                     ),
                   ],
                 ),
-                Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: FilledButton.icon(
-                          onPressed: () => editRole(),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Rolle anlegen'),
+                if (isCentralAdministration) backupTab(),
+                if (!isCentralAdministration)
+                  Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton.icon(
+                            onPressed: () => editRole(),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Rolle anlegen'),
+                          ),
                         ),
                       ),
-                    ),
-                    Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        children: roles
-                            .map(
-                              (role) => Card(
-                                child: ListTile(
-                                  title: Text(role['name'].toString()),
-                                  subtitle: Text(
-                                    '${(role['permissions'] as List? ?? const []).length} Berechtigungen',
-                                  ),
-                                  trailing: Wrap(
-                                    children: [
-                                      IconButton(
-                                        tooltip: 'Rolle bearbeiten',
-                                        onPressed: () => editRole(role),
-                                        icon: const Icon(Icons.edit),
-                                      ),
-                                      IconButton(
-                                        tooltip: 'Rolle löschen',
-                                        onPressed: () => deleteRole(role),
-                                        icon: const Icon(Icons.delete_outline),
-                                      ),
-                                    ],
+                      Expanded(
+                        child: ListView(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          children: roles
+                              .map(
+                                (role) => Card(
+                                  child: ListTile(
+                                    title: Text(role['name'].toString()),
+                                    subtitle: Text(
+                                      '${(role['permissions'] as List? ?? const []).length} Berechtigungen',
+                                    ),
+                                    trailing: Wrap(
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Rolle bearbeiten',
+                                          onPressed: () => editRole(role),
+                                          icon: const Icon(Icons.edit),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Rolle löschen',
+                                          onPressed: () => deleteRole(role),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                            .toList(),
+                              )
+                              .toList(),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Zentrale Fachbereiche bilden den Geltungsbereich für Fachbereichsleiter.',
+                    ],
+                  ),
+                if (!isCentralAdministration)
+                  Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Zentrale Fachbereiche bilden den Geltungsbereich für Fachbereichsleiter.',
+                              ),
                             ),
-                          ),
-                          FilledButton.icon(
-                            onPressed: () => editDepartment(),
-                            icon: const Icon(Icons.add),
-                            label: const Text('Fachbereich anlegen'),
-                          ),
-                        ],
+                            FilledButton.icon(
+                              onPressed: () => editDepartment(),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Fachbereich anlegen'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        children: departments
-                            .map(
-                              (department) => Card(
-                                child: ListTile(
-                                  leading: Icon(
-                                    department['active'] == false
-                                        ? Icons.account_tree_outlined
-                                        : Icons.account_tree,
-                                  ),
-                                  title: Text(department['name'].toString()),
-                                  subtitle: Text(
-                                    '${department['code']} · ${department['active'] == false ? 'Deaktiviert' : 'Aktiv'}',
-                                  ),
-                                  trailing: Wrap(
-                                    children: [
-                                      IconButton(
-                                        tooltip: 'Fachbereich bearbeiten',
-                                        onPressed: () =>
-                                            editDepartment(department),
-                                        icon: const Icon(Icons.edit),
-                                      ),
-                                      IconButton(
-                                        tooltip: 'Fachbereich löschen',
-                                        onPressed: () =>
-                                            deleteDepartment(department),
-                                        icon: const Icon(Icons.delete_outline),
-                                      ),
-                                    ],
+                      Expanded(
+                        child: ListView(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          children: departments
+                              .map(
+                                (department) => Card(
+                                  child: ListTile(
+                                    leading: Icon(
+                                      department['active'] == false
+                                          ? Icons.account_tree_outlined
+                                          : Icons.account_tree,
+                                    ),
+                                    title: Text(department['name'].toString()),
+                                    subtitle: Text(
+                                      '${department['code']} · ${department['active'] == false ? 'Deaktiviert' : 'Aktiv'}',
+                                    ),
+                                    trailing: Wrap(
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Fachbereich bearbeiten',
+                                          onPressed: () =>
+                                              editDepartment(department),
+                                          icon: const Icon(Icons.edit),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Fachbereich löschen',
+                                          onPressed: () =>
+                                              deleteDepartment(department),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                            .toList(),
+                              )
+                              .toList(),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
                 if (isAdmin) mailTab(),
                 if (isAdmin) scannerEmailTab(),
                 if (isAdmin)
@@ -2591,6 +2655,7 @@ class UserDialog extends StatefulWidget {
   final List<Map<String, dynamic>> serviceDevices;
   final bool membershipAssignment;
   final bool canManageAccount;
+  final bool centralAdministration;
   const UserDialog({
     required this.user,
     required this.roles,
@@ -2601,6 +2666,7 @@ class UserDialog extends StatefulWidget {
     this.serviceDevices = const [],
     this.membershipAssignment = false,
     this.canManageAccount = false,
+    this.centralAdministration = false,
     super.key,
   });
   @override
@@ -2641,7 +2707,8 @@ class _UserDialogState extends State<UserDialog> {
   bool get createsAccount =>
       widget.user == null && !widget.membershipAssignment;
   bool get globalAccountOnly =>
-      widget.user != null && widget.canManageAccount && accessScopes.isEmpty;
+      widget.centralAdministration ||
+      (widget.user != null && widget.canManageAccount && accessScopes.isEmpty);
 
   bool get hasLoginAccessChange {
     final previous = widget.user?['loginAccess'] as Map?;
@@ -2933,196 +3000,202 @@ class _UserDialogState extends State<UserDialog> {
                       'Mind. 12 Zeichen, Groß-/Kleinbuchstabe, Zahl, Sonderzeichen',
                 ),
               ),
-            const SizedBox(height: 20),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Freigaben je Organisationsebene',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Jede Einheit ist ein strikt getrennter Datenbereich und benötigt eine eigene Freigabe mit eigenen Rollen.',
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (widget.organizationUnits.isEmpty)
-              const ListTile(
-                leading: Icon(Icons.warning_amber_outlined),
-                title: Text(
-                  'Keine administrierbare Organisationseinheit gefunden.',
+            if (!widget.centralAdministration) ...[
+              const SizedBox(height: 20),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Freigaben je Organisationsebene',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-            for (var index = 0; index < accessScopes.length; index++)
-              Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: KeyboardDropdownButtonFormField<String>(
-                              key: ValueKey(
-                                'scope-$index-${accessScopes[index].unitId}',
-                              ),
-                              initialValue: accessScopes[index].unitId,
-                              decoration: const InputDecoration(
-                                labelText: 'Organisationseinheit',
-                                border: OutlineInputBorder(),
-                              ),
-                              items: widget.organizationUnits
-                                  .map(
-                                    (unit) => DropdownMenuItem(
-                                      value: unit['id'].toString(),
-                                      child: Text(
-                                        '${unit['name']} · EDV ${unit['edvNumber'] ?? '–'}',
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) => setState(() {
-                                if (value == null) return;
-                                final oldId = accessScopes[index].unitId;
-                                accessScopes[index].unitId = value;
-                                _removeInvalidRoles(accessScopes[index]);
-                                if (defaultUnitId == oldId) {
-                                  defaultUnitId = value;
-                                }
-                              }),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Freigabe entfernen',
-                            onPressed: accessScopes.length <= 1
-                                ? null
-                                : () => setState(() {
-                                    final removed = accessScopes.removeAt(
-                                      index,
-                                    );
-                                    if (defaultUnitId == removed.unitId) {
-                                      defaultUnitId = accessScopes.first.unitId;
-                                    }
-                                  }),
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
-                      ),
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        value: defaultUnitId == accessScopes[index].unitId,
-                        title: const Text('Standardeinheit nach der Anmeldung'),
-                        onChanged: (_) => setState(
-                          () => defaultUnitId = accessScopes[index].unitId,
-                        ),
-                      ),
-                      Text(
-                        'Rollen',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        children: _rolesForUnit(accessScopes[index].unitId)
-                            .map(
-                              (role) => FilterChip(
-                                label: Text(role),
-                                selected: accessScopes[index].roles.contains(
-                                  role,
+              const SizedBox(height: 4),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Jede Einheit ist ein strikt getrennter Datenbereich und benötigt eine eigene Freigabe mit eigenen Rollen.',
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (widget.organizationUnits.isEmpty)
+                const ListTile(
+                  leading: Icon(Icons.warning_amber_outlined),
+                  title: Text(
+                    'Keine administrierbare Organisationseinheit gefunden.',
+                  ),
+                ),
+              for (var index = 0; index < accessScopes.length; index++)
+                Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: KeyboardDropdownButtonFormField<String>(
+                                key: ValueKey(
+                                  'scope-$index-${accessScopes[index].unitId}',
                                 ),
-                                onSelected: (selected) => setState(() {
-                                  if (selected) {
-                                    accessScopes[index].roles.add(role);
-                                  } else {
-                                    accessScopes[index].roles.remove(role);
+                                initialValue: accessScopes[index].unitId,
+                                decoration: const InputDecoration(
+                                  labelText: 'Organisationseinheit',
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: widget.organizationUnits
+                                    .map(
+                                      (unit) => DropdownMenuItem(
+                                        value: unit['id'].toString(),
+                                        child: Text(
+                                          '${unit['name']} · EDV ${unit['edvNumber'] ?? '–'}',
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) => setState(() {
+                                  if (value == null) return;
+                                  final oldId = accessScopes[index].unitId;
+                                  accessScopes[index].unitId = value;
+                                  _removeInvalidRoles(accessScopes[index]);
+                                  if (defaultUnitId == oldId) {
+                                    defaultUnitId = value;
                                   }
                                 }),
                               ),
-                            )
-                            .toList(),
-                      ),
-                      if (_unit(accessScopes[index].unitId)?['unitKind'] ==
-                          'youth')
-                        const Padding(
-                          padding: EdgeInsets.only(top: 8),
-                          child: Text(
-                            'Die Rolle „Vorsitz“ wirkt in der '
-                            'Stammgliederung automatisch als '
-                            '„Jugendvorsitzender“. Diese Rolle wird in der '
-                            'Jugendorganisation nicht separat vergeben.',
+                            ),
+                            IconButton(
+                              tooltip: 'Freigabe entfernen',
+                              onPressed: accessScopes.length <= 1
+                                  ? null
+                                  : () => setState(() {
+                                      final removed = accessScopes.removeAt(
+                                        index,
+                                      );
+                                      if (defaultUnitId == removed.unitId) {
+                                        defaultUnitId =
+                                            accessScopes.first.unitId;
+                                      }
+                                    }),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: defaultUnitId == accessScopes[index].unitId,
+                          title: const Text(
+                            'Standardeinheit nach der Anmeldung',
+                          ),
+                          onChanged: (_) => setState(
+                            () => defaultUnitId = accessScopes[index].unitId,
                           ),
                         ),
-                      if (widget.departments.isNotEmpty) ...[
-                        const SizedBox(height: 8),
                         Text(
-                          'Geleitete Fachbereiche',
+                          'Rollen',
                           style: Theme.of(context).textTheme.titleSmall,
                         ),
                         Wrap(
                           spacing: 8,
-                          children: widget.departments
-                              .where(
-                                (department) => department['active'] != false,
-                              )
+                          children: _rolesForUnit(accessScopes[index].unitId)
                               .map(
-                                (department) => FilterChip(
-                                  label: Text(department['name'].toString()),
-                                  selected: accessScopes[index].departmentIds
-                                      .contains(department['id'].toString()),
+                                (role) => FilterChip(
+                                  label: Text(role),
+                                  selected: accessScopes[index].roles.contains(
+                                    role,
+                                  ),
                                   onSelected: (selected) => setState(() {
-                                    final id = department['id'].toString();
                                     if (selected) {
-                                      accessScopes[index].departmentIds.add(id);
+                                      accessScopes[index].roles.add(role);
                                     } else {
-                                      accessScopes[index].departmentIds.remove(
-                                        id,
-                                      );
+                                      accessScopes[index].roles.remove(role);
                                     }
                                   }),
                                 ),
                               )
                               .toList(),
                         ),
+                        if (_unit(accessScopes[index].unitId)?['unitKind'] ==
+                            'youth')
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Die Rolle „Vorsitz“ wirkt in der '
+                              'Stammgliederung automatisch als '
+                              '„Jugendvorsitzender“. Diese Rolle wird in der '
+                              'Jugendorganisation nicht separat vergeben.',
+                            ),
+                          ),
+                        if (widget.departments.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Geleitete Fachbereiche',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          Wrap(
+                            spacing: 8,
+                            children: widget.departments
+                                .where(
+                                  (department) => department['active'] != false,
+                                )
+                                .map(
+                                  (department) => FilterChip(
+                                    label: Text(department['name'].toString()),
+                                    selected: accessScopes[index].departmentIds
+                                        .contains(department['id'].toString()),
+                                    onSelected: (selected) => setState(() {
+                                      final id = department['id'].toString();
+                                      if (selected) {
+                                        accessScopes[index].departmentIds.add(
+                                          id,
+                                        );
+                                      } else {
+                                        accessScopes[index].departmentIds
+                                            .remove(id);
+                                      }
+                                    }),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed:
+                      accessScopes.length >= widget.organizationUnits.length
+                      ? null
+                      : () => setState(() {
+                          final used = accessScopes
+                              .map((scope) => scope.unitId)
+                              .toSet();
+                          final available = widget.organizationUnits.where(
+                            (unit) => !used.contains(unit['id'].toString()),
+                          );
+                          if (available.isEmpty) return;
+                          accessScopes.add(
+                            _AccessScopeDraft(
+                              unitId: available.first['id'].toString(),
+                              roles: {
+                                available.first['unitKind'] == 'youth'
+                                    ? 'Jugendmitglied'
+                                    : 'Nutzer',
+                              },
+                              departmentIds: {},
+                            ),
+                          );
+                        }),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Weitere Ebene freigeben'),
+                ),
               ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed:
-                    accessScopes.length >= widget.organizationUnits.length
-                    ? null
-                    : () => setState(() {
-                        final used = accessScopes
-                            .map((scope) => scope.unitId)
-                            .toSet();
-                        final available = widget.organizationUnits.where(
-                          (unit) => !used.contains(unit['id'].toString()),
-                        );
-                        if (available.isEmpty) return;
-                        accessScopes.add(
-                          _AccessScopeDraft(
-                            unitId: available.first['id'].toString(),
-                            roles: {
-                              available.first['unitKind'] == 'youth'
-                                  ? 'Jugendmitglied'
-                                  : 'Nutzer',
-                            },
-                            departmentIds: {},
-                          ),
-                        );
-                      }),
-                icon: const Icon(Icons.add),
-                label: const Text('Weitere Ebene freigeben'),
-              ),
-            ),
+            ],
             if (!widget.membershipAssignment &&
                 (createsAccount || widget.canManageAccount)) ...[
               const SizedBox(height: 16),

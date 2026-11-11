@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { createApp } = require('../src/app');
 const { normalizeTenancyData } = require('../src/tenancy');
 const { totp } = require('../src/totp');
+const { PLATFORM_ORGANIZATION_ID, synchronizePlatformAdministration } = require('../src/platform-administration');
 
 async function fixture(t) {
   const tokens = [];
@@ -24,21 +25,27 @@ async function fixture(t) {
   const login = async (identifier, password = 'MaterialKompass2026!') => request('/api/auth/login', { identifier, password });
   const admin = await login('admin');
   assert.equal(admin.status, 200);
+  const central = await request('/api/auth/context', { organizationId: PLATFORM_ORGANIZATION_ID }, admin.data.token);
+  assert.equal(central.status, 200);
   const create = async (username, extra = {}) => {
-    const result = await request('/api/users', { username, email: `${username}@example.org`,
-      password: 'SehrSicher123!', ...extra }, admin.data.token);
+    const { roles = ['Nutzer'], departmentIds = [], scopes, defaultUnitId, ...globalFields } = extra;
+    const result = await request('/api/users', { username, email: username + '@example.org',
+      password: 'SehrSicher123!', ...globalFields }, central.data.token);
     assert.equal(result.status, 201, JSON.stringify(result.data));
+    const assigned = await request('/api/users/memberships', { identifier: result.data.email,
+      roles, departmentIds, ...(scopes ? { scopes, defaultUnitId } : {}) }, admin.data.token);
+    assert.equal(assigned.status, 201, JSON.stringify(assigned.data));
     return result.data;
   };
-  return { app, request, login, create, admin: admin.data.token, tokens,
+  return { app, request, login, create, admin: admin.data.token, centralAdmin: central.data.token, tokens,
     advance: (milliseconds) => { timestamp += milliseconds; } };
 }
 
 test('concurrent normalized duplicate creation returns one account and one conflict', async (t) => {
   const f = await fixture(t);
   const results = await Promise.all([
-    f.request('/api/users', { username: 'parallel-one', email: 'parallel@example.org' }, f.admin),
-    f.request('/api/users', { username: 'parallel-two', email: ' PARALLEL@EXAMPLE.ORG ' }, f.admin),
+    f.request('/api/users', { username: 'parallel-one', email: 'parallel@example.org' }, f.centralAdmin),
+    f.request('/api/users', { username: 'parallel-two', email: ' PARALLEL@EXAMPLE.ORG ' }, f.centralAdmin),
   ]);
   assert.deepEqual(results.map((result) => result.status).sort(), [201, 409]);
   assert.equal(f.app.locals.appData.users.filter((user) => user.email === 'parallel@example.org').length, 1);
@@ -179,6 +186,7 @@ test('concurrent deletion cannot remove both remaining platform administrators',
   await f.create('remaining-org-admin', { roles: ['Admin'] });
   const data = f.app.locals.appData;
   data.users.find((entry) => entry.id === second.id).platformAdmin = true;
+  synchronizePlatformAdministration(data);
   data.memberships.find((entry) => entry.userId === 'user-admin').scopes.forEach((scope) => { scope.roles = ['Nutzer']; });
   const secondLogin = await f.login(second.username, 'SehrSicher123!');
   const results = await Promise.all([
@@ -198,8 +206,8 @@ test('platform account administration survives loss of organizational membership
   const membership = f.app.locals.appData.memberships.find((entry) => entry.userId === 'user-admin');
   membership.status = 'inactive';
   membership.scopes = [];
-  assert.equal((await f.request('/api/users/identity-conflicts', undefined, f.admin, 'GET')).status, 200);
-  assert.equal((await f.request(`/api/users/${user.id}`, { name: 'Updated globally' }, f.admin, 'PUT')).status, 200);
+  assert.equal((await f.request('/api/users/identity-conflicts', undefined, f.centralAdmin, 'GET')).status, 200);
+  assert.equal((await f.request(`/api/users/${user.id}`, { name: 'Updated globally' }, f.centralAdmin, 'PUT')).status, 200);
   assert.equal((await f.request('/api/material', undefined, f.admin, 'GET')).status, 403);
 });
 

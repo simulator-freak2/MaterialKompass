@@ -1,3 +1,4 @@
+const { PLATFORM_ORGANIZATION_ID, administrationRouteAllowed } = require('./platform-administration');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -561,13 +562,16 @@ function createApp(options = {}) {
 
   function defaultTenantContext(user, requestedOrganizationId, requestedUnitId) {
     const activeMemberships = memberships.filter((entry) => entry.userId === user.id
-      && entry.status === 'active');
-    const contextFor = (membership, activeUnitId) => contextForMembership({
-      membership,
-      units: organizationUnits,
-      roles,
-      activeUnitId,
-    });
+      && entry.status === 'active'
+      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true));
+    const contextFor = (membership, activeUnitId) => {
+      const context = contextForMembership({ membership, units: organizationUnits, roles, activeUnitId });
+      if (context?.organizationId === PLATFORM_ORGANIZATION_ID) {
+        context.roles = ['Plattformadministrator'];
+        context.permissions = ['dashboard.read', 'users.read', 'users.write', 'roles.read', 'organizations.write'];
+      }
+      return context;
+    };
 
     if (requestedOrganizationId) {
       return contextFor(activeMemberships.find((entry) =>
@@ -665,6 +669,9 @@ function createApp(options = {}) {
           && entry.organizationId === payload.oid) || null
         : null;
       if (payload.did) {
+        if (req.device?.organizationId === PLATFORM_ORGANIZATION_ID) {
+          return res.status(403).json({ error: 'In der zentralen Verwaltung sind keine Dienstgerätesitzungen zulässig.' });
+        }
         if (!req.device || !req.device.active || payload.dsv !== req.device.securityVersion
             || !ipAllowed(String(req.ip || '').replace(/^::ffff:/, ''), req.device.allowedNetworks)) {
           return res.status(401).json({ error: 'Gerätesitzung ist ungültig.' });
@@ -718,6 +725,12 @@ function createApp(options = {}) {
           allowedUnitIds: new Set(), roles: [], permissions: identity.platformAdmin === true
             ? ['dashboard.read', 'users.read', 'roles.read'] : ['dashboard.read'],
           departmentIds: [], membershipId: null, organizationAdmin: false, system: false };
+      }
+      if (tenant.organizationId === PLATFORM_ORGANIZATION_ID) {
+        if (identity.platformAdmin !== true || payload.did || !administrationRouteAllowed(req)) {
+          return res.status(403).json({ error: 'Die zentrale Verwaltung ist ausschließlich für die MaterialKompass-Administration vorgesehen.' });
+        }
+        tenant.permissions = ['dashboard.read', 'users.read', 'users.write', 'roles.read', 'organizations.write'];
       }
       req.identity = identity;
       req.tenant = tenant;
@@ -1765,6 +1778,7 @@ function createApp(options = {}) {
           shortName: organization.shortName,
           edvNumber: organization.edvNumber,
           branding: organization.branding || {},
+          systemKind: organization.systemKind || null,
         } : null,
         unit: unit ? {
           id: unit.id, name: unit.name, type: unit.type, parentId: unit.parentId,

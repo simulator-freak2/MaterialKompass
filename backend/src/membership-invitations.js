@@ -1,3 +1,4 @@
+const { PLATFORM_ORGANIZATION_ID } = require('./platform-administration');
 const crypto = require('node:crypto');
 const { normalizeIdentifier } = require('./user-identity');
 
@@ -50,6 +51,7 @@ function registerMembershipInvitations({ app, users, memberships, organizations,
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return null;
     const tokenHash = hash(token);
     for (const membership of memberships) {
+      if (membership.organizationId === PLATFORM_ORGANIZATION_ID) continue;
       const invitation = (membership.invitations || []).find((entry) =>
         entry.status === 'pending' && entry.tokenHash === tokenHash && Date.parse(entry.expiresAt) > now());
       if (!invitation) continue;
@@ -62,6 +64,7 @@ function registerMembershipInvitations({ app, users, memberships, organizations,
   }
 
   app.post('/api/users/memberships', authMiddleware, requirePermission('users.write'), async (req, res) => {
+    if (req.tenant.organizationId === PLATFORM_ORGANIZATION_ID) return res.status(403).json({ error: 'Mitglieder der zentralen Verwaltung werden ausschließlich aus den Plattformadministratoren abgeleitet.' });
     const mode = req.body.mode || 'direct';
     if (!['direct', 'invitation'].includes(mode)) return res.status(400).json({ error: 'Ungültige Aufnahmeart.' });
     const access = requestedScopes(req);

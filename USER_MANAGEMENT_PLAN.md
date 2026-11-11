@@ -66,3 +66,7 @@ Eine statische Clawdex-Vorschau ersetzt keine Backendbereitstellung oder Datenmi
 Umsetzung, Datenbankmigration, integriertes Handbuch und ergänzende Betriebsdokumentation sind im Projekt vorhanden. Die unabhängige Quellenprüfung einschließlich Nachkorrekturen ist abgeschlossen. Syntax-, Format- und JSON-Strukturprüfungen waren erfolgreich. Isolierte Laufzeittests und die strengen Audit-CLI-Dateiprüfungen bleiben umgebungsbedingt offen; der Auditbericht kennzeichnet den Lauf als unvollständig. Die produktive Datenbank wurde nicht migriert.
 
 Die gewünschte statische Vorschau mit Beispieldaten ist aktiv und unlisted veröffentlicht: https://clawdex.io/materialkompass-benutzerverwaltung-vorschau-fcbaa29472/
+
+## Erweiterung vom 11. November 2026: geschützte Verwaltungsorganisation
+
+Die oberste Verwaltungsebene „MaterialKompass – Zentrale Verwaltung“ wird beim Start und nach vollständiger Wiederherstellung idempotent angelegt. Nur Plattformadministratoren erhalten dort eine automatisch abgeleitete Mitgliedschaft. Globale Kontoanlage, Kontoverwaltung und Duplikatsprüfung erfolgen ausschließlich in diesem Kontext; das globale Kontenverzeichnis verleiht normalen Konten keine Mitgliedschaft. Lokale Antworten, Formulare und Änderungen berücksichtigen ausschließlich die aktive Ebene. Andere Organisationsrechte bleiben erhalten und werden nicht an die lokale Nutzeransicht geliefert. Handbuch und gezielte Regressionen wurden ergänzt. Syntax-/Formatprüfungen werden ausgeführt; Laufzeittests bleiben wegen der zuvor dokumentierten fehlenden Testisolation offen.

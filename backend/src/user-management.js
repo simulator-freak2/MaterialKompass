@@ -1,3 +1,4 @@
+const { PLATFORM_ORGANIZATION_ID, isPlatformAdministration } = require('./platform-administration');
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const { normalizeIdentifier: normalize, identityConflict, identityConflicts } = require('./user-identity');
@@ -120,8 +121,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
   }
 
   function requirePlatformAdmin(req, res, next) {
-    if (req.user.platformAdmin !== true) return res.status(403).json({
-      error: 'Globale Kontodaten verwalten nur die Plattformadministration und der Kontoinhaber.',
+    if (!isPlatformAdministration(req)) return res.status(403).json({
+      error: 'Globale Konten werden in MaterialKompass – Zentrale Verwaltung verwaltet.',
     });
     return next();
   }
@@ -158,7 +159,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       };
     return validateLoginAccessPolicy(requested, {
       devices: serviceDevices,
-      organizationId,
+      organizationId: organizationId === PLATFORM_ORGANIZATION_ID ? null : organizationId,
     });
   }
 
@@ -194,15 +195,15 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
         || permissionsForRoles(
           roleNames, roles, actorMembership.organizationId
         ).includes(permission);
-      if (!grantsPermission) continue;
+      if (!grantsPermission || scope.unitId !== req.tenant.unitId) continue;
       result.add(scope.unitId);
     }
     return result;
   }
 
   function usersForRequest(req) {
-    if (req.tenant?.organizationId === '__account__' && req.user.platformAdmin === true) return users;
-    if (!req?.tenant?.organizationId) return users;
+    if (isPlatformAdministration(req)) return users;
+    if (!req?.tenant?.organizationId) return [];
     const readableUnitIds = unitIdsForPermission(req, 'users.read');
     const ids = new Set(memberships.filter((entry) =>
       entry.organizationId === req.tenant.organizationId && entry.status === 'active'
@@ -228,7 +229,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
   }
 
   function roleIsManageable(role, req) {
-    if (req.user.platformAdmin === true) return true;
+    if (isPlatformAdministration(req)) return true;
     const writable = unitIdsForPermission(req, 'users.write');
     return memberships.filter((entry) => entry.organizationId === req.tenant.organizationId)
       .every((membership) => [
@@ -239,20 +240,25 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
   }
 
   function publicUserForRequest(user, req) {
+    if (isPlatformAdministration(req)) return {
+      ...publicUser(user), roles: [], permissions: [], departmentIds: [],
+      centralAccount: true, organizationAccess: null,
+    };
     const membership = organizationMembership(user.id, req?.tenant?.organizationId);
-    if (!membership) return publicUser(user);
+    if (!membership) return { ...publicUser(user), roles: [], permissions: [], departmentIds: [] };
     const visibleScopes = manageableScopes(membership, req);
     const visibleMembership = { ...membership, scopes: visibleScopes };
     const tenantUser = {
       ...user,
-      roles: membershipRoles(visibleMembership, user.roles),
-      departmentIds: membershipDepartments(visibleMembership, user.departmentIds),
+      roles: membershipRoles(visibleMembership),
+      departmentIds: membershipDepartments(visibleMembership),
     };
     tenantUser.permissions = permissionsForRoles(
       tenantUser.roles, roles, req?.tenant?.organizationId
     );
     return {
-      ...publicUser(tenantUser),
+      id: user.id, name: user.name, username: user.username, email: user.email, active: user.active,
+      roles: tenantUser.roles, permissions: tenantUser.permissions, departmentIds: tenantUser.departmentIds,
       membershipId: membership.id,
       organizationAccess: {
         organizationId: membership.organizationId,
@@ -601,11 +607,19 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       .map((user) => publicUserForRequest(user, req)));
   });
 
+  app.get('/api/platform/service-devices', authMiddleware, requirePlatformAdmin, (_req, res) => {
+    return res.json(serviceDevices.filter((device) => device.organizationId !== PLATFORM_ORGANIZATION_ID).map((device) => ({
+      id: device.id, name: [organizations.find((organization) => organization.id === device.organizationId)?.name,
+        device.name].filter(Boolean).join(' · '), active: device.active,
+      organizationId: device.organizationId, unitId: device.unitId,
+    })));
+  });
+
   app.get('/api/users/identity-conflicts', authMiddleware, requirePlatformAdmin, (_req, res) => {
     return res.json(identityConflicts(users));
   });
 
-  app.post('/api/users', authMiddleware, requirePermission('users.write'), async (req, res) => {
+  app.post('/api/users', authMiddleware, requirePlatformAdmin, async (req, res) => {
     if (users.length >= MAX_USER_RECORDS) {
       return res.status(507).json({ error: 'Die maximale Anzahl an Nutzerkonten ist erreicht.' });
     }
@@ -617,8 +631,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     if (identityConflict(users, { username, email })) return res.status(409).json({ error: 'Nutzername oder E-Mail-Adresse ist bereits vergeben. Verwenden Sie „Bestehendes Konto aufnehmen“.' });
     const hasStartPassword = typeof password === 'string' && password.length > 0;
     if (hasStartPassword && !passwordIsValid(password)) return res.status(400).json({ error: 'Das Passwort muss mindestens 12 Zeichen sowie Groß-/Kleinbuchstaben, Zahl und Sonderzeichen enthalten.' });
-    const access = requestedScopes(req, roleNames, departmentIds);
-    if (access.error) return res.status(400).json({ error: access.error });
+    if (req.body.scopes?.length || req.body.roles?.length || req.body.departmentIds?.length) return res.status(400).json({ error: 'Neue zentrale Konten erhalten keine Organisationsrechte. Diese werden in der jeweiligen Ebene freigegeben.' });
+    const access = { scopes: [], defaultUnitId: null };
     const loginAccess = requestedLoginAccess(
       req.body,
       { loginAccessMode: LOGIN_ACCESS_MODES.ALL_CLIENTS, allowedServiceDeviceIds: [] },
@@ -647,8 +661,8 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     };
     // Hashing yields to concurrent requests. Recheck immediately before the
     // synchronous reservation in the single-instance account collection.
-    const currentAccess = requestedScopes(req, roleNames, departmentIds);
-    if (!req.user.active || currentAccess.error) return res.status(403).json({
+    const currentAccess = access;
+    if (!isPlatformAdministration(req) || !req.user.active || currentAccess.error) return res.status(403).json({
       error: 'Die Berechtigung zur Freigabe ist nicht mehr vorhanden.',
     });
     if (identityConflict(users, user)) return res.status(409).json({
@@ -662,7 +676,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       users.splice(users.indexOf(user), 1);
       throw error;
     }
-    if (req.tenant?.organizationId) {
+    if (req.tenant?.organizationId && req.tenant.organizationId !== PLATFORM_ORGANIZATION_ID) {
       memberships.push({
         id: nextId('membership', memberships),
         userId: user.id,
@@ -689,15 +703,15 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
 
   app.put('/api/users/:id', authMiddleware, async (req, res, next) => {
     if (req.params.id === 'me') return next('route');
-    if (req.user.platformAdmin !== true && !req.user.permissions?.includes('users.write') && !req.user.roles?.includes('Admin')) {
+    if (!isPlatformAdministration(req) && !req.user.permissions?.includes('users.write') && !req.user.roles?.includes('Admin')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const user = req.user.platformAdmin === true
+    const user = isPlatformAdministration(req)
       ? users.find((entry) => entry.id === req.params.id)
       : writableUser(req, req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     const membership = organizationMembership(user.id, req.tenant?.organizationId);
-    if (req.user.platformAdmin !== true) {
+    if (!isPlatformAdministration(req)) {
       const globalChange = ['name', 'username', 'email', 'active', 'mfaRequired'].some((key) =>
         req.body[key] !== undefined && req.body[key] !== user[key])
         || Boolean(req.body.password)
@@ -732,6 +746,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
     let access;
     const accessChanged = ['scopes', 'roles', 'departmentIds', 'defaultUnitId']
       .some((key) => req.body[key] !== undefined);
+    if (accessChanged && isPlatformAdministration(req)) return res.status(400).json({ error: 'Bereichsrechte werden ausschließlich in der jeweiligen Organisationsebene verwaltet.' });
     if (accessChanged && !membership) return res.status(400).json({ error: 'Bitte das bestehende Konto zuerst aufnehmen.' });
     if (!accessChanged) {
       access = { scopes: membership?.scopes || [], defaultUnitId: membership?.defaultUnitId || null };
@@ -795,7 +810,7 @@ function registerUserRoutes({ app, users, roles, permissions, departments = [],
       loginAccessMode: loginAccess.mode,
       allowedServiceDeviceIds: loginAccess.allowedServiceDeviceIds,
     });
-    if (membership) {
+    if (membership && !isPlatformAdministration(req)) {
       membership.scopes = access.scopes;
       membership.defaultUnitId = access.defaultUnitId;
     }

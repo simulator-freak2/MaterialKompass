@@ -1,3 +1,4 @@
+const { synchronizePlatformAdministration, isPlatformAdministration } = require('./platform-administration');
 const { randomUUID } = require('node:crypto');
 const { identityConflicts } = require('./user-identity');
 const { rawCollection, DEFAULT_ORGANIZATION_ID, DEFAULT_UNIT_ID,
@@ -314,6 +315,7 @@ async function validatedBackup(input, collectionNames, identityProtection) {
     throw Object.assign(new Error('Die Passkey-Daten sind ungültig oder verweisen auf unbekannte Nutzer.'), { status: 400 });
   }
 
+  synchronizePlatformAdministration(data);
   return structuredClone(Object.fromEntries(
     requiredNames.map((name) => [name, data[name]]),
   ));
@@ -414,7 +416,7 @@ function registerDataBackupRoutes({
   identityProtection,
 }) {
   function requireAdmin(req, res, next) {
-    if (!req.user.roles?.includes('Admin')) {
+    if (!isPlatformAdministration(req) && !req.user.roles?.includes('Admin')) {
       return res.status(403).json({ error: 'Diese Aktion ist nur für Admins verfügbar.' });
     }
     return next();
@@ -429,7 +431,7 @@ function registerDataBackupRoutes({
         return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
       }
       const createdAt = new Date().toISOString();
-      const scope = req.identity?.platformAdmin === true ? null : backupScope(appData, req);
+      const scope = isPlatformAdministration(req) ? null : backupScope(appData, req);
       rawCollection(appData.exportLogs).push({
         id: `export-backup-${randomUUID()}`,
         exportType: 'complete-json-backup',
@@ -475,7 +477,7 @@ function registerDataBackupRoutes({
       if (!await verifyReauthentication(req.user, req.body)) {
         return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
       }
-      const scoped = req.identity?.platformAdmin !== true || req.body.backup?.scope != null;
+      const scoped = !isPlatformAdministration(req) || req.body.backup?.scope != null;
       const scope = scoped ? backupScope(appData, req) : null;
       const restored = scoped
         ? await validatedScopedBackup(req.body.backup, appData, collectionNames, scope, identityProtection)

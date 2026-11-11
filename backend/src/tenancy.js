@@ -1,3 +1,4 @@
+const { PLATFORM_ORGANIZATION_ID, synchronizePlatformAdministration } = require('./platform-administration');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { randomUUID } = require('node:crypto');
 
@@ -60,7 +61,7 @@ function normalizeTenancyData(data) {
   const configuredEdvNumber = normalizeEdvNumber(
     process.env.GLIEDERUNGSNUMMER || '10050035'
   );
-  if (organizations.length === 0) {
+  if (!organizations.some((entry) => entry.id !== PLATFORM_ORGANIZATION_ID)) {
     organizations.push({
       id: DEFAULT_ORGANIZATION_ID,
       name: 'Organisation',
@@ -75,20 +76,21 @@ function normalizeTenancyData(data) {
     });
   }
   if (organizationUnits.length === 0) {
+    const bootstrapOrganization = organizations.find((entry) => entry.id !== PLATFORM_ORGANIZATION_ID);
     organizationUnits.push({
       id: DEFAULT_UNIT_ID,
-      organizationId: organizations[0].id,
+      organizationId: bootstrapOrganization.id,
       parentId: null,
-      name: organizations[0].name,
+      name: bootstrapOrganization.name,
       type: 'Organisation',
-      edvNumber: organizations[0].edvNumber,
+      edvNumber: bootstrapOrganization.edvNumber,
       status: 'active',
       createdAt: nowIso(),
       archivedAt: null,
       purgeAfter: null,
     });
   }
-  const defaultOrganization = organizations[0];
+  const defaultOrganization = organizations.find((entry) => entry.id !== PLATFORM_ORGANIZATION_ID);
   const defaultUnit = organizationUnits.find((unit) =>
     unit.organizationId === defaultOrganization.id && unit.parentId === null
   ) || organizationUnits[0];
@@ -254,6 +256,7 @@ function normalizeTenancyData(data) {
       }
     }
   }
+  synchronizePlatformAdministration(data);
   return { organizations, organizationUnits, memberships };
 }
 
@@ -566,6 +569,7 @@ function publicOrganization(organization) {
     edvNumber: organization.edvNumber,
     status: organization.status,
     branding: organization.branding || {},
+    systemKind: organization.systemKind || null,
     calendarRetentionMonths: Number(organization.calendarRetentionMonths ?? 0),
     archivedAt: organization.archivedAt || null,
     purgeAfter: organization.purgeAfter || null,
@@ -574,7 +578,7 @@ function publicOrganization(organization) {
 
 function canCreateOrganizations(req) {
   return req.identity?.platformAdmin === true
-    && req.user?.roles?.includes('Admin')
+    && (req.tenant?.organizationId === PLATFORM_ORGANIZATION_ID || req.user?.roles?.includes('Admin'))
     && req.user?.permissions?.includes('organizations.write');
 }
 
@@ -663,7 +667,9 @@ function registerTenancyRoutes({
     const allowed = new Set(memberships
       .filter((entry) => entry.userId === req.user.id && entry.status === 'active')
       .map((entry) => entry.organizationId));
-    res.json(organizations.filter((entry) => allowed.has(entry.id)).map(publicOrganization));
+    res.json(organizations.filter((entry) => allowed.has(entry.id)
+      && (entry.id !== PLATFORM_ORGANIZATION_ID || req.user.platformAdmin === true))
+      .sort((a, b) => Number(b.id === PLATFORM_ORGANIZATION_ID) - Number(a.id === PLATFORM_ORGANIZATION_ID)).map(publicOrganization));
   });
 
   app.post('/api/organizations', authMiddleware, async (req, res) => {
@@ -789,8 +795,8 @@ function registerTenancyRoutes({
       ...entry,
       inventoryVisibleToUnitIds: manageable.has(entry.id)
         ? [...(entry.inventoryVisibleToUnitIds || [])] : undefined,
-      canManageStructure: manageable.has(entry.id),
-      canManageUnit: userManageable.has(entry.id),
+      canManageStructure: entry.organizationId !== PLATFORM_ORGANIZATION_ID && manageable.has(entry.id),
+      canManageUnit: entry.organizationId !== PLATFORM_ORGANIZATION_ID && userManageable.has(entry.id),
     })));
   });
 
@@ -1064,7 +1070,7 @@ function registerTenancyRoutes({
   });
 
   async function purgeExpiredUnits(referenceTime = Date.now()) {
-    const expired = units.filter((entry) => entry.status === 'archived'
+    const expired = units.filter((entry) => entry.organizationId !== PLATFORM_ORGANIZATION_ID && entry.status === 'archived'
       && Date.parse(entry.purgeAfter || '') <= referenceTime);
     for (const unit of expired) {
       unit.status = 'purged';
