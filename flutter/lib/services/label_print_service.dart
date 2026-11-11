@@ -72,6 +72,9 @@ class LabelPrinter {
 }
 
 class LabelData {
+  final String itemId;
+  final String categoryId;
+  final String parentCategoryId;
   final LabelType type;
   final String inventoryNumber;
   final String name;
@@ -81,6 +84,9 @@ class LabelData {
   final int suggestedCopies;
 
   const LabelData({
+    this.itemId = '',
+    this.categoryId = '',
+    this.parentCategoryId = '',
     required this.type,
     required this.inventoryNumber,
     required this.name,
@@ -102,6 +108,14 @@ class LabelData {
     final isBulk = type == LabelType.inventory && item['itemType'] == 'bulk';
     final quantity = num.tryParse(item['quantity']?.toString() ?? '') ?? 1;
     return LabelData(
+      itemId: item['id']?.toString() ?? '',
+      categoryId:
+          (item['categoryId'] ??
+                  item['subcategoryCode'] ??
+                  item['categoryCode'])
+              ?.toString() ??
+          '',
+      parentCategoryId: item['categoryCode']?.toString() ?? '',
       type: type,
       inventoryNumber: item['inventoryNumber']?.toString().trim() ?? '',
       name: item['name']?.toString().trim() ?? '',

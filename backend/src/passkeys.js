@@ -1,3 +1,4 @@
+const { requirePlatformAccountAdmin } = require('./account-authority');
 const bcrypt = require('bcryptjs');
 const crypto = require('node:crypto');
 const defaultWebAuthn = require('@simplewebauthn/server');
@@ -462,7 +463,7 @@ function createPasskeyAuth({
     });
   });
 
-  app.delete('/api/users/:id/passkeys', authMiddleware, requirePermission('users.write'),
+  app.delete('/api/users/:id/passkeys', authMiddleware, requirePlatformAccountAdmin,
     authRateLimit, async (req, res) => {
       const target = users.find((entry) => entry.id === req.params.id);
       if (!target) return res.status(404).json({ error: 'Benutzer nicht gefunden.' });

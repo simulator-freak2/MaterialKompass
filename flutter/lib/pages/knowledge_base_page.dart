@@ -2101,8 +2101,9 @@ const _articles = [
         'Passkey oder 2-FA pro Konto verpflichten, Einrichtungsfristen verstehen und Zugänge zurücksetzen.',
     icon: Icons.security_outlined,
     readingMinutes: 5,
-    audience: 'Für Admins',
-    prerequisite: 'Du brauchst Verwaltungsrechte für Nutzerkonten.',
+    audience: 'Für Plattformadministratoren',
+    prerequisite:
+        'Du brauchst Plattformadministrationsrechte. Organisationsadmins verwalten ausschließlich ihre Bereichsrechte.',
     steps: [
       'Öffne die Nutzerverwaltung und bearbeite das gewünschte Konto.',
       'Aktiviere „Starke Anmeldung verpflichtend“, wenn das Konto künftig einen Passkey oder 2-FA verwenden muss.',
@@ -2129,9 +2130,9 @@ const _articles = [
         'Festlegen, ob ein Konto überall, nur an Dienstgeräten oder nur an ausgewählten Dienstgeräten genutzt werden darf.',
     icon: Icons.phonelink_lock_outlined,
     readingMinutes: 4,
-    audience: 'Für Admins',
+    audience: 'Für Plattformadministratoren',
     prerequisite:
-        'Du brauchst Verwaltungsrechte für Nutzerkonten; für eine gezielte Freigabe muss mindestens ein Dienstgerät angelegt sein.',
+        'Du brauchst Plattformadministrationsrechte; für eine gezielte Freigabe muss mindestens ein Dienstgerät angelegt sein.',
     steps: [
       'Öffne „Nutzerverwaltung → Nutzer“ und bearbeite das gewünschte Konto.',
       'Wähle unter „Zulässige Anmeldung“ die Option „Web, Apps und Dienstgeräte“, wenn die normale Loginseite und alle aktivierten Dienstgeräte erlaubt sein sollen.',
@@ -2155,24 +2156,28 @@ const _articles = [
     category: 'Konten & Sicherheit',
     title: 'Nutzerkonto, Rollen und Fachbereiche verwalten',
     summary:
-        'Konten anlegen und Zugriffe nach dem Prinzip der geringsten Rechte vergeben.',
+        'Ein zentrales Konto verwenden und Rechte je Organisation und Bereich unabhängig vergeben.',
     icon: Icons.manage_accounts_outlined,
     readingMinutes: 5,
     audience: 'Für Admins',
     prerequisite:
         'Diese Funktionen stehen nur Konten mit Verwaltungsrechten zur Verfügung.',
     steps: [
-      'Öffne die Nutzerverwaltung und lege das Konto mit Name, Nutzername und eindeutiger E-Mail-Adresse an.',
-      'Wähle nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden.',
+      'Jede Person verwendet systemweit ein Konto. Nutzername und E-Mail-Adresse müssen eindeutig sein; Groß-/Kleinschreibung und äußere Leerzeichen werden bei der Prüfung ignoriert. Beide Angaben dienen zur Anmeldung und dürfen deshalb auch nicht mit dem jeweils anderen Feld eines fremden Kontos kollidieren.',
+      'Ist das Konto schon vorhanden, wähle „Bestehendes Konto aufnehmen“. Mit „Direkt freigeben“ gibst du die genaue E-Mail-Adresse oder den genauen Nutzernamen ein und vergibst ausschließlich Rechte für deine administrierbaren Bereiche.',
+      'Alternativ wähle „Einladung mit Zustimmung“ und gib die genaue E-Mail-Adresse ein. Die Person erhält einen sieben Tage gültigen Link, prüft Organisation, Bereiche und Rollen und kann ausdrücklich zustimmen oder ablehnen. Vor der Zustimmung entstehen keine neuen Rechte.',
+      'Unter „Offene Einladungen“ kannst du noch gültige Einladungen deiner Bereiche widerrufen. Nach Ablauf oder Ablehnung erstellst du bei Bedarf eine neue Einladung. Ändern sich zwischenzeitlich E-Mail-Adresse oder Verwaltungsrechte des Einladenden, kann eine neue Einladung erforderlich sein.',
+      'Nur wenn noch kein Konto existiert, wähle „Nutzer anlegen“. Nutzername und gültige E-Mail-Adresse sind Pflicht; Name ist optional. Bei einem Duplikat verwende das bestehende Konto und lege kein Ausweichkonto mit abgewandelten Angaben an.',
+      'Wähle je Organisationseinheit nur die Rollen, die für die tatsächlichen Aufgaben benötigt werden. Weitere Organisationen und Bereiche nutzen dasselbe Konto mit unabhängigen Freigaben.',
       'In Jugendorganisationen steht „Jugendmitglied“ für den eingeschränkten Zugriff bereit. Weise dem Jugendvorsitz dort „Vorsitz“ zu; „Jugendvorsitzender“ entsteht in der Stammgliederung automatisch und darf in der Jugend nicht separat vergeben werden.',
       'Ordne bei Bedarf geleitete Fachbereiche zu und prüfe die daraus entstehenden Bereichs- und Schreibrechte.',
-      'Lege fest, ob eine starke Anmeldung per Passkey oder 2-FA verpflichtend ist, und aktiviere das Konto.',
-      'Lege unter „Zulässige Anmeldung“ fest, ob Web, alle Dienstgeräte oder nur ausgewählte Dienstgeräte verwendet werden dürfen.',
-      'Informiere die Person über den vorgesehenen Anmeldeweg. Persönliche QR-Codes verwaltet sie unter „Mein Account“ oder ein Admin in der Nutzerverwaltung.',
-      'Deaktiviere nicht mehr benötigte Konten zeitnah und lösche sie nur unter Beachtung der Aufbewahrungsregeln.',
+      'Bearbeite vorhandene Freigaben mit „Bereichsrechte bearbeiten“. Änderungen gelten nur für die administrierbaren Bereiche. Der letzte aktive Admin eines Bereichs darf nicht entfernt oder herabgestuft werden.',
+      'Mit „Bereichsrechte entziehen“ entfernst du alle von dir administrierbaren Freigaben dieses Kontos. Andere Bereiche, andere Organisationen und das globale Konto bleiben erhalten. Auch beim letzten Organisationsaustritt wird das Konto nicht gelöscht.',
+      'Globale Kontodaten und persönliche Anmeldeverfahren verwaltet die Person unter „Mein Account“ oder die Plattformadministration. Organisationsadmins dürfen bestehende Passwörter, E-Mail-Adressen, MFA, Passkeys und globale Anmelderichtlinien nicht ändern.',
+      'Die Plattformadministration prüft unter „Identitätskonflikte“ die betroffenen Konto-IDs. Bestehende Dubletten werden nach Identitätsprüfung manuell geklärt; Konten und Berechtigungen werden nicht automatisch zusammengeführt.',
     ],
     tip:
-        'Vergib administrative Rechte nur für konkrete Verwaltungsaufgaben und nutze sie nicht als Standardrolle für die tägliche Arbeit.',
+        'Direkte Freigaben sind sofort wirksam. Eine Einladung ist erst nach Zustimmung wirksam. Vergib administrative Rechte nur für konkrete Verwaltungsaufgaben; eine globale Kontolöschung ist ein separater Vorgang.',
     keywords: [
       'benutzer',
       'rolle',
@@ -2189,16 +2194,18 @@ const _articles = [
         'Eine sektionierte JSON-Sicherung prüfen, gezielt bereinigen und sicher wiederherstellen.',
     icon: Icons.settings_backup_restore,
     readingMinutes: 6,
-    audience: 'Für Plattformadministratoren',
+    audience: 'Für Organisations- und Plattformadministratoren',
     prerequisite:
-        'Du brauchst Plattformadministrationsrechte, dein aktuelles Passwort und gegebenenfalls einen 2-FA-Code.',
+        'Du brauchst die Rolle Admin in der aktiven Einheit, dein aktuelles Passwort und gegebenenfalls einen 2-FA-Code. Nur Plattformadministratoren dürfen den gesamten Plattformbestand sichern.',
     steps: [
       'Öffne „Nutzerverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf.',
+      'Prüfe vorher die aktive Einheit: Jugend Ingelheim sichert nur sich selbst. Die Ortsgruppe Ingelheim sichert sich und ihre direkt zugehörige Jugend. Der Bezirk sichert sich und die Bezirksjugend, keine Ortsgruppen oder deren Jugend. Weitere Untereinheiten, Bestandsfreigaben und zusätzliche Mitgliedschaften erweitern diesen Bereich nicht.',
+      'Eine Bereichssicherung enthält die zugeordneten Fachdaten einschließlich Dokumenten und einheitenbezogenen Kategorien und Protokollen. Zentrale Konten, Rollen, Passkeys, Mitgliedschaften, Organisationsstruktur, Gerätezugänge und gemeinsame Einstellungen bleiben der Plattformsicherung vorbehalten und werden beim Bereichsimport nicht verändert.',
       'Arbeite nur an einer Kopie der UTF-8-JSON-Datei. Jede benannte Sektion besitzt eine Liste „records“; entferne dort ausschließlich den nachweislich fehlerhaften vollständigen Datensatz.',
       'Setze bei einer optionalen Sektion „enabled“ auf false oder entferne die gesamte Sektion, wenn ihr Inhalt bewusst nicht übernommen werden soll. Konten, Rollen, Organisationen, Einheiten und Mitgliedschaften sind Pflichtsektionen.',
       'Verändere keine verschlüsselten Identitätswerte. Prüfe nach dem Entfernen eines Datensatzes, ob abhängige Datensätze mit derselben ID ebenfalls entfernt werden müssen.',
-      'Teste die bearbeitete Datei zuerst in einer isolierten Testinstanz. Der Import ersetzt den vollständigen Plattformbestand und lehnt inkonsistente Organisations-, Rollen-, Mitgliedschafts- oder Passkey-Verweise ab.',
-      'Wähle „Alle Daten importieren“, bestätige Passwort, 2-FA und „ALLE DATEN ERSETZEN“. Melde dich danach neu an und prüfe Anmeldung, Organisationen, Stichproben und Auditlog.',
+      'Teste die bearbeitete Datei zuerst in einer isolierten Testinstanz. Eine Bereichssicherung kann nur im gleichen aktiven Bereich mit gleicher direkter Jugendzuordnung wiederhergestellt werden; fremde Datensätze und ID-Kollisionen werden abgelehnt. Der Import ersetzt die enthaltenen Fachdatenbereiche, auch wenn optionale Sektionen ausgelassen wurden. Nur eine Plattformsicherung ersetzt den vollständigen Plattformbestand.',
+      'Wähle „Sicherung importieren“, bestätige Passwort, 2-FA und „ALLE DATEN ERSETZEN“. Die Bestätigung bezieht sich auf den oben beschriebenen Sicherungsbereich. Melde dich danach neu an und prüfe Anmeldung, Organisationen, Stichproben und Auditlog.',
     ],
     tip:
         'Das Original niemals überschreiben: Eine syntaktisch gültige Bearbeitung kann fachlich trotzdem Daten entfernen, die später noch benötigt werden.',
@@ -2231,7 +2238,7 @@ const _articles = [
       'Spiele die vorgesehenen Daten ein und prüfe danach stichprobenartig Bestände, Verknüpfungen, Berechtigungen und den Auditlog.',
     ],
     tip:
-        'Ein JSON-Gesamtimport ersetzt alle Plattformdaten, nicht nur die zuvor geleerte Organisation. Führe ihn deshalb zuerst in einer isolierten Testinstanz aus.',
+        'Eine Bereichssicherung ersetzt nur die aktive Einheit und gegebenenfalls ihre direkte Jugend. Nur eine Plattformsicherung ersetzt alle Plattformdaten. Teste die Wiederherstellung zuerst isoliert; ein Bereichsimport stellt keine Konten oder Organisationsstruktur wieder her.',
     keywords: [
       'organisation',
       'unterorganisation',

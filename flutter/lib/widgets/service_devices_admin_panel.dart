@@ -14,10 +14,12 @@ class ServiceDevicesAdminPanel extends StatefulWidget {
   final String token;
   final List<Map<String, dynamic>> users;
   final List<Map<String, dynamic>> departments;
+  final bool canManagePersonalCredentials;
   const ServiceDevicesAdminPanel({
     required this.token,
     required this.users,
     required this.departments,
+    this.canManagePersonalCredentials = false,
     super.key,
   });
   @override
@@ -532,7 +534,10 @@ class _ServiceDevicesAdminPanelState extends State<ServiceDevicesAdminPanel> {
                                       label: const Text('NFC-Karte'),
                                     ),
                                     OutlinedButton.icon(
-                                      onPressed: () => addPersonalNfc(device),
+                                      onPressed:
+                                          widget.canManagePersonalCredentials
+                                          ? () => addPersonalNfc(device)
+                                          : null,
                                       icon: const Icon(Icons.person_pin),
                                       label: const Text(
                                         'Persönliche NFC-Karte',
@@ -540,7 +545,8 @@ class _ServiceDevicesAdminPanelState extends State<ServiceDevicesAdminPanel> {
                                     ),
                                     OutlinedButton.icon(
                                       onPressed:
-                                          device['offlineEnabled'] == true
+                                          widget.canManagePersonalCredentials &&
+                                              device['offlineEnabled'] == true
                                           ? () => issueOfflineQr(device)
                                           : null,
                                       icon: const Icon(Icons.offline_bolt),

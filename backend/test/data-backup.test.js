@@ -36,7 +36,7 @@ function records(backup, name) {
   return backup.sections.find((section) => section.name === name)?.records;
 }
 
-test('organization administrators cannot export or replace platform-wide backups', async () => {
+test('organization administrators export only scoped data and cannot replace platform-wide backups', async () => {
   const { server, request, token } = await setup({ platformAdmin: false });
   try {
     const exported = await request('/api/system/backup/export', {
@@ -44,8 +44,13 @@ test('organization administrators cannot export or replace platform-wide backups
       token,
       body: { currentPassword: 'MaterialKompass2026!' },
     });
-    assert.equal(exported.response.status, 403);
-    assert.match(exported.data.error, /Plattformadministratoren/);
+    assert.equal(exported.response.status, 200);
+    assert.equal(exported.data.scope.type, 'units');
+    assert.deepEqual(records(exported.data, 'users'), []);
+    assert.deepEqual(records(exported.data, 'passkeys'), []);
+    assert.deepEqual(records(exported.data, 'memberships'), []);
+    assert.ok(records(exported.data, 'materials').every((entry) =>
+      exported.data.scope.unitIds.includes(entry.unitId)));
 
     const imported = await request('/api/system/backup/import', {
       method: 'POST',
@@ -57,7 +62,16 @@ test('organization administrators cannot export or replace platform-wide backups
       },
     });
     assert.equal(imported.response.status, 403);
-    assert.match(imported.data.error, /Plattformadministratoren/);
+    assert.match(imported.data.error, /Organisationsbereich/);
+    const restored = await request('/api/system/backup/import', {
+      method: 'POST', token,
+      body: {
+        currentPassword: 'MaterialKompass2026!',
+        confirmation: 'ALLE DATEN ERSETZEN', backup: exported.data,
+      },
+    });
+    assert.equal(restored.response.status, 200);
+    assert.deepEqual(restored.data.scope, exported.data.scope);
   } finally {
     server.close();
   }

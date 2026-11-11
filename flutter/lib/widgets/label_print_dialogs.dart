@@ -2,10 +2,10 @@ import 'package:barcode_widget/barcode_widget.dart' as bw;
 import 'package:flutter/material.dart';
 
 import '../services/label_print_service.dart';
+import 'label_template_print_dialog.dart';
 
 bool userMayPrintLabels(Iterable<String> roles) {
-  const allowed = {'Materialwart', 'Kleiderwart', 'Vorsitz'};
-  return roles.any(allowed.contains);
+  return roles.isNotEmpty;
 }
 
 Future<void> showPrinterSettingsDialog(BuildContext context) async {
@@ -30,8 +30,19 @@ Future<bool> showLabelPrintDialog(
   BuildContext context, {
   required List<LabelData> labels,
   required LabelType type,
+  String? token,
 }) async {
   if (labels.isEmpty) return false;
+  if (token != null) {
+    final result = await showTemplatePrintChoice(
+      context,
+      token: token,
+      labels: labels,
+      type: type,
+    );
+    if (result != null) return result;
+    if (!context.mounted) return false;
+  }
   final service = LabelPrintService.instance;
   await service.load();
   if (!context.mounted) return false;
@@ -39,7 +50,7 @@ Future<bool> showLabelPrintDialog(
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          'Direkter Etikettendruck ist nur in der Windows- und Android-App verfügbar.',
+          'Für diese Auswahl ist keine passende Herstellervorlage freigegeben. Der direkte Zebra-Standarddruck ist auf dieser Plattform nicht verfügbar.',
         ),
       ),
     );

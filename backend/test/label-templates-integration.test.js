@@ -1,0 +1,31 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { createApp } = require('../src/app');
+
+test('authenticated uploads use the large-body route and persist original files before responding', async t => {
+  let snapshot;
+  const app = createApp({ dataStore: { async saveCollections(value) { snapshot = value; } } });
+  const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@materialkompass.org', password: 'MaterialKompass2026!' }) });
+  const { token } = await login.json();
+  assert.ok(token);
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const fileBase64 = Buffer.alloc(5 * 1024 * 1024, 65).toString('base64');
+  const body = { name: 'Große Originalvorlage', type: 'clothing', manufacturer: 'Zebra', fileName: 'Kleideretikett.nlbl', fileBase64, categoryIds: ['04-01'], scope: 'organization', variables: [{ name: 'Inventarnummer', field: 'inventoryNumber' }] };
+  const response = await fetch(`${base}/api/label-templates`, { method: 'POST', headers, body: JSON.stringify(body) });
+  assert.equal(response.status, 201, await response.clone().text());
+  const created = await response.json();
+  assert.equal(snapshot.labelTemplates[0].fileBase64, fileBase64);
+  assert.equal(snapshot.labelTemplates[0].organizationId, 'org-default');
+  assert.equal(snapshot.labelTemplates[0].unitId, 'unit-default-root');
+  assert.equal(created.fileBase64, undefined);
+  assert.equal(created.fileBytes, 5 * 1024 * 1024);
+  assert.ok(snapshot.auditLogs.some(e => e.entity === 'LabelTemplate' && e.actor === 'admin'));
+  const download = await fetch(`${base}/api/label-templates/${created.id}/file`, { headers });
+  assert.equal((await download.json()).fileBase64, fileBase64);
+  const tooLarge = await fetch(`${base}/api/label-templates`, { method: 'POST', headers, body: JSON.stringify({ ...body, fileBase64: Buffer.alloc(5 * 1024 * 1024 + 1, 65).toString('base64') }) });
+  assert.equal(tooLarge.status, 400);
+  assert.equal(snapshot.labelTemplates.length, 1);
+});

@@ -46,7 +46,13 @@ class AppHttpClient {
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
-  }) => offline.post(uri, headers: headers, body: body).timeout(requestTimeout);
+  }) => offline
+      .post(uri, headers: headers, body: body)
+      .timeout(
+        RegExp(r'^/api/label-templates/[^/]+/render$').hasMatch(uri.path)
+            ? const Duration(seconds: 60)
+            : requestTimeout,
+      );
 
   static Future<base.Response> put(
     Uri uri, {

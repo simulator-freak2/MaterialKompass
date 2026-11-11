@@ -86,7 +86,9 @@ class _MaterialKompassAppState extends State<MaterialKompassApp> {
         : Uri.base.fragment;
     final uri = Uri.tryParse(fragment);
     if (uri != null &&
-        (uri.path == 'verify-email' || uri.path == 'password-reset')) {
+        (uri.path == 'verify-email' ||
+            uri.path == 'password-reset' ||
+            uri.path == 'membership-invitation')) {
       return AuthLinkPage(
         action: uri.path,
         token: uri.queryParameters['token'] ?? '',

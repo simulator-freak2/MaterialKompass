@@ -66,7 +66,7 @@ class _ProcurementPageState extends State<ProcurementPage>
 
   bool _can(String permission) => _permissions.contains(permission);
   bool get _canPrintLabels =>
-      LabelPrintService.instance.supported && userMayPrintLabels(_roles);
+      userMayPrintLabels(_roles);
   int get _pendingEmailCount => _emailInbox
       .where(
         (entry) =>
@@ -639,6 +639,7 @@ class _ProcurementPageState extends State<ProcurementPage>
         if (materials.isNotEmpty) {
           await showLabelPrintDialog(
             context,
+            token: widget.token,
             labels: materials
                 .map((item) => LabelData.fromItem(item, LabelType.inventory))
                 .toList(),
@@ -648,6 +649,7 @@ class _ProcurementPageState extends State<ProcurementPage>
         if (clothing.isNotEmpty && mounted) {
           await showLabelPrintDialog(
             context,
+            token: widget.token,
             labels: clothing
                 .map((item) => LabelData.fromItem(item, LabelType.clothing))
                 .toList(),

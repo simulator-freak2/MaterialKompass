@@ -34,6 +34,7 @@ CREATE TABLE users (
   deactivation_reason VARCHAR(64) NULL,
   scheduled_deletion_at DATETIME NULL,
   created_at DATETIME NOT NULL,
+  membership_managed TINYINT(1) NOT NULL DEFAULT 0,
   INDEX idx_users_last_login (last_login_at),
   INDEX idx_users_scheduled_deletion (scheduled_deletion_at)
 );

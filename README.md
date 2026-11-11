@@ -1,5 +1,7 @@
 # MaterialKompass
 
+Die zentrale Benutzerverwaltung und die Zuständigkeiten für Organisationsrechte sind in [USER_MANAGEMENT.md](USER_MANAGEMENT.md) beschrieben.
+
 Hinweise zum datenschutzkonformen Produktivbetrieb, Pflichtangaben und offenen
 organisatorischen Maßnahmen stehen in [LEGAL_COMPLIANCE.md](LEGAL_COMPLIANCE.md).
 
@@ -570,8 +572,34 @@ repliziert werden.
 
 ### Editierbare JSON-Gesamtsicherung und gezieltes Zurücksetzen
 
-Plattformadministratoren können unter **Nutzerverwaltung → Datensicherung** eine
-portable JSON-Gesamtsicherung exportieren und wieder importieren. Das aktuelle
+Administratoren können unter **Nutzerverwaltung → Datensicherung** eine
+portable JSON-Sicherung ihres erlaubten Bereichs exportieren und wieder importieren.
+Der Server bestimmt den Bereich aus der aktiven Einheit, unabhängig von Dateiangaben,
+Bestandsfreigaben oder weiteren Mitgliedschaften:
+
+| Aktive Einheit | Erlaubter Sicherungs- und Wiederherstellungsbereich |
+| --- | --- |
+| Jugend Ingelheim | Nur Jugend Ingelheim |
+| Ortsgruppe Ingelheim | Ortsgruppe und direkt zugehörige Jugend Ingelheim |
+| Bezirk | Bezirk und direkt zugehörige Bezirksjugend, keine Ortsgruppen |
+| Plattformadministrator | Vollständiger Plattformbestand |
+
+Bereichssicherungen enthalten ausschließlich einheitenbezogene Fachdaten,
+Dokumente, Kategorien und Protokolle. Zentrale Konten, Anmeldedaten, Rollen,
+Passkeys, Mitgliedschaften, Organisationsstruktur, Gerätezugänge und gemeinsame
+Einstellungen sind nicht enthalten und werden beim Bereichsimport nicht verändert.
+Sie benötigen weiterhin eine Plattformsicherung bzw. eine Serversicherung.
+`scope` kennzeichnet den Bereich; er muss beim Import exakt mit dem serverseitig
+ermittelten Bereich einschließlich der direkten Jugendzuordnung übereinstimmen.
+Auch Plattformadministratoren können Bereichssicherungen nur im passenden aktiven
+Bereich einspielen. Alte unbeschränkte Sicherungen bleiben Plattformadministratoren
+vorbehalten. Fremde Datensätze, geschützte Sektionen, doppelte IDs und Kollisionen
+mit fremden Datensatz-IDs werden vor dem Schreiben abgelehnt. Verweise auf fremde
+Einheiten werden geprüft; die bestehenden erlaubten Jugend-Mängelverweise auf
+Material oder Fahrzeuge der direkt verknüpften Stammorganisation bleiben möglich,
+ohne deren Bestände mitzusichern. Historische Mängel dürfen gelöschte Ziele behalten.
+
+Das aktuelle
 `schemaVersion: 3` wird lesbar eingerückt ausgegeben und besteht aus benannten
 `sections`. Jede Sektion besitzt `records` mit einzeln entfernbaren Datensätzen. Eine
 optionale Sektion kann vor dem Import mit `enabled: false` vollständig ausgelassen oder
@@ -600,9 +628,12 @@ Daten gezielt zurücksetzen:
 Vor dem Zurücksetzen ist eine aktuelle Sicherung anzulegen. Die Aktion verlangt das
 aktuelle Admin-Passwort, bei aktivierter 2-FA zusätzlich einen Code, sowie die exakt
 angezeigte Bestätigung `DATEN <EDV-NUMMER> LÖSCHEN`. Sie wird mit Umfang und Anzahl der
-gelöschten Datensätze im Auditlog protokolliert. Ein JSON-Gesamtimport ersetzt weiterhin
-den kompletten Plattformbestand; eine bearbeitete Datei ist deshalb vorab in einer
-isolierten Testinstanz zu validieren.
+gelöschten Datensätze im Auditlog protokolliert. Ein Bereichsimport ersetzt nur die
+zugelassenen Fachdatenbereiche und erhält fremde Bereiche sowie zentrale Zugänge.
+Ausgelassene oder deaktivierte optionale Sektionen werden innerhalb des erlaubten
+Bereichs geleert. Die ursprüngliche Organisationsstruktur muss vorhanden sein.
+Nur eine Plattformsicherung ersetzt den kompletten Plattformbestand. Jede
+bearbeitete Datei ist vorab in einer isolierten Testinstanz zu validieren.
 
 Für den Produktivbetrieb wird `backend/.env.example` als Vorlage verwendet. Besonders
 `JWT_SECRET`, `MFA_ENCRYPTION_KEY`, `IDENTITY_KEYRING_MASTER_KEY`,

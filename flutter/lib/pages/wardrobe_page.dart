@@ -68,7 +68,7 @@ class _WardrobePageState extends State<WardrobePage> {
   Set<String> _permissions = {};
 
   bool get _canPrintLabels =>
-      LabelPrintService.instance.supported && userMayPrintLabels(_roles);
+      userMayPrintLabels(_roles);
 
   @override
   void initState() {
@@ -616,9 +616,9 @@ class _WardrobePageState extends State<WardrobePage> {
   Future<void> _printItems(List<Map<String, dynamic>> items) async {
     await showLabelPrintDialog(
       context,
+      token: widget.token,
       labels: items
           .map((item) => LabelData.fromItem(item, LabelType.clothing))
-          .where((label) => label.inventoryNumber.isNotEmpty)
           .toList(),
       type: LabelType.clothing,
     );

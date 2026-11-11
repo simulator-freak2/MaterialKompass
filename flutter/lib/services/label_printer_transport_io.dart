@@ -14,4 +14,9 @@ Future<void> sendRawLabel(String host, int port, List<int> bytes) async {
   }
 }
 
-bool get labelPrintingSupported => Platform.isWindows || Platform.isAndroid;
+bool get labelPrintingSupported =>
+    Platform.isWindows ||
+    Platform.isAndroid ||
+    Platform.isLinux ||
+    Platform.isMacOS ||
+    Platform.isIOS;

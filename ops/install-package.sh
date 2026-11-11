@@ -133,10 +133,16 @@ normalize_code_permissions() {
 
 mkdir -p .deployments/uploads .deployments/archive releases web-current
 chmod 700 .deployments .deployments/uploads .deployments/archive
-if [ ! -f .deployments/public-messages.json ]; then
-  printf '%s\n' '{"schemaVersion":1,"messages":[]}' > .deployments/public-messages.json
-  chmod 0644 .deployments/public-messages.json
+mkdir -p .deployments/public-runtime
+chmod 0755 .deployments/public-runtime
+if [ ! -f .deployments/public-runtime/public-messages.json ]; then
+  if [ -f .deployments/public-messages.json ]; then
+    cp .deployments/public-messages.json .deployments/public-runtime/public-messages.json
+  else
+    printf '%s\n' '{"schemaVersion":1,"messages":[]}' > .deployments/public-runtime/public-messages.json
+  fi
 fi
+chmod 0644 .deployments/public-runtime/public-messages.json
 if [ ! -f web-current/index.html ]; then
   printf '%s\n' '<!doctype html><html lang="de"><meta charset="utf-8"><title>MaterialKompass</title><body>MaterialKompass wird bereitgestellt.</body></html>' \
     > web-current/index.html

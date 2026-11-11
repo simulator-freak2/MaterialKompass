@@ -1,5 +1,6 @@
 const mariadb = require('mariadb');
 const crypto = require('node:crypto');
+const { normalizeIdentifier } = require('../user-identity');
 const { DEFAULT_ORGANIZATION_ID } = require('../tenancy');
 const {
   createIdentityProtection,
@@ -51,6 +52,43 @@ function createUserStore(database = mariadb, options = {}) {
   let processLockConnection;
   let processLockName;
   const serializedCollections = new Map();
+  // The database process lock makes this a single-writer identity index.
+  // Never persist identifiers outside the existing encrypted identity vault.
+  const identityClaims = new Map();
+  const deletedUserIds = new Set();
+  let userSaveQueue = Promise.resolve();
+  function claimIdentity(user) {
+    if (deletedUserIds.has(user.id)) {
+      throw Object.assign(new Error('Das Konto wurde bereits gelöscht.'), { status: 410 });
+    }
+    if (user.identityErased) return;
+    for (const key of new Set([user.username, user.email].map(normalizeIdentifier))) {
+      if (!key) continue;
+      const owners = identityClaims.get(key);
+      if (owners && [...owners].some((id) => id !== user.id)) {
+        const error = new Error('Nutzername oder E-Mail-Adresse ist bereits vergeben.');
+        error.code = 'IDENTITY_CONFLICT';
+        error.status = 409;
+        throw error;
+      }
+    }
+    indexIdentity(user);
+  }
+  function indexIdentity(user) {
+    if (user.identityErased) return;
+    for (const key of new Set([user.username, user.email].map(normalizeIdentifier))) {
+      if (!key) continue;
+      if (!identityClaims.has(key)) identityClaims.set(key, new Set());
+      identityClaims.get(key).add(user.id);
+    }
+  }
+  function releaseIdentity(id) {
+    for (const [key, owners] of identityClaims) {
+      owners.delete(id);
+      if (!owners.size) identityClaims.delete(key);
+    }
+  }
+
 
   function protectedPlaceholder(userId) {
     const suffix = crypto.createHash('sha256').update(String(userId)).digest('hex').slice(0, 32);
@@ -92,6 +130,66 @@ function createUserStore(database = mariadb, options = {}) {
     }));
   }
 
+  async function persistUser(user) {
+
+      claimIdentity(user);
+      const protectedRecord = await protectedUserRecord(user);
+      await pool.query(`INSERT INTO users (
+        id, name, username, email, identity_ciphertext, identity_erased,
+        password_hash, roles, permissions, platform_admin, active,
+        login_access_mode, allowed_service_device_ids,
+        failed_login_attempts, locked_until, last_login_at, email_verified_at,
+        verification_token_hash, verification_expires_at, password_reset_token_hash,
+        password_reset_expires_at, mfa_required, mfa_secret_encrypted,
+        mfa_pending_secret_encrypted, mfa_pending_secret_expires_at,
+        mfa_recovery_code_hashes, mfa_enabled_at,
+        mfa_last_verified_at, mfa_grace_ends_at, mfa_version,
+        deactivated_at, deactivation_reason, scheduled_deletion_at, created_at, department_ids, membership_managed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
+        identity_ciphertext=VALUES(identity_ciphertext), identity_erased=VALUES(identity_erased),
+        password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
+        permissions=VALUES(permissions), platform_admin=VALUES(platform_admin),
+        active=VALUES(active), login_access_mode=VALUES(login_access_mode),
+        allowed_service_device_ids=VALUES(allowed_service_device_ids),
+        failed_login_attempts=VALUES(failed_login_attempts),
+        locked_until=VALUES(locked_until), last_login_at=VALUES(last_login_at),
+        email_verified_at=VALUES(email_verified_at), verification_token_hash=VALUES(verification_token_hash),
+        verification_expires_at=VALUES(verification_expires_at), password_reset_token_hash=VALUES(password_reset_token_hash),
+        password_reset_expires_at=VALUES(password_reset_expires_at), mfa_required=VALUES(mfa_required),
+        mfa_secret_encrypted=VALUES(mfa_secret_encrypted),
+        mfa_pending_secret_encrypted=VALUES(mfa_pending_secret_encrypted),
+        mfa_pending_secret_expires_at=VALUES(mfa_pending_secret_expires_at),
+        mfa_recovery_code_hashes=VALUES(mfa_recovery_code_hashes),
+        mfa_enabled_at=VALUES(mfa_enabled_at), mfa_last_verified_at=VALUES(mfa_last_verified_at),
+        mfa_grace_ends_at=VALUES(mfa_grace_ends_at), mfa_version=VALUES(mfa_version),
+        deactivated_at=VALUES(deactivated_at),
+        deactivation_reason=VALUES(deactivation_reason), scheduled_deletion_at=VALUES(scheduled_deletion_at),
+        membership_managed=VALUES(membership_managed)`, [
+        user.id, protectedRecord.placeholder.name, protectedRecord.placeholder.username,
+        protectedRecord.placeholder.email, protectedRecord.identityCiphertext,
+        protectedRecord.identityErased ? 1 : 0,
+        user.passwordHash,
+        JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
+        user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
+        user.loginAccessMode || 'all_clients', JSON.stringify(user.allowedServiceDeviceIds || []),
+        user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
+        sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
+        user.passwordResetTokenHash || null, sqlDateTime(user.passwordResetExpiresAt),
+        user.mfaRequired ? 1 : 0, user.mfaSecretEncrypted || null,
+        user.mfaPendingSecretEncrypted || null, sqlDateTime(user.mfaPendingSecretExpiresAt),
+        JSON.stringify(user.mfaRecoveryCodeHashes || []),
+        sqlDateTime(user.mfaEnabledAt), sqlDateTime(user.mfaLastVerifiedAt),
+        sqlDateTime(user.mfaGraceEndsAt), Number(user.mfaVersion || 0), sqlDateTime(user.deactivatedAt),
+        user.deactivationReason || null, sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt),
+        JSON.stringify(user.departmentIds || []),
+        user.membershipManaged === true ? 1 : 0,
+      ]);
+
+      releaseIdentity(user.id);
+      indexIdentity(user);
+  }
+
   return {
     async acquireProcessLock(
       name = `materialkompass-backend:${process.env.DB_NAME || 'materialkompass'}`,
@@ -119,6 +217,7 @@ function createUserStore(database = mariadb, options = {}) {
 
     async initialize() {
       await identityProtection.initialize();
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS membership_managed TINYINT(1) NOT NULL DEFAULT 0');
       await pool.query(`CREATE TABLE IF NOT EXISTS application_collections (
         organization_id VARCHAR(64) NOT NULL,
         name VARCHAR(64) NOT NULL,
@@ -198,9 +297,10 @@ function createUserStore(database = mariadb, options = {}) {
           + 'Start abgebrochen, damit keine Konten irrtümlich tombstonisiert werden.',
         );
       }
-      return {
+      const loaded = {
         users: userRows.map((row) => identityProtection.unprotectUserRecord({
           id: row.id, name: row.name, username: row.username, email: row.email,
+          membershipManaged: Boolean(row.membership_managed),
           passwordHash: row.password_hash, roles: parseJson(row.roles),
           platformAdmin: Boolean(row.platform_admin),
           departmentIds: parseJson(row.department_ids),
@@ -251,63 +351,24 @@ function createUserStore(database = mariadb, options = {}) {
           lastUsedAt: iso(row.last_used_at),
         })),
       };
+      identityClaims.clear();
+      loaded.users.forEach(indexIdentity);
+      return loaded;
     },
 
-    async saveUser(user) {
-      user = user?.__identity || user;
-      const protectedRecord = await protectedUserRecord(user);
-      await pool.query(`INSERT INTO users (
-        id, name, username, email, identity_ciphertext, identity_erased,
-        password_hash, roles, permissions, platform_admin, active,
-        login_access_mode, allowed_service_device_ids,
-        failed_login_attempts, locked_until, last_login_at, email_verified_at,
-        verification_token_hash, verification_expires_at, password_reset_token_hash,
-        password_reset_expires_at, mfa_required, mfa_secret_encrypted,
-        mfa_pending_secret_encrypted, mfa_pending_secret_expires_at,
-        mfa_recovery_code_hashes, mfa_enabled_at,
-        mfa_last_verified_at, mfa_grace_ends_at, mfa_version,
-        deactivated_at, deactivation_reason, scheduled_deletion_at, created_at, department_ids
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE name=VALUES(name), username=VALUES(username), email=VALUES(email),
-        identity_ciphertext=VALUES(identity_ciphertext), identity_erased=VALUES(identity_erased),
-        password_hash=VALUES(password_hash), roles=VALUES(roles), department_ids=VALUES(department_ids),
-        permissions=VALUES(permissions), platform_admin=VALUES(platform_admin),
-        active=VALUES(active), login_access_mode=VALUES(login_access_mode),
-        allowed_service_device_ids=VALUES(allowed_service_device_ids),
-        failed_login_attempts=VALUES(failed_login_attempts),
-        locked_until=VALUES(locked_until), last_login_at=VALUES(last_login_at),
-        email_verified_at=VALUES(email_verified_at), verification_token_hash=VALUES(verification_token_hash),
-        verification_expires_at=VALUES(verification_expires_at), password_reset_token_hash=VALUES(password_reset_token_hash),
-        password_reset_expires_at=VALUES(password_reset_expires_at), mfa_required=VALUES(mfa_required),
-        mfa_secret_encrypted=VALUES(mfa_secret_encrypted),
-        mfa_pending_secret_encrypted=VALUES(mfa_pending_secret_encrypted),
-        mfa_pending_secret_expires_at=VALUES(mfa_pending_secret_expires_at),
-        mfa_recovery_code_hashes=VALUES(mfa_recovery_code_hashes),
-        mfa_enabled_at=VALUES(mfa_enabled_at), mfa_last_verified_at=VALUES(mfa_last_verified_at),
-        mfa_grace_ends_at=VALUES(mfa_grace_ends_at), mfa_version=VALUES(mfa_version),
-        deactivated_at=VALUES(deactivated_at),
-        deactivation_reason=VALUES(deactivation_reason), scheduled_deletion_at=VALUES(scheduled_deletion_at)`, [
-        user.id, protectedRecord.placeholder.name, protectedRecord.placeholder.username,
-        protectedRecord.placeholder.email, protectedRecord.identityCiphertext,
-        protectedRecord.identityErased ? 1 : 0,
-        user.passwordHash,
-        JSON.stringify(user.roles || []), JSON.stringify(user.permissions || []),
-        user.platformAdmin ? 1 : 0, user.active ? 1 : 0,
-        user.loginAccessMode || 'all_clients', JSON.stringify(user.allowedServiceDeviceIds || []),
-        user.failedLoginAttempts || 0, sqlDateTime(user.lockedUntil), sqlDateTime(user.lastLoginAt),
-        sqlDateTime(user.emailVerifiedAt), user.verificationTokenHash || null, sqlDateTime(user.verificationExpiresAt),
-        user.passwordResetTokenHash || null, sqlDateTime(user.passwordResetExpiresAt),
-        user.mfaRequired ? 1 : 0, user.mfaSecretEncrypted || null,
-        user.mfaPendingSecretEncrypted || null, sqlDateTime(user.mfaPendingSecretExpiresAt),
-        JSON.stringify(user.mfaRecoveryCodeHashes || []),
-        sqlDateTime(user.mfaEnabledAt), sqlDateTime(user.mfaLastVerifiedAt),
-        sqlDateTime(user.mfaGraceEndsAt), Number(user.mfaVersion || 0), sqlDateTime(user.deactivatedAt),
-        user.deactivationReason || null, sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt),
-        JSON.stringify(user.departmentIds || []),
-      ]);
+    saveUser(user) {
+      const snapshot = structuredClone(user?.__identity || user);
+      const operation = userSaveQueue.then(() => persistUser(snapshot));
+      userSaveQueue = operation.catch(() => {});
+      return operation;
     },
 
-    async deleteUser(id) { await pool.query('DELETE FROM users WHERE id = ?', [id]); },
+    async deleteUser(id) {
+      deletedUserIds.add(id);
+      await userSaveQueue;
+      await pool.query('DELETE FROM users WHERE id = ?', [id]);
+      releaseIdentity(id);
+    },
     async destroyUserIdentity(id) { return identityProtection.destroyUser(id); },
     async pruneIdentityKeys(userIds) { return identityProtection.pruneUsers(userIds); },
     invalidateCollectionCache() { serializedCollections.clear(); },
@@ -555,6 +616,56 @@ function createUserStore(database = mariadb, options = {}) {
         if (connection) connection.release();
       }
     },
+    async replaceScopedBackupData({ scope, collections }) {
+      const { SCOPED_BACKUP_COLLECTIONS } = require('../data-backup');
+      if (scope?.type !== 'units' || typeof scope.organizationId !== 'string'
+          || !Array.isArray(scope.unitIds) || !scope.unitIds.length) {
+        throw new TypeError('Ungültiger Sicherungsbereich.');
+      }
+      const owns = (name, entry) => entry?.organizationId === scope.organizationId
+        && scope.unitIds.includes(entry.unitId)
+        && (name !== 'categories' || entry.scope === 'unit');
+      for (const [name, values] of Object.entries(collections)) {
+        if (!SCOPED_BACKUP_COLLECTIONS.has(name) || !Array.isArray(values)
+            || values.some((entry) => !owns(name, entry))) {
+          throw new TypeError('Unzulässige Daten in der Bereichswiederherstellung.');
+        }
+      }
+      let connection;
+      const updated = new Map();
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        // Read the latest partition under a row lock. Other units in the same
+        // organization are retained from storage, never from a stale snapshot.
+        for (const name of Object.keys(collections).sort()) {
+          const rows = await connection.query(
+            'SELECT data_json FROM application_collections WHERE organization_id = ? AND name = ? FOR UPDATE',
+            [scope.organizationId, name],
+          );
+          const existing = rows.length
+            ? identityProtection.unprotectValue(parseJson(rows[0].data_json)) : [];
+          const retained = existing.filter((entry) => !owns(name, entry));
+          const retainedIds = new Set(retained.map((entry) => entry.id));
+          if (collections[name].some((entry) => retainedIds.has(entry.id))) {
+            throw new Error('Datensatz-ID gehört zu einem fremden Bereich.');
+          }
+          const values = [...retained, ...collections[name]];
+          await connection.query(`INSERT INTO application_collections
+            (organization_id, name, data_json) VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE data_json=VALUES(data_json)`,
+          [scope.organizationId, name, protectedCollectionJson(name, values)]);
+          updated.set(`${scope.organizationId}:${name}`, JSON.stringify(values));
+        }
+        await connection.commit();
+        updated.forEach((value, key) => serializedCollections.set(key, value));
+      } catch (error) {
+        if (connection) await connection.rollback();
+        throw error;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
     async replaceBackupData({ users, roles, passkeys, collections }) {
       let connection;
       let committed = false;
@@ -604,8 +715,8 @@ function createUserStore(database = mariadb, options = {}) {
             mfa_pending_secret_encrypted, mfa_pending_secret_expires_at,
             mfa_recovery_code_hashes, mfa_enabled_at, mfa_last_verified_at,
             mfa_grace_ends_at, mfa_version, deactivated_at, deactivation_reason,
-            scheduled_deletion_at, created_at, department_ids
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            scheduled_deletion_at, created_at, department_ids, membership_managed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           protectedUsers.map((record) => {
             const { user } = record;
             return [
@@ -627,6 +738,7 @@ function createUserStore(database = mariadb, options = {}) {
             sqlDateTime(user.deactivatedAt), user.deactivationReason || null,
             sqlDateTime(user.scheduledDeletionAt), sqlDateTime(user.createdAt || new Date()),
             JSON.stringify(user.departmentIds || []),
+            user.membershipManaged === true ? 1 : 0,
           ];
           }));
         }
@@ -654,6 +766,8 @@ function createUserStore(database = mariadb, options = {}) {
         }
         await connection.commit();
         committed = true;
+        identityClaims.clear();
+        users.forEach(indexIdentity);
         serializedCollections.clear();
         serialized.forEach(([organizationId, name, data]) => {
           serializedCollections.set(`${organizationId}:${name}`, JSON.stringify(data));
@@ -666,6 +780,7 @@ function createUserStore(database = mariadb, options = {}) {
       }
     },
     async close() {
+      await userSaveQueue;
       if (processLockConnection) {
         try {
           await processLockConnection.query(

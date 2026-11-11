@@ -53,6 +53,7 @@ const { createRateLimiter } = require('./request-rate-limiter');
 const { registerDataBackupRoutes } = require('./data-backup');
 const { createMemoryIdentityProtection } = require('./identity-protection');
 const { registerSystemMessageRoutes } = require('./system-messages');
+const { registerLabelTemplateRoutes } = require('./label-templates');
 const { loginAccessAllowed, loginAccessPolicy } = require('./login-access-policy');
 const { createAuthSessions } = require('./auth-sessions');
 const {
@@ -121,6 +122,7 @@ const LARGE_JSON_BODY_LIMIT = '12mb';
 const BACKUP_JSON_BODY_LIMIT = '128mb';
 const BACKUP_IMPORT_ROUTE = '/api/system/backup/import';
 const LARGE_BODY_ROUTES = [
+  /^\/api\/label-templates(?:\/[^/]+)?$/,
   /^\/api\/clothing\/import$/,
   /^\/api\/material\/import$/,
   /^\/api\/material\/[^/]+\/documents$/,
@@ -128,6 +130,7 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/defects\/[^/]+\/images$/,
 ];
 const PERSISTED_COLLECTIONS = Object.freeze([
+  'labelTemplates',
   'organizations', 'organizationUnits', 'memberships',
   'permissions', 'departments', 'locations', 'shelves', 'storageLevels',
   'stockStructures', 'categories', 'materials',
@@ -697,10 +700,24 @@ function createApp(options = {}) {
       if (payload.sv !== securityVersion(identity)) {
         return res.status(401).json({ error: 'Invalid token' });
       }
-      const tenant = defaultTenantContext(identity, payload.oid, payload.ouid);
+      let tenant = defaultTenantContext(identity, payload.oid, payload.ouid);
       if (!tenant || !organizations.some((entry) =>
         entry.id === tenant.organizationId && entry.status === 'active')) {
-        return res.status(403).json({ error: 'Die Organisationszuordnung ist nicht aktiv.' });
+        // A central account survives its last organizational access grant.
+        // Keep self-service available without borrowing any tenant authority.
+        const personalRoute = req.path === '/api/users/me' || req.path.startsWith('/api/users/me/')
+          || ['/api/auth/me', '/api/auth/logout', '/api/auth/context', '/api/dashboard', '/api/organizations'].includes(req.path);
+        const platformRoute = identity.platformAdmin === true && (
+          (req.method === 'GET' && ['/api/users', '/api/users/identity-conflicts', '/api/roles',
+            '/api/departments', '/api/organization-units'].includes(req.path))
+          || (req.method === 'PUT' && /^\/api\/users\/[^/]+$/.test(req.path))
+          || (req.method === 'DELETE' && /^\/api\/platform\/users\/[^/]+$/.test(req.path))
+          || /^\/api\/users\/[^/]+\/(mfa-policy|mfa|passkeys|password-reset|verification\/(resend|confirm))$/.test(req.path));
+        if ((!personalRoute && !platformRoute) || payload.did) return res.status(403).json({ error: 'Die Organisationszuordnung ist nicht aktiv.' });
+        tenant = { organizationId: '__account__', unitId: null,
+          allowedUnitIds: new Set(), roles: [], permissions: identity.platformAdmin === true
+            ? ['dashboard.read', 'users.read', 'roles.read'] : ['dashboard.read'],
+          departmentIds: [], membershipId: null, organizationAdmin: false, system: false };
       }
       req.identity = identity;
       req.tenant = tenant;
@@ -1408,6 +1425,12 @@ function createApp(options = {}) {
     PERSISTED_COLLECTIONS.forEach((name) => anonymize(appData[name] || []));
   }
 
+  registerLabelTemplateRoutes({
+    app, templates: appData.labelTemplates, categories, units: organizationUnits,
+    memberships, users, materials, clothingItems, authMiddleware, logEvent,
+    ...(options.labelRenderer ? { renderer: options.labelRenderer } : {}),
+  });
+
   const mailManagement = registerMailManagementRoutes({
     app,
     mailTemplates,
@@ -1418,7 +1441,7 @@ function createApp(options = {}) {
   });
 
   const userManagement = registerUserRoutes({
-    app, users, roles, permissions, departments, memberships, organizationUnits,
+    app, users, roles, permissions, departments, memberships, organizationUnits, organizations,
     serviceDevices,
     authMiddleware, requirePermission, logEvent,
     departmentReferences: procurementRequests,

@@ -97,7 +97,8 @@ function registerServiceDeviceRoutes({
   function findDevice(id) {
     const device = devicesById.get(String(id || ''));
     const tenant = currentTenant();
-    if (tenant && !tenant.system && device?.organizationId !== tenant.organizationId) return null;
+    if (tenant && !tenant.system && (device?.organizationId !== tenant.organizationId
+      || !tenant.allowedUnitIds?.has(device?.unitId))) return null;
     return device;
   }
 
@@ -130,7 +131,7 @@ function registerServiceDeviceRoutes({
         ? user.passwordHash
         : DUMMY_PASSWORD_HASH,
     );
-    if (!withinBcryptLimit || !passwordMatches || !user) return null;
+    if (!withinBcryptLimit || !passwordMatches || !user?.active || !user.emailVerifiedAt) return null;
     const tenant = tenantForUser(user, organizationId, unitId);
     return tenant?.roles?.includes('Admin') ? { user, tenant } : null;
   }
@@ -253,8 +254,7 @@ function registerServiceDeviceRoutes({
   }
 
   app.get('/api/service-devices', authMiddleware, requirePermission('users.write'), (_req, res) => {
-    const organizationId = currentTenant()?.organizationId;
-    res.json(devices.filter((entry) => entry.organizationId === organizationId).map(publicDevice));
+    res.json(devices.filter((entry) => findDevice(entry.id)).map(publicDevice));
   });
 
   app.post('/api/service-devices', authMiddleware, requirePermission('users.write'), async (req, res) => {
@@ -346,6 +346,7 @@ function registerServiceDeviceRoutes({
   });
 
   app.post('/api/service-devices/:id/personal-nfc', authMiddleware, requirePermission('users.write'), (req, res) => {
+    if (req.user.platformAdmin !== true) return res.status(403).json({ error: 'Persönliche Anmeldeverfahren verwaltet nur die Plattformadministration.' });
     const device = findDevice(req.params.id); if (!device) return res.status(404).json({ error: 'Gerät nicht gefunden.' });
     const user = users.find((entry) => entry.id === req.body.userId
       && userInOrganization(entry, req.tenant.organizationId, req.tenant.unitId));
@@ -365,6 +366,7 @@ function registerServiceDeviceRoutes({
   });
 
   app.post('/api/service-devices/:id/offline-qr', authMiddleware, requirePermission('users.write'), (req, res) => {
+    if (req.user.platformAdmin !== true) return res.status(403).json({ error: 'Persönliche Anmeldeverfahren verwaltet nur die Plattformadministration.' });
     const device = findDevice(req.params.id); if (!device) return res.status(404).json({ error: 'Gerät nicht gefunden.' });
     const user = users.find((entry) => entry.id === req.body.userId
       && userInOrganization(entry, req.tenant.organizationId, req.tenant.unitId));
@@ -399,7 +401,8 @@ function registerServiceDeviceRoutes({
     if (!authenticated) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
     return runWithTenant(authenticated.tenant, () => res.json(devices
       .filter((entry) => entry.active
-        && entry.organizationId === authenticated.tenant.organizationId)
+        && entry.organizationId === authenticated.tenant.organizationId
+        && authenticated.tenant.allowedUnitIds.has(entry.unitId))
       .map(publicDevice)));
   });
 
@@ -414,7 +417,8 @@ function registerServiceDeviceRoutes({
       });
     }
     const device = devicesById.get(String(req.body.deviceId || ''));
-    if (!device?.active || device.organizationId !== authenticated.tenant.organizationId) {
+    if (!device?.active || device.organizationId !== authenticated.tenant.organizationId
+      || !authenticated.tenant.allowedUnitIds.has(device.unitId)) {
       return res.status(404).json({ error: 'Aktives Gerät nicht gefunden.' });
     }
     const credential = crypto.randomBytes(48).toString('base64url');

@@ -202,18 +202,24 @@ Future<Response> _write(
   Encoding? encoding,
 }) async {
   final encoded = _bodyString(body, encoding);
+  // Proprietary label rendering may take longer than ordinary data writes.
+  // It remains a non-queueable request and is never replayed automatically.
+  final writeTimeout =
+      RegExp(r'^/api/label-templates/[^/]+/render$').hasMatch(url.path)
+      ? const Duration(seconds: 55)
+      : _timeout;
   if (kIsWeb) {
     final request = base.Request(method, url)
       ..headers.addAll(headers ?? const {});
     if (encoded != null) request.body = encoded;
-    final streamed = await _client.send(request).timeout(_timeout);
+    final streamed = await _client.send(request).timeout(writeTimeout);
     return base.Response.fromStream(streamed);
   }
   try {
     final request = base.Request(method, url)
       ..headers.addAll(headers ?? const {});
     if (encoded != null) request.body = encoded;
-    final streamed = await _client.send(request).timeout(_timeout);
+    final streamed = await _client.send(request).timeout(writeTimeout);
     final response = await base.Response.fromStream(streamed);
     if (response.statusCode >= 200 && response.statusCode < 300) {
       await OfflineStore.instance.markOnline();

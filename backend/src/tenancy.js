@@ -24,6 +24,7 @@ const UNIT_SCOPED_COLLECTIONS = new Set([
 ]);
 
 const ORGANIZATION_SCOPED_COLLECTIONS = new Set([
+  'labelTemplates',
   ...UNIT_SCOPED_COLLECTIONS,
   'categories', 'auditLogs', 'qrLoginCredentials', 'scannerEmailAddresses',
   'mailTemplates', 'serviceDevices', 'offlineClients', 'offlineCommandResults',
@@ -177,8 +178,8 @@ function normalizeTenancyData(data) {
       : [];
   }
   for (const user of data.users || []) {
-    if (!memberships.some((entry) =>
-      entry.userId === user.id && entry.organizationId === defaultOrganization.id
+    if (user.membershipManaged !== true && !memberships.some((entry) =>
+      entry.userId === user.id
     )) {
       memberships.push({
         id: `membership-${user.id}-${defaultOrganization.id}`,
@@ -195,6 +196,7 @@ function normalizeTenancyData(data) {
         createdAt: user.createdAt || nowIso(),
       });
     }
+    user.membershipManaged = true;
   }
   // Older memberships could inherit one scope into all descendants. Convert
   // that inheritance once into independent, explicit scopes. From this point
@@ -242,6 +244,10 @@ function normalizeTenancyData(data) {
       if (!entry || typeof entry !== 'object') continue;
       entry.organizationId ||= defaultOrganization.id;
       if (UNIT_SCOPED_COLLECTIONS.has(name)) entry.unitId ||= defaultUnit.id;
+      if (name === 'serviceDevices' && !entry.unitId) {
+        entry.unitId = organizationUnits.find((unit) => unit.organizationId === entry.organizationId
+          && unit.parentId === null)?.id || null;
+      }
       if (name === 'categories') {
         entry.scope ||= 'organization';
         if (entry.scope === 'unit') entry.unitId ||= defaultUnit.id;

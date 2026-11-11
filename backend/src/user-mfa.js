@@ -1,3 +1,4 @@
+const { requirePlatformAccountAdmin } = require('./account-authority');
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const {
@@ -221,6 +222,9 @@ function createUserMfa({
   });
 
   app.post('/api/users/me/mfa/setup', authMiddleware, async (req, res) => {
+    if (mfaEnabled(req.user)) return res.status(409).json({
+      error: 'Deaktivieren Sie die bestehende 2-FA zuerst mit Passwort und aktuellem Code.',
+    });
     if (!await bcrypt.compare(req.body.currentPassword || '', req.user.passwordHash)) {
       return res.status(403).json({ error: 'Das aktuelle Passwort ist nicht korrekt.' });
     }
@@ -269,6 +273,7 @@ function createUserMfa({
   });
 
   app.post('/api/users/me/mfa/confirm', authMiddleware, async (req, res) => {
+    if (mfaEnabled(req.user)) return res.status(409).json({ error: '2-FA ist bereits eingerichtet.' });
     const secret = vault.decrypt(req.user.mfaPendingSecretEncrypted);
     const pendingExpiresAt = Date.parse(req.user.mfaPendingSecretExpiresAt || '');
     if (!secret || !Number.isFinite(pendingExpiresAt) || pendingExpiresAt <= now()
@@ -352,7 +357,7 @@ function createUserMfa({
     });
   });
 
-  app.put('/api/users/:id/mfa-policy', authMiddleware, requirePermission('users.write'), async (req, res) => {
+  app.put('/api/users/:id/mfa-policy', authMiddleware, requirePlatformAccountAdmin, async (req, res) => {
     const user = users.find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     if (typeof req.body.required !== 'boolean') {
@@ -375,7 +380,7 @@ function createUserMfa({
     return res.json(publicMfa(user));
   });
 
-  app.delete('/api/users/:id/mfa', authMiddleware, requirePermission('users.write'), async (req, res) => {
+  app.delete('/api/users/:id/mfa', authMiddleware, requirePlatformAccountAdmin, async (req, res) => {
     const user = users.find((entry) => entry.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
     if (!await bcrypt.compare(req.body.currentPassword || '', req.user.passwordHash)) {

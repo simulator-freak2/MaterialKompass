@@ -112,9 +112,12 @@ function registerDefectManagement({
   const allClothingItems = () => rawCollection(clothingItems);
   const allVehicles = () => rawCollection(vehicles);
 
-  function entityFor(type, id, { raw = false, organizationId = null } = {}) {
+  function entityFor(type, id, { raw = false, organizationId = null, reportUnitId = null } = {}) {
     const matches = (entry) => entry.id === id
-      && (!organizationId || entry.organizationId === organizationId);
+      && (!organizationId || entry.organizationId === organizationId)
+      && (!reportUnitId || entry.unitId === reportUnitId
+        || (['MaterialItem', 'Vehicle'].includes(type)
+          && youthUnitsAreLinked(organizationUnits, organizationId, reportUnitId, entry.unitId)));
     if (type === 'MaterialItem') return (raw ? allMaterials() : materials).find(matches);
     if (type === 'ClothingItem') return (raw ? allClothingItems() : clothingItems).find(matches);
     if (type === 'Vehicle') return (raw ? allVehicles() : vehicles).find(matches);
@@ -225,6 +228,7 @@ function registerDefectManagement({
     const entity = entityFor(report.entityType, report.entityId, {
       raw: true,
       organizationId: report.organizationId,
+      reportUnitId: report.unitId,
     });
     return {
       ...report,
@@ -284,6 +288,7 @@ function registerDefectManagement({
     const entity = entityFor(report.entityType, report.entityId, {
       raw: true,
       organizationId: report.organizationId,
+      reportUnitId: report.unitId,
     });
     if (!entity) return;
     const existingBaseline = activeForEntity(
@@ -299,6 +304,7 @@ function registerDefectManagement({
     const entity = entityFor(report.entityType, report.entityId, {
       raw: true,
       organizationId: report.organizationId,
+      reportUnitId: report.unitId,
     });
     if (!entity || activeForEntity(
       report.entityType, report.entityId, report.id, report.organizationId,

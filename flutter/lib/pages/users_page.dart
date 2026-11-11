@@ -32,6 +32,7 @@ class _UsersPageState extends State<UsersPage> {
   List<String> scannerEmailDestinations = [];
   String scannerEmailDomain = 'materialkompass.org';
   bool isAdmin = false;
+  bool isPlatformAdmin = false;
   bool loading = true;
   bool backupTransferRunning = false;
   String? currentUnitId;
@@ -89,13 +90,17 @@ class _UsersPageState extends State<UsersPage> {
         organizationUnits = (jsonDecode(responses[5].body) as List)
             .cast<Map>()
             .map((entry) => Map<String, dynamic>.from(entry))
-            .where((entry) => entry['status'] == 'active')
+            .where(
+              (entry) =>
+                  entry['status'] == 'active' && entry['canManageUnit'] == true,
+            )
             .toList();
       }
       if (responses[6].statusCode == 200) {
         final me = Map<String, dynamic>.from(
           jsonDecode(responses[6].body) as Map,
         );
+        isPlatformAdmin = (me['user'] as Map?)?['platformAdmin'] == true;
         currentUnitId = ((me['context'] as Map?)?['unit'] as Map?)?['id']
             ?.toString();
       }
@@ -169,6 +174,7 @@ class _UsersPageState extends State<UsersPage> {
         currentUnitId: currentUnitId,
         mailTemplates: mailTemplates,
         serviceDevices: serviceDevices,
+        canManageAccount: isPlatformAdmin,
       ),
     );
     if (result == null) return;
@@ -203,10 +209,100 @@ class _UsersPageState extends State<UsersPage> {
     if (result == null) return;
     if (await _send('POST', '/api/users/memberships', result)) {
       _message(
-        'Das bestehende Nutzerkonto wurde für diese Organisation freigegeben.',
+        result['mode'] == 'invitation'
+            ? 'Wenn das Konto vorhanden ist, wurde eine Einladung versendet.'
+            : 'Die Bereichsrechte wurden freigegeben.',
       );
       await load();
     }
+  }
+
+  Future<void> showIdentityConflicts() async {
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/users/identity-conflicts'),
+      headers: headers,
+    );
+    if (!mounted) return;
+    if (response.statusCode != 200) {
+      _message('Konflikte konnten nicht geladen werden.');
+      return;
+    }
+    final entries = (jsonDecode(response.body) as List).cast<Map>();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Identitätskonflikte manuell klären'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Text(
+              entries.isEmpty
+                  ? 'Keine Konflikte gefunden.'
+                  : entries
+                        .map((entry) => (entry['userIds'] as List).join(' / '))
+                        .join('\n'),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Schließen'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> showInvitations() async {
+    final response = await http.get(
+      Uri.parse('$apiBaseUrl/api/users/invitations'),
+      headers: headers,
+    );
+    if (!mounted) return;
+    if (response.statusCode != 200) {
+      _message('Einladungen konnten nicht geladen werden.');
+      return;
+    }
+    final entries = (jsonDecode(response.body) as List).cast<Map>();
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Offene Einladungen'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (entries.isEmpty)
+                  const Text('Keine offenen Einladungen in deinen Bereichen.'),
+                ...entries.map(
+                  (entry) => ListTile(
+                    title: Text('Einladung ${entry['id']}'),
+                    subtitle: Text('Gültig bis ${entry['expiresAt']}'),
+                    trailing: TextButton(
+                      onPressed: () =>
+                          Navigator.pop(dialogContext, entry['id'].toString()),
+                      child: const Text('Widerrufen'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Schließen'),
+          ),
+        ],
+      ),
+    );
+    if (selected != null &&
+        await _send('DELETE', '/api/users/invitations/$selected'))
+      _message('Die Einladung wurde widerrufen.');
   }
 
   Future<void> sendPasswordReset(Map<String, dynamic> user) async {
@@ -269,7 +365,7 @@ class _UsersPageState extends State<UsersPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Löschen'),
+            child: const Text('Rechte entziehen'),
           ),
         ],
       ),
@@ -297,9 +393,9 @@ class _UsersPageState extends State<UsersPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Account endgültig löschen?'),
+        title: const Text('Bereichsrechte entziehen?'),
         content: Text(
-          '${user['name']} wird unwiderruflich aus der Nutzerverwaltung gelöscht.',
+          'Alle von dir administrierbaren Bereichsrechte von ${user['name']} werden entzogen. Das zentrale Konto und andere Bereiche bleiben erhalten.',
         ),
         actions: [
           TextButton(
@@ -317,6 +413,59 @@ class _UsersPageState extends State<UsersPage> {
         await _send('DELETE', '/api/users/${user['id']}')) {
       await load();
     }
+  }
+
+  Future<void> deleteGlobalAccount(Map<String, dynamic> user) async {
+    final currentPassword = TextEditingController();
+    final mfaCode = TextEditingController();
+    final proof = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Zentrales Konto endgültig löschen?'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Das Konto ${user['username']} wird mit allen Organisationszuordnungen gelöscht. Prüfe Identität und Aufbewahrungsregeln vor dieser globalen Aktion.',
+              ),
+              TextField(
+                controller: currentPassword,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Dein aktuelles Passwort',
+                ),
+              ),
+              TextField(
+                controller: mfaCode,
+                decoration: const InputDecoration(
+                  labelText: 'Dein 2-FA-Code (falls eingerichtet)',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, {
+              'currentPassword': currentPassword.text,
+              'mfaCode': mfaCode.text,
+            }),
+            child: const Text('Konto endgültig löschen'),
+          ),
+        ],
+      ),
+    );
+    currentPassword.dispose();
+    mfaCode.dispose();
+    if (proof != null &&
+        await _send('DELETE', '/api/platform/users/${user['id']}', proof))
+      await load();
   }
 
   Future<void> toggleMfaPolicy(Map<String, dynamic> user) async {
@@ -633,8 +782,8 @@ class _UsersPageState extends State<UsersPage> {
                 children: [
                   Text(
                     requireConfirmation
-                        ? 'Der vorhandene Datenbestand wird vollständig ersetzt. Dieser Vorgang kann nur mit einer zuvor exportierten Gesamtdatensicherung rückgängig gemacht werden.'
-                        : 'Die Datei enthält den vollständigen Datenbestand einschließlich Konten und Anmeldedaten. Bewahre sie geschützt auf.',
+                        ? 'Alle gesicherten Daten im Sicherungsbereich werden ersetzt. Für Organisationsadmins umfasst dieser die aktive Einheit und ihre direkt zugehörige Jugend. Plattformadmins ersetzen bei einer Plattformsicherung den gesamten Bestand. Bewahre vorher eine aktuelle Sicherung auf.'
+                        : 'Organisationsadmins sichern die aktive Einheit und ihre direkt zugehörige Jugend. Jugendorganisationen sichern nur sich selbst. Zentrale Konten und gemeinsame Einstellungen sind nur in der Plattformsicherung für Plattformadmins enthalten. Bewahre die Datei geschützt auf.',
                   ),
                   const SizedBox(height: 16),
                   TextField(
@@ -833,7 +982,7 @@ class _UsersPageState extends State<UsersPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Exportiert beziehungsweise importiert alle MaterialKompass-Daten: Inventar, Kleidung, Mängel, Beschaffung, Kalender, Dokumente, Protokolle, Einstellungen sowie Nutzer, Rollen und Passkeys.',
+                'Sichert die Daten der aktiven Einheit einschließlich ihrer direkt zugehörigen Jugend. Eine Jugendorganisation sichert nur ihre eigenen Daten. Bezirk und Bezirksjugend erhalten keine Daten der Ortsgruppen. Nur Plattformadmins sichern den gesamten Plattformbestand einschließlich zentraler Konten und gemeinsamer Einstellungen. Beim Import muss der Sicherungsbereich übereinstimmen.',
               ),
               const SizedBox(height: 12),
               const Text(
@@ -853,14 +1002,14 @@ class _UsersPageState extends State<UsersPage> {
                         ? null
                         : exportCompleteBackup,
                     icon: const Icon(Icons.download),
-                    label: const Text('Alle Daten exportieren'),
+                    label: const Text('Sicherung exportieren'),
                   ),
                   OutlinedButton.icon(
                     onPressed: backupTransferRunning
                         ? null
                         : importCompleteBackup,
                     icon: const Icon(Icons.upload_file),
-                    label: const Text('Alle Daten importieren'),
+                    label: const Text('Sicherung importieren'),
                   ),
                   if (backupTransferRunning) const CircularProgressIndicator(),
                 ],
@@ -1419,13 +1568,28 @@ class _UsersPageState extends State<UsersPage> {
                           ),
                           const SizedBox(width: 12),
                           OutlinedButton.icon(
-                            onPressed: assignExistingUser,
+                            onPressed: organizationUnits.isEmpty
+                                ? null
+                                : assignExistingUser,
                             icon: const Icon(Icons.person_add_alt_1_outlined),
-                            label: const Text('Bestehenden freigeben'),
+                            label: const Text('Bestehendes Konto aufnehmen'),
                           ),
                           const SizedBox(width: 12),
+                          IconButton(
+                            tooltip: 'Offene Einladungen',
+                            onPressed: showInvitations,
+                            icon: const Icon(Icons.mail_outline),
+                          ),
+                          if (isPlatformAdmin)
+                            IconButton(
+                              tooltip: 'Identitätskonflikte',
+                              onPressed: showIdentityConflicts,
+                              icon: const Icon(Icons.person_search_outlined),
+                            ),
                           FilledButton.icon(
-                            onPressed: () => editUser(),
+                            onPressed: organizationUnits.isEmpty
+                                ? null
+                                : () => editUser(),
                             icon: const Icon(Icons.person_add),
                             label: const Text('Nutzer anlegen'),
                           ),
@@ -1438,6 +1602,19 @@ class _UsersPageState extends State<UsersPage> {
                         itemCount: users.length,
                         itemBuilder: (_, index) {
                           final user = users[index];
+                          final manageableIds = organizationUnits
+                              .map((unit) => unit['id'].toString())
+                              .toSet();
+                          final canManageMembership =
+                              (((user['organizationAccess'] as Map?)?['scopes']
+                                          as List?) ??
+                                      const [])
+                                  .cast<Map>()
+                                  .any(
+                                    (scope) => manageableIds.contains(
+                                      scope['unitId'].toString(),
+                                    ),
+                                  );
                           final active = user['active'] == true;
                           final mfa = Map<String, dynamic>.from(
                             user['mfa'] as Map? ?? const {},
@@ -1449,9 +1626,8 @@ class _UsersPageState extends State<UsersPage> {
                           final loginAccess = Map<String, dynamic>.from(
                             user['loginAccess'] as Map? ?? const {},
                           );
-                          final loginAccessLabel = switch (
-                            loginAccess['mode']?.toString()
-                          ) {
+                          final loginAccessLabel = switch (loginAccess['mode']
+                              ?.toString()) {
                             'service_devices' => 'nur Dienstgeräte',
                             'selected_service_devices' =>
                               'ausgewählte Dienstgeräte',
@@ -1475,83 +1651,100 @@ class _UsersPageState extends State<UsersPage> {
                               isThreeLine: true,
                               trailing: Wrap(
                                 children: [
-                                  IconButton(
-                                    tooltip: mfa['required'] == true
-                                        ? 'Starke Anmeldung freiwillig machen'
-                                        : 'Starke Anmeldung verpflichtend machen',
-                                    onPressed: () => toggleMfaPolicy(user),
-                                    icon: Icon(
-                                      mfa['required'] == true
-                                          ? Icons.gpp_good
-                                          : Icons.gpp_maybe,
+                                  if (isPlatformAdmin) ...[
+                                    IconButton(
+                                      tooltip: mfa['required'] == true
+                                          ? 'Starke Anmeldung freiwillig machen'
+                                          : 'Starke Anmeldung verpflichtend machen',
+                                      onPressed: () => toggleMfaPolicy(user),
+                                      icon: Icon(
+                                        mfa['required'] == true
+                                            ? Icons.gpp_good
+                                            : Icons.gpp_maybe,
+                                      ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    tooltip: '2-FA zurücksetzen',
-                                    onPressed: mfa['enabled'] == true
-                                        ? () => resetMfa(user)
-                                        : null,
-                                    icon: const Icon(
-                                      Icons.settings_backup_restore,
+                                    IconButton(
+                                      tooltip: '2-FA zurücksetzen',
+                                      onPressed: mfa['enabled'] == true
+                                          ? () => resetMfa(user)
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.settings_backup_restore,
+                                      ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Alle Passkeys widerrufen',
-                                    onPressed: passkeyCount > 0
-                                        ? () => resetPasskeys(user)
-                                        : null,
-                                    icon: const Icon(Icons.key_off_outlined),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Anmeldecodes verwalten',
-                                    onPressed: active
-                                        ? () => manageQrLogins(user)
-                                        : null,
-                                    icon: const Icon(Icons.qr_code_2),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Passwort-Reset senden',
-                                    onPressed: () => sendPasswordReset(user),
-                                    icon: const Icon(Icons.password),
-                                  ),
-                                  IconButton(
-                                    tooltip:
-                                        'Bestätigungs-E-Mail erneut senden',
-                                    onPressed: verificationCanBeResent(user)
-                                        ? () async {
-                                            if (await _send(
-                                              'POST',
-                                              '/api/users/${user['id']}/verification/resend',
-                                            )) {
-                                              _message(
-                                                'Bestätigungs-E-Mail wurde erneut versendet.',
-                                              );
-                                              await load();
+                                    IconButton(
+                                      tooltip: 'Alle Passkeys widerrufen',
+                                      onPressed: passkeyCount > 0
+                                          ? () => resetPasskeys(user)
+                                          : null,
+                                      icon: const Icon(Icons.key_off_outlined),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Anmeldecodes verwalten',
+                                      onPressed: active
+                                          ? () => manageQrLogins(user)
+                                          : null,
+                                      icon: const Icon(Icons.qr_code_2),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Passwort-Reset senden',
+                                      onPressed: () => sendPasswordReset(user),
+                                      icon: const Icon(Icons.password),
+                                    ),
+                                    IconButton(
+                                      tooltip:
+                                          'Bestätigungs-E-Mail erneut senden',
+                                      onPressed: verificationCanBeResent(user)
+                                          ? () async {
+                                              if (await _send(
+                                                'POST',
+                                                '/api/users/${user['id']}/verification/resend',
+                                              )) {
+                                                _message(
+                                                  'Bestätigungs-E-Mail wurde erneut versendet.',
+                                                );
+                                                await load();
+                                              }
                                             }
-                                          }
-                                        : null,
-                                    icon: const Icon(Icons.mark_email_unread),
-                                  ),
+                                          : null,
+                                      icon: const Icon(Icons.mark_email_unread),
+                                    ),
+                                    IconButton(
+                                      tooltip:
+                                          'E-Mail-Adresse manuell bestätigen',
+                                      onPressed:
+                                          isAdmin &&
+                                              user['emailVerifiedAt'] == null
+                                          ? () => confirmEmailManually(user)
+                                          : null,
+                                      icon: const Icon(Icons.mark_email_read),
+                                    ),
+                                  ],
                                   IconButton(
-                                    tooltip:
-                                        'E-Mail-Adresse manuell bestätigen',
+                                    tooltip: 'Bereichsrechte bearbeiten',
                                     onPressed:
-                                        isAdmin &&
-                                            user['emailVerifiedAt'] == null
-                                        ? () => confirmEmailManually(user)
+                                        canManageMembership || isPlatformAdmin
+                                        ? () => editUser(user)
                                         : null,
-                                    icon: const Icon(Icons.mark_email_read),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Bearbeiten',
-                                    onPressed: () => editUser(user),
                                     icon: const Icon(Icons.edit),
                                   ),
                                   IconButton(
-                                    tooltip: 'Löschen',
-                                    onPressed: () => deleteUser(user),
+                                    tooltip: 'Bereichsrechte entziehen',
+                                    onPressed: canManageMembership
+                                        ? () => deleteUser(user)
+                                        : null,
                                     icon: const Icon(Icons.delete_outline),
                                   ),
+                                  if (isPlatformAdmin)
+                                    IconButton(
+                                      tooltip:
+                                          'Zentrales Konto endgültig löschen',
+                                      onPressed: () =>
+                                          deleteGlobalAccount(user),
+                                      icon: const Icon(
+                                        Icons.person_remove_outlined,
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),
@@ -1673,6 +1866,7 @@ class _UsersPageState extends State<UsersPage> {
                     token: widget.token,
                     users: users,
                     departments: departments,
+                    canManagePersonalCredentials: isPlatformAdmin,
                   ),
                 if (isAdmin) backupTab(),
               ],
@@ -2394,6 +2588,7 @@ class UserDialog extends StatefulWidget {
   final List<Map<String, dynamic>> mailTemplates;
   final List<Map<String, dynamic>> serviceDevices;
   final bool membershipAssignment;
+  final bool canManageAccount;
   const UserDialog({
     required this.user,
     required this.roles,
@@ -2403,6 +2598,7 @@ class UserDialog extends StatefulWidget {
     this.mailTemplates = const [],
     this.serviceDevices = const [],
     this.membershipAssignment = false,
+    this.canManageAccount = false,
     super.key,
   });
   @override
@@ -2425,6 +2621,7 @@ class _UserDialogState extends State<UserDialog> {
   String mailFormat = 'markdown';
   String mailPlacement = 'before-action';
   String? selectedTemplateId;
+  String membershipMode = 'direct';
   late bool active = widget.user?['active'] != false;
   late bool mfaRequired = ((widget.user?['mfa'] as Map?)?['required'] == true);
   late String loginAccessMode =
@@ -2441,6 +2638,20 @@ class _UserDialogState extends State<UserDialog> {
 
   bool get createsAccount =>
       widget.user == null && !widget.membershipAssignment;
+  bool get globalAccountOnly =>
+      widget.user != null && widget.canManageAccount && accessScopes.isEmpty;
+
+  bool get hasLoginAccessChange {
+    final previous = widget.user?['loginAccess'] as Map?;
+    final previousMode = previous?['mode']?.toString() ?? 'all_clients';
+    final previousIds =
+        ((previous?['allowedServiceDeviceIds'] as List?) ?? const [])
+            .map((entry) => entry.toString())
+            .toSet();
+    return loginAccessMode != previousMode ||
+        allowedServiceDeviceIds.length != previousIds.length ||
+        allowedServiceDeviceIds.any((id) => !previousIds.contains(id));
+  }
 
   @override
   void initState() {
@@ -2449,7 +2660,13 @@ class _UserDialogState extends State<UserDialog> {
       widget.user?['organizationAccess'] as Map? ?? const {},
     );
     final rawScopes = (access['scopes'] as List? ?? const []).cast<Map>();
+    final manageableUnitIds = widget.organizationUnits
+        .map((unit) => unit['id'].toString())
+        .toSet();
     accessScopes = rawScopes
+        .where(
+          (scope) => manageableUnitIds.contains(scope['unitId'].toString()),
+        )
         .map(
           (scope) => _AccessScopeDraft(
             unitId: scope['unitId'].toString(),
@@ -2462,10 +2679,12 @@ class _UserDialogState extends State<UserDialog> {
           ),
         )
         .toList();
-    if (accessScopes.isEmpty && widget.organizationUnits.isNotEmpty) {
-      final initialUnitId =
-          widget.currentUnitId ??
-          widget.organizationUnits.first['id'].toString();
+    if (widget.user == null &&
+        accessScopes.isEmpty &&
+        widget.organizationUnits.isNotEmpty) {
+      final initialUnitId = manageableUnitIds.contains(widget.currentUnitId)
+          ? widget.currentUnitId!
+          : widget.organizationUnits.first['id'].toString();
       accessScopes.add(
         _AccessScopeDraft(
           unitId: initialUnitId,
@@ -2478,9 +2697,10 @@ class _UserDialogState extends State<UserDialog> {
         ),
       );
     }
-    defaultUnitId =
-        access['defaultUnitId']?.toString() ??
-        (accessScopes.isEmpty ? null : accessScopes.first.unitId);
+    final previousDefault = access['defaultUnitId']?.toString();
+    defaultUnitId = accessScopes.any((scope) => scope.unitId == previousDefault)
+        ? previousDefault
+        : (accessScopes.isEmpty ? null : accessScopes.first.unitId);
   }
 
   List<Map<String, dynamic>> get availableTemplates => widget.mailTemplates
@@ -2510,9 +2730,11 @@ class _UserDialogState extends State<UserDialog> {
     final allowed = _rolesForUnit(scope.unitId).toSet();
     scope.roles.removeWhere((role) => !allowed.contains(role));
     if (scope.roles.isEmpty) {
-      scope.roles.add(_unit(scope.unitId)?['unitKind'] == 'youth'
-          ? 'Jugendmitglied'
-          : 'Nutzer');
+      scope.roles.add(
+        _unit(scope.unitId)?['unitKind'] == 'youth'
+            ? 'Jugendmitglied'
+            : 'Nutzer',
+      );
     }
   }
 
@@ -2546,10 +2768,10 @@ class _UserDialogState extends State<UserDialog> {
   Widget build(BuildContext context) => AlertDialog(
     title: Text(
       widget.membershipAssignment
-          ? 'Bestehenden Nutzer freigeben'
+          ? 'Bestehendes Konto aufnehmen'
           : widget.user == null
           ? 'Nutzer anlegen'
-          : 'Nutzer bearbeiten',
+          : 'Bereichsrechte bearbeiten',
     ),
     content: SizedBox(
       width: 720,
@@ -2557,26 +2779,51 @@ class _UserDialogState extends State<UserDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (widget.membershipAssignment)
+            if (widget.membershipAssignment) ...[
+              DropdownButtonFormField<String>(
+                initialValue: membershipMode,
+                decoration: const InputDecoration(labelText: 'Aufnahmeart'),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'direct',
+                    child: Text('Direkt freigeben'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'invitation',
+                    child: Text('Einladung mit Zustimmung'),
+                  ),
+                ],
+                onChanged: (value) =>
+                    setState(() => membershipMode = value ?? 'direct'),
+              ),
               TextField(
                 controller: identifier,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Nutzername oder E-Mail-Adresse *',
+                decoration: InputDecoration(
+                  labelText: membershipMode == 'invitation'
+                      ? 'Genaue E-Mail-Adresse *'
+                      : 'Genauer Nutzername oder E-Mail-Adresse *',
                   helperText:
                       'Das Konto muss bereits in MaterialKompass vorhanden sein.',
                 ),
-              )
-            else ...[
+              ),
+            ] else ...[
+              if (!createsAccount && !widget.canManageAccount)
+                const Text(
+                  'Das Konto besteht systemweit einmal. Kontodaten und Anmeldesicherheit verwalten die Person selbst oder die Plattformadministration.',
+                ),
               TextField(
+                readOnly: !createsAccount && !widget.canManageAccount,
                 controller: name,
                 decoration: const InputDecoration(labelText: 'Name'),
               ),
               TextField(
+                readOnly: !createsAccount && !widget.canManageAccount,
                 controller: username,
                 decoration: const InputDecoration(labelText: 'Nutzername *'),
               ),
               TextField(
+                readOnly: !createsAccount && !widget.canManageAccount,
                 controller: email,
                 decoration: const InputDecoration(labelText: 'E-Mail *'),
               ),
@@ -2672,7 +2919,9 @@ class _UserDialogState extends State<UserDialog> {
                 ],
               ),
             ],
-            if (widget.user != null && !widget.membershipAssignment)
+            if (widget.user != null &&
+                widget.canManageAccount &&
+                !widget.membershipAssignment)
               TextField(
                 controller: password,
                 obscureText: true,
@@ -2872,7 +3121,8 @@ class _UserDialogState extends State<UserDialog> {
                 label: const Text('Weitere Ebene freigeben'),
               ),
             ),
-            if (!widget.membershipAssignment) ...[
+            if (!widget.membershipAssignment &&
+                (createsAccount || widget.canManageAccount)) ...[
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 key: ValueKey(loginAccessMode),
@@ -2969,10 +3219,11 @@ class _UserDialogState extends State<UserDialog> {
       FilledButton(
         onPressed: () {
           final unitIds = accessScopes.map((scope) => scope.unitId).toList();
-          if (accessScopes.isEmpty ||
+          if ((accessScopes.isEmpty && !globalAccountOnly) ||
               unitIds.toSet().length != unitIds.length ||
               accessScopes.any((scope) => scope.roles.isEmpty) ||
-              (loginAccessMode == 'selected_service_devices' &&
+              ((createsAccount || widget.canManageAccount) &&
+                  loginAccessMode == 'selected_service_devices' &&
                   allowedServiceDeviceIds.isEmpty)) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -2997,26 +3248,29 @@ class _UserDialogState extends State<UserDialog> {
               )
               .toList();
           final result = <String, dynamic>{
-            'scopes': scopePayload,
-            'defaultUnitId': defaultUnitId,
+            if (!globalAccountOnly) 'scopes': scopePayload,
+            if (!globalAccountOnly) 'defaultUnitId': defaultUnitId,
           };
           if (widget.membershipAssignment) {
             if (identifier.text.trim().isEmpty) return;
             result['identifier'] = identifier.text.trim();
+            result['mode'] = membershipMode;
             Navigator.pop(context, result);
             return;
           }
-          result.addAll({
-            'name': name.text,
-            'username': username.text,
-            'email': email.text,
-            'active': active,
-            'mfaRequired': mfaRequired,
-            'loginAccess': {
-              'mode': loginAccessMode,
-              'allowedServiceDeviceIds': allowedServiceDeviceIds.toList(),
-            },
-          });
+          if (createsAccount || widget.canManageAccount)
+            result.addAll({
+              'name': name.text,
+              'username': username.text,
+              'email': email.text,
+              'active': active,
+              'mfaRequired': mfaRequired,
+              if (createsAccount || hasLoginAccessChange)
+                'loginAccess': {
+                  'mode': loginAccessMode,
+                  'allowedServiceDeviceIds': allowedServiceDeviceIds.toList(),
+                },
+            });
           if (password.text.isNotEmpty) {
             result['password'] = password.text;
           }

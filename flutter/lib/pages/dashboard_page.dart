@@ -22,6 +22,7 @@ import 'defects_page.dart' as defects_page;
 import 'login_page.dart';
 import 'inventory_page.dart' as inventory_page;
 import 'knowledge_base_page.dart' as knowledge_base_page;
+import 'label_templates_page.dart' as label_templates_page;
 import 'locations_page.dart' as locations_page;
 import 'organizations_page.dart' as organizations_page;
 import 'procurement_page.dart' as procurement_page;
@@ -925,6 +926,15 @@ class _DashboardPageState extends State<DashboardPage>
                   })
                   .toList();
               final actions = <_DashboardAction>[
+                if (can('inventory.read') || can('clothing.read'))
+                  _DashboardAction(
+                    icon: Icons.label_outline,
+                    label: 'Etikettenvorlagen',
+                    description: 'Herstellervorlagen und Freigaben verwalten',
+                    onTap: () => _loadAndOpen(
+                      () => label_templates_page.LabelTemplatesPage(token: _token),
+                    ),
+                  ),
                 _DashboardAction(
                   icon: Icons.menu_book_outlined,
                   label: 'Handbuch',

@@ -3,6 +3,34 @@ const assert = require('node:assert/strict');
 
 const { createUserStore, sqlDateTime } = require('../src/db/user-store');
 
+test('serialized identity claims reject parallel duplicates and release only after successful rename', async () => {
+  const store = createUserStore({ createPool: () => ({ async query() {}, async end() {} }) });
+  const user = { id: 'one', name: 'One', username: 'first', email: 'first@example.org',
+    passwordHash: 'hash', roles: [], permissions: [], active: true, createdAt: '2026-11-10T00:00:00.000Z' };
+  const results = await Promise.allSettled([
+    store.saveUser(user),
+    store.saveUser({ ...user, id: 'two', username: 'second', email: ' FIRST@EXAMPLE.ORG ' }),
+  ]);
+  assert.equal(results[0].status, 'fulfilled');
+  assert.equal(results[1].status, 'rejected');
+  assert.equal(results[1].reason.code, 'IDENTITY_CONFLICT');
+  await store.saveUser({ ...user, username: 'renamed', email: 'renamed@example.org' });
+  await store.saveUser({ ...user, id: 'two' });
+  await assert.rejects(store.saveUser({ ...user, id: 'three', username: 'renamed@example.org', email: 'third@example.org' }), { code: 'IDENTITY_CONFLICT' });
+  await store.close();
+});
+
+test('an uncertain failed identity save keeps its reservation until reload', async () => {
+  let fail = true;
+  const store = createUserStore({ createPool: () => ({ async query() { if (fail) throw new Error('dummy storage failure'); }, async end() {} }) });
+  const user = { id: 'one', username: 'uncertain', email: 'uncertain@example.org', roles: [], permissions: [], active: true };
+  await assert.rejects(store.saveUser(user), /dummy storage failure/);
+  fail = false;
+  await assert.rejects(store.saveUser({ ...user, id: 'two' }), { code: 'IDENTITY_CONFLICT' });
+  await store.saveUser(user);
+  await store.close();
+});
+
 test('sqlDateTime converts ISO timestamps to MariaDB DATETIME values', () => {
   assert.equal(sqlDateTime('2026-01-01T00:00:00.000Z'), '2026-01-01 00:00:00');
   assert.equal(sqlDateTime(null), null);

@@ -35,7 +35,7 @@ if ($IdentityFile) {
     $sshOptions += @('-o', 'IdentitiesOnly=yes', '-i', (Resolve-Path -LiteralPath $IdentityFile).Path)
 }
 $target = "$SshUser@$Server"
-$remoteFile = "$RemotePath/.deployments/public-messages.json"
+$remoteFile = "$RemotePath/.deployments/public-runtime/public-messages.json"
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) "materialkompass-message-$PID-$([guid]::NewGuid().ToString('N'))"
 [IO.Directory]::CreateDirectory($temporaryDirectory) | Out-Null
 try {

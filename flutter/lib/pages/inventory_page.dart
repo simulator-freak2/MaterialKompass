@@ -532,7 +532,7 @@ class _InventoryPageState extends State<InventoryPage> {
   AuthenticatedApiClient get api => AuthenticatedApiClient(widget.token);
   bool can(String value) => permissions.contains(value);
   bool get canPrintLabels =>
-      LabelPrintService.instance.supported && userMayPrintLabels(roles);
+      userMayPrintLabels(roles);
 
   @override
   void initState() {
@@ -747,9 +747,9 @@ class _InventoryPageState extends State<InventoryPage> {
   Future<void> _printItems(List<Map<String, dynamic>> source) async {
     await showLabelPrintDialog(
       context,
+      token: widget.token,
       labels: source
           .map((item) => LabelData.fromItem(item, LabelType.inventory))
-          .where((label) => label.inventoryNumber.isNotEmpty)
           .toList(),
       type: LabelType.inventory,
     );

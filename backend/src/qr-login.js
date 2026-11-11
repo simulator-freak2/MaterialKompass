@@ -1,3 +1,4 @@
+const { requirePlatformAccountAdmin } = require('./account-authority');
 const crypto = require('node:crypto');
 const { currentTenant, runWithTenant } = require('./tenancy');
 
@@ -188,7 +189,7 @@ function registerQrLoginRoutes({
   app.get(
     '/api/users/:id/qr-credentials',
     authMiddleware,
-    requirePermission('users.write'),
+    requirePlatformAccountAdmin,
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
       if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
@@ -201,7 +202,7 @@ function registerQrLoginRoutes({
   app.post(
     '/api/users/:id/qr-credential',
     authMiddleware,
-    requirePermission('users.write'),
+    requirePlatformAccountAdmin,
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
       if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
@@ -223,7 +224,7 @@ function registerQrLoginRoutes({
   app.delete(
     '/api/users/:id/qr-credentials/:credentialId',
     authMiddleware,
-    requirePermission('users.write'),
+    requirePlatformAccountAdmin,
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
       if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
