@@ -2,9 +2,7 @@
 
 ## [1.7.1] - 2026-11-11
 
--Überarbeitung der Nutzerverwaltung
-
-## [1.6.3] - 2026-11-06
+-Überarbeitung der Nutzerverwaltung## [1.6.3] - 2026-11-06
 
 - Überarbeitung 2 FA
 - Updater in die Installierten Apps eingebaut

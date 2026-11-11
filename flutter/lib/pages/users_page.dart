@@ -301,8 +301,9 @@ class _UsersPageState extends State<UsersPage> {
       ),
     );
     if (selected != null &&
-        await _send('DELETE', '/api/users/invitations/$selected'))
+        await _send('DELETE', '/api/users/invitations/$selected')) {
       _message('Die Einladung wurde widerrufen.');
+    }
   }
 
   Future<void> sendPasswordReset(Map<String, dynamic> user) async {
@@ -464,8 +465,9 @@ class _UsersPageState extends State<UsersPage> {
     currentPassword.dispose();
     mfaCode.dispose();
     if (proof != null &&
-        await _send('DELETE', '/api/platform/users/${user['id']}', proof))
+        await _send('DELETE', '/api/platform/users/${user['id']}', proof)) {
       await load();
+    }
   }
 
   Future<void> toggleMfaPolicy(Map<String, dynamic> user) async {
@@ -3258,7 +3260,7 @@ class _UserDialogState extends State<UserDialog> {
             Navigator.pop(context, result);
             return;
           }
-          if (createsAccount || widget.canManageAccount)
+          if (createsAccount || widget.canManageAccount) {
             result.addAll({
               'name': name.text,
               'username': username.text,
@@ -3271,6 +3273,7 @@ class _UserDialogState extends State<UserDialog> {
                   'allowedServiceDeviceIds': allowedServiceDeviceIds.toList(),
                 },
             });
+          }
           if (password.text.isNotEmpty) {
             result['password'] = password.text;
           }

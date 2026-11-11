@@ -32,7 +32,7 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
         '/api/auth/membership-invitation',
         queryParameters: {'token': widget.token},
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           if (response.statusCode == 200) {
             invitation = response.object;
@@ -43,6 +43,7 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
                 'Die Einladung konnte nicht geladen werden.';
           }
         });
+      }
     } on ApiException catch (error) {
       if (mounted) setState(() => message = error.message);
     } finally {
@@ -57,7 +58,7 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
         '/api/auth/membership-invitation/confirm',
         body: {'token': widget.token, 'accept': accept},
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           invitationCompleted =
               response.statusCode >= 200 && response.statusCode < 300;
@@ -66,6 +67,7 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
                       'Die Einladung konnte nicht verarbeitet werden.')
                   .toString();
         });
+      }
     } on ApiException catch (error) {
       if (mounted) setState(() => message = error.message);
     } finally {
