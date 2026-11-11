@@ -21,6 +21,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'remote-package-install.ps1')
+. (Join-Path $PSScriptRoot 'release-validation.ps1')
 
 function Invoke-Checked {
     param(
@@ -40,7 +42,10 @@ function New-ServerBundle {
     $requiredPaths = @(
         'backend/package.json', 'backend/package-lock.json', 'backend/Dockerfile',
         'mailbox-provisioner/Dockerfile', 'mailbox-provisioner/server.js',
-        'ops/install-package.sh',
+        'ops/install-package.sh', 'ops/run-package-install.sh',
+        'ops/run-asset-publication.sh',
+        'ops/remote-package-install.ps1',
+        'ops/release-validation.ps1',
         'ops/apply-package-migrations.sh', 'ops/backup-mariadb.sh',
         'ops/publish-assets.sh', 'ops/sync-public-web.sh',
         'compose.yaml', 'CHANGELOG.md'
@@ -114,10 +119,18 @@ Write-Host "Temporaerer Updateordner: $updateTempRoot"
 $sshOptions = @(
     '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', "UserKnownHostsFile=$knownHosts",
-    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3'
+    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
+    '-o', 'ConnectTimeout=10'
 )
 if ($resolvedIdentity) { $sshOptions += @('-o', 'IdentitiesOnly=yes', '-i', $resolvedIdentity) }
 $target = "$SshUser@$Server"
+if ($UploadWeb) {
+    $webRelease = Join-Path $repositoryRoot 'releases/MaterialKompass-Web.zip'
+    if (-not (Test-Path -LiteralPath $webRelease -PathType Leaf)) {
+        throw 'releases/MaterialKompass-Web.zip fehlt.'
+    }
+    Assert-WebReleaseVersion -ArchivePath $webRelease -ExpectedVersion $Version
+}
 
 if ($DryRun) {
     Write-Host 'SICHERHEITSVORSCHAU - es werden keine Aenderungen ausgefuehrt.'
@@ -154,6 +167,8 @@ $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) "materialkompass-depl
 $stageName = "upload-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())-$PID"
 $stagePath = "$RemotePath/.deployments/uploads/$stageName"
 $stageCreated = $false
+$installationMayBeRunning = $false
+$runPath = "$RemotePath/.deployments/runs/$stageName"
 
 Push-Location $repositoryRoot
 try {
@@ -178,6 +193,7 @@ try {
         New-ServerBundle -RepositoryRoot $repositoryRoot -Destination $serverBundle
         $files.Add($serverBundle)
         $files.Add((Join-Path $repositoryRoot 'ops/install-package.sh'))
+        $files.Add((Join-Path $repositoryRoot 'ops/run-package-install.sh'))
     }
     if ($UploadWeb) {
         $webArchive = Join-Path $repositoryRoot 'releases/MaterialKompass-Web.zip'
@@ -207,6 +223,9 @@ try {
         }
     }
 
+    if ($UploadWeb -or $UploadReleases) {
+        $files.Add((Join-Path $repositoryRoot 'ops/run-asset-publication.sh'))
+    }
     Write-Host "[5/7] Geschuetztes Uploadverzeichnis wird auf $target erstellt."
     Invoke-Checked ssh ($sshOptions + @($target,
         "mkdir -p '$RemotePath/.deployments/uploads' && mkdir '$stagePath' && chmod 700 '$stagePath'"))
@@ -227,18 +246,33 @@ try {
 
     if ($DeployBackend) {
         Write-Host '[7/7] Serverbackup, Paketinstallation, Migrationen und Gesundheitspruefung starten.'
-        $deployCommand = "sh '$stagePath/install-package.sh' '$stagePath/MaterialKompass-Server.tar.gz' '$Version' '$RemotePath'"
-        Invoke-Checked ssh ($sshOptions + @($target, $deployCommand))
+        $deployCommand = "mkdir -p '$RemotePath/.deployments/runs' && chmod 700 '$RemotePath/.deployments/runs' && nohup sh '$stagePath/run-package-install.sh' '$stagePath' '$Version' '$RemotePath' </dev/null >/dev/null 2>&1 &"
+        # A lost SSH acknowledgement must never lead to a second installation
+        # or deletion of files a detached installer could still be using.
+        $installationMayBeRunning = $true
+        & ssh @sshOptions $target $deployCommand
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Startbestaetigung fehlt. Der bestehende Installationslauf wird geprueft.'
+        }
+        Wait-RemotePackageInstall -SshOptions $sshOptions -Target $target -RunPath $runPath
+        $installationMayBeRunning = $false
         Invoke-Checked ssh ($sshOptions + @($target,
-            "rm -f -- '$stagePath/MaterialKompass-Server.tar.gz' '$stagePath/install-package.sh'"))
+            "rm -f -- '$stagePath/MaterialKompass-Server.tar.gz' '$stagePath/install-package.sh' '$stagePath/run-package-install.sh'"))
     }
 
     if ($UploadWeb -or $UploadReleases) {
         Write-Host 'Web- und/oder Clientdateien werden atomar veroeffentlicht.'
         $uploadWebFlag = if ($UploadWeb.IsPresent) { '1' } else { '0' }
         $uploadReleasesFlag = if ($UploadReleases.IsPresent) { '1' } else { '0' }
-        $publish = "cd '$RemotePath' && sh ops/publish-assets.sh '$stagePath' '$Version' '$uploadWebFlag' '$uploadReleasesFlag'"
-        Invoke-Checked ssh ($sshOptions + @($target, $publish))
+        $runPath = "$RemotePath/.deployments/runs/$stageName-assets"
+        $publish = "mkdir -p '$RemotePath/.deployments/runs' && chmod 700 '$RemotePath/.deployments/runs' && nohup sh '$stagePath/run-asset-publication.sh' '$stagePath' '$Version' '$RemotePath' '$uploadWebFlag' '$uploadReleasesFlag' </dev/null >/dev/null 2>&1 &"
+        $installationMayBeRunning = $true
+        & ssh @sshOptions $target $publish
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Startbestaetigung fehlt. Der bestehende Veroeffentlichungslauf wird geprueft.'
+        }
+        Wait-RemotePackageInstall -SshOptions $sshOptions -Target $target -RunPath $runPath
+        $installationMayBeRunning = $false
         $stageCreated = $false
     }
     else {
@@ -250,7 +284,10 @@ try {
 }
 catch {
     Write-Host "Deployment fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Red
-    if ($stageCreated) {
+    if ($installationMayBeRunning) {
+        Write-Host "Upload und Serverprotokoll bleiben zur Wiederaufnahme erhalten: $runPath/install.log"
+    }
+    elseif ($stageCreated) {
         & ssh @sshOptions $target "rm -rf -- '$stagePath'" 2>$null
     }
     throw

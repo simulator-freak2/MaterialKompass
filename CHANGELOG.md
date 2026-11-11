@@ -20,9 +20,7 @@
 
 - Überarbeitung 2 FA## [1.6.0] - 2026-10-23
 
-- Überarbeitung 2 FA
-
-## [1.5.10] - 2026-10-23
+- Überarbeitung 2 FA## [1.5.10] - 2026-10-23
 
 - Einschränkung der Anmeldemöglichkeiten## [1.5.7] - 2026-10-20
 

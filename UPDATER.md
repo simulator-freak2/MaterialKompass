@@ -19,6 +19,8 @@ Verbindung wird der fest gespeicherte SSH-Hostschlüssel geprüft.
 - lokale Prüf-Builds oder Start des GitHub-Actions-Workflows
 - optionales Committen und direktes Pushen lokaler Änderungen aus dem Updater
 - direkter, SHA-256-geprüfter Serverupload ohne Git-Push oder Git-Abruf
+- vom SSH-Kanal unabhängige Paketinstallation mit erneuter Statusabfrage nach
+  Verbindungsabbrüchen; Erfolg wird erst nach dem Exit-Code des Installers gemeldet
 - verpflichtende Anmeldung vor jedem echten Deployment; zugelassen sind ausschließlich
   Plattformadministratoren, die als Admin die Berechtigung `organizations.write`
   besitzen und damit auch neue Organisationen anlegen dürfen
@@ -54,6 +56,22 @@ Das Protokoll wird im unteren Bereich des Fensters live angezeigt. Über
 **Logdatei öffnen** gelangt man zur vollständigen Sitzungsdatei unter
 `%LOCALAPPDATA%\MaterialKompass\Updater\logs`. Fehlermeldungen zeigen diesen Pfad
 ebenfalls an, damit auch lange Ausgaben vollständig erhalten bleiben.
+
+Während der Backendinstallation und beim Veröffentlichen von Web- und Clientdateien
+läuft der Serverprozess unabhängig von der
+SSH-Verbindung weiter. Der Updater verbindet sich bei kurzen Unterbrechungen erneut
+und liest den Status desselben Laufs; die Installation wird dabei nicht erneut
+gestartet. Serverprotokoll und Exit-Code bleiben unter
+`/opt/materialkompass/.deployments/runs/upload-…/` erhalten (bei abweichendem
+Serververzeichnis entsprechend dort). Bei unbekanntem Ausgang oder Zeitüberschreitung
+bleiben auch die hochgeladenen Dateien erhalten. Vor einem erneuten Update zuerst
+`install.log`, `exit-code` und den Containerstatus prüfen. Eine abgebrochene
+Statusverbindung allein bedeutet nicht, dass die Installation fehlgeschlagen ist.
+Veröffentlichungen besitzen einen eigenen Lauf mit der Endung `-assets`. Auch der
+Neustart des Backends zur Übernahme der Clientversionen beendet diesen Lauf nicht.
+Vor dem Upload muss `version.json` im Web-ZIP zur ausgewählten Releaseversion
+passen. Veraltete Webpakete werden auch in der Vorschau abgelehnt. In diesem Fall
+zuerst **Apps bauen** ausführen oder die passenden GitHub-Artefakte herunterladen.
 
 ## SSH-Schlüssel erstmalig erstellen
 
