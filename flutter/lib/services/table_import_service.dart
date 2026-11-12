@@ -73,8 +73,9 @@ Future<Map<String, dynamic>?> importTable({
       Uri.parse('$apiBaseUrl/api/storage-hierarchy'),
       headers: headers,
     );
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw Exception('Lagerorte konnten nicht geladen werden.');
+    }
     final hierarchy = jsonDecode(response.body) as Map<String, dynamic>;
     final locations = (hierarchy['locations'] as List)
         .cast<Map<String, dynamic>>();

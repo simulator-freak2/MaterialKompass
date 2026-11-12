@@ -1286,6 +1286,7 @@ function createApp(options = {}) {
     return String(value || '')
       .trim()
       .toLowerCase()
+      .replace(/ß/g, 'ss')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]/g, '');

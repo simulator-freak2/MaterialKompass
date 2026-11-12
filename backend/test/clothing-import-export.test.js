@@ -105,3 +105,32 @@ for (const format of ['xlsx', 'ods']) {
     }
   });
 }
+
+
+for (const format of ['xlsx', 'ods']) {
+  test('reimports an unchanged wardrobe export with category and Größe (' + format + ')', async () => {
+    const { server, baseUrl } = await startServer();
+    try {
+      const token = await login(baseUrl);
+      const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+      const original = await fetch(baseUrl + '/api/clothing', { headers }).then(r => r.json());
+      const exported = await fetch(baseUrl + '/api/clothing/export?format=' + format, { headers }).then(r => r.json());
+      for (const item of original) {
+        const response = await fetch(baseUrl + '/api/clothing/' + item.id, { method: 'DELETE', headers });
+        assert.ok(response.ok);
+      }
+      const response = await fetch(baseUrl + '/api/clothing/import', { method: 'POST', headers, body: JSON.stringify(exported) });
+      assert.equal(response.status, 200);
+      const result = await response.json();
+      assert.equal(result.imported, original.length);
+      assert.deepEqual(result.skippedRows, []);
+      const restored = await fetch(baseUrl + '/api/clothing', { headers }).then(r => r.json());
+      for (const item of original) {
+        const copy = restored.find(entry => entry.inventoryNumber === item.inventoryNumber);
+        assert.ok(copy); assert.notEqual(copy.id, item.id);
+        assert.equal(copy.categoryId, item.categoryId);
+        assert.equal(copy.size, item.size);
+      }
+    } finally { server.close(); }
+  });
+}

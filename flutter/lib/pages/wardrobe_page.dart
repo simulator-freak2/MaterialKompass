@@ -386,6 +386,7 @@ class _WardrobePageState extends State<WardrobePage> {
     );
     if (file == null) return;
     final bytes = await file.readAsBytes();
+    if (!mounted) return;
 
     setState(() => _isTransferringTable = true);
     try {
