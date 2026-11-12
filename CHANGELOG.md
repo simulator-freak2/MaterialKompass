@@ -1,5 +1,9 @@
 # Aenderungsprotokoll
 
+## [1.7.6] - 2026-11-12
+
+-Update
+
 ## [1.7.5] - 2026-11-12
 
 -Update

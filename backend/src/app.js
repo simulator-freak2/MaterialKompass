@@ -1,3 +1,4 @@
+const { activeItems, planImport } = require('./table-import');
 const { PLATFORM_ORGANIZATION_ID, administrationRouteAllowed } = require('./platform-administration');
 const express = require('express');
 const cors = require('cors');
@@ -21,7 +22,7 @@ const {
   registerProcurementEmailRoutes,
 } = require('./procurement-email-ingestion');
 const {
-  inventoryNumberInUse, nextInventoryNumber, reservesInventoryNumber,
+  inventoryNumberInUse, nextInventoryNumber,
 } = require('./inventory-number');
 const { registerUserRoutes, publicUser } = require('./user-management');
 const { registerDefectManagement } = require('./defects');
@@ -732,6 +733,8 @@ function createApp(options = {}) {
         }
         tenant.permissions = ['dashboard.read', 'users.read', 'users.write', 'roles.read', 'organizations.write'];
       }
+      const storageCounterpart = youthCounterpartUnitId(organizationUnits, tenant.organizationId, tenant.unitId);
+      tenant.storageUnitIds = new Set([...tenant.allowedUnitIds, ...(storageCounterpart ? [storageCounterpart] : [])]);
       req.identity = identity;
       req.tenant = tenant;
       req.user = sessionUser(identity, tenant);
@@ -1839,7 +1842,8 @@ function createApp(options = {}) {
     }));
   });
 
-  const stocktakeReferences = (field, id) => stocktakes.some((stocktake) => {
+  const stocktakeReferences = (field, id) => rawCollection(stocktakes).some((stocktake) => {
+    if (stocktake.organizationId !== currentTenant()?.organizationId) return false;
     if (stocktake.status === 'Abgeschlossen') return false;
     const scopeField = field === 'locationId' ? 'locationIds' : 'stockStructureIds';
     if ((stocktake.scope?.[scopeField] || []).includes(id)) return true;
@@ -1865,7 +1869,7 @@ function createApp(options = {}) {
   };
 
   const positionIsReferenced = (id) => (
-    [...materials, ...clothingItems].filter((entry) => !entry.archived)
+    [...rawCollection(materials), ...rawCollection(clothingItems)].filter((entry) => entry.organizationId === currentTenant()?.organizationId && !entry.archived)
       .some((entry) => entry.stockStructureId === id || entry.storagePositionId === id)
     || stocktakeReferences('stockStructureId', id)
   );
@@ -1917,6 +1921,12 @@ function createApp(options = {}) {
   const publicStorageEntry = (req, entry) => ({
     ...entry,
     readOnly: entry.unitId !== req.tenant.unitId,
+    canUseForBooking: entry.unitId === req.tenant.unitId || organizationUnits.some((unit) =>
+      unit.id === req.tenant.unitId && unit.organizationId === req.tenant.organizationId
+      && unit.unitKind === 'youth' && unit.baseUnitId === entry.unitId),
+    canAddChildren: entry.unitId === req.tenant.unitId || organizationUnits.some((unit) =>
+      unit.id === req.tenant.unitId && unit.organizationId === req.tenant.organizationId
+      && unit.unitKind === 'youth' && unit.baseUnitId === entry.unitId),
     sourceUnitName: organizationUnits.find((unit) => unit.id === entry.unitId
       && unit.organizationId === entry.organizationId)?.name || null,
   });
@@ -1944,7 +1954,7 @@ function createApp(options = {}) {
       || entry.code.toLowerCase() === input.code.toLowerCase())) {
       return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
     }
-    const location = { id: nextId('loc', locations), ...input };
+    const location = { id: nextId('loc', rawCollection(locations)), ...input };
     locations.push(location);
     refreshStoragePaths(appData);
     logEvent('create', 'Location', { id: location.id }, req.user.username);
@@ -1983,6 +1993,7 @@ function createApp(options = {}) {
 
   app.put('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const location = locations.find((entry) => entry.id === req.params.id);
+    if (location && location.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!location) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
     if (location.vehicleId) {
       return res.status(409).json({ error: 'Fahrzeug-Lagerorte werden in der Fahrzeugverwaltung gepflegt.' });
@@ -2007,7 +2018,11 @@ function createApp(options = {}) {
 
   app.delete('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = locations.findIndex((entry) => entry.id === req.params.id);
+    if (index >= 0 && locations[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
+    if ([...shelves, ...storageLevels, ...stockStructures].some((entry) => (entry.locationId === req.params.id) && entry.unitId !== req.tenant.unitId)) {
+      return res.status(409).json({ error: 'Die Struktur enthält Lagerorte einer anderen Gliederung. Diese müssen zuerst umgelagert werden.' });
+    }
     if (locations[index].vehicleId) {
       return res.status(409).json({ error: 'Fahrzeug-Lagerorte können nicht separat gelöscht werden.' });
     }
@@ -2018,7 +2033,7 @@ function createApp(options = {}) {
     const nestedStockIds = new Set(stockStructures
       .filter((entry) => entry.locationId === req.params.id)
       .map((entry) => entry.id));
-    const inventoryReferences = [...materials, ...clothingItems].filter((entry) => !entry.archived)
+    const inventoryReferences = [...rawCollection(materials), ...rawCollection(clothingItems)].filter((entry) => entry.organizationId === req.tenant.organizationId && !entry.archived)
       .some((entry) => entry.locationId === req.params.id || nestedStockIds.has(entry.stockStructureId || entry.storagePositionId));
     const stocktakeUsesLocation = stocktakeReferences('locationId', req.params.id)
       || [...nestedStockIds].some((id) => stocktakeReferences('stockStructureId', id));
@@ -2047,7 +2062,7 @@ function createApp(options = {}) {
 
   app.post('/api/shelves', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const locationId = String(req.body.locationId || '').trim();
-    if (!locations.some((entry) => entry.id === locationId)) {
+    if (!locations.some((entry) => entry.id === locationId && publicStorageEntry(req, entry).canAddChildren)) {
       return res.status(400).json({ error: 'Ein gültiges Gebäude ist erforderlich.' });
     }
     const input = parseStorageInput(res, () => hierarchyNodeInput(req.body));
@@ -2055,7 +2070,7 @@ function createApp(options = {}) {
     if (duplicateInScope(shelves, input, { parentKey: 'locationId', parentId: locationId })) {
       return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Gebäude bereits vorhanden.' });
     }
-    const shelf = { id: nextId('shelf', shelves), locationId, ...input };
+    const shelf = { id: nextId('shelf', rawCollection(shelves)), locationId, ...input };
     shelves.push(shelf);
     refreshStoragePaths(appData);
     logEvent('create', 'Shelf', { id: shelf.id, locationId }, req.user.username);
@@ -2064,6 +2079,7 @@ function createApp(options = {}) {
 
   app.put('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const shelf = shelves.find((entry) => entry.id === req.params.id);
+    if (shelf && shelf.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!shelf) return res.status(404).json({ error: 'Regal nicht gefunden.' });
     const locationId = String(req.body.locationId ?? shelf.locationId).trim();
     if (!locations.some((entry) => entry.id === locationId)) {
@@ -2087,9 +2103,13 @@ function createApp(options = {}) {
 
   app.delete('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = shelves.findIndex((entry) => entry.id === req.params.id);
+    if (index >= 0 && shelves[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Regal nicht gefunden.' });
     const positionIds = stockStructures
       .filter((entry) => entry.shelfId === req.params.id).map((entry) => entry.id);
+    if ([...shelves, ...storageLevels, ...stockStructures].some((entry) => (entry.shelfId === req.params.id) && entry.unitId !== req.tenant.unitId)) {
+      return res.status(409).json({ error: 'Die Struktur enthält Lagerorte einer anderen Gliederung. Diese müssen zuerst umgelagert werden.' });
+    }
     if (positionIds.some(positionIsReferenced)) {
       return res.status(409).json({ error: 'Das Regal enthält noch verwendete Lagerplätze.' });
     }
@@ -2112,14 +2132,14 @@ function createApp(options = {}) {
   app.post('/api/storage-levels', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const shelfId = String(req.body.shelfId || '').trim();
     const shelf = shelves.find((entry) => entry.id === shelfId);
-    if (!shelf) return res.status(400).json({ error: 'Ein gültiges Regal ist erforderlich.' });
+    if (!shelf || !publicStorageEntry(req, shelf).canAddChildren) return res.status(400).json({ error: 'Ein gültiges Regal ist erforderlich.' });
     const input = parseStorageInput(res, () => hierarchyNodeInput(req.body));
     if (!input) return;
     if (duplicateInScope(storageLevels, input, { parentKey: 'shelfId', parentId: shelfId })) {
       return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist in diesem Regal bereits vorhanden.' });
     }
     const level = {
-      id: nextId('level', storageLevels), shelfId, locationId: shelf.locationId, ...input,
+      id: nextId('level', rawCollection(storageLevels)), shelfId, locationId: shelf.locationId, ...input,
     };
     storageLevels.push(level);
     refreshStoragePaths(appData);
@@ -2129,6 +2149,7 @@ function createApp(options = {}) {
 
   app.put('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const level = storageLevels.find((entry) => entry.id === req.params.id);
+    if (level && level.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!level) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
     const shelfId = String(req.body.shelfId ?? level.shelfId).trim();
     const shelf = shelves.find((entry) => entry.id === shelfId);
@@ -2153,9 +2174,13 @@ function createApp(options = {}) {
 
   app.delete('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = storageLevels.findIndex((entry) => entry.id === req.params.id);
+    if (index >= 0 && storageLevels[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
     const positionIds = stockStructures
       .filter((entry) => entry.levelId === req.params.id).map((entry) => entry.id);
+    if ([...shelves, ...storageLevels, ...stockStructures].some((entry) => (entry.levelId === req.params.id) && entry.unitId !== req.tenant.unitId)) {
+      return res.status(409).json({ error: 'Die Struktur enthält Lagerorte einer anderen Gliederung. Diese müssen zuerst umgelagert werden.' });
+    }
     if (positionIds.some(positionIsReferenced)) {
       return res.status(409).json({ error: 'Die Ebene enthält noch verwendete Lagerplätze.' });
     }
@@ -2176,14 +2201,14 @@ function createApp(options = {}) {
   app.post('/api/stock-structures', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const levelId = String(req.body.levelId || '').trim();
     const level = storageLevels.find((entry) => entry.id === levelId);
-    if (!level) return res.status(400).json({ error: 'Eine gültige Ebene ist erforderlich.' });
+    if (!level || !publicStorageEntry(req, level).canAddChildren) return res.status(400).json({ error: 'Eine gültige Ebene ist erforderlich.' });
     const input = parseStorageInput(res, () => hierarchyNodeInput(req.body));
     if (!input) return;
     if (duplicateInScope(stockStructures, input, { parentKey: 'levelId', parentId: levelId })) {
       return res.status(409).json({ error: 'Bezeichnung oder Kürzel ist auf dieser Ebene bereits vorhanden.' });
     }
     const stock = {
-      id: nextId('stock', stockStructures),
+      id: nextId('stock', rawCollection(stockStructures)),
       levelId,
       shelfId: level.shelfId,
       locationId: level.locationId,
@@ -2198,6 +2223,7 @@ function createApp(options = {}) {
 
   app.put('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const stock = stockStructures.find((entry) => entry.id === req.params.id);
+    if (stock && stock.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!stock) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
     const levelId = String(req.body.levelId ?? stock.levelId).trim();
     const level = storageLevels.find((entry) => entry.id === levelId);
@@ -2224,6 +2250,7 @@ function createApp(options = {}) {
 
   app.delete('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const index = stockStructures.findIndex((entry) => entry.id === req.params.id);
+    if (index >= 0 && stockStructures[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
     if (positionIsReferenced(req.params.id)) {
       return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
@@ -2253,7 +2280,7 @@ function createApp(options = {}) {
 
     const created = { shelves: [], storageLevels: [], stockStructures: [] };
     const numericIdFactory = (prefix, entries) => {
-      let number = Number(nextId(prefix, entries).slice(prefix.length + 1));
+      let number = Number(nextId(prefix, rawCollection(entries)).slice(prefix.length + 1));
       return () => `${prefix}-${number++}`;
     };
     const nextShelfId = numericIdFactory('shelf', shelves);
@@ -2628,7 +2655,7 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'inventoryNumber is required' });
     }
     if (inventoryNumberInUse(
-      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems],
+      activeItems(materials, clothingItems),
       inventoryNumber,
       item,
     )) {
@@ -2882,26 +2909,29 @@ function createApp(options = {}) {
       return res.status(507).json({ error: 'Der Import würde die maximale Anzahl an Kleidungsdatensätzen überschreiten.' });
     }
 
-    const usedInventoryNumbers = new Set(
-      [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
-        .filter(reservesInventoryNumber)
-        .map((item) => String(item.inventoryNumber).toLowerCase())
-    );
+    rows = rows.map((row) => ({ ...row, locationId: String(row.locationId || '').trim()
+      || (req.body.conflictPolicy === 'replace' && clothingItems.find((item) =>
+        !item.archived && String(item.inventoryNumber).toLowerCase() === String(row.inventoryNumber).toLowerCase())?.locationId) || 'loc-2' }));
+    const plan = planImport(rows, req.body, clothingItems, activeItems(materials, clothingItems), locations, stockStructures);
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    if (req.body.preview === true) return res.json({ conflicts: plan.conflicts, missingStorage: plan.missingStorage });
+    if (plan.missingStorage.length) return res.status(409).json({ error: 'Bitte die alten Lagerorte aktuellen Lagerorten zuordnen.', missingStorage: plan.missingStorage });
     const importedItems = [];
     const skippedRows = [];
-
-    rows.forEach((row, index) => {
+    let replaced = 0; let renumbered = 0;
+    plan.prepared.forEach((_, index) => {
+      const { row, existing } = planImport([rows[index]], req.body, clothingItems,
+        activeItems(materials, clothingItems), locations, stockStructures).prepared[0];
       const rowNumber = index + 2;
       const name = String(row.name || '').trim();
       let inventoryNumber = String(row.inventoryNumber || '').trim();
-      if (!name) {
-        skippedRows.push({ row: rowNumber, reason: 'Name fehlt' });
-        return;
+      if (!name) { skippedRows.push({ row: rowNumber, reason: 'Name fehlt' }); return; }
+      const conflict = inventoryNumber && inventoryNumberInUse(activeItems(materials, clothingItems), inventoryNumber);
+      if (conflict && (plan.policy === 'skip' || (plan.policy === 'replace' && !existing))) {
+        skippedRows.push({ row: rowNumber, reason: 'Inventarnummer existiert bereits (gegebenenfalls im anderen Bereich)' }); return;
       }
-      if (inventoryNumber && usedInventoryNumbers.has(inventoryNumber.toLowerCase())) {
-        skippedRows.push({ row: rowNumber, reason: `Inventarnummer ${inventoryNumber} existiert bereits` });
-        return;
-      }
+      const target = conflict && plan.policy === 'replace' ? existing : null;
+      if (conflict && plan.policy === 'renumber') inventoryNumber = '';
       const requestedStatus = String(row.status || '').trim().toLowerCase();
       if (requestedStatus && !['lagernd', 'ausgegeben'].includes(requestedStatus)) {
         skippedRows.push({ row: rowNumber, reason: `Ungültiger Status ${row.status}` });
@@ -2946,7 +2976,7 @@ function createApp(options = {}) {
         return;
       }
       if (!inventoryNumber) {
-        inventoryNumber = nextClothingInventoryNumber(category?.id || null);
+        inventoryNumber = nextInventoryNumber([...activeItems(materials, clothingItems), ...rows.filter((entry) => entry.inventoryNumber)], category?.parentId || category?.id || '00', category?.parentId ? category.id : '00');
       }
       const item = {
         id: nextId('clothing', [...clothingItems, ...deletedClothingItems]),
@@ -2969,17 +2999,23 @@ function createApp(options = {}) {
         ),
         createdAt: new Date().toISOString(),
       };
-      clothingItems.push(item);
-      usedInventoryNumbers.add(inventoryNumber.toLowerCase());
-      importedItems.push(item);
+      if (target) {
+        const { id, createdAt, lastInspectionDate, nextInspectionDate, status, assignedPerson, ...fields } = item;
+        Object.assign(target, fields, { updatedAt: new Date().toISOString() });
+        replaced += 1;
+      } else {
+        clothingItems.push(item);
+        importedItems.push(item);
+        if (conflict) renumbered += 1;
+      }
     });
 
     logEvent('import', 'ClothingItem', {
       fileName,
-      imported: importedItems.length,
+      imported: importedItems.length, replaced, renumbered,
       skipped: skippedRows.length,
     }, req.user.username);
-    res.json({ imported: importedItems.length, skipped: skippedRows.length, skippedRows });
+    res.json({ imported: importedItems.length, replaced, renumbered, skipped: skippedRows.length, skippedRows });
   });
 
   app.get('/api/clothing/export', authMiddleware, requirePermission('clothing.read'), (req, res) => {

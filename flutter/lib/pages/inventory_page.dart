@@ -9,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../services/app_http_client.dart';
+import '../services/table_import_service.dart';
 import '../services/authenticated_api_client.dart';
 import '../services/debouncer.dart';
 import '../services/document_output_service.dart';
@@ -960,11 +961,18 @@ class _InventoryPageState extends State<InventoryPage> {
     if (archived) {
       final hierarchy = await _request('/api/storage-hierarchy');
       if (hierarchy is! Map || !mounted) return;
-      final availableLocations = List<Map<String, dynamic>>.from(
-        (hierarchy['locations'] as List).map(
-          (entry) => Map<String, dynamic>.from(entry as Map),
-        ),
-      ).where((entry) => entry['readOnly'] != true).toList();
+      final availableLocations =
+          List<Map<String, dynamic>>.from(
+                (hierarchy['locations'] as List).map(
+                  (entry) => Map<String, dynamic>.from(entry as Map),
+                ),
+              )
+              .where(
+                (entry) =>
+                    entry['readOnly'] != true ||
+                    entry['canUseForBooking'] == true,
+              )
+              .toList();
       final availableStocks = List<Map<String, dynamic>>.from(
         (hierarchy['stockStructures'] as List).map(
           (entry) => Map<String, dynamic>.from(entry as Map),
@@ -1592,14 +1600,23 @@ class _InventoryPageState extends State<InventoryPage> {
     );
     if (file == null) return;
     final bytes = await file.readAsBytes();
-    final result = await _request(
-      '/api/material/import',
-      method: 'POST',
-      body: {'fileName': file.name, 'fileBase64': base64Encode(bytes)},
-    );
+    Map<String, dynamic>? result;
+    try {
+      if (!mounted) return;
+      result = await importTable(
+        context: context,
+        token: widget.token,
+        path: '/api/material/import',
+        fileName: file.name,
+        bytes: bytes,
+      );
+    } catch (error) {
+      _message('Import fehlgeschlagen: $error');
+      return;
+    }
     if (result != null) {
       _message(
-        '${result['imported']} importiert, ${result['skipped']} übersprungen.',
+        '${result['imported']} eingefügt, ${result['replaced'] ?? 0} ersetzt, ${result['renumbered'] ?? 0} neue Nummern, ${result['skipped']} übersprungen.',
       );
       await _load();
     }

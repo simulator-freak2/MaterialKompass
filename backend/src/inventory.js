@@ -1,3 +1,4 @@
+const { activeItems, planImport, nonEmpty } = require('./table-import');
 const MATERIAL_STATUSES = [
   'Lagernd', 'Ausgegeben', 'Reserviert', 'In Prüfung', 'Defekt',
   'In Reparatur', 'Ausgesondert', 'Verloren',
@@ -431,24 +432,52 @@ function registerInventoryRoutes({
     if (materials.length + deletedMaterials.length + rows.length > MAX_MATERIAL_RECORDS) {
       return res.status(507).json({ error: 'Der Import würde die maximale Anzahl an Materialdatensätzen überschreiten.' });
     }
-    const skippedRows = []; const imported = [];
-    rows.forEach((row, index) => {
-      const values = validate(row); const requested = String(row.inventoryNumber || '').trim();
-      if (values.error || (requested && inventoryNumberInUse(inventoryEntries(), requested))) { skippedRows.push({ row: index + 2, reason: values.error || 'Inventarnummer existiert bereits' }); return; }
-      const safetyCritical = ['ja', 'true', '1', 'yes'].includes(
-        String(row.safetyCritical || '').trim().toLowerCase(),
-      );
-      const item = { ...row, ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: requested || inventoryNumber(values.categoryCode, values.subcategoryCode), unit: row.unit || 'Stück', issuedQuantity: 0, safetyCritical, safetyInstructions: String(row.safetyInstructions || '').trim().slice(0, 2_000), archived: false, createdAt: new Date().toISOString() };
-      materials.push(item); imported.push(item);
+    const active = activeItems(materials, clothingItems);
+    const plan = planImport(rows, req.body, materials, active, locations, stockStructures);
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    if (req.body.preview === true) return res.json({ conflicts: plan.conflicts, missingStorage: plan.missingStorage });
+    if (plan.missingStorage.length) return res.status(409).json({ error: 'Bitte die alten Lagerorte aktuellen Lagerorten zuordnen.', missingStorage: plan.missingStorage });
+    const skippedRows = []; const imported = []; let replaced = 0; let renumbered = 0;
+    plan.prepared.forEach((_, index) => {
+      const { row, existing } = planImport([rows[index]], req.body, materials,
+        activeItems(materials, clothingItems), locations, stockStructures).prepared[0];
+      const requested = String(row.inventoryNumber || '').trim();
+      const conflict = requested && inventoryNumberInUse(activeItems(materials, clothingItems), requested);
+      if (conflict && (plan.policy === 'skip' || (plan.policy === 'replace' && !existing))) {
+        skippedRows.push({ row: index + 2, reason: 'Inventarnummer existiert bereits (gegebenenfalls im anderen Bereich)' }); return;
+      }
+      const target = conflict && plan.policy === 'replace' ? existing : null;
+      // Older exports did not include the item type. Preserve their quantities.
+      if (!row.itemType && number(row.quantity, 1) > 1) row.itemType = 'bulk';
+      const values = validate(row, target);
+      if (values.error) { skippedRows.push({ row: index + 2, reason: values.error }); return; }
+      const safetyCritical = typeof row.safetyCritical === 'boolean' ? row.safetyCritical
+        : ['ja', 'true', '1', 'yes'].includes(String(row.safetyCritical || '').trim().toLowerCase());
+      const fields = { ...nonEmpty(row), ...values, safetyCritical,
+        safetyInstructions: String(row.safetyInstructions || '').trim().slice(0, 2_000) };
+      if (target) {
+        // Preserve identity, issue state, inspections and all linked records.
+        for (const field of ['id', 'organizationId', 'unitId', 'createdAt', 'issuedQuantity',
+          'lastInspectionDate', 'lastInspectionResult', 'nextInspectionDate', 'status']) delete fields[field];
+        Object.assign(target, fields, { updatedAt: new Date().toISOString() });
+        replaced += 1;
+      } else {
+        const inv = !requested || conflict ? nextInventoryNumber([...activeItems(materials, clothingItems), ...rows.filter((entry) => entry.inventoryNumber)], values.categoryCode, values.subcategoryCode) : requested;
+        const item = { ...fields, id: nextId('material', [...materials, ...deletedMaterials]),
+          inventoryNumber: inv, unit: row.unit || 'Stück', issuedQuantity: 0, archived: false,
+          createdAt: new Date().toISOString() };
+        materials.push(item); imported.push(item);
+        if (conflict) renumbered += 1;
+      }
     });
-    logEvent('import', 'MaterialItem', { imported: imported.length, skipped: skippedRows.length }, req.user.username);
-    res.json({ imported: imported.length, skipped: skippedRows.length, skippedRows });
+    logEvent('import', 'MaterialItem', { imported: imported.length, replaced, renumbered, skipped: skippedRows.length }, req.user.username);
+    res.json({ imported: imported.length, replaced, renumbered, skipped: skippedRows.length, skippedRows });
   });
 
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => withReadAccess(req, () => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item.id), 'Auf Fahrzeugen': loadedQuantity(item.id), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item.id), 'Auf Fahrzeugen': loadedQuantity(item.id), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
       .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');

@@ -260,7 +260,7 @@ Untereinheit entsprechend kennzeichnen. Eine Jugendorganisation ist fest mit ihr
 direkten Stammgliederung verbunden, darf keine Untereinheiten besitzen und kann nicht
 selbst Stammgliederung einer weiteren Jugendorganisation werden.
 
-Die Verknüpfung stellt ausschließlich folgende gegenseitige Funktionen bereit:
+Die Verknüpfung stellt folgende gegenseitige Funktionen bereit:
 
 - Lagerorte einschließlich Adresse und vollständigem Lagerpfad durchsuchen;
 - aktive Einzelinventargegenstände mit Inventarnummer reservieren;
@@ -273,12 +273,35 @@ Export über die Verknüpfung nicht erlaubt. Verknüpfte Reservierungen benötig
 die Freigabe der besitzenden Gliederung; bestehende Sicherheits-, Konflikt- und
 TLE-Prüfungen gelten unverändert. Mängel werden in der besitzenden Gliederung geführt.
 
+Jugendorganisationen dürfen zusätzlich eigene Artikel auf Gebäude und Lagerplätze
+ihrer direkt übergeordneten Stammgliederung buchen. Mit den entsprechenden
+Lagerortrechten dürfen sie dort eigene Regale, Ebenen und Lagerplätze anlegen
+und ihre eigenen Strukturen bearbeiten oder löschen. Fremde Strukturen bleiben
+vor Änderungen und Löschung geschützt. Genutzte Lagerorte und Strukturen mit
+fremden Untereinträgen können nicht gelöscht werden.
+
 Für normale Mitglieder steht in Jugendorganisationen die minimale Rolle
 **Jugendmitglied** bereit. Die vorsitzende Person erhält dort die Rolle **Vorsitz**.
 Beim Wechsel in die verknüpfte Stammgliederung wirkt diese Zuordnung automatisch als
 eingeschränkte Rolle **Jugendvorsitzender**. `Jugendvorsitzender` ist deshalb in der
 Jugendorganisation nicht separat zuweisbar. Innerhalb der eigenen Gliederung gelten
 weiterhin die normalen Rollenrechte.
+
+## Tabellen erneut importieren
+
+Inventar und Kleiderkammer unterstützen XLSX und ODS. Vor dem Import wird die
+Datei geprüft. Bei doppelten aktuell vergebenen Inventarnummern wird einmal für
+den gesamten Import zwischen **Überspringen**, **Ersetzen** und **Neue
+Inventarnummern** gewählt. Nummern gelöschter oder archivierter Artikel blockieren
+den Tabellenimport nicht; historische Datensätze bleiben erhalten.
+
+Beim Ersetzen bleiben die Artikel-ID, Ausgaben, Prüfungen und verknüpfte Dokumente
+erhalten. Leere Felder überschreiben keine bestehenden Werte. Eine Nummer im
+anderen Bereich (Inventar/Kleiderkammer) kann nicht durch einen Artikel des
+anderen Typs ersetzt werden; solche Zeilen werden mit Begründung übersprungen.
+Nicht mehr vorhandene Lagerorte können vor dem Einfügen aktuellen Gebäuden und
+optional Lagerplätzen zugeordnet werden. Jede Zuordnung gilt für alle Zeilen mit
+demselben ursprünglichen Gebäude und Lagerplatz. Abbrechen verändert keine Daten.
 
 ## Reservierungs- und Wartungskalender
 

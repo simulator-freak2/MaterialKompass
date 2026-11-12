@@ -442,11 +442,12 @@ function stampEntry(entry, context, unitScoped) {
   return entry;
 }
 
-function createTenantCollection(entries, { unitScoped = false, categoryScoped = false } = {}) {
+function createTenantCollection(entries, { unitScoped = false, categoryScoped = false, storageScoped = false } = {}) {
   if (entries?.[RAW_COLLECTION]) return entries;
   const target = Array.isArray(entries) ? entries : [];
   const view = () => target.filter((entry) =>
-    isVisible(entry, currentTenant(), unitScoped, categoryScoped)
+    isVisible(entry, storageScoped && currentTenant()?.storageUnitIds
+      ? { ...currentTenant(), allowedUnitIds: new Set([...currentTenant().allowedUnitIds, ...currentTenant().storageUnitIds]) } : currentTenant(), unitScoped, categoryScoped)
   );
   const replaceViewOrder = (ordered) => {
     const visible = new Set(view());
@@ -547,6 +548,7 @@ function wrapTenantCollections(data) {
     data[name] = tenantCollection(data[name] || [], {
       unitScoped: UNIT_SCOPED_COLLECTIONS.has(name),
       categoryScoped: name === 'categories',
+      storageScoped: ['locations', 'shelves', 'storageLevels', 'stockStructures'].includes(name),
     });
   }
 }

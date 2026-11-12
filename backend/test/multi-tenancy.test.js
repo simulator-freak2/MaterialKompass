@@ -649,7 +649,7 @@ test('youth and base units share only search, reservation and defect reporting c
     const forbiddenLocationWrite = await request(baseUrl, '/api/locations/loc-1', {
       token: youthToken, method: 'PUT', body: { name: 'Manipuliert' },
     });
-    assert.equal(forbiddenLocationWrite.response.status, 404);
+    assert.equal(forbiddenLocationWrite.response.status, 403);
 
     const reservableMaterials = await request(baseUrl, '/api/calendar/materials', {
       token: youthToken,
@@ -1023,4 +1023,32 @@ test('unit administrators cannot read or overwrite access rights of sibling unit
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+
+test('youth can build own storage under its direct base and book own material there', async () => {
+  const { server, baseUrl } = await start(youthTenantData());
+  try {
+    const token = await login(baseUrl, 'jugendvorsitz', 'Material123!');
+    const send = (path, body, method = 'POST') => request(baseUrl, path, { token, method, body });
+    const shelf = await send('/api/shelves', { locationId: 'loc-1', name: 'Jugend Regal', code: 'JREG' });
+    assert.equal(shelf.response.status, 201); assert.equal(shelf.data.unitId, 'unit-a-youth');
+    const level = await send('/api/storage-levels', { shelfId: shelf.data.id, name: 'Ebene', code: 'E1' });
+    assert.equal(level.response.status, 201);
+    const position = await send('/api/stock-structures', { levelId: level.data.id, name: 'Jugend Platz', code: 'P1' });
+    assert.equal(position.response.status, 201);
+    const material = await send('/api/material', { name: 'Jugend Testartikel', categoryCode: '02', subcategoryCode: '02-02', locationId: 'loc-1', stockStructureId: position.data.id, status: 'Lagernd', itemType: 'individual' });
+    assert.equal(material.response.status, 201);
+    const ownUpdate = await send('/api/shelves/' + shelf.data.id, { name: 'Jugend Regal neu' }, 'PUT');
+    assert.equal(ownUpdate.response.status, 200);
+    const denied = await send('/api/locations/loc-1', { name: 'Fremd' }, 'PUT');
+    assert.equal(denied.response.status, 403);
+    const unrelated = await send('/api/shelves', { locationId: 'loc-a-child', name: 'Fremd', code: 'F1' });
+    assert.equal(unrelated.response.status, 400);
+    const ownDeletion = await send('/api/shelves', { locationId: 'loc-1', name: 'Leer', code: 'LEER' });
+    assert.equal((await send('/api/shelves/' + ownDeletion.data.id, undefined, 'DELETE')).response.status, 204);
+    const baseToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const protectedParent = await request(baseUrl, '/api/locations/loc-1', { token: baseToken, method: 'DELETE' });
+    assert.equal(protectedParent.response.status, 409);
+  } finally { server.close(); }
 });

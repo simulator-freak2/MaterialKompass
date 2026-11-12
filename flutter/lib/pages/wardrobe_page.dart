@@ -9,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../services/app_http_client.dart';
+import '../services/table_import_service.dart';
 import '../services/document_output_service.dart';
 import '../services/download_service.dart';
 import '../services/label_print_service.dart';
@@ -388,23 +389,14 @@ class _WardrobePageState extends State<WardrobePage> {
 
     setState(() => _isTransferringTable = true);
     try {
-      final response = await AppHttpClient.post(
-        Uri.parse('$apiBaseUrl/api/clothing/import'),
-        headers: {
-          'Authorization': 'Bearer ${widget.token}',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'fileName': file.name,
-          'fileBase64': base64Encode(bytes),
-        }),
+      final data = await importTable(
+        context: context,
+        token: widget.token,
+        path: '/api/clothing/import',
+        fileName: file.name,
+        bytes: bytes,
       );
-      if (!mounted) return;
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      if (response.statusCode != 200) {
-        throw Exception(data['error']?.toString() ?? 'Import fehlgeschlagen');
-      }
+      if (!mounted || data == null) return;
 
       final imported = data['imported'] as int? ?? 0;
       final skipped = data['skipped'] as int? ?? 0;
@@ -426,7 +418,9 @@ class _WardrobePageState extends State<WardrobePage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$imported Kleidungsstücke importiert.'),
+                Text(
+                  '$imported Kleidungsstücke eingefügt, ${data['replaced'] ?? 0} ersetzt, ${data['renumbered'] ?? 0} mit neuer Inventarnummer.',
+                ),
                 if (skipped > 0) ...[
                   const SizedBox(height: 8),
                   Text('$skipped Zeilen wurden übersprungen:'),

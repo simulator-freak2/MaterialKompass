@@ -586,7 +586,8 @@ class _LocationsPageState extends State<LocationsPage> {
             _contentsButton('levels', level),
           ],
         ),
-        trailing: _canEdit(level)
+        trailing:
+            (_canEdit(level) || (_canWrite && level['canAddChildren'] == true))
             ? _actions(
                 tooltip: 'Ebenenaktionen',
                 items: [
@@ -595,12 +596,14 @@ class _LocationsPageState extends State<LocationsPage> {
                     Icons.add_box_outlined,
                     'Lagerplatz hinzufügen',
                   ),
-                  _menuItem(
-                    'edit',
-                    Icons.drive_file_move_outlined,
-                    'Bearbeiten oder verschieben',
-                  ),
-                  _menuItem('delete', Icons.delete_outline, 'Löschen'),
+                  if (_canEdit(level))
+                    _menuItem(
+                      'edit',
+                      Icons.drive_file_move_outlined,
+                      'Bearbeiten oder verschieben',
+                    ),
+                  if (_canEdit(level))
+                    _menuItem('delete', Icons.delete_outline, 'Löschen'),
                 ],
                 onSelected: (action) {
                   if (action == 'add') _editPosition(id);
@@ -618,7 +621,9 @@ class _LocationsPageState extends State<LocationsPage> {
                 _emptyBranch(
                   'Keine Lagerplätze angelegt.',
                   () => _editPosition(id),
-                  canAdd: _canEdit(level),
+                  canAdd:
+                      _canWrite &&
+                      (_canEdit(level) || level['canAddChildren'] == true),
                 ),
               ]
             : positions.map(_positionTile).toList(),
@@ -644,17 +649,20 @@ class _LocationsPageState extends State<LocationsPage> {
             _contentsButton('shelves', shelf),
           ],
         ),
-        trailing: _canEdit(shelf)
+        trailing:
+            (_canEdit(shelf) || (_canWrite && shelf['canAddChildren'] == true))
             ? _actions(
                 tooltip: 'Regalaktionen',
                 items: [
                   _menuItem('add', Icons.add, 'Ebene hinzufügen'),
-                  _menuItem(
-                    'edit',
-                    Icons.drive_file_move_outlined,
-                    'Bearbeiten oder verschieben',
-                  ),
-                  _menuItem('delete', Icons.delete_outline, 'Löschen'),
+                  if (_canEdit(shelf))
+                    _menuItem(
+                      'edit',
+                      Icons.drive_file_move_outlined,
+                      'Bearbeiten oder verschieben',
+                    ),
+                  if (_canEdit(shelf))
+                    _menuItem('delete', Icons.delete_outline, 'Löschen'),
                 ],
                 onSelected: (action) {
                   if (action == 'add') _editLevel(id);
@@ -672,7 +680,9 @@ class _LocationsPageState extends State<LocationsPage> {
                 _emptyBranch(
                   'Keine Ebenen angelegt.',
                   () => _editLevel(id),
-                  canAdd: _canEdit(shelf),
+                  canAdd:
+                      _canWrite &&
+                      (_canEdit(shelf) || shelf['canAddChildren'] == true),
                 ),
               ]
             : levels.map(_levelTile).toList(),
@@ -733,23 +743,36 @@ class _LocationsPageState extends State<LocationsPage> {
               ),
             if (building['readOnly'] == true)
               Text(
-                'Nur Suche · ${_value(building, 'sourceUnitName')}',
+                'Gemeinsam nutzbar · ${_value(building, 'sourceUnitName')}',
                 style: TextStyle(color: Colors.blueGrey.shade700),
               ),
           ],
         ),
-        trailing: _canEdit(building)
+        trailing:
+            (_canEdit(building) ||
+                (_canWrite && building['canAddChildren'] == true))
             ? _actions(
                 tooltip: 'Gebäudeaktionen',
                 items: [
                   _menuItem('add', Icons.add, 'Regal hinzufügen'),
-                  _menuItem(
-                    'bulk',
-                    Icons.auto_awesome_outlined,
-                    'Struktur automatisch anlegen',
-                  ),
-                  _menuItem('edit', Icons.edit_outlined, 'Gebäude bearbeiten'),
-                  _menuItem('delete', Icons.delete_outline, 'Gebäude löschen'),
+                  if (_canEdit(building))
+                    _menuItem(
+                      'bulk',
+                      Icons.auto_awesome_outlined,
+                      'Struktur automatisch anlegen',
+                    ),
+                  if (_canEdit(building))
+                    _menuItem(
+                      'edit',
+                      Icons.edit_outlined,
+                      'Gebäude bearbeiten',
+                    ),
+                  if (_canEdit(building))
+                    _menuItem(
+                      'delete',
+                      Icons.delete_outline,
+                      'Gebäude löschen',
+                    ),
                 ],
                 onSelected: (action) {
                   if (action == 'add') _editShelf(id);
@@ -782,7 +805,9 @@ class _LocationsPageState extends State<LocationsPage> {
             _emptyBranch(
               'Keine Regale angelegt.',
               () => _editShelf(id),
-              canAdd: _canEdit(building),
+              canAdd:
+                  _canWrite &&
+                  (_canEdit(building) || building['canAddChildren'] == true),
             )
           else
             ...shelves.map(_shelfTile),
