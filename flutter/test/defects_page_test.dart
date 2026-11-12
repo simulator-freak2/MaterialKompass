@@ -83,6 +83,49 @@ void main() {
     });
   }
 
+  testWidgets(
+    'finds report items by name and inventory number or scanner input',
+    (tester) async {
+      setViewport(tester, const Size(1440, 960));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DefectsPage(token: 'test', request: request),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Neuer Mangel'));
+      await tester.pumpAndSettle();
+      final search = find.widgetWithText(
+        TextField,
+        'Inventarnummer oder Name suchen',
+      );
+      await tester.enterText(search, 'pressluft');
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(ListTile, 'Pressluftatmer'), findsOneWidget);
+      await tester.enterText(search, 'pa-001');
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(ListTile, 'Pressluftatmer'), findsOneWidget);
+      await tester.enterText(search, 'unbekannt');
+      await tester.pumpAndSettle();
+      expect(find.text('Keine passenden Artikel gefunden.'), findsOneWidget);
+      await tester.tap(find.byTooltip('Artikel scannen'));
+      await tester.pumpAndSettle();
+      final scanner = find.widgetWithText(
+        TextField,
+        'Handscanner / Inventarnummer',
+      );
+      await tester.enterText(scanner, 'PA-001');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(find.text('Barcode oder QR-Code scannen'), findsNothing);
+      expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+      expect(
+        find.byKey(const ValueKey('MaterialItem-material-1')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('uses a desktop master-detail workspace', (tester) async {
     setViewport(tester, const Size(1440, 960));
     await tester.pumpWidget(

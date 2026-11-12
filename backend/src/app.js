@@ -1910,7 +1910,7 @@ function createApp(options = {}) {
   app.get('/api/storage-hierarchy', authMiddleware, requirePermission('locations.read'), (req, res) => {
     refreshStoragePaths(appData);
     return withYouthStorageReadAccess(req, () => res.json({
-      locations: locations.map((entry) => publicStorageEntry(req, entry)),
+      locations: locations.filter((entry) => !entry.vehicleId).map((entry) => publicStorageEntry(req, entry)),
       shelves: shelves.map((entry) => publicStorageEntry(req, entry)),
       storageLevels: storageLevels.map((entry) => publicStorageEntry(req, entry)),
       stockStructures: stockStructures.map((entry) => publicStorageEntry(req, entry)),
@@ -1950,6 +1950,11 @@ function createApp(options = {}) {
         || entry.code.toLowerCase() === input.code.toLowerCase()))) {
       return res.status(409).json({ error: 'Name oder Kürzel wird bereits verwendet.' });
     }
+    if (rawCollection(vehicles).some(vehicle => vehicle.organizationId === req.tenant.organizationId
+      && vehicle.parkingLocationId === location.id && vehicle.parkingSpaceId
+      && !input.parkingSpaces.some(space => space.id === vehicle.parkingSpaceId))) {
+      return res.status(409).json({ error: 'Ein zugewiesener Stellplatz kann nicht entfernt werden. Bitte zuerst die Fahrzeuge umstellen.' });
+    }
     Object.assign(location, input, { updatedAt: new Date().toISOString() });
     refreshStoragePaths(appData);
     logEvent('update', 'Location', { id: location.id }, req.user.username);
@@ -1961,6 +1966,10 @@ function createApp(options = {}) {
     if (index < 0) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
     if (locations[index].vehicleId) {
       return res.status(409).json({ error: 'Fahrzeug-Lagerorte können nicht separat gelöscht werden.' });
+    }
+    if (rawCollection(vehicles).some(vehicle => vehicle.organizationId === req.tenant.organizationId
+      && vehicle.parkingLocationId === req.params.id)) {
+      return res.status(409).json({ error: 'Dem Gebäude sind noch Fahrzeuge zugewiesen.' });
     }
     const nestedStockIds = new Set(stockStructures
       .filter((entry) => entry.locationId === req.params.id)
@@ -3176,8 +3185,6 @@ function createApp(options = {}) {
       const visibleVehicles = rawCollection(vehicles).filter((entry) =>
         entry.organizationId === req.tenant.organizationId
         && (entry.unitId === req.tenant.unitId
-          || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
-            req.tenant.unitId, entry.unitId)
           || entry.viewAllowedUnitIds?.includes(req.tenant.unitId)
           || entry.reservationAllowedUnitIds?.includes(req.tenant.unitId)));
       summary.vehicleCount = visibleVehicles.filter((entry) => !entry.archivedAt).length;

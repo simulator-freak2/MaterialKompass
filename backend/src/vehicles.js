@@ -1,5 +1,5 @@
 const { randomUUID } = require('node:crypto');
-const { rawCollection, youthUnitsAreLinked } = require('./tenancy');
+const { rawCollection } = require('./tenancy');
 const { assessMaterialSafety, validDateOnly } = require('./material-safety');
 
 const LEGACY_VEHICLE_TYPES = Object.freeze([
@@ -142,16 +142,12 @@ function registerVehicleRoutes({
   function visibleTo(req, vehicle) {
     if (!vehicle || vehicle.organizationId !== req.tenant.organizationId) return false;
     return vehicle.unitId === req.tenant.unitId
-      || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
-        req.tenant.unitId, vehicle.unitId)
       || vehicle.viewAllowedUnitIds?.includes(req.tenant.unitId)
       || vehicle.reservationAllowedUnitIds?.includes(req.tenant.unitId);
   }
 
   function reservableBy(req, vehicle) {
     return vehicle?.unitId === req.tenant.unitId
-      || youthUnitsAreLinked(organizationUnits, req.tenant.organizationId,
-        req.tenant.unitId, vehicle?.unitId)
       || vehicle?.reservationAllowedUnitIds?.includes(req.tenant.unitId);
   }
 
@@ -224,6 +220,7 @@ function registerVehicleRoutes({
       ...vehicleClassification(vehicle),
       ownerUnitName: owner?.name || null,
       parkingLocationName: parking?.name || null,
+      parkingSpaceName: parking?.parkingSpaces?.find(space => space.id === vehicle.parkingSpaceId)?.name || null,
       loadLocationName: loadLocation?.name || displayName(vehicle),
       safetyStatus: assessVehicleSafety(vehicle),
       loadCount: actualLoad.length,
@@ -237,7 +234,14 @@ function registerVehicleRoutes({
     const registrationNumber = normalizeIdentifier(body.registrationNumber ?? existing?.registrationNumber);
     const vin = normalizeIdentifier(body.vin ?? existing?.vin);
     const radioCallName = text(body.radioCallName ?? existing?.radioCallName, 100);
-    const parkingLocationId = text(body.parkingLocationId ?? existing?.parkingLocationId, 64) || null;
+    const parkingLocationId = text(Object.hasOwn(body, 'parkingLocationId') ? body.parkingLocationId : existing?.parkingLocationId, 64) || null;
+    const parkingSpaceId = text(Object.hasOwn(body, 'parkingSpaceId') ? body.parkingSpaceId
+      : (parkingLocationId === existing?.parkingLocationId ? existing?.parkingSpaceId : null), 64) || null;
+    if (parkingSpaceId && !all(locations).some(location => location.id === parkingLocationId
+      && location.organizationId === req.tenant.organizationId && location.unitId === req.tenant.unitId
+      && !location.vehicleId && location.parkingSpaces?.some(space => space.id === parkingSpaceId))) {
+      return { error: 'Der gewählte Fahrzeugstellplatz gehört nicht zu diesem Gebäude.' };
+    }
     const parkingDetails = text(body.parkingDetails ?? existing?.parkingDetails, 160);
     const year = nullableNumber(body.year ?? existing?.year, { integer: true, maximum: 9999 });
     const manufacturer = text(body.manufacturer ?? existing?.manufacturer, 120);
@@ -277,8 +281,19 @@ function registerVehicleRoutes({
           && normalizeIdentifier(entry.registrationNumber) === registrationNumber)
         || (vin && normalizeIdentifier(entry.vin) === vin)));
     if (duplicate) return { error: 'Kennzeichen und Fahrgestellnummer müssen, sofern angegeben, innerhalb der Organisation eindeutig sein.', status: 409 };
+    if (body.storagePositions !== undefined && (!Array.isArray(body.storagePositions)
+      || body.storagePositions.length > 100 || body.storagePositions.some(entry =>
+        typeof entry !== 'string' || !entry.trim() || entry.trim().length > 160))) {
+      return { error: 'Bitte höchstens 100 Fahrzeugfächer mit jeweils maximal 160 Zeichen angeben.' };
+    }
+    const storagePositions = uniqueTexts(body.storagePositions ?? existing?.storagePositions, 160);
+    if (existing && all(vehicleLoadAssignments).some(entry => entry.vehicleId === existing.id
+      && existing.storagePositions?.includes(entry.position) && !storagePositions.includes(entry.position))) {
+      return { error: 'Belegte Fahrzeugfächer können nicht entfernt werden.', status: 409 };
+    }
     return {
-      registrationNumber, vin, radioCallName, parkingLocationId, parkingDetails,
+      storagePositions,
+      registrationNumber, vin, radioCallName, parkingLocationId, parkingSpaceId, parkingDetails,
       year, manufacturer, model, vehicleKind, usage, type, status, mileage, operatingHours, notes,
       primaryResponseVehicle: body.primaryResponseVehicle ?? existing?.primaryResponseVehicle ?? false,
     };
@@ -410,7 +425,7 @@ function registerVehicleRoutes({
       maintenanceStatuses: MAINTENANCE_STATUSES,
       parkingLocations: all(locations).filter((entry) => entry.organizationId === req.tenant.organizationId
         && entry.unitId === req.tenant.unitId && !entry.vehicleId).map((entry) => ({
-        id: entry.id, name: entry.name, path: entry.path || entry.name,
+        id: entry.id, name: entry.name, path: entry.path || entry.name, parkingSpaces: entry.parkingSpaces || [],
       })),
       organizationSettings: settings,
     });
@@ -816,6 +831,9 @@ function registerVehicleRoutes({
       }
       const materialSafety = assessMaterialSafety(material);
       if (materialSafety.blocked) return res.status(409).json({ error: 'Das Material ist sicherheitsbedingt gesperrt.', reasons: materialSafety.reasons });
+      if (vehicle.storagePositions?.length && !vehicle.storagePositions.includes(text(req.body.position, 160))) {
+        return res.status(400).json({ error: 'Bitte ein definiertes Fahrzeugfach wählen.' });
+      }
       const at = nowIso();
       const assignment = {
         id: `vehicle-load-${randomUUID()}`,

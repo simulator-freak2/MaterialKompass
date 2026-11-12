@@ -31,6 +31,10 @@ class _BuildingDialogState extends State<BuildingDialog> {
   late final _postalCode = _controller('postalCode');
   late final _city = _controller('city');
   late final _country = _controller('country', fallback: 'Deutschland');
+  late final List<Map<String, dynamic>> _parkingSpaces =
+      (widget.building?['parkingSpaces'] as List? ?? const [])
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .toList();
   bool _saving = false;
   String? _error;
 
@@ -79,6 +83,7 @@ class _BuildingDialogState extends State<BuildingDialog> {
       'postalCode': _postalCode.text.trim(),
       'city': _city.text.trim(),
       'country': _country.text.trim(),
+      'parkingSpaces': _parkingSpaces,
     });
     if (!mounted) return;
     if (error == null) {
@@ -151,6 +156,46 @@ class _BuildingDialogState extends State<BuildingDialog> {
                 postalCodeController: _postalCode,
                 cityController: _city,
                 countryController: _country,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Fahrzeugstellplätze',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const Text(
+                'Ein Stellplatz kann mehreren Fahrzeugen und Anhängern zugewiesen werden.',
+              ),
+              ..._parkingSpaces.map(
+                (space) => Row(
+                  key: ObjectKey(space),
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: space['name']?.toString() ?? '',
+                        decoration: const InputDecoration(
+                          labelText: 'Stellplatzbezeichnung',
+                        ),
+                        maxLength: 120,
+                        validator: _required,
+                        onChanged: (value) => space['name'] = value.trim(),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Stellplatz entfernen',
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _parkingSpaces.remove(space)),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _saving || _parkingSpaces.length >= 100
+                    ? null
+                    : () => setState(() => _parkingSpaces.add({'name': ''})),
+                icon: const Icon(Icons.add),
+                label: const Text('Fahrzeugstellplatz hinzufügen'),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),

@@ -1,3 +1,5 @@
+const { randomUUID } = require('node:crypto');
+
 class StorageValidationError extends Error {}
 
 const CODE_PATTERN = /^[A-Z0-9_-]{1,32}$/;
@@ -28,7 +30,23 @@ function storageCode(value, label = 'Kürzel') {
 }
 
 function buildingInput(body, existing = {}) {
+  const requested = body.parkingSpaces ?? existing.parkingSpaces ?? [];
+  if (!Array.isArray(requested) || requested.length > 100) {
+    throw new StorageValidationError('Bitte höchstens 100 Fahrzeugstellplätze angeben.');
+  }
+  const parkingSpaces = requested.map(entry => {
+    if (!entry || typeof entry !== 'object') throw new StorageValidationError('Ungültiger Fahrzeugstellplatz.');
+    if (entry.id && !(existing.parkingSpaces || []).some(space => space.id === entry.id)) {
+      throw new StorageValidationError('Unbekannter Fahrzeugstellplatz.');
+    }
+    return { id: entry.id || randomUUID(), name: requiredText(entry.name, 'Stellplatz', 120) };
+  });
+  if (new Set(parkingSpaces.map(entry => entry.id)).size !== parkingSpaces.length
+    || new Set(parkingSpaces.map(entry => entry.name.toLowerCase())).size !== parkingSpaces.length) {
+    throw new StorageValidationError('Fahrzeugstellplätze müssen innerhalb eines Gebäudes eindeutig sein.');
+  }
   return {
+    parkingSpaces,
     name: requiredText(body.name ?? existing.name, 'Name'),
     code: storageCode(body.code ?? existing.code),
     street: requiredText(body.street ?? existing.street, 'Straße'),

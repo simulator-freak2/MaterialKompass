@@ -603,6 +603,10 @@ class _LocationsPageState extends State<LocationsPage> {
             Text(
               '${_value(building, 'code')} · ${shelves.length} Regale · $positionCount Lagerplätze',
             ),
+            if ((building['parkingSpaces'] as List? ?? const []).isNotEmpty)
+              Text(
+                'Fahrzeugstellplätze: ${(building['parkingSpaces'] as List).map((space) => space['name']).join(', ')}',
+              ),
             if (building['readOnly'] == true)
               Text(
                 'Nur Suche · ${_value(building, 'sourceUnitName')}',

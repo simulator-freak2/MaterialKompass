@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide DropdownButtonFormField;
 import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+
+import '../camera_scan_support.dart';
 
 import '../services/authenticated_api_client.dart';
 import '../services/debouncer.dart';
@@ -4364,6 +4367,7 @@ class _DefectFormDialog extends StatefulWidget {
 }
 
 class _DefectFormDialogState extends State<_DefectFormDialog> {
+  final itemSearch = TextEditingController();
   late final TextEditingController title;
   late final TextEditingController description;
   late final TextEditingController quantity;
@@ -4389,6 +4393,93 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
   String? entityId;
 
   bool get editing => widget.defect != null;
+
+  void _chooseItem(Map<String, dynamic> item) {
+    setState(() {
+      entityType = item['entityType']?.toString();
+      entityId = item['id']?.toString();
+      itemSearch.clear();
+    });
+  }
+
+  void _findItem(String value) {
+    final query = value.trim().toLowerCase();
+    if (query.isEmpty) return;
+    final exact = widget.items
+        .where(
+          (item) =>
+              item['inventoryNumber']?.toString().toLowerCase() == query ||
+              item['name']?.toString().toLowerCase() == query,
+        )
+        .toList();
+    if (exact.length == 1) {
+      _chooseItem(exact.single);
+    } else {
+      setState(() => itemSearch.text = value.trim());
+    }
+  }
+
+  Future<void> _scanItem() async {
+    var completed = false;
+    var manual = '';
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Barcode oder QR-Code scannen'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Handscanner / Inventarnummer',
+                ),
+                onChanged: (value) => manual = value,
+                onSubmitted: (value) => Navigator.pop(context, value),
+              ),
+              if (isCameraScanningSupported)
+                SizedBox(
+                  height: 260,
+                  child: MobileScanner(
+                    onDetect: (capture) {
+                      final code = capture.barcodes.isEmpty
+                          ? null
+                          : capture.barcodes.first.rawValue;
+                      if (code != null &&
+                          code.trim().isNotEmpty &&
+                          !completed) {
+                        completed = true;
+                        Navigator.pop(context, code);
+                      }
+                    },
+                  ),
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.only(top: 16),
+                  child: Text(
+                    'Der Kamera-Scan ist nur auf Smartphones und Tablets verfügbar. Am PC kann ein USB-Handscanner verwendet werden.',
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, manual),
+            child: const Text('Suchen'),
+          ),
+        ],
+      ),
+    );
+    if (mounted && value != null) _findItem(value);
+  }
 
   @override
   void initState() {
@@ -4470,6 +4561,7 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
       contactName,
       contactEmail,
       contactPhone,
+      itemSearch,
     ]) {
       controller.dispose();
     }
@@ -4564,12 +4656,56 @@ class _DefectFormDialogState extends State<_DefectFormDialog> {
       Navigator.pop(context, _payload());
     }
 
+    final query = itemSearch.text.trim().toLowerCase();
+    final matches = query.isEmpty
+        ? <Map<String, dynamic>>[]
+        : widget.items
+              .where(
+                (item) =>
+                    (item['inventoryNumber']?.toString().toLowerCase() ?? '')
+                        .contains(query) ||
+                    (item['name']?.toString().toLowerCase() ?? '').contains(
+                      query,
+                    ),
+              )
+              .toList();
     final targetSection = _WorkspaceSection(
       title: 'Betroffener Artikel',
       icon: Icons.inventory_2_outlined,
       child: Column(
         children: [
+          TextField(
+            controller: itemSearch,
+            decoration: InputDecoration(
+              labelText: 'Inventarnummer oder Name suchen',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: IconButton(
+                tooltip: 'Artikel scannen',
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: _scanItem,
+              ),
+            ),
+            onChanged: (_) => setState(() {}),
+            onSubmitted: _findItem,
+          ),
+          if (query.isNotEmpty) ...[
+            if (matches.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Keine passenden Artikel gefunden.'),
+              ),
+            for (final item in matches.take(8))
+              ListTile(
+                title: Text(item['name']?.toString() ?? ''),
+                subtitle: Text(item['inventoryNumber']?.toString() ?? '-'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _chooseItem(item),
+              ),
+            if (matches.length > 8)
+              Text('${matches.length} Treffer – bitte Suche verfeinern.'),
+          ],
           DropdownButtonFormField<String>(
+            key: ValueKey('area-$entityType'),
             initialValue: entityType,
             decoration: const InputDecoration(labelText: 'Bereich *'),
             items: types

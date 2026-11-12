@@ -63,6 +63,12 @@ test('vehicle master data is validated and creates a protected inventory locatio
     assert.equal(vehicle.registrationNumber, 'DLRG 1');
     assert.equal(vehicle.ownerUnitName, 'Organisation');
     assert.ok(vehicle.loadLocationId);
+    const updated = await fetch(baseUrl + '/api/vehicles/' + vehicle.id, {
+      method: 'PUT', headers, body: JSON.stringify({ storagePositions: ['G1', 'G2', 'G1'] }),
+    }).then(response => response.json());
+    assert.deepEqual(updated.storagePositions, ['G1', 'G2']);
+    const hierarchy = await fetch(baseUrl + '/api/storage-hierarchy', { headers }).then(response => response.json());
+    assert.equal(hierarchy.locations.some(entry => entry.id === vehicle.loadLocationId), false);
 
     const duplicate = await fetch(`${baseUrl}/api/vehicles`, {
       method: 'POST', headers,
@@ -393,4 +399,66 @@ test('off-duty vehicles are purged after ten years only without open defects or 
   } finally {
     server.close();
   }
+});
+
+ test('linked youth units only see explicitly shared vehicles', async () => {
+  const { app, server, baseUrl, headers } = await setup();
+  try {
+    const vehicle = await fetch(baseUrl + '/api/vehicles', {
+      method: 'POST', headers, body: JSON.stringify(vehicleBody()),
+    }).then(response => response.json());
+    const data = app.locals.appData;
+    const viewer = data.organizationUnits.find(entry => entry.id === data.vehicles[0].unitId);
+    const ownerId = 'vehicle-test-base';
+    data.organizationUnits.push({ id: ownerId, organizationId: viewer.organizationId, name: 'Stammgliederung', status: 'active', unitKind: 'standard' });
+    viewer.unitKind = 'youth';
+    viewer.baseUnitId = ownerId;
+    const stored = data.vehicles.find(entry => entry.id === vehicle.id);
+    stored.unitId = ownerId;
+    assert.equal((await fetch(baseUrl + '/api/vehicles/' + vehicle.id, { headers })).status, 404);
+    stored.viewAllowedUnitIds = [viewer.id];
+    assert.equal((await fetch(baseUrl + '/api/vehicles/' + vehicle.id, { headers })).status, 200);
+    stored.viewAllowedUnitIds = [];
+    assert.equal((await fetch(baseUrl + '/api/vehicles/' + vehicle.id, { headers })).status, 404);
+  } finally { server.close(); }
+});
+
+test('building parking spaces support multiple vehicles and protect assignments', async () => {
+  const { server, baseUrl, headers } = await setup();
+  const send = (path, method, body) => fetch(baseUrl + path, { method, headers, body: JSON.stringify(body) });
+  try {
+    const response = await send('/api/locations', 'POST', {
+      name: 'Fahrzeughalle', code: 'FH', street: 'Hafenstraße', houseNumber: '1',
+      postalCode: '20457', city: 'Hamburg', country: 'Deutschland',
+      parkingSpaces: [{ name: 'Stellplatz 1' }, { name: 'Stellplatz 2' }],
+    });
+    assert.equal(response.status, 201);
+    const building = await response.json();
+    const space = building.parkingSpaces[0];
+    const ids = [];
+    for (const [index, vehicleKind] of ['Kraftfahrzeug', 'Anhänger'].entries()) {
+      const created = await send('/api/vehicles', 'POST', vehicleBody({
+        registrationNumber: 'PARK ' + index, vin: 'PARKVIN' + index, vehicleKind,
+        parkingLocationId: building.id, parkingSpaceId: space.id,
+      }));
+      assert.equal(created.status, 201);
+      const vehicle = await created.json();
+      assert.equal(vehicle.parkingSpaceId, space.id);
+      assert.equal(vehicle.parkingSpaceName, 'Stellplatz 1');
+      ids.push(vehicle.id);
+    }
+    assert.equal((await send('/api/locations/' + building.id, 'PUT', { parkingSpaces: [] })).status, 409);
+    assert.equal((await fetch(baseUrl + '/api/locations/' + building.id, { method: 'DELETE', headers })).status, 409);
+    const renamed = await send('/api/locations/' + building.id, 'PUT', {
+      parkingSpaces: building.parkingSpaces.map(entry => ({ ...entry, name: entry.id === space.id ? 'Tor 1' : entry.name })),
+    });
+    assert.equal(renamed.status, 200);
+    const vehicle = await fetch(baseUrl + '/api/vehicles/' + ids[0], { headers }).then(res => res.json());
+    assert.equal(vehicle.parkingSpaceName, 'Tor 1');
+    assert.equal((await send('/api/vehicles/' + ids[0], 'PUT', { parkingSpaceId: 'unknown' })).status, 400);
+    for (const id of ids) {
+      assert.equal((await send('/api/vehicles/' + id, 'PUT', { parkingLocationId: null, parkingSpaceId: null })).status, 200);
+    }
+    assert.equal((await send('/api/locations/' + building.id, 'PUT', { parkingSpaces: [] })).status, 200);
+  } finally { server.close(); }
 });

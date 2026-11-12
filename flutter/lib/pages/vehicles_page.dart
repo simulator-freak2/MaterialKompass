@@ -316,7 +316,7 @@ class _VehiclesPageState extends State<VehiclesPage> {
       '${_vehicleKindOf(vehicle)} · ${_vehicleUsageOf(vehicle)} · ${vehicle['type']}'
           .trim(),
       '${vehicle['manufacturer']} ${vehicle['model']}'.trim(),
-      'Stellplatz: ${vehicle['parkingDetails'].toString().isNotEmpty ? vehicle['parkingDetails'] : vehicle['parkingLocationName'] ?? '-'}',
+      'Stellplatz: ${vehicle['parkingDetails'].toString().isNotEmpty ? vehicle['parkingDetails'] : [vehicle['parkingLocationName'], vehicle['parkingSpaceName']].whereType<String>().join(' / ')}',
       if (vehicle['unitId'] != activeUnitId)
         'Freigegeben durch ${vehicle['ownerUnitName'] ?? 'andere Gliederung'}',
     ].join('\n');
@@ -624,6 +624,9 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
   late final hours = TextEditingController(
     text: widget.vehicle?['operatingHours']?.toString(),
   );
+  late final storagePositions = TextEditingController(
+    text: (widget.vehicle?['storagePositions'] as List? ?? const []).join('\n'),
+  );
   late final parkingDetails = TextEditingController(
     text: widget.vehicle?['parkingDetails']?.toString(),
   );
@@ -638,6 +641,7 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
       : _vehicleUsageOf(widget.vehicle!);
   late String type = widget.vehicle?['type']?.toString() ?? 'Einsatzfahrzeug';
   late String status = widget.vehicle?['status']?.toString() ?? 'Verfügbar';
+  late String? parkingSpaceId = widget.vehicle?['parkingSpaceId']?.toString();
   late String? parkingLocationId = widget.vehicle?['parkingLocationId']
       ?.toString();
   late bool primary = widget.vehicle?['primaryResponseVehicle'] == true;
@@ -679,6 +683,7 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
       mileage,
       hours,
       parkingDetails,
+      storagePositions,
       notes,
     ]) {
       controller.dispose();
@@ -799,12 +804,12 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
                   child: DropdownButtonFormField<String?>(
                     initialValue: parkingLocationId,
                     decoration: const InputDecoration(
-                      labelText: 'Stellplatz-Lagerort',
+                      labelText: 'Gebäude / Fahrzeugstandort',
                     ),
                     items: [
                       const DropdownMenuItem<String?>(
                         value: null,
-                        child: Text('Kein Lagerort'),
+                        child: Text('Kein Gebäude'),
                       ),
                       ...parking.map(
                         (entry) => DropdownMenuItem<String?>(
@@ -816,10 +821,50 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
                         ),
                       ),
                     ],
-                    onChanged: (value) => parkingLocationId = value,
+                    onChanged: (value) => setState(() {
+                      parkingLocationId = value;
+                      parkingSpaceId = null;
+                    }),
+                  ),
+                ),
+                SizedBox(
+                  width: 330,
+                  child: DropdownButtonFormField<String?>(
+                    key: ValueKey('parking-space-$parkingLocationId'),
+                    initialValue: parkingSpaceId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Fahrzeugstellplatz',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Kein bestimmter Stellplatz'),
+                      ),
+                      for (final building in parking.where(
+                        (entry) => entry['id'] == parkingLocationId,
+                      ))
+                        for (final space
+                            in (building['parkingSpaces'] as List? ?? const []))
+                          DropdownMenuItem<String?>(
+                            value: space['id'].toString(),
+                            child: Text(space['name'].toString()),
+                          ),
+                    ],
+                    onChanged: parkingLocationId == null
+                        ? null
+                        : (value) => setState(() => parkingSpaceId = value),
                   ),
                 ),
                 _field(parkingDetails, 'Stellplatz-Details'),
+                TextFormField(
+                  controller: storagePositions,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Lagermöglichkeiten im Fahrzeug',
+                    helperText: 'Ein Fach oder Lagerplatz pro Zeile.',
+                  ),
+                ),
                 SizedBox(
                   width: 330,
                   child: DropdownButtonFormField<String>(
@@ -884,7 +929,13 @@ class _VehicleFormDialogState extends State<_VehicleFormDialog> {
               'mileage': mileage.text,
               'operatingHours': hours.text,
               'parkingLocationId': parkingLocationId,
+              'parkingSpaceId': parkingSpaceId,
               'parkingDetails': parkingDetails.text,
+              'storagePositions': storagePositions.text
+                  .split('\n')
+                  .map((e) => e.trim())
+                  .where((e) => e.isNotEmpty)
+                  .toList(),
               'status': status,
               'primaryResponseVehicle': primary,
               'notes': notes.text,
@@ -1007,6 +1058,9 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => _LoadMaterialDialog(
+        positions: (vehicle?['storagePositions'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
         materials: materials
             .map((entry) => Map<String, dynamic>.from(entry as Map))
             .toList(),
@@ -1181,7 +1235,11 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                     'Baujahr': value['year'],
                     'Stellplatz': value['parkingDetails'].toString().isNotEmpty
                         ? value['parkingDetails']
-                        : value['parkingLocationName'],
+                        : [
+                            value['parkingLocationName'],
+                            value['parkingSpaceName'],
+                          ].whereType<String>().join(' / '),
+                    'Zugewiesener Fahrzeugstellplatz': value['parkingSpaceName'] ?? 'Keiner',
                     'Kilometerstand': value['mileage'],
                     'Betriebsstunden': value['operatingHours'],
                     'Status': value['status'],
@@ -1969,7 +2027,8 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
 }
 
 class _LoadMaterialDialog extends StatefulWidget {
-  const _LoadMaterialDialog({required this.materials});
+  const _LoadMaterialDialog({required this.materials, required this.positions});
+  final List<String> positions;
   final List<Map<String, dynamic>> materials;
   @override
   State<_LoadMaterialDialog> createState() => _LoadMaterialDialogState();
@@ -2018,12 +2077,24 @@ class _LoadMaterialDialogState extends State<_LoadMaterialDialog> {
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Menge'),
           ),
-          TextField(
-            controller: position,
-            decoration: const InputDecoration(
-              labelText: 'Beladungsposition/Fach',
+          if (widget.positions.isNotEmpty)
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(labelText: 'Fahrzeugfach'),
+              items: widget.positions
+                  .map(
+                    (value) =>
+                        DropdownMenuItem(value: value, child: Text(value)),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => position.text = value ?? ''),
+            )
+          else
+            TextField(
+              controller: position,
+              decoration: const InputDecoration(
+                labelText: 'Beladungsposition/Fach',
+              ),
             ),
-          ),
           TextField(
             controller: notes,
             decoration: const InputDecoration(labelText: 'Notiz'),

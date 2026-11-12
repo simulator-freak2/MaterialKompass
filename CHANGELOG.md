@@ -1,5 +1,41 @@
 # Aenderungsprotokoll
 
+## [1.7.4] - 2026-11-12
+
+-Überarbeitung der Nutzerverwaltung## [1.6.3] - 2026-11-06
+
+- Überarbeitung 2 FA
+- Updater in die Installierten Apps eingebaut
+- performance verbessert
+
+## Unveroeffentlicht
+
+- Native Apps koennen vollstaendig authentifizierte Sitzungen mit Geraete-PIN,
+  Biometrie oder Windows Hello entsperren; Web-Sitzungen ueberstehen Reloads und
+  bleiben bis zum Schliessen des letzten Tabs aktiv.
+- Rotierende Refresh-Sitzungen, Mehrtab-Synchronisierung und kontoweiter Widerruf
+  bei Logout sowie sicherheitsrelevanten Kontoaenderungen ergaenzt.
+- Push-Abfragen von Vorder- und Hintergrunddienst loesen keine gegenseitigen
+  Neustarts oder irrtuemlichen Meldungen ueber zu viele Versuche mehr aus.## [1.6.2] - 2026-10-27
+
+- Überarbeitung 2 FA## [1.6.0] - 2026-10-23
+
+- Überarbeitung 2 FA## [1.5.10] - 2026-10-23
+
+- Einschränkung der Anmeldemöglichkeiten## [1.5.7] - 2026-10-20
+
+-Überarbeitung Loginseite
+-Überabeitung der 2FA
+-Gedächtnis der Letzten Einheit Eingeführt## [1.5.6] - 2026-10-18
+
+-2FA## [1.5.5] - 2026-10-18
+
+-2FA## [1.5.4] - 2026-10-17
+
+-Datenschutzupdate## [1.5.3] - 2026-10-17
+
+-Sicherheitsupdate
+
 ## [1.7.3] - 2026-11-11
 
 -Überarbeitung der Nutzerverwaltung## [1.6.3] - 2026-11-06
