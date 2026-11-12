@@ -1,5 +1,9 @@
 # Aenderungsprotokoll
 
+## [1.7.5] - 2026-11-12
+
+-Update
+
 ## [1.7.4] - 2026-11-12
 
 -Überarbeitung der Nutzerverwaltung## [1.6.3] - 2026-11-06

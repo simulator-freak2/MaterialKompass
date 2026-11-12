@@ -1,3 +1,4 @@
+const { createOrganizationAccount, centralRequest } = require('../test-support/accounts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('../src/app');
@@ -39,7 +40,7 @@ async function setup() {
   return { server, request, token: login.data.token, sent, snapshots };
 }
 
-test('admins manage persistent mail templates and defaults are used for account mail', async () => {
+test('admins manage persistent mail templates and explicitly select account mail', async () => {
   const { server, request, token, sent, snapshots } = await setup();
   try {
     const createdTemplate = await request('/api/mail/templates', {
@@ -58,10 +59,11 @@ test('admins manage persistent mail templates and defaults are used for account 
     assert.equal(createdTemplate.response.status, 201);
     assert.equal(snapshots.at(-1).mailTemplates.length, 1);
 
-    const createdUser = await request('/api/users', {
+    const createdUser = await createOrganizationAccount(request, {
       method: 'POST',
       token,
       body: {
+        mailMessage: { content: createdTemplate.data.content, format: createdTemplate.data.format, placement: createdTemplate.data.placement },
         username: 'mail-test',
         email: 'mail-test@example.org',
         password: 'SehrSicher123!',
@@ -100,7 +102,7 @@ test('admins send free mails and can add a one-off password reset message', asyn
     assert.equal(freeMail.response.status, 202);
     assert.equal(sent.at(-1).richContent.format, 'html');
 
-    const reset = await request('/api/users/user-admin/password-reset', {
+    const reset = await centralRequest(request, '/api/users/user-admin/password-reset', {
       method: 'POST',
       token,
       body: {

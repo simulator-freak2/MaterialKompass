@@ -199,6 +199,7 @@ void main() {
       'postalCode': '20457',
       'city': 'Hamburg',
       'country': 'Deutschland',
+      'parkingSpaces': [],
     });
     expect(find.text('Gebäude wurde angelegt.'), findsOneWidget);
   });

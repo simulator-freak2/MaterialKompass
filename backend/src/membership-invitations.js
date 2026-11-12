@@ -102,6 +102,7 @@ function registerMembershipInvitations({ app, users, memberships, organizations,
       id: crypto.randomUUID(), status: 'pending', tokenHash: hash(token),
       recipientBinding: recipientBinding(token, user.email), actorId: req.user.id,
       actorMembershipId: req.tenant.membershipId,
+      actorUnitId: req.tenant.unitId,
       scopes: structuredClone(access.scopes), defaultUnitId: access.defaultUnitId,
       expiresAt: new Date(now() + INVITATION_TTL_MS).toISOString(),
     };
@@ -162,7 +163,8 @@ function registerMembershipInvitations({ app, users, memberships, organizations,
       const actorMembership = memberships.find((entry) => entry.id === invitation.actorMembershipId
         && entry.userId === invitation.actorId && entry.organizationId === membership.organizationId && entry.status === 'active');
       const checkRequest = { tenant: { organizationId: membership.organizationId,
-        membershipId: actorMembership?.id }, body: { scopes: invitation.scopes, defaultUnitId: invitation.defaultUnitId } };
+        membershipId: actorMembership?.id, unitId: invitation.actorUnitId },
+        body: { scopes: invitation.scopes, defaultUnitId: invitation.defaultUnitId } };
       const access = actor && actorMembership && requestedScopes(checkRequest);
       if (!access || access.error) return res.status(409).json({ error: 'Die Freigabe ist nicht mehr zulässig. Bitte eine neue Einladung anfordern.' });
       const result = mergeAccess(user, membership.organizationId, access);

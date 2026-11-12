@@ -531,8 +531,7 @@ class _InventoryPageState extends State<InventoryPage> {
   };
   AuthenticatedApiClient get api => AuthenticatedApiClient(widget.token);
   bool can(String value) => permissions.contains(value);
-  bool get canPrintLabels =>
-      userMayPrintLabels(roles);
+  bool get canPrintLabels => userMayPrintLabels(roles);
 
   @override
   void initState() {
@@ -957,7 +956,121 @@ class _InventoryPageState extends State<InventoryPage> {
       return;
     }
     final action = archived ? 'restore' : 'archive';
-    if (await _request('/api/material/${item['id']}/$action', method: 'POST') !=
+    Map<String, dynamic>? restoreBody;
+    if (archived) {
+      final hierarchy = await _request('/api/storage-hierarchy');
+      if (hierarchy is! Map || !mounted) return;
+      final availableLocations = List<Map<String, dynamic>>.from(
+        (hierarchy['locations'] as List).map(
+          (entry) => Map<String, dynamic>.from(entry as Map),
+        ),
+      ).where((entry) => entry['readOnly'] != true).toList();
+      final availableStocks = List<Map<String, dynamic>>.from(
+        (hierarchy['stockStructures'] as List).map(
+          (entry) => Map<String, dynamic>.from(entry as Map),
+        ),
+      );
+      final locationExists = availableLocations.any(
+        (entry) => entry['id'] == item['locationId'],
+      );
+      final stockId = item['stockStructureId']?.toString() ?? '';
+      final stockExists =
+          stockId.isEmpty ||
+          availableStocks.any(
+            (entry) =>
+                entry['id'] == stockId &&
+                entry['locationId'] == item['locationId'],
+          );
+      if (!locationExists || !stockExists) {
+        String? selectedLocation;
+        String? selectedStock;
+        restoreBody = await showDialog<Map<String, dynamic>>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, update) => AlertDialog(
+              title: const Text('Neuen Lagerort wählen'),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Der bisherige Lagerort existiert nicht mehr. Wohin soll der Artikel wiederhergestellt werden?',
+                    ),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedLocation,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Gebäude *'),
+                      items: availableLocations
+                          .map(
+                            (entry) => DropdownMenuItem(
+                              value: entry['id'].toString(),
+                              child: Text(entry['name'].toString()),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => update(() {
+                        selectedLocation = value;
+                        selectedStock = null;
+                      }),
+                    ),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(selectedLocation),
+                      initialValue: selectedStock,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Lagerplatz (optional)',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('Nur Gebäude'),
+                        ),
+                        ...availableStocks
+                            .where(
+                              (entry) =>
+                                  entry['locationId'] == selectedLocation,
+                            )
+                            .map(
+                              (entry) => DropdownMenuItem(
+                                value: entry['id'].toString(),
+                                child: Text(
+                                  (entry['path'] ?? entry['name']).toString(),
+                                ),
+                              ),
+                            ),
+                      ],
+                      onChanged: (value) => update(() => selectedStock = value),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Abbrechen'),
+                ),
+                FilledButton(
+                  onPressed: selectedLocation == null
+                      ? null
+                      : () => Navigator.pop(context, <String, dynamic>{
+                          'locationId': selectedLocation,
+                          'stockStructureId': selectedStock ?? '',
+                        }),
+                  child: const Text('Wiederherstellen'),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (restoreBody == null) return;
+      }
+    }
+    if (await _request(
+          '/api/material/${item['id']}/$action',
+          method: 'POST',
+          body: restoreBody,
+        ) !=
         null) {
       _message(archived ? 'Eintrag wiederhergestellt.' : 'Eintrag archiviert.');
       await _load();

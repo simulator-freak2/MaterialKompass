@@ -146,7 +146,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Schnellzugriff'), findsOneWidget);
-    expect(find.text('Nutzerverwaltung'), findsOneWidget);
+    expect(find.text('Berechtigungen dieser Ebene'), findsOneWidget);
     expect(find.text('Organisationen'), findsOneWidget);
     expect(find.text('Mängel'), findsOneWidget);
     expect(find.text('Kalender'), findsOneWidget);

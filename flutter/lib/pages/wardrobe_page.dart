@@ -67,8 +67,7 @@ class _WardrobePageState extends State<WardrobePage> {
   Set<String> _roles = {};
   Set<String> _permissions = {};
 
-  bool get _canPrintLabels =>
-      userMayPrintLabels(_roles);
+  bool get _canPrintLabels => userMayPrintLabels(_roles);
 
   @override
   void initState() {
@@ -2606,6 +2605,11 @@ class _WardrobePageState extends State<WardrobePage> {
                         'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}',
                       ),
                       Text('Kategorie: ${_categoryName(item['categoryId'])}'),
+                      if (item['stockStructureName'] != null ||
+                          item['locationName'] != null)
+                        Text(
+                          'Bisheriger Lagerort: ${item['stockStructureName'] ?? item['locationName']}',
+                        ),
                       Text(
                         item['archivedAt'] == null
                             ? 'Gelöscht am: ${item['deletedAt']?.toString() ?? '-'}'

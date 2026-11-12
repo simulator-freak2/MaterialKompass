@@ -1,3 +1,4 @@
+const { createOrganizationAccount, centralRequest } = require('../test-support/accounts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -54,7 +55,7 @@ test('mandatory MFA uses a grace period and then limits the session to enrollmen
     now: () => timestamp,
   });
   try {
-    const created = await request('/api/users', {
+    const created = await createOrganizationAccount(request, {
       method: 'POST', token: adminToken, body: {
         name: 'Pflichtkonto',
         username: 'pflichtkonto',

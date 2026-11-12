@@ -1,6 +1,6 @@
 const { requirePlatformAccountAdmin } = require('./account-authority');
 const crypto = require('node:crypto');
-const { currentTenant, runWithTenant } = require('./tenancy');
+const { currentTenant, runWithTenant, rawCollection } = require('./tenancy');
 
 const QR_LOGIN_TTL_MS = 10 * 60 * 1000;
 const QR_PREFIX = 'mkqr:v1:';
@@ -37,11 +37,11 @@ function registerQrLoginRoutes({
 }) {
   const issueSession = createSession
     || ((user, context) => ({ token: createToken(user, context), expiresIn: 3600 }));
-  function removeExpired() {
+  function removeExpired(collection = credentials) {
     const now = Date.now();
-    for (let index = credentials.length - 1; index >= 0; index -= 1) {
-      const expiresAt = credentials[index].expiresAt;
-      if (expiresAt && new Date(expiresAt).getTime() <= now) credentials.splice(index, 1);
+    for (let index = collection.length - 1; index >= 0; index -= 1) {
+      const expiresAt = collection[index].expiresAt;
+      if (expiresAt && new Date(expiresAt).getTime() <= now) collection.splice(index, 1);
     }
   }
 
@@ -82,17 +82,18 @@ function registerQrLoginRoutes({
     };
   }
 
-  function listFor(userId) {
-    removeExpired();
-    const organizationId = currentTenant()?.organizationId;
-    return credentials
+  function listFor(userId, central = false) {
+    const collection = central ? rawCollection(credentials) : credentials;
+    removeExpired(collection);
+    const organizationId = central ? null : currentTenant()?.organizationId;
+    return collection
       .filter((entry) => entry.userId === userId
         && (!organizationId || entry.organizationId === organizationId))
       .map(publicCredential)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  function issue(user, actor, requestedValidity, title) {
+  function issue(user, actor, requestedValidity, title, tenant = currentTenant()) {
     removeExpired();
     const secret = crypto.randomBytes(32).toString('base64url');
     const qrValue = `${QR_PREFIX}${secret}`;
@@ -102,8 +103,8 @@ function registerQrLoginRoutes({
       : new Date(createdAt.getTime() + requestedValidity.ttlMs);
     credentials.push({
       id: crypto.randomUUID(),
-      organizationId: currentTenant()?.organizationId,
-      unitId: currentTenant()?.unitId,
+      organizationId: tenant?.organizationId,
+      unitId: tenant?.unitId,
       userId: user.id,
       title,
       credentialHash: hashCredential(qrValue),
@@ -137,14 +138,15 @@ function registerQrLoginRoutes({
     return { ...result, id: credentials.at(-1).id };
   }
 
-  function revoke(userId, credentialId, actor) {
-    const organizationId = currentTenant()?.organizationId;
-    const index = credentials.findIndex(
+  function revoke(userId, credentialId, actor, central = false) {
+    const collection = central ? rawCollection(credentials) : credentials;
+    const organizationId = central ? null : currentTenant()?.organizationId;
+    const index = collection.findIndex(
       (entry) => entry.id === credentialId && entry.userId === userId
         && (!organizationId || entry.organizationId === organizationId),
     );
     if (index < 0) return false;
-    const [credential] = credentials.splice(index, 1);
+    const [credential] = collection.splice(index, 1);
     logEvent(
       'qr_login_revoked',
       'User',
@@ -192,10 +194,10 @@ function registerQrLoginRoutes({
     requirePlatformAccountAdmin,
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
-      if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
+      if (!user) {
         return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
       }
-      return res.json(listFor(user.id));
+      return res.json(listFor(user.id, true));
     },
   );
 
@@ -205,7 +207,8 @@ function registerQrLoginRoutes({
     requirePlatformAccountAdmin,
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
-      if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
+      const tenant = user && tenantForUser(user);
+      if (!user || !tenant) {
         return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
       }
       if (!user.active || !user.emailVerifiedAt) {
@@ -216,7 +219,7 @@ function registerQrLoginRoutes({
       const requestedTitle = titleFrom(req.body);
       if (requestedTitle.error) return res.status(400).json({ error: requestedTitle.error });
       return res.status(201).json(
-        issue(user, req.user, requestedValidity, requestedTitle.title),
+        issue(user, req.user, requestedValidity, requestedTitle.title, tenant),
       );
     },
   );
@@ -227,10 +230,10 @@ function registerQrLoginRoutes({
     requirePlatformAccountAdmin,
     (req, res) => {
       const user = users.find((entry) => entry.id === req.params.id);
-      if (!user || !tenantForUser(user, req.tenant.organizationId, req.tenant.unitId)) {
+      if (!user) {
         return res.status(404).json({ error: 'Nutzer nicht gefunden.' });
       }
-      if (!revoke(user.id, req.params.credentialId, req.user)) {
+      if (!revoke(user.id, req.params.credentialId, req.user, true)) {
         return res.status(404).json({ error: 'Anmeldecode nicht gefunden.' });
       }
       return res.status(204).end();

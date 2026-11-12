@@ -152,16 +152,16 @@ function youthTenantData() {
     registrationNumber: 'A JUG 1', vin: 'YOUTH-VEHICLE-1',
     radioCallName: 'Stammfahrzeug', vehicleKind: 'Kraftfahrzeug',
     usage: 'sonstige Verwendung', type: 'Vereinsfahrzeug', status: 'Verfügbar',
-    primaryResponseVehicle: false, viewAllowedUnitIds: [],
-    reservationAllowedUnitIds: [], createdAt: '2026-01-01T00:00:00.000Z',
+    primaryResponseVehicle: false, viewAllowedUnitIds: ['unit-a-youth'],
+    reservationAllowedUnitIds: ['unit-a-youth'], createdAt: '2026-01-01T00:00:00.000Z',
   });
   data.vehicles.push({
     id: 'vehicle-a-youth', organizationId: 'org-a', unitId: 'unit-a-youth',
     registrationNumber: 'A JUG 2', vin: 'YOUTH-VEHICLE-2',
     radioCallName: 'Jugendfahrzeug', vehicleKind: 'Kraftfahrzeug',
     usage: 'sonstige Verwendung', type: 'Vereinsfahrzeug', status: 'Verfügbar',
-    primaryResponseVehicle: false, viewAllowedUnitIds: [],
-    reservationAllowedUnitIds: [], createdAt: '2026-01-01T00:00:00.000Z',
+    primaryResponseVehicle: false, viewAllowedUnitIds: ['unit-a'],
+    reservationAllowedUnitIds: ['unit-a'], createdAt: '2026-01-01T00:00:00.000Z',
   });
   return data;
 }
@@ -912,37 +912,21 @@ test('units require transfer before archive and receive a two-year purge deadlin
 });
 
 test('users receive independent rights per organization and organization unit', async () => {
-  const { server, baseUrl } = await start();
+  const data = tenantData();
+  const target = data.memberships.find((entry) => entry.id === 'membership-warden-a');
+  target.scopes = [
+    { unitId: 'unit-a-child', includeDescendants: false, roles: ['Materialwart'], departmentIds: [] },
+    { unitId: 'unit-a-sibling', includeDescendants: false, roles: ['Nutzer'], departmentIds: [] },
+  ];
+  // Explicit per-unit grants; a parent admin no longer administers child accounts.
+  data.memberships.find((entry) => entry.id === 'membership-admin-a').scopes.push({
+    unitId: 'unit-a-child', includeDescendants: false, roles: ['Admin'], departmentIds: [],
+  });
+  const { app, server, baseUrl } = await start(data);
+  const materialwart = data.users.find((entry) => entry.id === 'user-materialwart');
   try {
     const adminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
-    const users = await request(baseUrl, '/api/users?search=materialwart', {
-      token: adminToken,
-    });
-    const materialwart = users.data[0];
-    const changed = await request(baseUrl, `/api/users/${materialwart.id}`, {
-      token: adminToken,
-      method: 'PUT',
-      body: {
-        ...materialwart,
-        defaultUnitId: 'unit-a-child',
-        scopes: [
-          {
-            unitId: 'unit-a-child', includeDescendants: false,
-            roles: ['Materialwart'], departmentIds: [],
-          },
-          {
-            unitId: 'unit-a-sibling', includeDescendants: false,
-            roles: ['Nutzer'], departmentIds: [],
-          },
-        ],
-      },
-    });
-    assert.equal(changed.response.status, 200);
-    assert.deepEqual(
-      changed.data.organizationAccess.scopes.map((scope) => scope.roles),
-      [['Materialwart'], ['Nutzer']],
-    );
-
+    const rootAdminToken = adminToken;
     const materialwartToken = await login(baseUrl, 'materialwart', 'Material123!');
     const siblingContext = await request(baseUrl, '/api/auth/context', {
       token: materialwartToken,
@@ -985,33 +969,21 @@ test('users receive independent rights per organization and organization unit', 
 });
 
 test('unit administrators cannot read or overwrite access rights of sibling units', async () => {
-  const { server, baseUrl } = await start();
+  const data = tenantData();
+  const target = data.memberships.find((entry) => entry.id === 'membership-warden-a');
+  target.scopes = [
+    { unitId: 'unit-a-child', includeDescendants: false, roles: ['Admin'], departmentIds: [] },
+    { unitId: 'unit-a-sibling', includeDescendants: false, roles: ['Nutzer'], departmentIds: [] },
+  ];
+  // Explicit per-unit grants; a parent admin no longer administers child accounts.
+  data.memberships.find((entry) => entry.id === 'membership-admin-a').scopes.push({
+    unitId: 'unit-a-child', includeDescendants: false, roles: ['Admin'], departmentIds: [],
+  });
+  const { app, server, baseUrl } = await start(data);
+  const materialwart = data.users.find((entry) => entry.id === 'user-materialwart');
   try {
-    const rootAdminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
-    const users = await request(baseUrl, '/api/users?search=materialwart', {
-      token: rootAdminToken,
-    });
-    const materialwart = users.data[0];
-    const configured = await request(baseUrl, `/api/users/${materialwart.id}`, {
-      token: rootAdminToken,
-      method: 'PUT',
-      body: {
-        ...materialwart,
-        defaultUnitId: 'unit-a-child',
-        scopes: [
-          {
-            unitId: 'unit-a-child', includeDescendants: false,
-            roles: ['Admin'], departmentIds: [],
-          },
-          {
-            unitId: 'unit-a-sibling', includeDescendants: false,
-            roles: ['Nutzer'], departmentIds: [],
-          },
-        ],
-      },
-    });
-    assert.equal(configured.response.status, 200);
-
+    const adminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const rootAdminToken = adminToken;
     const unitAdminToken = await login(baseUrl, 'materialwart', 'Material123!');
     const visibleUsers = await request(baseUrl, '/api/users', { token: unitAdminToken });
     assert.deepEqual(
@@ -1041,12 +1013,12 @@ test('unit administrators cannot read or overwrite access rights of sibling unit
     });
     assert.equal(updated.response.status, 200);
 
+    assert.deepEqual(app.locals.appData.memberships.find((entry) => entry.id === 'membership-warden-a').scopes.map((scope) => scope.unitId).sort(), ['unit-a-child', 'unit-a-sibling']);
     const rootView = await request(baseUrl, '/api/users?search=materialwart', {
       token: rootAdminToken,
     });
     assert.deepEqual(
-      rootView.data[0].organizationAccess.scopes.map((scope) => scope.unitId),
-      ['unit-a-sibling', 'unit-a-child'],
+      rootView.data, [],
     );
   } finally {
     await new Promise((resolve) => server.close(resolve));

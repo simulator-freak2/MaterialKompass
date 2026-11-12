@@ -1,3 +1,4 @@
+const { createOrganizationAccount, centralRequest } = require('../test-support/accounts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('../src/app');
@@ -98,7 +99,7 @@ test('account policy blocks normal login and permits only selected service devic
 
     const allowedDevice = await createAndActivate('Zulässiges Terminal', 'ACCESS-001');
     const deniedDevice = await createAndActivate('Fremdes Terminal', 'ACCESS-002');
-    const created = await request('/api/users', {
+    const created = await createOrganizationAccount(request, {
       method: 'POST', token: adminToken, body: {
         name: 'Gerätegebundene Person', username: 'device-user',
         email: 'device-user@example.org', password: 'SehrSicher123!',
@@ -120,7 +121,7 @@ test('account policy blocks normal login and permits only selected service devic
     });
     assert.equal(normalLogin.response.status, 403);
 
-    const qr = await request(`/api/users/${created.data.id}/qr-credential`, {
+    const qr = await centralRequest(request, `/api/users/${created.data.id}/qr-credential`, {
       method: 'POST', token: adminToken, body: {},
     });
     assert.equal(qr.response.status, 201);
@@ -145,7 +146,7 @@ test('account policy blocks normal login and permits only selected service devic
     assert.equal(allowed.response.status, 200);
     assert.equal((await request('/api/dashboard', { token: allowed.data.token })).response.status, 200);
 
-    const invalidUpdate = await request(`/api/users/${created.data.id}`, {
+    const invalidUpdate = await centralRequest(request, `/api/users/${created.data.id}`, {
       method: 'PUT', token: adminToken, body: {
         loginAccess: {
           mode: 'selected_service_devices',
@@ -155,7 +156,7 @@ test('account policy blocks normal login and permits only selected service devic
     });
     assert.equal(invalidUpdate.response.status, 400);
 
-    const opened = await request(`/api/users/${created.data.id}`, {
+    const opened = await centralRequest(request, `/api/users/${created.data.id}`, {
       method: 'PUT', token: adminToken, body: {
         loginAccess: { mode: 'all_clients', allowedServiceDeviceIds: [] },
       },

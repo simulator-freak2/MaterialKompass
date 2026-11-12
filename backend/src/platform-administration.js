@@ -80,6 +80,9 @@ function administrationRouteAllowed(req) {
   if (['/api/users/identity-conflicts', '/api/platform/service-devices'].includes(req.path)) return req.method === 'GET';
   if (/^\/api\/users\/[^/]+$/.test(req.path)) return req.method === 'PUT';
   if (/^\/api\/platform\/users\/[^/]+$/.test(req.path)) return req.method === 'DELETE';
+  if (/^\/api\/users\/[^/]+\/qr-credential$/.test(req.path)) return req.method === 'POST';
+  if (/^\/api\/users\/[^/]+\/qr-credentials$/.test(req.path)) return req.method === 'GET';
+  if (/^\/api\/users\/[^/]+\/qr-credentials\/[^/]+$/.test(req.path)) return req.method === 'DELETE';
   return /^\/api\/users\/[^/]+\/(mfa-policy|mfa|passkeys|password-reset|verification\/(resend|confirm))$/.test(req.path);
 }
 

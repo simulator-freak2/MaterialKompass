@@ -14,7 +14,7 @@ function Assert-WebReleaseVersion {
         try { $metadata = $reader.ReadToEnd() | ConvertFrom-Json }
         finally { $reader.Dispose() }
         if (-not $metadata.PSObject.Properties['version'] -or $metadata.version -cne $ExpectedVersion) {
-            throw "Webpaket passt nicht zur Releaseversion $ExpectedVersion. Bitte Apps fuer diese Version neu bauen oder die passenden GitHub-Artefakte herunterladen."
+            throw "Webpaket passt nicht zur Releaseversion $ExpectedVersion. Bitte Apps fuer diese Version neu bauen oder die passenden GitHub-Artefakte herunterladen. Das Starten von GitHub Actions allein aktualisiert das lokale Webpaket nicht: $ArchivePath"
         }
         Write-Host "Webpaket-Version geprueft: $ExpectedVersion"
     }

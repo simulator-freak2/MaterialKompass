@@ -1,3 +1,4 @@
+const { centralRequest } = require('../test-support/accounts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('../src/app');
@@ -67,10 +68,30 @@ test('self-issued QR login is opaque, hashed at rest and single-use', async () =
 test('admin can issue a QR login for another active user', async () => {
   const { server, request, adminToken } = await setup();
   try {
-    const issued = await request('/api/users/user-materialwart/qr-credential', {
+    assert.equal((await request('/api/users/user-materialwart/qr-credential', {
+      method: 'POST', token: adminToken, body: {},
+    })).response.status, 403);
+    const issued = await centralRequest(request, '/api/users/user-materialwart/qr-credential', {
       method: 'POST', token: adminToken, body: {},
     });
     assert.equal(issued.response.status, 201);
+
+    const listed = await centralRequest(request, '/api/users/user-materialwart/qr-credentials', {
+      token: adminToken,
+    });
+    assert.equal(listed.response.status, 200);
+    assert.ok(listed.data.some((entry) => entry.id === issued.data.id));
+
+    const revoked = await centralRequest(request, '/api/users/user-materialwart/qr-credential', {
+      method: 'POST', token: adminToken, body: {},
+    });
+    assert.equal(revoked.response.status, 201);
+    const revokePath = `/api/users/user-materialwart/qr-credentials/${revoked.data.id}`;
+    assert.equal((await request(revokePath, { method: 'DELETE', token: adminToken })).response.status, 403);
+    assert.equal((await centralRequest(request, revokePath, { method: 'DELETE', token: adminToken })).response.status, 204);
+    assert.equal((await request('/api/auth/qr-login', {
+      method: 'POST', body: { credential: revoked.data.qrValue },
+    })).response.status, 401);
 
     const used = await request('/api/auth/qr-login', {
       method: 'POST', body: { credential: issued.data.qrValue },

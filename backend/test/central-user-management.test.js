@@ -120,6 +120,24 @@ test('expired or revoked invitations never activate access', async (t) => {
   assert.equal(f.app.locals.appData.memberships.find((entry) => entry.userId === user.id).status, 'inactive');
 });
 
+test('invitation acceptance rechecks the issuing admins current unit permissions', async (t) => {
+  const f = await fixture(t);
+  const user = await f.create('revoked-invitation-authority');
+  await f.request(`/api/users/${user.id}`, {}, f.admin, 'DELETE');
+  assert.equal((await f.request('/api/users/memberships', {
+    identifier: user.email, mode: 'invitation',
+  }, f.admin)).status, 202);
+  const token = f.tokens.find((entry) => entry.type === 'membership-invitation').token;
+  const data = f.app.locals.appData;
+  const issuer = data.memberships.find((entry) => entry.userId === 'user-admin'
+    && entry.organizationId !== PLATFORM_ORGANIZATION_ID);
+  issuer.scopes.forEach((scope) => { scope.roles = ['Nutzer']; });
+  assert.equal((await f.request('/api/auth/membership-invitation/confirm', {
+    token, accept: true,
+  })).status, 409);
+  assert.equal(data.memberships.find((entry) => entry.userId === user.id).status, 'inactive');
+});
+
 test('an organization role used in another non-managed unit cannot be edited', async (t) => {
   const f = await fixture(t);
   const manager = await f.create('role-manager', { roles: ['Admin'] });

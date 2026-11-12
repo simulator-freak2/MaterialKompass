@@ -118,10 +118,10 @@ function registerInventoryRoutes({
       sourceUnitName: unitName(item.unitId),
       categoryName: categories.find((entry) => entry.id === item.categoryCode)?.name || null,
       subcategoryName: categories.find((entry) => entry.id === item.subcategoryCode)?.name || null,
-      locationName: locations.find((entry) => entry.id === item.locationId)?.name || null,
+      locationName: locations.find((entry) => entry.id === item.locationId)?.name || item.historicalLocationName || null,
       stockStructureName: stockStructures.find((entry) =>
         entry.id === item.stockStructureId)?.path || stockStructures.find((entry) =>
-        entry.id === item.stockStructureId)?.name || null,
+        entry.id === item.stockStructureId)?.name || item.historicalStoragePath || null,
       reservationAllowedUnitIds: [...(item.reservationAllowedUnitIds || [])],
       safetyStatus: assessMaterialSafety(item),
       vehicleLoadedQuantity: loadedQuantity(item.id),
@@ -260,6 +260,14 @@ function registerInventoryRoutes({
     if (inventoryNumberInUse(inventoryEntries(), item.inventoryNumber, item)) {
       return res.status(409).json({ error: 'Die Inventarnummer ist inzwischen anderweitig vergeben.' });
     }
+    const locationId = String(req.body.locationId ?? item.locationId ?? '');
+    const stockStructureId = String(req.body.stockStructureId ?? (req.body.locationId ? '' : item.stockStructureId) ?? '');
+    if (!locations.some((entry) => entry.id === locationId)
+      || (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId))) {
+      return res.status(409).json({ code: 'RESTORE_LOCATION_REQUIRED', error: 'Der bisherige Lagerort existiert nicht mehr. Bitte einen gültigen Lagerort wählen.' });
+    }
+    item.locationId = locationId;
+    item.stockStructureId = stockStructureId || null;
     item.archived = false; item.archivedAt = null; item.archivedBy = null;
     logEvent('restore', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));

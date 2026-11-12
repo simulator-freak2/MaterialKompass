@@ -1,3 +1,4 @@
+const { createOrganizationAccount, centralRequest } = require('../test-support/accounts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
@@ -30,7 +31,7 @@ async function setup(options = {}) {
 test('admin creates, verifies, searches, edits and deletes users', async () => {
   const { server, request, tokens, adminToken } = await setup();
   try {
-    const created = await request('/api/users', { method: 'POST', token: adminToken, body: {
+    const created = await createOrganizationAccount(request, { method: 'POST', token: adminToken, body: {
       name: 'Nora Nutzerin', username: 'nora', email: 'nora@example.org',
       password: 'SehrSicher123!', roles: ['Nutzer'], active: true,
     } });
@@ -54,7 +55,7 @@ test('admin creates, verifies, searches, edits and deletes users', async () => {
     assert.equal(search.data.length, 1);
     assert.equal(search.data[0].lastLoginAt !== null, true);
 
-    const changed = await request(`/api/users/${created.data.id}`, { method: 'PUT', token: adminToken, body: { ...created.data, active: false } });
+    const changed = await centralRequest(request, `/api/users/${created.data.id}`, { method: 'PUT', token: adminToken, body: { active: false } });
     assert.equal(changed.response.status, 200);
     assert.equal(changed.data.active, false);
     assert.equal((await request('/api/auth/login', { method: 'POST', body: { identifier: 'nora', password: 'SehrSicher123!' } })).response.status, 403);
@@ -66,7 +67,7 @@ test('admin creates, verifies, searches, edits and deletes users', async () => {
 test('admin creates a user with only username and email as required fields', async () => {
   const { server, request, tokens, adminToken } = await setup();
   try {
-    const created = await request('/api/users', { method: 'POST', token: adminToken, body: {
+    const created = await createOrganizationAccount(request, { method: 'POST', token: adminToken, body: {
       username: 'ohne-name', email: 'ohne-name@example.org',
     } });
     assert.equal(created.response.status, 201);
@@ -106,7 +107,7 @@ test('email verification can only be resent after 24 hours for new and changed a
     now: () => currentTime,
   });
   try {
-    const created = await request('/api/users', {
+    const created = await createOrganizationAccount(request, {
       method: 'POST',
       token: adminToken,
       body: {
@@ -131,7 +132,7 @@ test('email verification can only be resent after 24 hours for new and changed a
     assert.equal(earlyPublicResend.response.status, 202);
     assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 1);
 
-    const earlyAdminResend = await request(
+    const earlyAdminResend = await centralRequest(request,
       `/api/users/${created.data.id}/verification/resend`,
       { method: 'POST', token: adminToken },
     );
@@ -154,10 +155,10 @@ test('email verification can only be resent after 24 hours for new and changed a
       200,
     );
 
-    const changed = await request(`/api/users/${created.data.id}`, {
+    const changed = await centralRequest(request, `/api/users/${created.data.id}`, {
       method: 'PUT',
       token: adminToken,
-      body: { ...created.data, email: 'geändert@example.org' },
+      body: { email: 'geändert@example.org' },
     });
     assert.equal(changed.response.status, 200);
     assert.equal(changed.data.emailVerifiedAt, null);
@@ -168,7 +169,7 @@ test('email verification can only be resent after 24 hours for new and changed a
     assert.equal(tokens.filter((entry) => entry.type === 'verification').length, 3);
 
     assert.equal(
-      (await request(`/api/users/${created.data.id}/verification/resend`, {
+      (await centralRequest(request, `/api/users/${created.data.id}/verification/resend`, {
         method: 'POST',
         token: adminToken,
       })).response.status,
@@ -177,7 +178,7 @@ test('email verification can only be resent after 24 hours for new and changed a
 
     currentTime += 24 * 60 * 60 * 1000;
     assert.equal(
-      (await request(`/api/users/${created.data.id}/verification/resend`, {
+      (await centralRequest(request, `/api/users/${created.data.id}/verification/resend`, {
         method: 'POST',
         token: adminToken,
       })).response.status,
@@ -188,7 +189,7 @@ test('email verification can only be resent after 24 hours for new and changed a
     const pendingToken = tokens.findLast(
       (entry) => entry.type === 'verification' && entry.userId === created.data.id,
     ).token;
-    const manuallyConfirmed = await request(
+    const manuallyConfirmed = await centralRequest(request,
       `/api/users/${created.data.id}/verification/confirm`,
       { method: 'POST', token: adminToken },
     );
@@ -200,7 +201,7 @@ test('email verification can only be resent after 24 hours for new and changed a
       400,
     );
     assert.equal(
-      (await request(`/api/users/${created.data.id}/verification/confirm`, {
+      (await centralRequest(request, `/api/users/${created.data.id}/verification/confirm`, {
         method: 'POST',
         token: adminToken,
       })).response.status,
@@ -241,19 +242,19 @@ test('departments are managed centrally and required for department heads', asyn
     });
     assert.equal(department.response.status, 201);
 
-    const missingAssignment = await request('/api/users', {
+    const missingAssignment = await createOrganizationAccount(request, {
       method: 'POST',
       token: adminToken,
       body: {
-        username: 'bereichsleitung',
-        email: 'bereichsleitung@example.org',
+        username: 'bereichsleitung-ohne-zuordnung',
+        email: 'bereichsleitung-ohne-zuordnung@example.org',
         password: 'SehrSicher123!',
         roles: ['Fachbereichsleiter'],
       },
     });
     assert.equal(missingAssignment.response.status, 400);
 
-    const created = await request('/api/users', {
+    const created = await createOrganizationAccount(request, {
       method: 'POST',
       token: adminToken,
       body: {

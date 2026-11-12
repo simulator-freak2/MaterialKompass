@@ -72,6 +72,10 @@ Neustart des Backends zur Übernahme der Clientversionen beendet diesen Lauf nic
 Vor dem Upload muss `version.json` im Web-ZIP zur ausgewählten Releaseversion
 passen. Veraltete Webpakete werden auch in der Vorschau abgelehnt. In diesem Fall
 zuerst **Apps bauen** ausführen oder die passenden GitHub-Artefakte herunterladen.
+**Apps bauen** erstellt das Webpaket in beiden Buildmodi lokal und benötigt dafür
+das Flutter-SDK. Im GitHub-Modus werden die Installer anschließend nur zum Build
+angestoßen. Vor einem Installer-Deployment müssen die fertigen Artefakte des
+passenden GitHub-Laufs nach `releases` heruntergeladen werden.
 
 ## SSH-Schlüssel erstmalig erstellen
 

@@ -1,3 +1,4 @@
+const { centralRequest } = require('../test-support/accounts');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
@@ -276,7 +277,7 @@ test('passkey login respects a service-device-only account policy', async () => 
     });
     assert.equal(registered.response.status, 201);
 
-    const restricted = await request('/api/users/user-admin', {
+    const restricted = await centralRequest(request, '/api/users/user-admin', {
       method: 'PUT', token: registered.data.token,
       body: {
         loginAccess: { mode: 'service_devices', allowedServiceDeviceIds: [] },

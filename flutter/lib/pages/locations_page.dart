@@ -424,13 +424,127 @@ class _LocationsPageState extends State<LocationsPage> {
         ),
       );
 
+  Future<void> _showContents(String kind, Map<String, dynamic> entry) async {
+    var history = false;
+    Future<Map<String, dynamic>> load() async {
+      final id = Uri.encodeComponent(_value(entry, 'id'));
+      final response = await _client.get(
+        Uri.parse(
+          '$apiBaseUrl/api/storage-contents/$kind/$id?history=$history',
+        ),
+        headers: _headers,
+      );
+      if (response.statusCode != 200) {
+        throw Exception('Artikel konnten nicht geladen werden.');
+      }
+      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    }
+
+    var result = load();
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: Text('Zugeordnete Artikel · ${_value(entry, 'name')}'),
+          content: SizedBox(
+            width: 640,
+            height: 440,
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Historie einblenden'),
+                  value: history,
+                  onChanged: (value) => update(() {
+                    history = value;
+                    result = load();
+                  }),
+                ),
+                Expanded(
+                  child: FutureBuilder<Map<String, dynamic>>(
+                    future: result,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return const Center(
+                          child: Text('Artikel konnten nicht geladen werden.'),
+                        );
+                      }
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final data = snapshot.data!;
+                      final items = _mapList(data['items']);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${items.length} Artikel'),
+                          if ((data['hiddenTypes'] as List? ?? []).isNotEmpty)
+                            const Text(
+                              'Bereiche ohne Leseberechtigung werden nicht angezeigt.',
+                            ),
+                          Expanded(
+                            child: items.isEmpty
+                                ? const Center(
+                                    child: Text('Keine zugeordneten Artikel.'),
+                                  )
+                                : ListView.builder(
+                                    itemCount: items.length,
+                                    itemBuilder: (context, index) {
+                                      final item = items[index];
+                                      return ListTile(
+                                        leading: Icon(
+                                          item['type'] == 'Kleidung'
+                                              ? Icons.checkroom
+                                              : Icons.inventory_2_outlined,
+                                        ),
+                                        title: Text(
+                                          '${item['inventoryNumber'] ?? '-'} · ${item['name'] ?? ''}',
+                                        ),
+                                        subtitle: Text(
+                                          '${item['type']} · ${item['status'] ?? ''} · Anzahl: ${item['quantity']}\n${item['path'] ?? item['locationName'] ?? '-'}',
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Schließen'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _contentsButton(String kind, Map<String, dynamic> entry) =>
+      TextButton.icon(
+        onPressed: () => _showContents(kind, entry),
+        icon: const Icon(Icons.list_alt),
+        label: const Text('Zugeordnete Artikel'),
+      );
+
   Widget _positionTile(Map<String, dynamic> position) {
     final id = Uri.encodeComponent(_value(position, 'id'));
     return ListTile(
       contentPadding: const EdgeInsets.only(left: 60, right: 12),
       leading: const Icon(Icons.inventory_2_outlined, size: 20),
       title: Text(_value(position, 'name')),
-      subtitle: Text(_value(position, 'fullCode')),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_value(position, 'fullCode')),
+          _contentsButton('positions', position),
+        ],
+      ),
       trailing: _canEdit(position)
           ? _actions(
               tooltip: 'Lagerplatzaktionen',
@@ -465,7 +579,13 @@ class _LocationsPageState extends State<LocationsPage> {
         initiallyExpanded: _query.isNotEmpty,
         leading: const Icon(Icons.layers_outlined),
         title: Text(_value(level, 'name')),
-        subtitle: Text('${_value(level, 'code')} · ${positions.length} Plätze'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${_value(level, 'code')} · ${positions.length} Plätze'),
+            _contentsButton('levels', level),
+          ],
+        ),
         trailing: _canEdit(level)
             ? _actions(
                 tooltip: 'Ebenenaktionen',
@@ -517,7 +637,13 @@ class _LocationsPageState extends State<LocationsPage> {
         initiallyExpanded: _query.isNotEmpty,
         leading: const Icon(Icons.shelves),
         title: Text(_value(shelf, 'name')),
-        subtitle: Text('${_value(shelf, 'code')} · ${levels.length} Ebenen'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${_value(shelf, 'code')} · ${levels.length} Ebenen'),
+            _contentsButton('shelves', shelf),
+          ],
+        ),
         trailing: _canEdit(shelf)
             ? _actions(
                 tooltip: 'Regalaktionen',
@@ -554,24 +680,21 @@ class _LocationsPageState extends State<LocationsPage> {
     );
   }
 
-  Widget _emptyBranch(
-    String message,
-    VoidCallback onAdd, {
-    bool? canAdd,
-  }) => Padding(
-    padding: const EdgeInsets.fromLTRB(56, 12, 16, 16),
-    child: Row(
-      children: [
-        Expanded(child: Text(message)),
-        if (canAdd ?? _canWrite)
-          TextButton.icon(
-            onPressed: onAdd,
-            icon: const Icon(Icons.add),
-            label: const Text('Anlegen'),
-          ),
-      ],
-    ),
-  );
+  Widget _emptyBranch(String message, VoidCallback onAdd, {bool? canAdd}) =>
+      Padding(
+        padding: const EdgeInsets.fromLTRB(56, 12, 16, 16),
+        child: Row(
+          children: [
+            Expanded(child: Text(message)),
+            if (canAdd ?? _canWrite)
+              TextButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Icons.add),
+                label: const Text('Anlegen'),
+              ),
+          ],
+        ),
+      );
 
   Widget _buildingCard(Map<String, dynamic> building) {
     final id = _value(building, 'id');
@@ -600,6 +723,7 @@ class _LocationsPageState extends State<LocationsPage> {
           children: [
             const SizedBox(height: 4),
             Text(address.isEmpty ? 'Adresse noch nicht hinterlegt' : address),
+            _contentsButton('locations', building),
             Text(
               '${_value(building, 'code')} · ${shelves.length} Regale · $positionCount Lagerplätze',
             ),

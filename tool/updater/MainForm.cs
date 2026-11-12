@@ -616,18 +616,6 @@ internal sealed class MainForm : Form
     private async Task BuildAppsAsync()
     {
         ValidateRelease();
-        if (_buildMode.SelectedIndex == 0)
-        {
-            var result = await CommandRunner.RunAsync("gh.exe",
-            [
-                "workflow", "run", "client-installers.yml", "--ref", _branch.Text.Trim(),
-                "-f", $"version={_version.Text.Trim()}", "-f", $"api_base_url={_apiUrl.Text.Trim()}",
-            ], _repositoryRoot, Log, Token);
-            if (!result.Success) throw new InvalidOperationException("GitHub-Workflow konnte nicht gestartet werden.");
-            Log("GitHub Actions wurde gestartet. Die signierten Artefakte können nach Einrichtung der Zertifikate aus dem Workflow heruntergeladen werden.");
-            return;
-        }
-
         var webBuild = await RunPowerShellAsync("ops/build-web.ps1",
         [
             "-Version", _version.Text.Trim(),
@@ -642,6 +630,18 @@ internal sealed class MainForm : Form
         System.IO.Compression.ZipFile.CreateFromDirectory(
             Path.Combine(_repositoryRoot, "flutter", "build", "web"), archive,
             System.IO.Compression.CompressionLevel.Optimal, includeBaseDirectory: false);
+
+        if (_buildMode.SelectedIndex == 0)
+        {
+            var result = await CommandRunner.RunAsync("gh.exe",
+            [
+                "workflow", "run", "client-installers.yml", "--ref", _branch.Text.Trim(),
+                "-f", $"version={_version.Text.Trim()}", "-f", $"api_base_url={_apiUrl.Text.Trim()}",
+            ], _repositoryRoot, Log, Token);
+            if (!result.Success) throw new InvalidOperationException("GitHub-Workflow konnte nicht gestartet werden.");
+            Log("Das lokale Webpaket ist bereit. GitHub Actions wurde für die Installer gestartet; deren Build läuft noch. Vor einem Installer-Deployment die fertigen Artefakte des passenden Laufs nach releases herunterladen. Signaturen setzen eingerichtete Zertifikate voraus.");
+            return;
+        }
 
         if (!_native.Checked)
         {

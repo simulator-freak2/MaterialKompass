@@ -70,13 +70,13 @@ function registerStocktakeRoutes({
     return source.find((item) => item.id === entry.entityId);
   }
 
-  function locationName(id) {
-    return locations.find((entry) => entry.id === id)?.name || id || '';
+  function locationName(id, stocktake) {
+    return locations.find((entry) => entry.id === id)?.name || stocktake?.historicalStorageNames?.[id] || id || '';
   }
 
-  function stockName(id) {
+  function stockName(id, stocktake) {
     const position = stockStructures.find((entry) => entry.id === id);
-    return position?.path || position?.name || id || '';
+    return position?.path || position?.name || stocktake?.historicalStorageNames?.[id] || id || '';
   }
 
   function matchesScope(item, scope) {
@@ -138,10 +138,10 @@ function registerStocktakeRoutes({
     if (includeEntries) result.entries = stocktake.entries.map((entry) => ({
       ...entry,
       discrepancies: discrepancy(entry),
-      expectedLocationName: locationName(entry.expectedLocationId),
-      expectedStockStructureName: stockName(entry.expectedStockStructureId),
-      actualLocationName: locationName(entry.actualLocationId),
-      actualStockStructureName: stockName(entry.actualStockStructureId),
+      expectedLocationName: locationName(entry.expectedLocationId, stocktake),
+      expectedStockStructureName: stockName(entry.expectedStockStructureId, stocktake),
+      actualLocationName: locationName(entry.actualLocationId, stocktake),
+      actualStockStructureName: stockName(entry.actualStockStructureId, stocktake),
     }));
     return result;
   }
@@ -423,8 +423,8 @@ function registerStocktakeRoutes({
       Inventarnummer: entry.inventoryNumber,
       Bezeichnung: entry.name,
       Bereich: entry.entityType === 'MaterialItem' ? 'Inventar' : 'Kleiderkammer',
-      Standort: locationName(entry.expectedLocationId),
-      Lagerplatz: stockName(entry.expectedStockStructureId),
+      Standort: locationName(entry.expectedLocationId, stocktake),
+      Lagerplatz: stockName(entry.expectedStockStructureId, stocktake),
       Einheit: entry.unit,
       Sollmenge: stocktake.countMode === 'blind' && blank ? '' : entry.expectedQuantity,
       Istmenge: blank ? '' : entry.actualQuantity ?? '',
@@ -453,7 +453,7 @@ function registerStocktakeRoutes({
       addPage();
       for (const entry of exportedEntries) {
         if (y < 55) addPage();
-        const target = `${entry.inventoryNumber} | ${entry.name} | ${locationName(entry.expectedLocationId)} / ${stockName(entry.expectedStockStructureId)}`.slice(0, 120);
+        const target = `${entry.inventoryNumber} | ${entry.name} | ${locationName(entry.expectedLocationId, stocktake)} / ${stockName(entry.expectedStockStructureId, stocktake)}`.slice(0, 120);
         page.drawText(target, { x: margin, y, size: 8, font: bold }); y -= 10;
         let detail = entry.itemType === 'bulk'
           ? `Ist-Menge: ${blank ? '____________' : entry.actualQuantity ?? '-'} ${entry.unit}    Notiz: ${blank ? '____________________________' : entry.notes || '-'}`

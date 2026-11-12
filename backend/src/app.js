@@ -1840,6 +1840,7 @@ function createApp(options = {}) {
   });
 
   const stocktakeReferences = (field, id) => stocktakes.some((stocktake) => {
+    if (stocktake.status === 'Abgeschlossen') return false;
     const scopeField = field === 'locationId' ? 'locationIds' : 'stockStructureIds';
     if ((stocktake.scope?.[scopeField] || []).includes(id)) return true;
     return (stocktake.entries || []).some((entry) => {
@@ -1864,7 +1865,7 @@ function createApp(options = {}) {
   };
 
   const positionIsReferenced = (id) => (
-    [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
+    [...materials, ...clothingItems].filter((entry) => !entry.archived)
       .some((entry) => entry.stockStructureId === id || entry.storagePositionId === id)
     || stocktakeReferences('stockStructureId', id)
   );
@@ -1881,6 +1882,19 @@ function createApp(options = {}) {
       if (locationByPosition.has(positionId)) {
         entry.locationId = locationByPosition.get(positionId);
       }
+    }
+  };
+
+  const preserveStorageHistory = (locationId, positionIds) => {
+    const ids = new Set(positionIds);
+    for (const item of [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]) {
+      if (item.locationId !== locationId && !ids.has(item.stockStructureId || item.storagePositionId)) continue;
+      item.historicalLocationName = locations.find((entry) => entry.id === item.locationId)?.name || item.historicalLocationName;
+      item.historicalStoragePath = stockStructures.find((entry) => entry.id === (item.stockStructureId || item.storagePositionId))?.path || item.historicalStoragePath;
+    }
+    for (const stocktake of stocktakes.filter((entry) => entry.status === 'Abgeschlossen')) {
+      stocktake.historicalStorageNames ||= {};
+      for (const entry of [...locations.filter((entry) => entry.id === locationId), ...stockStructures.filter((entry) => ids.has(entry.id))]) stocktake.historicalStorageNames[entry.id] ||= entry.path || entry.name;
     }
   };
 
@@ -1937,6 +1951,36 @@ function createApp(options = {}) {
     return res.status(201).json(location);
   });
 
+  app.get('/api/storage-contents/:kind/:id', authMiddleware, requirePermission('locations.read'), (req, res) => {
+    const { kind, id } = req.params;
+    const collections = { locations, shelves, levels: storageLevels, positions: stockStructures };
+    if (!collections[kind]) return res.status(400).json({ error: 'Ungültige Lagerebene.' });
+    return withYouthStorageReadAccess(req, () => {
+      if (!collections[kind].some((entry) => entry.id === id)) return res.status(404).json({ error: 'Lagerort nicht gefunden.' });
+      const positions = stockStructures.filter((entry) => kind === 'locations' ? entry.locationId === id
+        : kind === 'shelves' ? entry.shelfId === id : kind === 'levels' ? entry.levelId === id : entry.id === id);
+      const ids = new Set(positions.map((entry) => entry.id));
+      const includeHistory = req.query.history === 'true';
+      const rows = [];
+      for (const [type, permission, current, deleted] of [
+        ['Inventar', 'inventory.read', materials, deletedMaterials],
+        ['Kleidung', 'clothing.read', clothingItems, deletedClothingItems],
+      ]) {
+        if (!hasPermission(req.user, permission)) continue;
+        for (const item of [...current, ...(includeHistory ? deleted : [])]) {
+          const historical = item.archived === true || deleted.includes(item);
+          if (historical && !includeHistory) continue;
+          if (!(kind === 'locations' && item.locationId === id) && !ids.has(item.stockStructureId || item.storagePositionId)) continue;
+          rows.push({ id: item.id, type, name: item.name, inventoryNumber: item.inventoryNumber,
+            quantity: item.quantity ?? 1, status: historical ? (deleted.includes(item) ? 'Gelöscht' : 'Archiviert') : item.status,
+            historical, locationName: locations.find((entry) => entry.id === item.locationId)?.name || item.historicalLocationName,
+            path: stockStructures.find((entry) => entry.id === (item.stockStructureId || item.storagePositionId))?.path || item.historicalStoragePath || item.historicalLocationName });
+        }
+      }
+      return res.json({ items: rows, hiddenTypes: ['inventory.read', 'clothing.read'].filter((permission) => !hasPermission(req.user, permission)) });
+    });
+  });
+
   app.put('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
     const location = locations.find((entry) => entry.id === req.params.id);
     if (!location) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
@@ -1974,13 +2018,16 @@ function createApp(options = {}) {
     const nestedStockIds = new Set(stockStructures
       .filter((entry) => entry.locationId === req.params.id)
       .map((entry) => entry.id));
-    const inventoryReferences = [...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems]
-      .some((entry) => entry.locationId === req.params.id || nestedStockIds.has(entry.stockStructureId));
+    const inventoryReferences = [...materials, ...clothingItems].filter((entry) => !entry.archived)
+      .some((entry) => entry.locationId === req.params.id || nestedStockIds.has(entry.stockStructureId || entry.storagePositionId));
     const stocktakeUsesLocation = stocktakeReferences('locationId', req.params.id)
       || [...nestedStockIds].some((id) => stocktakeReferences('stockStructureId', id));
     if (inventoryReferences || stocktakeUsesLocation) {
-      return res.status(409).json({ error: 'Der Lagerort wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
+      return res.status(409).json({ error: inventoryReferences
+        ? 'Dem Lagerort sind noch aktuelle Inventarartikel oder Kleidung zugeordnet. Bitte „Zugeordnete Artikel“ öffnen und die Artikel umlagern.'
+        : 'Der Lagerort wird noch von nicht abgeschlossenen Inventuren verwendet.' });
     }
+    preserveStorageHistory(req.params.id, nestedStockIds);
     removeWhere(stockStructures, (entry) => entry.locationId === req.params.id);
     const nestedShelfIds = new Set(shelves
       .filter((entry) => entry.locationId === req.params.id)
@@ -2048,6 +2095,7 @@ function createApp(options = {}) {
     }
     const levelIds = new Set(storageLevels
       .filter((entry) => entry.shelfId === req.params.id).map((entry) => entry.id));
+    preserveStorageHistory(null, positionIds);
     removeWhere(stockStructures, (entry) => positionIds.includes(entry.id));
     removeWhere(storageLevels, (entry) => levelIds.has(entry.id));
     const [removed] = shelves.splice(index, 1);
@@ -2111,6 +2159,7 @@ function createApp(options = {}) {
     if (positionIds.some(positionIsReferenced)) {
       return res.status(409).json({ error: 'Die Ebene enthält noch verwendete Lagerplätze.' });
     }
+    preserveStorageHistory(null, positionIds);
     removeWhere(stockStructures, (entry) => positionIds.includes(entry.id));
     const [removed] = storageLevels.splice(index, 1);
     logEvent('delete', 'StorageLevel', { id: removed.id }, req.user.username);
@@ -2179,6 +2228,7 @@ function createApp(options = {}) {
     if (positionIsReferenced(req.params.id)) {
       return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
     }
+    preserveStorageHistory(null, [req.params.id]);
     const [removed] = stockStructures.splice(index, 1);
     logEvent('delete', 'StockStructure', { id: removed.id }, req.user.username);
     res.status(204).end();
@@ -2796,6 +2846,10 @@ function createApp(options = {}) {
 
   app.get('/api/clothing/history', authMiddleware, requirePermission('clothing.read'), (req, res) => {
     res.json([...deletedClothingItems, ...clothingItems.filter((item) => item.archived)]
+      .map((item) => ({ ...item,
+        locationName: locations.find((entry) => entry.id === item.locationId)?.name || item.historicalLocationName || null,
+        stockStructureName: stockStructures.find((entry) => entry.id === (item.stockStructureId || item.storagePositionId))?.path || item.historicalStoragePath || null,
+      }))
       .sort((left, right) => String(right.deletedAt || right.archivedAt || '')
         .localeCompare(String(left.deletedAt || left.archivedAt || ''))));
   });

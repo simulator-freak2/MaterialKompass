@@ -1,3 +1,4 @@
+const { centralRequest } = require('../test-support/accounts');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
@@ -25,11 +26,13 @@ async function setup({ platformAdmin = true } = {}) {
       data: response.status === 204 ? null : await response.json(),
     };
   };
+  const backupRequest = (path, options) => platformAdmin
+    ? centralRequest(request, path, options) : request(path, options);
   const login = await request('/api/auth/login', {
     method: 'POST',
     body: { identifier: 'admin', password: 'MaterialKompass2026!' },
   });
-  return { server, baseUrl, request, token: login.data.token };
+  return { server, baseUrl, request, backupRequest, token: login.data.token };
 }
 
 function records(backup, name) {
@@ -37,9 +40,9 @@ function records(backup, name) {
 }
 
 test('organization administrators export only scoped data and cannot replace platform-wide backups', async () => {
-  const { server, request, token } = await setup({ platformAdmin: false });
+  const { server, request, backupRequest, token } = await setup({ platformAdmin: false });
   try {
-    const exported = await request('/api/system/backup/export', {
+    const exported = await backupRequest('/api/system/backup/export', {
       method: 'POST',
       token,
       body: { currentPassword: 'MaterialKompass2026!' },
@@ -52,7 +55,7 @@ test('organization administrators export only scoped data and cannot replace pla
     assert.ok(records(exported.data, 'materials').every((entry) =>
       exported.data.scope.unitIds.includes(entry.unitId)));
 
-    const imported = await request('/api/system/backup/import', {
+    const imported = await backupRequest('/api/system/backup/import', {
       method: 'POST',
       token,
       body: {
@@ -63,7 +66,7 @@ test('organization administrators export only scoped data and cannot replace pla
     });
     assert.equal(imported.response.status, 403);
     assert.match(imported.data.error, /Organisationsbereich/);
-    const restored = await request('/api/system/backup/import', {
+    const restored = await backupRequest('/api/system/backup/import', {
       method: 'POST', token,
       body: {
         currentPassword: 'MaterialKompass2026!',
@@ -92,16 +95,16 @@ test('backup import authenticates before parsing the large JSON body', async () 
 });
 
 test('admin can export and restore the complete application data', async () => {
-  const { server, request, token } = await setup();
+  const { server, request, backupRequest, token } = await setup();
   try {
-    const rejected = await request('/api/system/backup/export', {
+    const rejected = await backupRequest('/api/system/backup/export', {
       method: 'POST',
       token,
       body: { currentPassword: 'falsch' },
     });
     assert.equal(rejected.response.status, 403);
 
-    const exported = await request('/api/system/backup/export', {
+    const exported = await backupRequest('/api/system/backup/export', {
       method: 'POST',
       token,
       body: { currentPassword: 'MaterialKompass2026!' },
@@ -125,7 +128,7 @@ test('admin can export and restore the complete application data', async () => {
     });
     assert.equal(created.response.status, 201);
 
-    const imported = await request('/api/system/backup/import', {
+    const imported = await backupRequest('/api/system/backup/import', {
       method: 'POST',
       token,
       body: {
@@ -146,15 +149,15 @@ test('admin can export and restore the complete application data', async () => {
 });
 
 test('backup import rejects incomplete data and backups without an active admin', async () => {
-  const { server, request, token } = await setup();
+  const { server, request, backupRequest, token } = await setup();
   try {
-    const exported = await request('/api/system/backup/export', {
+    const exported = await backupRequest('/api/system/backup/export', {
       method: 'POST',
       token,
       body: { currentPassword: 'MaterialKompass2026!' },
     });
     records(exported.data, 'users').forEach((user) => { user.active = false; });
-    const imported = await request('/api/system/backup/import', {
+    const imported = await backupRequest('/api/system/backup/import', {
       method: 'POST',
       token,
       body: {
@@ -171,15 +174,15 @@ test('backup import rejects incomplete data and backups without an active admin'
 });
 
 test('editable backup sections can omit optional data and legacy v2 remains importable', async () => {
-  const { server, request, token } = await setup();
+  const { server, request, backupRequest, token } = await setup();
   try {
-    const exported = await request('/api/system/backup/export', {
+    const exported = await backupRequest('/api/system/backup/export', {
       method: 'POST', token, body: { currentPassword: 'MaterialKompass2026!' },
     });
     const materialSection = exported.data.sections.find((section) => section.name === 'materials');
     materialSection.enabled = false;
     delete materialSection.records;
-    const imported = await request('/api/system/backup/import', {
+    const imported = await backupRequest('/api/system/backup/import', {
       method: 'POST', token,
       body: {
         currentPassword: 'MaterialKompass2026!',
@@ -190,7 +193,7 @@ test('editable backup sections can omit optional data and legacy v2 remains impo
     assert.equal(imported.response.status, 200);
     assert.deepEqual((await request('/api/material', { token })).data, []);
 
-    const secondExport = await request('/api/system/backup/export', {
+    const secondExport = await backupRequest('/api/system/backup/export', {
       method: 'POST', token, body: { currentPassword: 'MaterialKompass2026!' },
     });
     const legacy = {
@@ -202,7 +205,7 @@ test('editable backup sections can omit optional data and legacy v2 remains impo
     };
     delete legacy.sections;
     delete legacy.editInstructions;
-    const legacyImport = await request('/api/system/backup/import', {
+    const legacyImport = await backupRequest('/api/system/backup/import', {
       method: 'POST', token,
       body: {
         currentPassword: 'MaterialKompass2026!',
@@ -217,14 +220,14 @@ test('editable backup sections can omit optional data and legacy v2 remains impo
 });
 
 test('editable backup rejects disabled core sections and duplicate section names', async () => {
-  const { server, request, token } = await setup();
+  const { server, request, backupRequest, token } = await setup();
   try {
-    const exported = await request('/api/system/backup/export', {
+    const exported = await backupRequest('/api/system/backup/export', {
       method: 'POST', token, body: { currentPassword: 'MaterialKompass2026!' },
     });
     const users = exported.data.sections.find((section) => section.name === 'users');
     users.enabled = false;
-    let imported = await request('/api/system/backup/import', {
+    let imported = await backupRequest('/api/system/backup/import', {
       method: 'POST', token,
       body: {
         currentPassword: 'MaterialKompass2026!', confirmation: 'ALLE DATEN ERSETZEN',
@@ -236,7 +239,7 @@ test('editable backup rejects disabled core sections and duplicate section names
 
     users.enabled = true;
     exported.data.sections.push(structuredClone(users));
-    imported = await request('/api/system/backup/import', {
+    imported = await backupRequest('/api/system/backup/import', {
       method: 'POST', token,
       body: {
         currentPassword: 'MaterialKompass2026!', confirmation: 'ALLE DATEN ERSETZEN',

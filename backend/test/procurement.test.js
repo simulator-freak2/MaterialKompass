@@ -1,3 +1,4 @@
+const { createOrganizationAccount } = require('../test-support/accounts');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
@@ -49,7 +50,7 @@ async function createApprovers(baseUrl, admin, login) {
     { name: 'Vera Vorsitz', username: 'vorsitz', email: 'vorsitz@test.local', password: 'Testpasswort123!', roles: ['Vorsitz'] },
     { name: 'Theo Schatz', username: 'schatz', email: 'schatz@test.local', password: 'Testpasswort123!', roles: ['Schatzmeister'] },
   ]) {
-    const created = await jsonRequest(`${baseUrl}/api/users`, admin, 'POST', user);
+    const created = await createOrganizationAccount((path, options) => jsonRequest(baseUrl + path, options.token, options.method, options.body), { token: admin, body: user });
     assert.equal(created.response.status, 201);
   }
   return {
@@ -194,14 +195,14 @@ test('department heads can only request and see their assigned departments', asy
     const otherDepartment = await jsonRequest(`${baseUrl}/api/departments`, admin, 'POST', {
       name: 'Öffentlichkeitsarbeit', code: 'OEFF', active: true,
     });
-    const leader = await jsonRequest(`${baseUrl}/api/users`, admin, 'POST', {
+    const leader = await createOrganizationAccount((path, options) => jsonRequest(baseUrl + path, options.token, options.method, options.body), { token: admin, body: {
       name: 'Fiona Fachbereich',
       username: 'fachbereich',
       email: 'fachbereich@test.local',
       password: 'Testpasswort123!',
       roles: ['Fachbereichsleiter'],
       departmentIds: [department.data.id],
-    });
+    } });
     assert.equal(leader.response.status, 201);
     const leaderToken = await login('fachbereich@test.local', 'Testpasswort123!');
     const requestBody = {
