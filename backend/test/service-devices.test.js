@@ -136,6 +136,50 @@ test('personal device login keeps user permissions and revocation invalidates bo
   } finally { server.close(); }
 });
 
+test('device reset ends personal refresh sessions and device sessions cannot mint QR logins', async () => {
+  const { server, request, adminToken } = await setup();
+  try {
+    const created = await request('/api/service-devices', {
+      method: 'POST', token: adminToken, body: {
+        name: 'Halle Refresh', locationId: 'loc-1', inventoryNumber: 'DEVICE-REFRESH-1',
+        systemPassword: 'GeraetePasswort3!', allowedDepartmentIds: [], allowedNetworks: [],
+      },
+    });
+    const activation = await request('/api/service-devices/activate', {
+      method: 'POST', body: {
+        identifier: 'admin', password: 'MaterialKompass2026!', deviceId: created.data.id,
+        clientPlatform: 'windows',
+      },
+    });
+    const personal = await request('/api/service-devices/login/personal', {
+      method: 'POST', body: {
+        deviceCredential: activation.data.deviceCredential,
+        identifier: 'admin', password: 'MaterialKompass2026!',
+      },
+    });
+    assert.equal(personal.response.status, 200);
+    assert.ok(personal.data.refreshToken);
+
+    const qr = await request('/api/auth/qr-credentials/me', {
+      method: 'POST', token: personal.data.token, body: { validity: 'unlimited' },
+    });
+    assert.equal(qr.response.status, 403);
+
+    const refreshed = await request('/api/auth/refresh', {
+      method: 'POST', body: { refreshToken: personal.data.refreshToken },
+    });
+    assert.equal(refreshed.response.status, 200);
+
+    assert.equal((await request(`/api/service-devices/${created.data.id}/reset-activation`, {
+      method: 'POST', token: adminToken,
+    })).response.status, 200);
+    const afterReset = await request('/api/auth/refresh', {
+      method: 'POST', body: { refreshToken: refreshed.data.refreshToken },
+    });
+    assert.equal(afterReset.response.status, 401);
+  } finally { server.close(); }
+});
+
 test('system MFA is enforced and administrative changes invalidate active sessions', async () => {
   const { server, request, adminToken } = await setup();
   try {
@@ -215,12 +259,27 @@ test('offline QR login returns only a verifier and queued commands are idempoten
     assert.equal(created.response.status, 201);
     assert.equal(created.data.offlineEnabled, true);
 
-    const activation = await request('/api/service-devices/activate', {
+    // An administrator with TOTP must not activate a device with the password alone.
+    const passwordOnly = await request('/api/service-devices/activate', {
       method: 'POST', body: {
         identifier: 'admin', password: 'MaterialKompass2026!', deviceId: created.data.id,
         clientPlatform: 'windows',
       },
     });
+    assert.equal(passwordOnly.response.status, 401);
+    assert.equal(passwordOnly.data.mfaRequired, true);
+    const passwordOnlyOptions = await request('/api/service-devices/activation/options', {
+      method: 'POST', body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    assert.equal(passwordOnlyOptions.response.status, 401);
+
+    const activation = await request('/api/service-devices/activate', {
+      method: 'POST', body: {
+        identifier: 'admin', password: 'MaterialKompass2026!', deviceId: created.data.id,
+        clientPlatform: 'windows', mfaCode: totp(setupResponse.data.secret),
+      },
+    });
+    assert.equal(activation.response.status, 200);
     const issued = await request(`/api/service-devices/${created.data.id}/offline-qr`, {
       method: 'POST', token: adminToken, body: { userId: 'user-admin', label: 'Admin Offline' },
     });

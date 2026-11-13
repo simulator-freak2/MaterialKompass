@@ -8,6 +8,9 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
   const processedMailbox = env.PROCUREMENT_IMAP_PROCESSED_MAILBOX || 'Verarbeitet';
   const mailboxKey = `procurement:${env.PROCUREMENT_IMAP_USER || ''}:${mailbox}`;
   const intervalMs = Number(env.PROCUREMENT_IMAP_POLL_INTERVAL_MS || 300000);
+  // Pro Lauf nur einen begrenzten UID-Bereich laden und jede Nachricht sofort
+  // verarbeiten, damit eine Flut großer E-Mails den Prozess nicht überlastet.
+  const batchSize = Math.min(Math.max(Number(env.PROCUREMENT_IMAP_BATCH_SIZE) || 10, 1), 100);
   let running = false; let timer; let activeRun;
 
   function client() {
@@ -39,21 +42,28 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
         state = { mailbox: mailboxKey, uidValidity, lastUid: 0, initializedAt: new Date() };
         await store.saveMailboxProcessingState(state);
       }
-      const lastUid = Math.max(0, Number(selected.uidNext || 1) - 1);
-      if (state.lastUid < lastUid) {
-        const messages = [];
-        for await (const message of connection.fetch(`${state.lastUid + 1}:${lastUid}`, { uid: true, source: true, envelope: true }, { uid: true })) messages.push(message);
-        messages.sort((left, right) => left.uid - right.uid);
-        for (const message of messages) {
+      const firstUid = state.lastUid + 1;
+      const lastUid = Math.min(Math.max(0, Number(selected.uidNext || 1) - 1), firstUid + batchSize - 1);
+      if (firstUid <= lastUid) {
+        const headers = [];
+        for await (const message of connection.fetch(`${firstUid}:${lastUid}`, { uid: true, envelope: true }, { uid: true })) headers.push(message);
+        headers.sort((left, right) => left.uid - right.uid);
+        for (const message of headers) {
           const sourceInfo = { mailbox, uid: message.uid, uidValidity, messageId: String(message.envelope?.messageId || '') };
           let entry;
-          try { entry = (await service.ingestSource(message.source, sourceInfo)).entry; }
+          try {
+            const { source } = await connection.fetchOne(message.uid, { uid: true, source: true }, { uid: true }) || {};
+            entry = (await service.ingestSource(source, sourceInfo)).entry;
+          }
           catch (error) { entry = await service.recordFailure(sourceInfo, error); }
           await ensureProcessed(connection);
           const moved = await connection.messageMove([message.uid], processedMailbox, { uid: true });
           await service.updateMoved(entry, { mailbox: processedMailbox, uid: moved?.uidMap?.get(message.uid) || null });
           state.lastUid = message.uid; await store.saveMailboxProcessingState(state);
         }
+        // Gelöschte Nachrichten erzeugen UID-Lücken; den begrenzten Bereich
+        // trotzdem abschließen, damit kein leerer Bereich endlos abgefragt wird.
+        if (state.lastUid < lastUid) { state.lastUid = lastUid; await store.saveMailboxProcessingState(state); }
       }
         await persistData(); return true;
       } finally {

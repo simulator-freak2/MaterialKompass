@@ -963,6 +963,7 @@ function createApp(options = {}) {
       if (context.sessionType !== PERSONAL_DEVICE_SESSION) return false;
       const device = serviceDevices.find((entry) => entry.id === context.deviceId);
       return Boolean(device?.active
+        && device.securityVersion === context.deviceSecurityVersion
         && device.organizationId === context.organizationId
         && device.unitId === context.unitId
         && ipAllowed(
