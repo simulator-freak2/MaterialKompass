@@ -687,12 +687,165 @@ function registerTenancyRoutes({
       .sort((a, b) => Number(b.id === PLATFORM_ORGANIZATION_ID) - Number(a.id === PLATFORM_ORGANIZATION_ID)).map(publicOrganization));
   });
 
+  const activeMembershipsOf = (organizationId) => memberships.filter((entry) =>
+    entry.organizationId === organizationId && entry.status === 'active'
+    && users.some((user) => user.id === entry.userId && user.active !== false));
+  const organizationAdminIds = (organization) => {
+    const root = units.find((entry) => entry.organizationId === organization.id
+      && entry.parentId === null && entry.status !== 'purged');
+    if (!root) return new Set();
+    return new Set(activeMembershipsOf(organization.id)
+      .filter((entry) => (entry.scopes || []).some((scope) =>
+        scope.unitId === root.id && (scope.roles || []).includes('Admin')))
+      .map((entry) => entry.userId));
+  };
+  const platformOrganization = (organization) => ({
+    ...publicOrganization(organization),
+    createdAt: organization.createdAt || null,
+    unitCount: units.filter((entry) => entry.organizationId === organization.id
+      && entry.status === 'active').length,
+    memberCount: activeMembershipsOf(organization.id).length,
+    adminCount: organizationAdminIds(organization).size,
+    restorable: organization.status === 'archived' && Boolean(organization.purgeAfter)
+      && Date.parse(organization.purgeAfter) > Date.now(),
+  });
+  const publicAdmin = (user) => ({
+    id: user.id,
+    username: user.username,
+    name: user.name || null,
+    email: user.email || null,
+    active: user.active !== false,
+  });
+
   app.get('/api/platform/organizations', authMiddleware, (req, res) => {
     if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
     return res.json(organizations
       .filter((entry) => entry.id !== PLATFORM_ORGANIZATION_ID && entry.status !== 'purged')
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de'))
-      .map(publicOrganization));
+      .map(platformOrganization));
+  });
+
+  // Organizations visible to the central administration, including archived
+  // ones that are still inside their retention period.
+  const platformManagedOrganization = (id) => organizations.find((entry) => entry.id === id
+    && entry.id !== PLATFORM_ORGANIZATION_ID && entry.status !== 'purged');
+
+  app.get('/api/platform/organizations/:id', authMiddleware, (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = platformManagedOrganization(req.params.id);
+    if (!organization) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    const adminIds = organizationAdminIds(organization);
+    return res.json({
+      ...platformOrganization(organization),
+      // Read-only structure overview. Domain data of the organization is not
+      // exposed to the central administration.
+      units: units
+        .filter((entry) => entry.organizationId === organization.id && entry.status !== 'purged')
+        .map((entry) => ({
+          id: entry.id,
+          parentId: entry.parentId,
+          name: entry.name,
+          type: entry.type,
+          edvNumber: entry.edvNumber,
+          status: entry.status,
+          unitKind: entry.unitKind || UNIT_KIND_STANDARD,
+          baseUnitId: entry.baseUnitId || null,
+        })),
+      admins: users.filter((user) => adminIds.has(user.id))
+        .sort((a, b) => String(a.username).localeCompare(String(b.username), 'de'))
+        .map(publicAdmin),
+    });
+  });
+
+  app.post('/api/platform/organizations/:id/admins', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = managedOrganization(req.params.id);
+    const root = organization && rootUnitOf(organization.id);
+    if (!organization || !root) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    const user = users.find((entry) => entry.id === String(req.body?.userId || ''));
+    if (!user || user.active === false) {
+      return res.status(404).json({ error: 'Aktives Konto nicht gefunden.' });
+    }
+    let membership = memberships.find((entry) =>
+      entry.userId === user.id && entry.organizationId === organization.id);
+    if (!membership) {
+      membership = {
+        id: randomUUID(), userId: user.id, organizationId: organization.id,
+        status: 'active', defaultUnitId: root.id, scopes: [], createdAt: nowIso(),
+      };
+      memberships.push(membership);
+    }
+    membership.scopes = Array.isArray(membership.scopes) ? membership.scopes : [];
+    const scope = membership.scopes.find((entry) => entry.unitId === root.id);
+    if (scope) {
+      scope.roles = [...new Set([...(scope.roles || []), 'Admin'])];
+      scope.includeDescendants = true;
+    } else {
+      membership.scopes.push({ unitId: root.id, includeDescendants: true, roles: ['Admin'], departmentIds: [] });
+    }
+    membership.status = 'active';
+    membership.defaultUnitId = membership.defaultUnitId || root.id;
+    await persistMembership(membership);
+    logEvent('grant_organization_admin', 'Organization', {
+      id: organization.id, userId: user.id,
+    }, req.user.username);
+    return res.status(201).json(publicAdmin(user));
+  });
+
+  app.delete('/api/platform/organizations/:id/admins/:userId', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = managedOrganization(req.params.id);
+    const root = organization && rootUnitOf(organization.id);
+    if (!organization || !root) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    const adminIds = organizationAdminIds(organization);
+    if (!adminIds.has(req.params.userId)) {
+      return res.status(404).json({ error: 'Das Konto ist kein Organisationsadmin.' });
+    }
+    if (adminIds.size <= 1) {
+      return res.status(409).json({ error: 'Der letzte aktive Organisationsadmin darf nicht entfernt werden.' });
+    }
+    const membership = memberships.find((entry) => entry.userId === req.params.userId
+      && entry.organizationId === organization.id && entry.status === 'active');
+    // Only the admin role on the root unit is withdrawn; other roles and
+    // scopes of the membership stay untouched.
+    membership.scopes = (membership.scopes || []).flatMap((scope) => {
+      if (scope.unitId !== root.id) return [scope];
+      const remainingRoles = (scope.roles || []).filter((role) => role !== 'Admin');
+      return remainingRoles.length ? [{ ...scope, roles: remainingRoles }] : [];
+    });
+    if (!membership.scopes.length) membership.status = 'inactive';
+    if (!membership.scopes.some((scope) => scope.unitId === membership.defaultUnitId)) {
+      membership.defaultUnitId = membership.scopes[0]?.unitId || null;
+    }
+    await persistMembership(membership);
+    logEvent('revoke_organization_admin', 'Organization', {
+      id: organization.id, userId: req.params.userId,
+    }, req.user.username);
+    return res.status(204).end();
+  });
+
+  app.post('/api/platform/organizations/:id/restore', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = platformManagedOrganization(req.params.id);
+    if (!organization || organization.status !== 'archived') {
+      return res.status(404).json({ error: 'Gelöschte Organisation nicht gefunden.' });
+    }
+    if (!platformOrganization(organization).restorable) {
+      return res.status(409).json({ error: 'Die Aufbewahrungsfrist ist abgelaufen; die Organisation kann nicht wiederhergestellt werden.' });
+    }
+    const { archivedAt } = organization;
+    // Only units archived together with the organization are reactivated.
+    // Units that were archived individually before stay archived.
+    for (const unit of units) {
+      if (unit.organizationId !== organization.id || unit.status !== 'archived') continue;
+      if (unit.parentId !== null && unit.archivedAt !== archivedAt) continue;
+      Object.assign(unit, { status: 'active', archivedAt: null, purgeAfter: null });
+      await persistUnit(unit);
+    }
+    Object.assign(organization, { status: 'active', archivedAt: null, purgeAfter: null });
+    await persistOrganization(organization);
+    logEvent('restore', 'Organization', { id: organization.id }, req.user.username);
+    return res.json(platformOrganization(organization));
   });
 
   app.post('/api/organizations', authMiddleware, async (req, res) => {

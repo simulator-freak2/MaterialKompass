@@ -1261,3 +1261,91 @@ test('unit administrators only manage offline clients of their own unit', async 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('central administration inspects organizations, manages their admins and restores deleted ones', async () => {
+  const { app, server, baseUrl } = await start();
+  try {
+    const localToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const central = await request(baseUrl, '/api/auth/context', {
+      token: localToken, method: 'POST', body: { organizationId: PLATFORM_ORGANIZATION_ID },
+    });
+    const centralToken = central.data.token;
+
+    // Organization admins acting locally cannot use the central endpoints.
+    assert.equal((await request(baseUrl, '/api/platform/organizations/org-a', { token: localToken })).response.status, 403);
+    assert.equal((await request(baseUrl, '/api/platform/organizations/org-a/admins', {
+      token: localToken, method: 'POST', body: { userId: 'user-materialwart' },
+    })).response.status, 403);
+    assert.equal((await request(baseUrl, `/api/platform/organizations/${PLATFORM_ORGANIZATION_ID}`, { token: centralToken })).response.status, 404);
+
+    const listed = await request(baseUrl, '/api/platform/organizations', { token: centralToken });
+    const listedA = listed.data.find((entry) => entry.id === 'org-a');
+    assert.equal(listedA.unitCount, 3);
+    assert.equal(listedA.adminCount, 1);
+    assert.equal(listedA.memberCount, 2);
+
+    const detail = await request(baseUrl, '/api/platform/organizations/org-a', { token: centralToken });
+    assert.equal(detail.response.status, 200);
+    assert.deepEqual(detail.data.units.map((entry) => entry.id).sort(), ['unit-a', 'unit-a-child', 'unit-a-sibling']);
+    assert.deepEqual(detail.data.admins.map((entry) => entry.id), ['user-admin']);
+    assert.equal(detail.data.admins[0].passwordHash, undefined);
+
+    // The last organization admin is protected.
+    assert.equal((await request(baseUrl, '/api/platform/organizations/org-a/admins/user-admin', {
+      token: centralToken, method: 'DELETE',
+    })).response.status, 409);
+
+    const granted = await request(baseUrl, '/api/platform/organizations/org-a/admins', {
+      token: centralToken, method: 'POST', body: { userId: 'user-materialwart' },
+    });
+    assert.equal(granted.response.status, 201);
+    const wardenMembership = app.locals.appData.memberships.find((entry) => entry.id === 'membership-warden-a');
+    assert.ok(wardenMembership.scopes.some((scope) => scope.unitId === 'unit-a' && scope.roles.includes('Admin')));
+    assert.ok(wardenMembership.scopes.some((scope) => scope.unitId === 'unit-a-child' && scope.roles.includes('Materialwart')));
+
+    const revoked = await request(baseUrl, '/api/platform/organizations/org-a/admins/user-materialwart', {
+      token: centralToken, method: 'DELETE',
+    });
+    assert.equal(revoked.response.status, 204);
+    assert.equal(wardenMembership.scopes.some((scope) => scope.unitId === 'unit-a'), false);
+    assert.equal(wardenMembership.status, 'active');
+
+    // New membership for an account without access to organization B.
+    const grantedB = await request(baseUrl, '/api/platform/organizations/org-b/admins', {
+      token: centralToken, method: 'POST', body: { userId: 'user-materialwart' },
+    });
+    assert.equal(grantedB.response.status, 201);
+    assert.ok(app.locals.appData.memberships.some((entry) => entry.userId === 'user-materialwart'
+      && entry.organizationId === 'org-b' && entry.status === 'active'));
+    assert.equal((await request(baseUrl, '/api/platform/organizations/org-b/admins', {
+      token: centralToken, method: 'POST', body: { userId: 'missing-user' },
+    })).response.status, 404);
+
+    // Restore brings back the organization and units archived with it.
+    assert.equal((await request(baseUrl, '/api/platform/organizations/org-b/restore', {
+      token: centralToken, method: 'POST',
+    })).response.status, 404);
+    const deleted = await request(baseUrl, '/api/organizations/org-b', {
+      token: centralToken, method: 'DELETE',
+      body: { confirmation: 'ORGANISATION 10000002 LÖSCHEN', currentPassword: 'MaterialKompass2026!' },
+    });
+    assert.equal(deleted.response.status, 200);
+    const archivedDetail = await request(baseUrl, '/api/platform/organizations/org-b', { token: centralToken });
+    assert.equal(archivedDetail.data.status, 'archived');
+    assert.equal(archivedDetail.data.restorable, true);
+    const restored = await request(baseUrl, '/api/platform/organizations/org-b/restore', {
+      token: centralToken, method: 'POST',
+    });
+    assert.equal(restored.response.status, 200);
+    assert.equal(restored.data.status, 'active');
+    const rootB = app.locals.appData.organizationUnits.find((entry) => entry.id === 'unit-b');
+    assert.equal(rootB.status, 'active');
+    assert.equal(rootB.purgeAfter, null);
+    const enterRestored = await request(baseUrl, '/api/auth/context', {
+      token: localToken, method: 'POST', body: { organizationId: 'org-b' },
+    });
+    assert.equal(enterRestored.response.status, 200);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

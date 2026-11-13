@@ -1803,7 +1803,7 @@ const _articles = [
     prerequisite:
         'Zum Anlegen brauchst du Organisationsverwaltungsrechte. Eine Stammgliederung darf noch keine Jugendorganisation besitzen.',
     steps: [
-      'Öffne „Organisationen & Einheiten“ und wähle „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung.',
+      'Öffne „Organisationsstruktur“ und wähle „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung.',
       'Ordne normale Jugendmitglieder mit der Rolle „Jugendmitglied“ zu. Vergib an die vorsitzende Person in der Jugendorganisation die Rolle „Vorsitz“.',
       'Die Rolle „Jugendvorsitzender“ wird in der Jugendorganisation nicht vergeben: Der dortige Vorsitz erhält sie beim Wechsel in die Stammgliederung automatisch.',
       'Jugend- und Stammgliederung können gegenseitig Lagerorte durchsuchen, Inventar und Fahrzeuge reservieren sowie Mängel melden. Fremde Stammdaten bleiben schreibgeschützt.',
@@ -2230,6 +2230,7 @@ const _articles = [
       'Die zuständigen Organisationsadmins nehmen das vorhandene Konto anschließend in ihrer aktiven Ebene direkt oder per Einladung auf und vergeben nur die dort benötigten Rollen.',
       'In „Berechtigungen dieser Ebene“ werden ausschließlich die Freigaben der ausgewählten Ebene gezeigt. Andere Organisationen und Ebenen bleiben ausgeblendet; ihre Freigaben bleiben bei Änderungen erhalten.',
       'Globale Kontodaten, Sicherheitsrichtlinien und vollständige Datensicherungen werden in der Zentrale verwaltet. In normalen Organisationen stehen nur deren lokale Verwaltungsfunktionen zur Verfügung.',
+      'Organisationen selbst verwaltest du in der Zentrale unter „Organisationsverwaltung“: anlegen, Stammdaten (Name, Kurzname, EDV-Nummer) bearbeiten, Organisationsadmins hinzufügen oder entfernen, die Einheiten einsehen sowie löschen und innerhalb der Aufbewahrungsfrist wiederherstellen. Einheiten unterhalb der Organisation pflegen deren Organisationsadmins unter „Organisationsstruktur“.',
     ],
     tip:
         'Mitglieder der zentralen Organisation werden aus den Plattformadministrationsrechten abgeleitet. Sie können nicht über normale Freigaben oder Einladungen hinzugefügt werden.',
@@ -2320,7 +2321,7 @@ const _articles = [
         'Du brauchst Organisationsverwaltungsrechte, dein aktuelles Passwort, gegebenenfalls einen 2-FA-Code und eine geprüfte Sicherung.',
     steps: [
       'Erstelle zuerst unter „Nutzerverwaltung → Datensicherung“ eine aktuelle Sicherung und prüfe, dass die Datei lesbar und vollständig ist.',
-      'Öffne „Organisationen & Einheiten“. Am Eintrag der aktiven Organisation löscht „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
+      'Öffne „Organisationsstruktur“. Am Eintrag der aktiven Organisation löscht „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
       'Am Menü einer Unterorganisation löscht „Alle Daten löschen“ nur deren fachliche Daten und die Daten ihrer Untereinheiten. Geschwister- und übergeordnete Einheiten bleiben erhalten.',
       'Prüfe Zielname, EDV-Nummer und den im Dialog beschriebenen Umfang. Gib Passwort, gegebenenfalls 2-FA und exakt „DATEN <EDV-NUMMER> LÖSCHEN“ ein.',
       'Kontrolliere die gemeldete Datensatzanzahl. Organisationsstruktur, Konten, Rollen, Passkeys und Nutzerfreigaben bleiben erhalten.',

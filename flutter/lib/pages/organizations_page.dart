@@ -31,19 +31,6 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       _api.request('/api/auth/me'),
     ]);
     final me = Map<String, dynamic>.from(results[2] as Map);
-    final activeOrganization = Map<String, dynamic>.from(
-      (me['context'] as Map?)?['organization'] as Map? ?? const {},
-    );
-    final platformAdmin = (me['user'] as Map?)?['platformAdmin'] == true;
-    // Only MaterialKompass admins inside the central administration manage
-    // organizations. The server enforces this independently of the UI.
-    final managedOrganizations =
-        platformAdmin &&
-            activeOrganization['systemKind'] == 'platform_administration'
-        ? (await _api.request('/api/platform/organizations') as List)
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
-        : <Map<String, dynamic>>[];
     return {
       'organizations': (results[0] as List)
           .map((entry) => Map<String, dynamic>.from(entry as Map))
@@ -52,188 +39,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           .map((entry) => Map<String, dynamic>.from(entry as Map))
           .toList(),
       'me': me,
-      'managedOrganizations': managedOrganizations,
     };
-  }
-
-  Future<void> _editOrganization(Map<String, dynamic> organization) async {
-    final name = TextEditingController(
-      text: organization['name']?.toString() ?? '',
-    );
-    final shortName = TextEditingController(
-      text: organization['shortName']?.toString() ?? '',
-    );
-    final edvNumber = TextEditingController(
-      text: organization['edvNumber']?.toString() ?? '',
-    );
-    try {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Organisation bearbeiten'),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: shortName,
-                  decoration: const InputDecoration(labelText: 'Kurzname'),
-                  textCapitalization: TextCapitalization.characters,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: edvNumber,
-                  decoration: const InputDecoration(labelText: 'EDV-Nummer *'),
-                  textCapitalization: TextCapitalization.characters,
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Abbrechen'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Speichern'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-      await _api.request(
-        '/api/organizations/${organization['id']}',
-        method: 'PUT',
-        body: {
-          'name': name.text,
-          'shortName': shortName.text,
-          'edvNumber': edvNumber.text,
-        },
-      );
-      await _refresh();
-    } catch (error) {
-      _error(error);
-    } finally {
-      name.dispose();
-      shortName.dispose();
-      edvNumber.dispose();
-    }
-  }
-
-  Future<void> _deleteOrganization(Map<String, dynamic> organization) async {
-    final password = TextEditingController();
-    final mfaCode = TextEditingController();
-    final confirmation = TextEditingController();
-    final organizationName = organization['name']?.toString() ?? 'Organisation';
-    final expectedConfirmation =
-        'ORGANISATION ${organization['edvNumber'] ?? ''} LÖSCHEN';
-    try {
-      final credentials = await showDialog<Map<String, String>>(
-        context: context,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (dialogContext, setDialogState) => AlertDialog(
-            title: const Text('Organisation löschen'),
-            content: SizedBox(
-              width: 560,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      '„$organizationName“ und alle Unterorganisationen werden '
-                      'sofort gesperrt und nach Ablauf der Aufbewahrungsfrist '
-                      'mit allen Daten endgültig gelöscht. Konten bleiben '
-                      'erhalten.',
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Exportiere vorher eine Datensicherung.',
-                      style: TextStyle(
-                        color: Theme.of(dialogContext).colorScheme.error,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: password,
-                      obscureText: true,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Aktuelles Admin-Passwort',
-                        border: OutlineInputBorder(),
-                      ),
-                      onChanged: (_) => setDialogState(() {}),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: mfaCode,
-                      decoration: const InputDecoration(
-                        labelText: '2-FA-Code (falls aktiviert)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: confirmation,
-                      decoration: InputDecoration(
-                        labelText:
-                            'Zur Bestätigung „$expectedConfirmation“ eingeben',
-                        border: const OutlineInputBorder(),
-                      ),
-                      onChanged: (_) => setDialogState(() {}),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Abbrechen'),
-              ),
-              FilledButton(
-                onPressed:
-                    password.text.isEmpty ||
-                        confirmation.text != expectedConfirmation
-                    ? null
-                    : () => Navigator.pop(dialogContext, {
-                        'currentPassword': password.text,
-                        'mfaCode': mfaCode.text.trim(),
-                        'confirmation': confirmation.text,
-                      }),
-                child: const Text('Organisation löschen'),
-              ),
-            ],
-          ),
-        ),
-      );
-      if (credentials == null || !mounted) return;
-      await _api.request(
-        '/api/organizations/${organization['id']}',
-        method: 'DELETE',
-        body: credentials,
-      );
-      await _refresh();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$organizationName wurde gelöscht.')),
-      );
-    } catch (error) {
-      _error(error);
-    } finally {
-      password.dispose();
-      mfaCode.dispose();
-      confirmation.dispose();
-    }
   }
 
   Future<void> _refresh() async {
@@ -360,75 +166,6 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       mfaCode.dispose();
       confirmation.dispose();
       if (mounted) setState(() => _dataResetRunning = false);
-    }
-  }
-
-  Future<void> _createOrganization() async {
-    final name = TextEditingController();
-    final shortName = TextEditingController();
-    final edvNumber = TextEditingController();
-    try {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Organisation anlegen'),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: shortName,
-                  decoration: const InputDecoration(labelText: 'Kurzname'),
-                  textCapitalization: TextCapitalization.characters,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: edvNumber,
-                  decoration: const InputDecoration(
-                    labelText: 'EDV-Nummer *',
-                    helperText: 'Eindeutig, z. B. 10050035',
-                  ),
-                  textCapitalization: TextCapitalization.characters,
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Abbrechen'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Anlegen'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-      await _api.request(
-        '/api/organizations',
-        method: 'POST',
-        body: {
-          'name': name.text,
-          'shortName': shortName.text,
-          'edvNumber': edvNumber.text,
-        },
-      );
-      await _refresh();
-    } catch (error) {
-      _error(error);
-    } finally {
-      name.dispose();
-      shortName.dispose();
-      edvNumber.dispose();
     }
   }
 
@@ -926,7 +663,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Organisationen & Einheiten')),
+      appBar: AppBar(title: const Text('Organisationsstruktur')),
       body: FutureBuilder<Map<String, dynamic>>(
         future: _future,
         builder: (context, snapshot) {
@@ -956,7 +693,6 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           final roles = (user['roles'] as List? ?? const [])
               .map((entry) => entry.toString())
               .toSet();
-          final platformAdmin = user['platformAdmin'] == true;
           final activeContext = Map<String, dynamic>.from(
             me['context'] as Map? ?? const {},
           );
@@ -965,10 +701,6 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
           );
           final centralAdministration =
               activeOrganization['systemKind'] == 'platform_administration';
-          final canManageOrganizations = platformAdmin && centralAdministration;
-          final managedOrganizations =
-              (data['managedOrganizations'] as List? ?? const [])
-                  .cast<Map<String, dynamic>>();
           final canCreateOrganizationStructure =
               !centralAdministration &&
               roles.contains('Admin') &&
@@ -983,12 +715,6 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    if (canManageOrganizations)
-                      FilledButton.icon(
-                        onPressed: _createOrganization,
-                        icon: const Icon(Icons.add_business_outlined),
-                        label: const Text('Organisation anlegen'),
-                      ),
                     if (canCreateOrganizationStructure && units.isNotEmpty)
                       FilledButton.icon(
                         onPressed: () => _createUnit(units),
@@ -1003,57 +729,21 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                       ),
                   ],
                 ),
-                if (canManageOrganizations) ...[
-                  const SizedBox(height: 20),
-                  Text(
-                    'Alle Organisationen',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  if (managedOrganizations.isEmpty)
-                    const Text('Es sind noch keine Organisationen angelegt.'),
-                  for (final organization in managedOrganizations)
-                    Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.corporate_fare_outlined),
-                        title: Text(organization['name']?.toString() ?? ''),
-                        subtitle: Text(
-                          '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}'
-                          '${organization['status'] == 'archived' ? ' · gelöscht, endgültige Löschung nach ${organization['purgeAfter'] ?? '–'}' : ''}',
-                        ),
-                        trailing: organization['status'] == 'active'
-                            ? PopupMenuButton<String>(
-                                tooltip: 'Aktionen für diese Organisation',
-                                onSelected: (action) {
-                                  if (action == 'edit') {
-                                    _editOrganization(organization);
-                                  }
-                                  if (action == 'delete') {
-                                    _deleteOrganization(organization);
-                                  }
-                                },
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Bearbeiten'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text('Löschen'),
-                                  ),
-                                ],
-                              )
-                            : null,
-                      ),
-                    ),
-                ],
                 const SizedBox(height: 20),
                 Text(
-                  'Meine Organisationen',
+                  'Organisation',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Name, Kurzname und EDV-Nummer der Organisation pflegt die '
+                  'MaterialKompass-Administration in der Zentralen Verwaltung.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 const SizedBox(height: 8),
-                for (final organization in organizations)
+                for (final organization in organizations.where(
+                  (entry) => entry['id'] == activeOrganization['id'],
+                ))
                   Card(
                     child: ListTile(
                       leading: const Icon(Icons.corporate_fare_outlined),

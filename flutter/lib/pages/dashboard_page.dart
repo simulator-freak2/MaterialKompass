@@ -26,6 +26,7 @@ import 'knowledge_base_page.dart' as knowledge_base_page;
 import 'label_templates_page.dart' as label_templates_page;
 import 'locations_page.dart' as locations_page;
 import 'organizations_page.dart' as organizations_page;
+import 'platform_organizations_page.dart' as platform_organizations_page;
 import 'procurement_page.dart' as procurement_page;
 import 'profile_page.dart' as profile_page;
 import 'stocktakes_page.dart' as stocktakes_page;
@@ -896,6 +897,9 @@ class _DashboardPageState extends State<DashboardPage>
           final roles = (currentUser['roles'] as List? ?? const [])
               .map((role) => role.toString())
               .toList();
+          final centralAdministration =
+              activeOrganization['systemKind'] == 'platform_administration';
+          final platformAdmin = currentUser['platformAdmin'] == true;
           bool can(String permission) => permissions.contains(permission);
           bool hasMetric(String key) => summary.containsKey(key);
           int metricValue(String key) =>
@@ -1078,11 +1082,26 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () =>
                         _loadAndOpen(() => users_page.UsersPage(token: _token)),
                   ),
-                if (roles.contains('Admin') && can('organizations.write'))
+                if (centralAdministration && platformAdmin)
+                  _DashboardAction(
+                    icon: Icons.corporate_fare_outlined,
+                    label: 'Organisationsverwaltung',
+                    description:
+                        'Organisationen anlegen, bearbeiten, löschen und '
+                        'wiederherstellen',
+                    onTap: () => _loadAndOpen(
+                      () => platform_organizations_page.PlatformOrganizationsPage(
+                        token: _token,
+                      ),
+                    ),
+                  ),
+                if (!centralAdministration &&
+                    roles.contains('Admin') &&
+                    can('organizations.write'))
                   _DashboardAction(
                     icon: Icons.account_tree_outlined,
-                    label: 'Organisationen',
-                    description: 'Organisationen und Einheiten verwalten',
+                    label: 'Organisationsstruktur',
+                    description: 'Einheiten und Jugendorganisationen verwalten',
                     onTap: () => _loadAndOpen(
                       () => organizations_page.OrganizationsPage(token: _token),
                     ),

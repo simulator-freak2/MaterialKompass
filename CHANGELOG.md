@@ -6,6 +6,12 @@
 
 ## Unveroeffentlicht
 
+- Organisationsverwaltung in die Zentrale Verwaltung verschoben: eigene Kachel
+  „Organisationsverwaltung“ mit Suche, Detailseite (Stammdaten bearbeiten,
+  Kennzahlen, Einheiten lesend), Organisationsadmins hinzufügen/entfernen und
+  Wiederherstellung gelöschter Organisationen innerhalb der Aufbewahrungsfrist.
+  In normalen Organisationen heißt die Kachel nun „Organisationsstruktur“ und
+  enthält nur noch die Einheitenverwaltung.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte
