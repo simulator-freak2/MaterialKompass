@@ -249,12 +249,98 @@ function bulkInput(body) {
   };
 }
 
+const STORAGE_ID_COLLECTIONS = Object.freeze([
+  ['locations', 'loc', /^(?:[a-z]+)?locationIds?$/i],
+  ['shelves', 'shelf', /^(?:[a-z]+)?shelfIds?$/i],
+  ['storageLevels', 'level', /^(?:[a-z]+)?levelIds?$/i],
+  ['stockStructures', 'stock', /^(?:[a-z]+)?(?:stockStructure|storagePosition|position)Ids?$/i],
+]);
+
+function nextNumericId(prefix, entries) {
+  const pattern = new RegExp(`^${prefix}-(\\d+)$`);
+  const highest = entries.reduce((max, entry) => {
+    const match = String(entry?.id || '').match(pattern);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  return `${prefix}-${highest + 1}`;
+}
+
+function replaceReferences(value, keyPattern, oldId, newId, key = '') {
+  if (Array.isArray(value)) {
+    if (keyPattern.test(key)) {
+      return value.map((entry) => (entry === oldId ? newId : entry));
+    }
+    return value.map((entry) => replaceReferences(entry, keyPattern, oldId, newId));
+  }
+  if (value && typeof value === 'object') {
+    for (const [field, entry] of Object.entries(value)) {
+      if (field === 'id') continue;
+      if (entry === oldId && keyPattern.test(field)) value[field] = newId;
+      else if (entry && typeof entry === 'object') {
+        value[field] = replaceReferences(entry, keyPattern, oldId, newId, field);
+      }
+    }
+  }
+  return value;
+}
+
+/**
+ * Repairs storage records that share an ID with another record. Duplicate IDs
+ * make the UI select the wrong building and let tenant checks hit the record
+ * of another unit. The first record keeps its ID; every further record gets a
+ * fresh one and the references of its own organisation unit are moved along.
+ * Exact copies of the same record (same unit and code) are dropped instead.
+ */
+function repairDuplicateStorageIds(data, { log = () => {} } = {}) {
+  const repairs = [];
+  for (const [name, prefix, keyPattern] of STORAGE_ID_COLLECTIONS) {
+    const entries = data[name] || [];
+    const firstById = new Map();
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (!entry || typeof entry !== 'object' || !entry.id) continue;
+      const first = firstById.get(entry.id);
+      if (!first) {
+        firstById.set(entry.id, entry);
+        continue;
+      }
+      if (first.organizationId === entry.organizationId && first.unitId === entry.unitId
+          && String(first.code || '') === String(entry.code || '')
+          && String(first.name || '') === String(entry.name || '')) {
+        entries.splice(index, 1);
+        index -= 1;
+        repairs.push({ collection: name, id: entry.id, action: 'removed-copy' });
+        continue;
+      }
+      const oldId = entry.id;
+      const newId = nextNumericId(prefix, entries);
+      entry.id = newId;
+      firstById.set(newId, entry);
+      for (const values of Object.values(data)) {
+        if (!Array.isArray(values)) continue;
+        for (const candidate of values) {
+          if (!candidate || typeof candidate !== 'object' || candidate === first) continue;
+          if (candidate.organizationId !== entry.organizationId
+              || candidate.unitId !== entry.unitId) continue;
+          replaceReferences(candidate, keyPattern, oldId, newId);
+        }
+      }
+      repairs.push({ collection: name, id: oldId, newId, unitId: entry.unitId,
+        organizationId: entry.organizationId, action: 'renumbered' });
+    }
+  }
+  repairs.forEach((repair) => log(repair));
+  if (repairs.length) refreshStoragePaths(data);
+  return repairs;
+}
+
 module.exports = {
   StorageValidationError,
   buildingInput,
   hierarchyNodeInput,
   duplicateInScope,
   ensureStorageHierarchy,
+  repairDuplicateStorageIds,
   refreshStoragePaths,
   bulkInput,
 };

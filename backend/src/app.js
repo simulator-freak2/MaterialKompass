@@ -85,6 +85,7 @@ const {
   hierarchyNodeInput,
   duplicateInScope,
   ensureStorageHierarchy,
+  repairDuplicateStorageIds,
   refreshStoragePaths,
   bulkInput,
 } = require('./storage-hierarchy');
@@ -317,6 +318,9 @@ function createApp(options = {}) {
   }
   const tenancyData = normalizeTenancyData(appData);
   ensureStorageHierarchy(appData);
+  repairDuplicateStorageIds(appData, {
+    log: (repair) => console.warn('Doppelte Lagerort-ID repariert:', JSON.stringify(repair)),
+  });
   wrapTenantCollections(appData);
   app.locals.appData = appData;
   const roles = appData.roles;
@@ -2019,6 +2023,14 @@ function createApp(options = {}) {
       && unit.organizationId === entry.organizationId)?.name || null,
   });
 
+  // Prefer the requesting unit's own record so a (repaired or not yet
+  // repaired) ID collision with a shared record of the counterpart unit can
+  // never block editing or deleting the unit's own storage structure.
+  const ownStorageEntry = (req, collection) => {
+    const matches = collection.filter((entry) => entry.id === req.params.id);
+    return matches.find((entry) => entry.unitId === req.tenant.unitId) || matches[0];
+  };
+
   app.get('/api/storage-hierarchy', authMiddleware, requirePermission('locations.read'), (req, res) => {
     refreshStoragePaths(appData);
     return withYouthStorageReadAccess(req, () => res.json({
@@ -2080,7 +2092,7 @@ function createApp(options = {}) {
   });
 
   app.put('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const location = locations.find((entry) => entry.id === req.params.id);
+    const location = ownStorageEntry(req, locations);
     if (location && location.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!location) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
     if (location.vehicleId) {
@@ -2105,7 +2117,7 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/locations/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const index = locations.findIndex((entry) => entry.id === req.params.id);
+    const index = locations.indexOf(ownStorageEntry(req, locations));
     if (index >= 0 && locations[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Gebäude nicht gefunden.' });
     if ([...shelves, ...storageLevels, ...stockStructures].some((entry) => (entry.locationId === req.params.id) && entry.unitId !== req.tenant.unitId)) {
@@ -2166,7 +2178,7 @@ function createApp(options = {}) {
   });
 
   app.put('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const shelf = shelves.find((entry) => entry.id === req.params.id);
+    const shelf = ownStorageEntry(req, shelves);
     if (shelf && shelf.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!shelf) return res.status(404).json({ error: 'Regal nicht gefunden.' });
     const locationId = String(req.body.locationId ?? shelf.locationId).trim();
@@ -2190,7 +2202,7 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/shelves/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const index = shelves.findIndex((entry) => entry.id === req.params.id);
+    const index = shelves.indexOf(ownStorageEntry(req, shelves));
     if (index >= 0 && shelves[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Regal nicht gefunden.' });
     const positionIds = stockStructures
@@ -2236,7 +2248,7 @@ function createApp(options = {}) {
   });
 
   app.put('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const level = storageLevels.find((entry) => entry.id === req.params.id);
+    const level = ownStorageEntry(req, storageLevels);
     if (level && level.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!level) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
     const shelfId = String(req.body.shelfId ?? level.shelfId).trim();
@@ -2261,7 +2273,7 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/storage-levels/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const index = storageLevels.findIndex((entry) => entry.id === req.params.id);
+    const index = storageLevels.indexOf(ownStorageEntry(req, storageLevels));
     if (index >= 0 && storageLevels[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Ebene nicht gefunden.' });
     const positionIds = stockStructures
@@ -2310,7 +2322,7 @@ function createApp(options = {}) {
   });
 
   app.put('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const stock = stockStructures.find((entry) => entry.id === req.params.id);
+    const stock = ownStorageEntry(req, stockStructures);
     if (stock && stock.unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen geändert werden.' });
     if (!stock) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
     const levelId = String(req.body.levelId ?? stock.levelId).trim();
@@ -2337,7 +2349,7 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/stock-structures/:id', authMiddleware, requirePermission('locations.write'), (req, res) => {
-    const index = stockStructures.findIndex((entry) => entry.id === req.params.id);
+    const index = stockStructures.indexOf(ownStorageEntry(req, stockStructures));
     if (index >= 0 && stockStructures[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
     if (positionIsReferenced(req.params.id)) {

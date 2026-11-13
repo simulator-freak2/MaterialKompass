@@ -6,6 +6,10 @@
 
 ## Unveroeffentlicht
 
+- Lagerorte mit doppelter interner ID (z. B. Kleiderkammer der Jugend und
+  Gebäude der Ortsgruppe) werden beim Start automatisch neu nummeriert; die
+  Zuordnungen der eigenen Gliederung wandern mit. Dadurch lässt sich der eigene
+  Lagerort wieder auswählen, bearbeiten und löschen.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte
