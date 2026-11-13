@@ -564,7 +564,10 @@ function createApp(options = {}) {
   function defaultTenantContext(user, requestedOrganizationId, requestedUnitId) {
     const activeMemberships = memberships.filter((entry) => entry.userId === user.id
       && entry.status === 'active'
-      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true));
+      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true)
+      // Memberships of archived (deleted) organizations must not shadow other access.
+      && organizations.some((organization) => organization.id === entry.organizationId
+        && organization.status === 'active'));
     const contextFor = (membership, activeUnitId) => {
       const context = contextForMembership({ membership, units: organizationUnits, roles, activeUnitId });
       if (context?.organizationId === PLATFORM_ORGANIZATION_ID) {
