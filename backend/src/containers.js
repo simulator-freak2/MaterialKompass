@@ -54,86 +54,104 @@ function itemKey(entityType, entityId) {
   return `${entityType}:${entityId}`;
 }
 
+// Material-, Kleidungs- und damit auch Kisten-IDs werden pro Gliederung
+// vergeben (`nextId`) und sind nur innerhalb einer Gliederung eindeutig.
+// Alle Abfragen arbeiten deshalb mit dem Objekt selbst und gleichen
+// `organizationId` und `unitId` ab, nie mit der reinen ID.
+function sameOwner(left, right) {
+  return Boolean(left && right && typeof left === 'object' && typeof right === 'object')
+    && left.organizationId === right.organizationId && left.unitId === right.unitId;
+}
+
 function createContainerGuard({ containerContents, materials, clothingItems }) {
   const all = (collection) => rawCollection(collection);
 
-  function materialById(id) {
-    return all(materials).find((entry) => entry.id === id) || null;
+  function materialById(id, owner) {
+    if (!owner) return null;
+    return all(materials).find((entry) => entry.id === id && sameOwner(entry, owner)) || null;
   }
 
-  function entityFor(entityType, entityId) {
-    if (entityType === 'MaterialItem') return materialById(entityId);
-    if (entityType === 'ClothingItem') {
-      return all(clothingItems).find((entry) => entry.id === entityId) || null;
+  function entityFor(entityType, entityId, owner) {
+    if (entityType === 'MaterialItem') return materialById(entityId, owner);
+    if (entityType === 'ClothingItem' && owner) {
+      return all(clothingItems).find((entry) => entry.id === entityId && sameOwner(entry, owner)) || null;
     }
     return null;
   }
 
-  function contentsOf(containerId) {
-    return all(containerContents).filter((entry) => entry.containerId === containerId);
+  function entriesFor(entityType, entity) {
+    if (!entity || typeof entity !== 'object') return [];
+    return all(containerContents).filter((entry) => entry.entityType === entityType
+      && entry.entityId === entity.id && sameOwner(entry, entity));
   }
 
-  function packedQuantity(materialId) {
-    return all(containerContents).reduce((sum, entry) =>
-      entry.entityType === 'MaterialItem' && entry.entityId === materialId
-        ? sum + number(entry.quantity) : sum, 0);
+  function contentsOf(container) {
+    if (!container || typeof container !== 'object') return [];
+    return all(containerContents).filter((entry) => entry.containerId === container.id
+      && sameOwner(entry, container));
+  }
+
+  function packedQuantity(material, { ignoredContentId = null } = {}) {
+    return entriesFor('MaterialItem', material).reduce((sum, entry) =>
+      entry.id !== ignoredContentId ? sum + number(entry.quantity) : sum, 0);
   }
 
   // Individuell geführte Artikel und Kisten können nur in genau einer Kiste liegen.
-  function placementOf(entityType, entityId) {
-    return all(containerContents).find((entry) => entry.entityType === entityType
-      && entry.entityId === entityId && entry.individual === true) || null;
+  function placementOf(entityType, entity) {
+    return entriesFor(entityType, entity).find((entry) => entry.individual === true) || null;
   }
 
-  function containerOf(entityType, entityId) {
-    const placement = placementOf(entityType, entityId);
-    return placement ? materialById(placement.containerId) : null;
+  function containerOf(entityType, entity) {
+    const placement = placementOf(entityType, entity);
+    return placement ? materialById(placement.containerId, placement) : null;
   }
 
-  function lockedMessage(entityType, entityId) {
-    const container = containerOf(entityType, entityId);
+  function lockedMessage(entityType, entity) {
+    const container = containerOf(entityType, entity);
     if (!container) return null;
     return `Der Artikel liegt in der Kiste ${container.inventoryNumber} (${container.name}). `
       + 'Bitte zuerst aus der Kiste entnehmen.';
   }
 
-  function ancestorsOf(containerId) {
+  // Liefert die übergeordneten Kisten (innerste zuerst) als Objekte.
+  function ancestorsOf(container) {
     const result = [];
-    let current = placementOf('MaterialItem', containerId);
-    const seen = new Set([containerId]);
-    while (current && !seen.has(current.containerId) && result.length < 50) {
-      result.push(current.containerId);
-      seen.add(current.containerId);
-      current = placementOf('MaterialItem', current.containerId);
+    if (!container || typeof container !== 'object') return result;
+    const seen = new Set([container.id]);
+    let parent = containerOf('MaterialItem', container);
+    while (parent && !seen.has(parent.id) && result.length < 50) {
+      result.push(parent);
+      seen.add(parent.id);
+      parent = containerOf('MaterialItem', parent);
     }
     return result;
   }
 
-  function nestingDepth(containerId) {
-    return ancestorsOf(containerId).length;
+  function nestingDepth(container) {
+    return ancestorsOf(container).length;
   }
 
-  function subtreeDepth(containerId, seen = new Set()) {
-    if (seen.has(containerId)) return 0;
-    seen.add(containerId);
+  function subtreeDepth(container, seen = new Set()) {
+    if (!container || seen.has(container.id)) return 0;
+    seen.add(container.id);
     let deepest = 0;
-    for (const entry of contentsOf(containerId)) {
+    for (const entry of contentsOf(container)) {
       if (entry.entityType !== 'MaterialItem') continue;
-      const child = materialById(entry.entityId);
-      if (child?.isContainer) deepest = Math.max(deepest, 1 + subtreeDepth(child.id, seen));
+      const child = materialById(entry.entityId, entry);
+      if (child?.isContainer) deepest = Math.max(deepest, 1 + subtreeDepth(child, seen));
     }
     return deepest;
   }
 
-  function descendantEntries(containerId, seen = new Set()) {
-    if (seen.has(containerId)) return [];
-    seen.add(containerId);
+  function descendantEntries(container, seen = new Set()) {
+    if (!container || seen.has(container.id)) return [];
+    seen.add(container.id);
     const result = [];
-    for (const entry of contentsOf(containerId)) {
+    for (const entry of contentsOf(container)) {
       result.push(entry);
       if (entry.entityType === 'MaterialItem') {
-        const child = materialById(entry.entityId);
-        if (child?.isContainer) result.push(...descendantEntries(child.id, seen));
+        const child = materialById(entry.entityId, entry);
+        if (child?.isContainer) result.push(...descendantEntries(child, seen));
       }
     }
     return result;
@@ -156,15 +174,14 @@ function createContainerGuard({ containerContents, materials, clothingItems }) {
   // Ein Container ist sicherheitsbedingt gesperrt, wenn ein sicherheitskritischer
   // Inhalt gesperrt ist. Abgelaufene Inhalte werden gemeldet, blockieren aber nicht,
   // damit eine Einsatzkiste nicht wegen eines einzelnen Pflasters ausfällt.
-  function contentSafety(containerId, at = new Date()) {
-    const container = materialById(containerId);
+  function contentSafety(container, at = new Date()) {
     const warningDays = warningDaysFor(container);
     const reasons = [];
     const warnings = [];
     let expired = 0;
     let expiringSoon = 0;
-    for (const entry of descendantEntries(containerId)) {
-      const entity = entityFor(entry.entityType, entry.entityId);
+    for (const entry of descendantEntries(container)) {
+      const entity = entityFor(entry.entityType, entry.entityId, entry);
       const label = entity?.inventoryNumber || entry.inventoryNumberSnapshot || entry.entityId;
       if (entry.entityType === 'MaterialItem' && entity && !entity.isContainer) {
         const safety = assessMaterialSafety(entity, at);
@@ -192,16 +209,15 @@ function createContainerGuard({ containerContents, materials, clothingItems }) {
   }
 
   // Bewegt den physischen Inhalt (rekursiv) an den aktuellen Ort der Kiste.
-  function syncContents(containerId, { actor = 'System', movements = null, nextId = null,
+  function syncContents(container, { actor = 'System', movements = null, nextId = null,
     reason = 'container-follow', seen = new Set() } = {}) {
-    const container = materialById(containerId);
-    if (!container?.isContainer || seen.has(containerId)) return 0;
-    seen.add(containerId);
+    if (!container?.isContainer || seen.has(container.id)) return 0;
+    seen.add(container.id);
     const target = destinationOf(container);
     let changed = 0;
-    for (const entry of contentsOf(containerId)) {
+    for (const entry of contentsOf(container)) {
       if (!entry.individual) continue;
-      const entity = entityFor(entry.entityType, entry.entityId);
+      const entity = entityFor(entry.entityType, entry.entityId, entry);
       if (!entity) continue;
       if (entity.locationId !== target.locationId
           || (entity.stockStructureId || null) !== target.stockStructureId) {
@@ -215,24 +231,23 @@ function createContainerGuard({ containerContents, materials, clothingItems }) {
             action: reason, quantity: 1,
             fromLocationId: from.locationId, fromStockStructureId: from.stockStructureId,
             toLocationId: target.locationId, toStockStructureId: target.stockStructureId,
-            containerId, notes: `Mit Kiste ${container.inventoryNumber} bewegt.`,
+            containerId: container.id, notes: `Mit Kiste ${container.inventoryNumber} bewegt.`,
             actor, createdAt: new Date().toISOString(),
             organizationId: entity.organizationId, unitId: entity.unitId,
           });
         }
       }
       if (entry.entityType === 'MaterialItem' && entity.isContainer) {
-        changed += syncContents(entity.id, { actor, movements, nextId, reason, seen });
+        changed += syncContents(entity, { actor, movements, nextId, reason, seen });
       }
     }
     return changed;
   }
 
-  function syncMany(ids, options = {}) {
+  function syncMany(items, options = {}) {
     let changed = 0;
-    for (const id of ids) {
-      const material = materialById(id);
-      if (material?.isContainer) changed += syncContents(id, options);
+    for (const material of items) {
+      if (material?.isContainer) changed += syncContents(material, options);
     }
     return changed;
   }
@@ -252,7 +267,7 @@ function createContainerGuard({ containerContents, materials, clothingItems }) {
     warningDaysFor,
     syncContents,
     syncMany,
-    hasContents: (containerId) => contentsOf(containerId).length > 0,
+    hasContents: (container) => contentsOf(container).length > 0,
   };
 }
 
@@ -284,8 +299,14 @@ function registerContainerRoutes({
     return entry?.path || entry?.name || null;
   }
 
-  function vehicleAssignment(materialId) {
-    return all(vehicleLoadAssignments).find((entry) => entry.materialId === materialId) || null;
+  function vehicleAssignments(material) {
+    if (!material) return [];
+    return all(vehicleLoadAssignments).filter((entry) => entry.materialId === material.id
+      && sameOwner(entry, material));
+  }
+
+  function vehicleAssignment(material) {
+    return vehicleAssignments(material)[0] || null;
   }
 
   function entityLabel(entityType, entity, entry = {}) {
@@ -295,20 +316,31 @@ function registerContainerRoutes({
     };
   }
 
-  function entityFor(entityType, entityId) {
-    if (entityType === 'MaterialItem') return all(materials).find((entry) => entry.id === entityId) || null;
-    if (entityType === 'ClothingItem') return all(clothingItems).find((entry) => entry.id === entityId) || null;
-    return null;
+  // `owner` ist die Kiste, der Kisteninhalt oder der Mandant der Anfrage.
+  function entityFor(entityType, entityId, owner) {
+    const collection = entityType === 'MaterialItem' ? materials
+      : entityType === 'ClothingItem' ? clothingItems : null;
+    if (!collection || !owner) return null;
+    return all(collection).find((entry) => entry.id === entityId && sameOwner(entry, owner)) || null;
   }
 
-  function activePackList(containerId) {
-    return all(containerPackLists).find((entry) => entry.containerId === containerId
-      && entry.status === 'Aktiv') || null;
+  function packListsOf(container) {
+    return all(containerPackLists).filter((entry) => entry.containerId === container.id
+      && sameOwner(entry, container));
   }
 
-  function actualQuantities(containerId) {
+  function checksOf(container) {
+    return all(containerChecks).filter((entry) => entry.containerId === container.id
+      && sameOwner(entry, container));
+  }
+
+  function activePackList(container) {
+    return packListsOf(container).find((entry) => entry.status === 'Aktiv') || null;
+  }
+
+  function actualQuantities(container) {
     const result = new Map();
-    for (const entry of guard.contentsOf(containerId)) {
+    for (const entry of guard.contentsOf(container)) {
       const key = itemKey(entry.entityType, entry.entityId);
       result.set(key, (result.get(key) || 0) + number(entry.quantity));
     }
@@ -316,12 +348,12 @@ function registerContainerRoutes({
   }
 
   function packListDeviation(container) {
-    const list = activePackList(container.id);
+    const list = activePackList(container);
     if (!list) return null;
-    const actual = actualQuantities(container.id);
+    const actual = actualQuantities(container);
     const rows = list.items.map((item) => {
       const key = itemKey(item.entityType, item.entityId);
-      const entity = entityFor(item.entityType, item.entityId);
+      const entity = entityFor(item.entityType, item.entityId, container);
       const actualQuantity = actual.get(key) || 0;
       return {
         key, entityType: item.entityType, entityId: item.entityId,
@@ -334,7 +366,7 @@ function registerContainerRoutes({
     const listed = new Set(rows.map((row) => row.key));
     const extra = [...actual.entries()].filter(([key]) => !listed.has(key)).map(([key, quantity]) => {
       const [entityType, entityId] = key.split(/:(.*)/s);
-      const entity = entityFor(entityType, entityId);
+      const entity = entityFor(entityType, entityId, container);
       return {
         key, entityType, entityId, ...entityLabel(entityType, entity),
         position: '', targetQuantity: 0, actualQuantity: quantity, deviation: quantity,
@@ -351,7 +383,7 @@ function registerContainerRoutes({
   }
 
   function publicContent(entry, container) {
-    const entity = entityFor(entry.entityType, entry.entityId);
+    const entity = entityFor(entry.entityType, entry.entityId, entry);
     const warningDays = guard.warningDaysFor(container);
     return {
       ...entry,
@@ -360,7 +392,7 @@ function registerContainerRoutes({
       itemType: entry.entityType === 'ClothingItem' ? 'individual' : entity?.itemType || 'individual',
       size: entry.entityType === 'ClothingItem' ? entity?.size || null : undefined,
       isContainer: entity?.isContainer === true,
-      nestedContentCount: entity?.isContainer ? guard.contentsOf(entity.id).length : 0,
+      nestedContentCount: entity?.isContainer ? guard.contentsOf(entity).length : 0,
       safetyStatus: entry.entityType === 'MaterialItem' && entity && !entity.isContainer
         ? assessMaterialSafety(entity) : null,
       expiryState: guard.expiryState(entry, warningDays),
@@ -368,13 +400,13 @@ function registerContainerRoutes({
   }
 
   function publicContainer(container, { detail = false } = {}) {
-    const contents = guard.contentsOf(container.id);
-    const parent = guard.containerOf('MaterialItem', container.id);
-    const assignment = vehicleAssignment(container.id);
-    const safety = guard.contentSafety(container.id);
+    const contents = guard.contentsOf(container);
+    const parent = guard.containerOf('MaterialItem', container);
+    const assignment = vehicleAssignment(container);
+    const safety = guard.contentSafety(container);
     const deviation = packListDeviation(container);
-    const list = activePackList(container.id);
-    const checks = all(containerChecks).filter((entry) => entry.containerId === container.id);
+    const list = activePackList(container);
+    const checks = checksOf(container);
     const lastCheck = checks.reduce((latest, entry) =>
       !latest || entry.checkedAt > latest.checkedAt ? entry : latest, null);
     const result = {
@@ -409,7 +441,7 @@ function registerContainerRoutes({
     };
     if (detail) {
       result.contents = contents.map((entry) => publicContent(entry, container));
-      result.packLists = all(containerPackLists).filter((entry) => entry.containerId === container.id)
+      result.packLists = packListsOf(container)
         .sort((left, right) => Number(right.version) - Number(left.version));
       result.packListDeviation = deviation;
       result.checks = checks.slice().sort((left, right) =>
@@ -421,9 +453,9 @@ function registerContainerRoutes({
 
   // Prüfgrundlage: aktive Packliste, sonst der aktuelle Ist-Inhalt.
   function checkTemplate(container) {
-    const list = activePackList(container.id);
-    const actual = actualQuantities(container.id);
-    const contents = guard.contentsOf(container.id);
+    const list = activePackList(container);
+    const actual = actualQuantities(container);
+    const contents = guard.contentsOf(container);
     const expiryByKey = new Map();
     for (const entry of contents) {
       const key = itemKey(entry.entityType, entry.entityId);
@@ -441,7 +473,7 @@ function registerContainerRoutes({
       packListVersion: list?.version || null,
       items: source.map((item) => {
         const key = itemKey(item.entityType, item.entityId);
-        const entity = entityFor(item.entityType, item.entityId);
+        const entity = entityFor(item.entityType, item.entityId, container);
         return {
           key, entityType: item.entityType, entityId: item.entityId,
           ...entityLabel(item.entityType, entity, item),
@@ -463,11 +495,8 @@ function registerContainerRoutes({
   }
 
   function availableMaterialQuantity(material, ignoredContentId = null) {
-    const packed = all(containerContents).reduce((sum, entry) =>
-      entry.entityType === 'MaterialItem' && entry.entityId === material.id
-        && entry.id !== ignoredContentId ? sum + number(entry.quantity) : sum, 0);
-    const loaded = all(vehicleLoadAssignments).reduce((sum, entry) =>
-      entry.materialId === material.id ? sum + number(entry.quantity) : sum, 0);
+    const packed = guard.packedQuantity(material, { ignoredContentId });
+    const loaded = vehicleAssignments(material).reduce((sum, entry) => sum + number(entry.quantity), 0);
     return number(material.quantity, 1) - number(material.issuedQuantity) - loaded - packed;
   }
 
@@ -483,26 +512,26 @@ function registerContainerRoutes({
         return { status: 409, error: 'Ausgegebene Kleidung kann nicht in eine Kiste gepackt werden.' };
       }
       if (quantity !== 1) return { status: 400, error: 'Kleidungsstücke werden einzeln gepackt.' };
-      if (guard.placementOf('ClothingItem', entity.id)) {
-        return { status: 409, error: guard.lockedMessage('ClothingItem', entity.id) };
+      if (guard.placementOf('ClothingItem', entity)) {
+        return { status: 409, error: guard.lockedMessage('ClothingItem', entity) };
       }
       return null;
     }
     if (entity.id === container.id) return { status: 409, error: 'Eine Kiste kann nicht in sich selbst gepackt werden.' };
     if (entity.isContainer) {
-      if (guard.ancestorsOf(container.id).includes(entity.id)) {
+      if (guard.ancestorsOf(container).some((ancestor) => ancestor.id === entity.id)) {
         return { status: 409, error: 'Eine übergeordnete Kiste kann nicht in eine ihrer Unterkisten gepackt werden.' };
       }
-      if (guard.nestingDepth(container.id) + 1 + guard.subtreeDepth(entity.id) > MAX_NESTING_DEPTH) {
+      if (guard.nestingDepth(container) + 1 + guard.subtreeDepth(entity) > MAX_NESTING_DEPTH) {
         return { status: 409, error: `Kisten dürfen höchstens ${MAX_NESTING_DEPTH} Ebenen tief verschachtelt werden.` };
       }
     }
     if (entity.itemType === 'individual' || entity.isContainer) {
       if (quantity !== 1) return { status: 400, error: 'Einzelstücke werden einzeln gepackt.' };
-      if (guard.placementOf('MaterialItem', entity.id)) {
-        return { status: 409, error: guard.lockedMessage('MaterialItem', entity.id) };
+      if (guard.placementOf('MaterialItem', entity)) {
+        return { status: 409, error: guard.lockedMessage('MaterialItem', entity) };
       }
-      if (number(entity.issuedQuantity) > 0 || vehicleAssignment(entity.id)) {
+      if (number(entity.issuedQuantity) > 0 || vehicleAssignment(entity)) {
         return { status: 409, error: 'Ausgegebenes oder auf Fahrzeuge geladenes Material kann nicht gepackt werden.' };
       }
     } else if (!Number.isInteger(quantity) || quantity < 1 || quantity > availableMaterialQuantity(entity)) {
@@ -549,7 +578,8 @@ function registerContainerRoutes({
     const result = all(containerContents).filter((entry) => ownedBy(req, entry)
       && entry.expiresAt && entry.expiresAt <= limitDate)
       .map((entry) => {
-        const container = all(materials).find((candidate) => candidate.id === entry.containerId);
+        const container = all(materials).find((candidate) => candidate.id === entry.containerId
+          && sameOwner(candidate, entry));
         return {
           ...publicContent(entry, container),
           containerInventoryNumber: container?.inventoryNumber || null,
@@ -575,7 +605,7 @@ function registerContainerRoutes({
     }
     const entityType = material ? 'MaterialItem' : 'ClothingItem';
     const entity = material || clothing;
-    const parent = entity ? guard.containerOf(entityType, entity.id) : null;
+    const parent = entity ? guard.containerOf(entityType, entity) : null;
     if (parent && ownedBy(req, parent)) {
       return res.json({
         match: 'content',
@@ -643,7 +673,7 @@ function registerContainerRoutes({
     if (settings.error) return res.status(400).json({ error: settings.error });
     const removed = (container.containerCompartments || [])
       .filter((entry) => !settings.containerCompartments.includes(entry));
-    if (guard.contentsOf(container.id).some((entry) => removed.includes(entry.position))) {
+    if (guard.contentsOf(container).some((entry) => removed.includes(entry.position))) {
       return res.status(409).json({ error: 'Belegte Kistenfächer können nicht entfernt werden.' });
     }
     Object.assign(container, settings, { updatedAt: nowIso() });
@@ -654,12 +684,12 @@ function registerContainerRoutes({
   app.delete('/api/containers/:id', authMiddleware, requirePermission('containers.manage'), (req, res) => {
     const container = ownedContainer(req, req.params.id);
     if (!container) return res.status(404).json({ error: 'Kiste nicht gefunden.' });
-    if (guard.hasContents(container.id)) {
+    if (guard.hasContents(container)) {
       return res.status(409).json({ error: 'Nur leere Kisten können aufgelöst werden.' });
     }
     container.isContainer = false;
     container.updatedAt = nowIso();
-    for (const list of all(containerPackLists).filter((entry) => entry.containerId === container.id)) {
+    for (const list of packListsOf(container)) {
       if (list.status === 'Aktiv') list.status = 'Ersetzt';
     }
     logEvent('delete', 'Container', { id: container.id }, req.user.username);
@@ -674,13 +704,13 @@ function registerContainerRoutes({
     const query = text(req.query.query, 120).toLowerCase();
     const matches = (entry) => !query
       || `${entry.inventoryNumber} ${entry.name}`.toLowerCase().includes(query);
-    const ancestors = new Set(guard.ancestorsOf(container.id));
+    const ancestors = new Set(guard.ancestorsOf(container).map((ancestor) => ancestor.id));
     const materialCandidates = all(materials).filter((entry) => ownedBy(req, entry)
       && !entry.archived && entry.id !== container.id && !ancestors.has(entry.id) && matches(entry)
       && !['Ausgesondert', 'Verloren'].includes(entry.status))
       .filter((entry) => (entry.itemType === 'individual' || entry.isContainer)
-        ? !guard.placementOf('MaterialItem', entry.id) && number(entry.issuedQuantity) === 0
-          && !vehicleAssignment(entry.id)
+        ? !guard.placementOf('MaterialItem', entry) && number(entry.issuedQuantity) === 0
+          && !vehicleAssignment(entry)
         : availableMaterialQuantity(entry) > 0)
       .slice(0, 100)
       .map((entry) => ({
@@ -695,7 +725,7 @@ function registerContainerRoutes({
     const clothingCandidates = hasPermission(req.user, 'clothing.read')
       ? all(clothingItems).filter((entry) => ownedBy(req, entry) && !entry.archived && matches(entry)
         && entry.status !== 'Ausgegeben' && !entry.assignedPerson
-        && !guard.placementOf('ClothingItem', entry.id))
+        && !guard.placementOf('ClothingItem', entry))
         .slice(0, 100)
         .map((entry) => ({
           entityType: 'ClothingItem', entityId: entry.id,
@@ -712,7 +742,7 @@ function registerContainerRoutes({
     if (!container) return res.status(404).json({ error: 'Kiste nicht gefunden.' });
     const locked = containerEditable(container);
     if (locked) return res.status(409).json({ error: locked });
-    if (guard.contentsOf(container.id).length >= MAX_CONTENTS_PER_CONTAINER
+    if (guard.contentsOf(container).length >= MAX_CONTENTS_PER_CONTAINER
         || all(containerContents).length >= MAX_CONTENT_RECORDS) {
       return res.status(507).json({ error: 'Die maximale Anzahl an Kisteninhalten ist erreicht.' });
     }
@@ -720,7 +750,7 @@ function registerContainerRoutes({
     if (!CONTENT_ENTITY_TYPES.includes(entityType)) {
       return res.status(400).json({ error: 'Die Artikelart ist ungültig.' });
     }
-    const entity = entityFor(entityType, text(req.body.entityId ?? req.body.materialId, 64));
+    const entity = entityFor(entityType, text(req.body.entityId ?? req.body.materialId, 64), req.tenant);
     const quantity = Number(req.body.quantity ?? 1);
     const blocker = packBlocker(req, container, entityType, entity, quantity);
     if (blocker) return res.status(blocker.status).json({ error: blocker.error });
@@ -751,7 +781,7 @@ function registerContainerRoutes({
       entity.locationId = container.locationId;
       entity.stockStructureId = container.stockStructureId || null;
       if (entity.isContainer) {
-        guard.syncContents(entity.id, { actor: req.user.username, movements: materialMovements, nextId });
+        guard.syncContents(entity, { actor: req.user.username, movements: materialMovements, nextId });
       }
     }
     if (entityType === 'MaterialItem') {
@@ -775,8 +805,8 @@ function registerContainerRoutes({
   app.put('/api/containers/:id/contents/:contentId', authMiddleware,
     requirePermission('containers.pack'), (req, res) => {
       const container = ownedContainer(req, req.params.id);
-      const entry = all(containerContents).find((candidate) => candidate.id === req.params.contentId
-        && candidate.containerId === container?.id);
+      const entry = container && all(containerContents).find((candidate) => candidate.id === req.params.contentId
+        && candidate.containerId === container.id && sameOwner(candidate, container));
       if (!entry) return res.status(404).json({ error: 'Kisteninhalt nicht gefunden.' });
       const expiry = validExpiry(req.body.expiresAt);
       if (expiry.error) return res.status(400).json({ error: expiry.error });
@@ -786,7 +816,7 @@ function registerContainerRoutes({
         const locked = containerEditable(container);
         if (locked) return res.status(409).json({ error: locked });
         const quantity = Number(req.body.quantity);
-        const material = entry.entityType === 'MaterialItem' ? entityFor('MaterialItem', entry.entityId) : null;
+        const material = entry.entityType === 'MaterialItem' ? entityFor('MaterialItem', entry.entityId, entry) : null;
         if (entry.individual || !material) {
           return res.status(400).json({ error: 'Nur bei Mengenartikeln kann die Menge geändert werden.' });
         }
@@ -820,13 +850,13 @@ function registerContainerRoutes({
     requirePermission('containers.pack'), (req, res) => {
       const container = ownedContainer(req, req.params.id);
       const contents = all(containerContents);
-      const index = contents.findIndex((candidate) => candidate.id === req.params.contentId
-        && candidate.containerId === container?.id);
+      const index = container ? contents.findIndex((candidate) => candidate.id === req.params.contentId
+        && candidate.containerId === container.id && sameOwner(candidate, container)) : -1;
       if (index < 0) return res.status(404).json({ error: 'Kisteninhalt nicht gefunden.' });
       const locked = containerEditable(container);
       if (locked) return res.status(409).json({ error: locked });
       const entry = contents[index];
-      const entity = entityFor(entry.entityType, entry.entityId);
+      const entity = entityFor(entry.entityType, entry.entityId, entry);
       let destination = null;
       let destinationStockStructureId = null;
       if (entry.individual && entity) {
@@ -855,7 +885,7 @@ function registerContainerRoutes({
         entity.locationId = destination.id;
         entity.stockStructureId = destinationStockStructureId;
         if (entity.isContainer) {
-          guard.syncContents(entity.id, { actor: req.user.username, movements: materialMovements, nextId });
+          guard.syncContents(entity, { actor: req.user.username, movements: materialMovements, nextId });
         }
         if (entry.entityType === 'MaterialItem') {
           all(materialMovements).push({
@@ -893,7 +923,7 @@ function registerContainerRoutes({
       let items = Array.isArray(req.body.items) ? req.body.items : [];
       if (req.body.fromContents === true) {
         const grouped = new Map();
-        for (const entry of guard.contentsOf(container.id)) {
+        for (const entry of guard.contentsOf(container)) {
           const key = itemKey(entry.entityType, entry.entityId);
           const current = grouped.get(key) || {
             entityType: entry.entityType, entityId: entry.entityId,
@@ -912,7 +942,7 @@ function registerContainerRoutes({
       for (const item of items) {
         const entityType = text(item?.entityType || 'MaterialItem', 32);
         const entity = CONTENT_ENTITY_TYPES.includes(entityType)
-          ? entityFor(entityType, text(item?.entityId ?? item?.materialId, 64)) : null;
+          ? entityFor(entityType, text(item?.entityId ?? item?.materialId, 64), container) : null;
         const targetQuantity = Number(item?.targetQuantity);
         if (!entity || !ownedBy(req, entity) || entity.id === container.id
             || !Number.isInteger(targetQuantity) || targetQuantity < 1
@@ -928,11 +958,11 @@ function registerContainerRoutes({
           inventoryNumberSnapshot: entity.inventoryNumber, nameSnapshot: entity.name,
         });
       }
-      const version = all(containerPackLists).filter((entry) => entry.containerId === container.id)
+      const version = packListsOf(container)
         .reduce((highest, entry) => Math.max(highest, Number(entry.version || 0)), 0) + 1;
       const activate = req.body.activate !== false;
       if (activate) {
-        all(containerPackLists).filter((entry) => entry.containerId === container.id && entry.status === 'Aktiv')
+        packListsOf(container).filter((entry) => entry.status === 'Aktiv')
           .forEach((entry) => { entry.status = 'Ersetzt'; });
         container.completenessStatus = 'Ungeprüft';
       }
@@ -950,11 +980,10 @@ function registerContainerRoutes({
   app.post('/api/containers/:id/pack-lists/:listId/activate', authMiddleware,
     requirePermission('containers.packlists'), (req, res) => {
       const container = ownedContainer(req, req.params.id);
-      const list = all(containerPackLists).find((entry) => entry.id === req.params.listId
-        && entry.containerId === container?.id);
+      const list = container && packListsOf(container).find((entry) => entry.id === req.params.listId);
       if (!list) return res.status(404).json({ error: 'Packliste nicht gefunden.' });
       if (list.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können aktiviert werden.' });
-      all(containerPackLists).filter((entry) => entry.containerId === container.id && entry.status === 'Aktiv')
+      packListsOf(container).filter((entry) => entry.status === 'Aktiv')
         .forEach((entry) => { entry.status = 'Ersetzt'; });
       list.status = 'Aktiv';
       list.activatedAt = nowIso();
@@ -969,7 +998,7 @@ function registerContainerRoutes({
       const container = ownedContainer(req, req.params.id);
       if (!container) return res.status(404).json({ error: 'Kiste nicht gefunden.' });
       const template = checkTemplate(container);
-      const list = activePackList(container.id);
+      const list = activePackList(container);
       const { PDFDocument, StandardFonts, rgb } = pdfLib();
       const pdf = await PDFDocument.create();
       const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -1012,11 +1041,10 @@ function registerContainerRoutes({
   app.post('/api/containers/:id/checks', authMiddleware, requirePermission('containers.check'), (req, res) => {
     const container = ownedContainer(req, req.params.id);
     if (!container) return res.status(404).json({ error: 'Kiste nicht gefunden.' });
-    if (all(containerChecks).filter((entry) => entry.containerId === container.id).length
-        >= MAX_CHECKS_PER_CONTAINER) {
+    if (checksOf(container).length >= MAX_CHECKS_PER_CONTAINER) {
       // Älteste Prüfprotokolle werden rollierend ersetzt.
       const raw = all(containerChecks);
-      const oldest = raw.filter((entry) => entry.containerId === container.id)
+      const oldest = checksOf(container)
         .sort((left, right) => String(left.checkedAt).localeCompare(String(right.checkedAt)))[0];
       raw.splice(raw.indexOf(oldest), 1);
     }

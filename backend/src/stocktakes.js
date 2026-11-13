@@ -31,7 +31,7 @@ function registerStocktakeRoutes({
   XLSX, defectManagement, containerGuard = null,
 }) {
   const nowIso = () => new Date().toISOString();
-  const containerOf = (entityType, entityId) => containerGuard?.containerOf(entityType, entityId) || null;
+  const containerOf = (entityType, entity) => containerGuard?.containerOf(entityType, entity) || null;
 
   function roles(user) {
     return new Set(user?.roles || []);
@@ -89,7 +89,7 @@ function registerStocktakeRoutes({
 
   function snapshotEntry(item, entityType, index) {
     const isBulk = entityType === 'MaterialItem' && item.itemType === 'bulk';
-    const container = isBulk ? null : containerOf(entityType, item.id);
+    const container = isBulk ? null : containerOf(entityType, item);
     return {
       containerId: container?.id || null,
       containerInventoryNumber: container?.inventoryNumber || null,
@@ -309,7 +309,7 @@ function registerStocktakeRoutes({
       if (!containerEntry || !container?.isContainer || !containerGuard) {
         return res.status(404).json({ error: 'Die Kiste ist nicht Teil dieser Inventur.' });
       }
-      const contained = new Set(containerGuard.descendantEntries(container.id)
+      const contained = new Set(containerGuard.descendantEntries(container)
         .filter((entry) => entry.individual)
         .map((entry) => `${entry.entityType}:${entry.entityId}`));
       const targets = stocktake.entries.filter((entry) => !entry.countedAt && entry.itemType === 'individual'

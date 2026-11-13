@@ -493,10 +493,10 @@ function registerVehicleRoutes({
     if (!material || !Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
       return { status: 400, error: 'Material und positive ganze Menge sind erforderlich.' };
     }
-    const packedMessage = containers.lockedMessage('MaterialItem', material.id);
+    const packedMessage = containers.lockedMessage('MaterialItem', material);
     if (packedMessage) return { status: 409, error: packedMessage };
     const available = Number(material.quantity || 1) - Number(material.issuedQuantity || 0)
-      - materialLoadedQuantity(material) - containers.packedQuantity(material.id) - reserved;
+      - materialLoadedQuantity(material) - containers.packedQuantity(material) - reserved;
     if (quantity > available || (material.itemType === 'individual' && quantity !== 1)) {
       return { status: 409, error: 'Die gewünschte Menge ist nicht verfügbar.' };
     }
@@ -505,7 +505,7 @@ function registerVehicleRoutes({
       return { status: 409, error: 'Das Material ist sicherheitsbedingt gesperrt.', reasons: materialSafety.reasons };
     }
     if (material.isContainer) {
-      const contentSafety = containers.contentSafety(material.id);
+      const contentSafety = containers.contentSafety(material);
       if (contentSafety.blocked) {
         return { status: 409, error: 'Die Kiste enthält sicherheitsbedingt gesperrtes Material.', reasons: contentSafety.reasons };
       }
@@ -541,7 +541,7 @@ function registerVehicleRoutes({
     if (material.itemType === 'individual') {
       material.locationId = vehicle.loadLocationId;
       material.stockStructureId = null;
-      containers.syncContents(material.id, { actor, movements: materialMovements, nextId });
+      containers.syncContents(material, { actor, movements: materialMovements, nextId });
     }
     all(materialMovements).push({
       id: nextId('movement', all(materialMovements)), materialId: material.id,
@@ -1124,9 +1124,9 @@ function registerVehicleRoutes({
           itemType: item.itemType, quantity: Number(item.quantity || 1), unit: item.unit,
           loadedQuantity: materialLoadedQuantity(item),
           requestedQuantity: pendingRequestedQuantity(item),
-          availableQuantity: containers.placementOf('MaterialItem', item.id) ? 0
+          availableQuantity: containers.placementOf('MaterialItem', item) ? 0
             : Math.max(0, Number(item.quantity || 1) - Number(item.issuedQuantity || 0)
-              - materialLoadedQuantity(item) - containers.packedQuantity(item.id)
+              - materialLoadedQuantity(item) - containers.packedQuantity(item)
               - pendingRequestedQuantity(item)),
           isContainer: item.isContainer === true,
         }));
@@ -1181,7 +1181,7 @@ function registerVehicleRoutes({
       if (!material || !destination || !destinationStructureValid) return res.status(400).json({ error: 'Ein gültiger Ziel-Lagerort ist erforderlich.' });
       if (material.itemType === 'individual') {
         material.locationId = destination.id; material.stockStructureId = destinationStockStructureId;
-        containers.syncContents(material.id, syncOptions(req));
+        containers.syncContents(material, syncOptions(req));
       }
       assignments.splice(index, 1);
       const at = nowIso();

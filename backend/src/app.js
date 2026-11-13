@@ -2785,7 +2785,7 @@ function createApp(options = {}) {
     const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
     const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
     const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
-    const packedMessage = containerGuard.lockedMessage('ClothingItem', item.id);
+    const packedMessage = containerGuard.lockedMessage('ClothingItem', item);
     if (packedMessage && (locationId !== (item.locationId || '')
       || stockStructureId !== (item.stockStructureId || ''))) {
       return res.status(409).json({ error: packedMessage });
@@ -2981,7 +2981,7 @@ function createApp(options = {}) {
     if (clothingItems[index].status === 'Ausgegeben') {
       return res.status(409).json({ error: 'Issued clothing cannot be deleted' });
     }
-    const packedMessage = containerGuard.lockedMessage('ClothingItem', clothingItems[index].id);
+    const packedMessage = containerGuard.lockedMessage('ClothingItem', clothingItems[index]);
     if (packedMessage) return res.status(409).json({ error: packedMessage });
 
     const removedItem = clothingItems.splice(index, 1)[0];
@@ -3214,7 +3214,7 @@ function createApp(options = {}) {
           inventoryNumber: item.inventoryNumber,
           reasons: psageManagement.safetyFor(item).reasons,
         });
-      } else if (action === 'ausgegeben' && containerGuard.placementOf('ClothingItem', id)) {
+      } else if (action === 'ausgegeben' && containerGuard.placementOf('ClothingItem', item)) {
         errors.push({ id, error: 'packed_in_container' });
       } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
           !(item.status === 'Defekt' && item.assignedPerson)) {
