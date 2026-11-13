@@ -6,7 +6,7 @@ Die Fahrzeugverwaltung unterscheidet die feste Fahrzeugart (`Kraftfahrzeug`, `Bo
 
 Kennzeichen und Fahrgestellnummer sind nur bei Kraftfahrzeugen und Anhängern Pflichtfelder. Bei Booten und sonstigen Fahrzeugarten können beide Angaben leer bleiben. Funkrufname, Stellplatz, Baujahr, Status und weitere beschreibende Angaben bleiben optional.
 
-Die besitzende Gliederung verwaltet das Fahrzeug und legt getrennt fest, welche Gliederungen es sehen beziehungsweise reservieren dürfen. Die Freigaben ersetzen keine Rollenrechte: Ein Benutzer benötigt zusätzlich immer die passende Berechtigung.
+Die besitzende Gliederung verwaltet das Fahrzeug und legt getrennt fest, welche Gliederungen es sehen, reservieren beziehungsweise mit eigenem Material beladen dürfen. Die Freigaben ersetzen keine Rollenrechte: Ein Benutzer benötigt zusätzlich immer die passende Berechtigung.
 
 Eine ausdrücklich verknüpfte Jugendorganisation und ihre Stammgliederung dürfen ihre Fahrzeuge automatisch gegenseitig sehen und reservieren. Diese Sonderfreigabe erlaubt weder Stammdatenänderungen noch Wartung, Beladung, Ausgabe, Rücknahme oder Freigabeverwaltung. Die besitzende Gliederung entscheidet weiterhin über die Reservierung; Sicherheits- und gegebenenfalls TLE-Freigaben bleiben unverändert.
 
@@ -41,6 +41,16 @@ Für jedes Fahrzeug wird automatisch ein geschützter Lagerort angelegt. Individ
 
 Beladungen können eine Positions- oder Fachangabe enthalten. Eine Soll-Beladung wird als versionierte Beladungsliste gespeichert; eine neue Version ersetzt die vorherige aktive Version, ohne die Historie zu verlieren. Die druckbare A4-Fassung enthält Fahrzeugidentifikation, Versionsstand, Soll-/Ist-Mengen, Abweichungen sowie Unterschriftsfelder.
 
+### Material anderer Gliederungen
+
+Hat die besitzende Gliederung einer anderen Gliederung die Freigabe „Darf eigenes Material buchen“ erteilt, kann diese ihr eigenes Material für das Fahrzeug anfragen. Die Freigabe schließt die Sichtfreigabe ein. Eine Anfrage bucht noch nichts: Das Material bleibt an seinem Lagerort, die angefragte Menge ist aber für weitere Anfragen und Beladungen vorgemerkt.
+
+1. Die fremde Gliederung stellt mit dem Recht zum Ändern der Beladung eine Anfrage mit Material, Menge, Fahrzeugfach und Notiz.
+2. Die besitzende Gliederung gibt die Anfrage mit demselben Recht frei (optional mit anderem Fahrzeugfach) oder lehnt sie mit Begründung ab. Die anfragende Gliederung kann offene Anfragen zurückziehen.
+3. Erst mit der Freigabe werden Verfügbarkeit, Sicherheitsstatus und Fahrzeugfach erneut geprüft und das Material auf das Fahrzeug gebucht.
+
+Das gebuchte Material bleibt Eigentum der anfragenden Gliederung und wird in deren Inventar weiterhin als „auf Fahrzeugen“ geführt. Abbuchen dürfen sowohl die besitzende Gliederung des Fahrzeugs als auch die Eigentümerin des Materials; Ziel ist immer ein Lagerort der Eigentümerin des Materials. Wird die Freigabe entzogen, werden offene Anfragen automatisch zurückgezogen; bereits gebuchtes Material bleibt bis zur Abbuchung auf dem Fahrzeug. Soll-Beladungslisten umfassen weiterhin nur Material der besitzenden Gliederung.
+
 ## Wartung und Mängel
 
 Wartungen enthalten Typ, Termin, Status, Werkstatt, Kosten, Kilometerstand, Beschreibung und eine optionale Sicherheitsblockade. Offene Fahrzeugmängel sind in die vorhandene Mängelverwaltung integriert und können den Fahrzeugstatus automatisch auf `Defekt` setzen. Das bloße Außerdienststellen eines Fahrzeugs erzeugt keinen Mangel.
@@ -55,10 +65,12 @@ Außerdienstgestellte Fahrzeuge sind standardmäßig archiviert und bleiben nach
 - `/api/vehicles/options`: Auswahldaten für Formulare
 - `/api/vehicles/sharing-candidates`: freigabefähige Gliederungen
 - `/api/vehicle-settings`: organisationsweite Verwendungen und verwendungsabhängige Fahrzeugtypen
-- `/api/vehicles/:id/sharing`: Sicht- und Reservierungsfreigaben
+- `/api/vehicles/:id/sharing`: Sicht-, Reservierungs- und Beladungsfreigaben (`viewUnitIds`, `reservationUnitIds`, `loadUnitIds`)
 - `/api/vehicles/:id/reservations`: Reservierungen und Entscheidungen
 - `/api/vehicles/:id/maintenance`: Wartungsplanung und Abschluss
 - `/api/vehicles/:id/load`: tatsächliche Beladung
+- `/api/vehicles/:id/load-requests`: Beladungsanfrage einer freigegebenen Gliederung
+- `/api/vehicle-load-requests`: sichtbare Beladungsanfragen; `/:requestId/decision` (Freigabe/Ablehnung durch die besitzende Gliederung) und `/:requestId/cancel` (Zurückziehen durch die anfragende Gliederung)
 - `/api/vehicles/:id/load-lists`: versionierte Soll-Beladungslisten
 - `/api/vehicles/:id/load-lists/:listId/print`: druckbare PDF-Fassung
 

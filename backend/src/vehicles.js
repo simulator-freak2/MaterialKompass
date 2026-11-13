@@ -16,6 +16,7 @@ const DEFAULT_VEHICLE_TYPES_BY_USAGE = Object.freeze({
 const VEHICLE_STATUSES = Object.freeze(['Verfügbar', 'In Wartung', 'Defekt', 'Außer Dienst']);
 const RESERVATION_TERMINAL = new Set(['Abgelehnt', 'Storniert', 'Abgeschlossen']);
 const MAINTENANCE_STATUSES = Object.freeze(['Geplant', 'In Arbeit', 'Abgeschlossen', 'Abgebrochen']);
+const LOAD_REQUEST_PENDING = 'Ausstehend';
 const MAX_VEHICLES = 10_000;
 const MAX_RELATED_RECORDS = 100_000;
 
@@ -86,6 +87,7 @@ function registerVehicleRoutes({
   vehicleMaintenanceEvents,
   vehicleLoadAssignments,
   vehicleLoadLists,
+  vehicleLoadRequests = [],
   materials,
   materialMovements,
   locations,
@@ -143,7 +145,16 @@ function registerVehicleRoutes({
     if (!vehicle || vehicle.organizationId !== req.tenant.organizationId) return false;
     return vehicle.unitId === req.tenant.unitId
       || vehicle.viewAllowedUnitIds?.includes(req.tenant.unitId)
-      || vehicle.reservationAllowedUnitIds?.includes(req.tenant.unitId);
+      || vehicle.reservationAllowedUnitIds?.includes(req.tenant.unitId)
+      || vehicle.loadAllowedUnitIds?.includes(req.tenant.unitId);
+  }
+
+  // A shared vehicle accepts material of another unit only when the owning
+  // unit explicitly allowed it; every single booking is approved afterwards.
+  function loadableBy(req, vehicle) {
+    return vehicle?.organizationId === req.tenant.organizationId
+      && vehicle.unitId !== req.tenant.unitId
+      && vehicle.loadAllowedUnitIds?.includes(req.tenant.unitId) === true;
   }
 
   function reservableBy(req, vehicle) {
@@ -390,10 +401,98 @@ function registerVehicleRoutes({
       entry.materialId === materialId && entry.id !== ignoredAssignmentId ? sum + Number(entry.quantity || 0) : sum, 0);
   }
 
+  function pendingRequestedQuantity(materialId, ignoredRequestId = null) {
+    return all(vehicleLoadRequests).reduce((sum, entry) => entry.materialId === materialId
+      && entry.id !== ignoredRequestId && entry.status === LOAD_REQUEST_PENDING
+      ? sum + Number(entry.quantity || 0) : sum, 0);
+  }
+
+  function unitName(unitId) {
+    return organizationUnits.find((entry) => entry.id === unitId)?.name || null;
+  }
+
+  // Shared validation for direct bookings, load requests and their approval.
+  function validateLoad(vehicle, material, body, { reserved = 0 } = {}) {
+    const quantity = Number(body.quantity ?? 1);
+    if (!material || !Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+      return { status: 400, error: 'Material und positive ganze Menge sind erforderlich.' };
+    }
+    const available = Number(material.quantity || 1) - Number(material.issuedQuantity || 0)
+      - materialLoadedQuantity(material.id) - reserved;
+    if (quantity > available || (material.itemType === 'individual' && quantity !== 1)) {
+      return { status: 409, error: 'Die gewünschte Menge ist nicht verfügbar.' };
+    }
+    const materialSafety = assessMaterialSafety(material);
+    if (materialSafety.blocked) {
+      return { status: 409, error: 'Das Material ist sicherheitsbedingt gesperrt.', reasons: materialSafety.reasons };
+    }
+    const position = text(body.position, 160);
+    if (vehicle.storagePositions?.length && !vehicle.storagePositions.includes(position)) {
+      return { status: 400, error: 'Bitte ein definiertes Fahrzeugfach wählen.' };
+    }
+    return { quantity, position, notes: text(body.notes, 1000) };
+  }
+
+  function bookLoad(vehicle, material, values, actor, extra = {}) {
+    const at = nowIso();
+    const foreign = material.unitId !== vehicle.unitId;
+    const assignment = {
+      id: `vehicle-load-${randomUUID()}`,
+      organizationId: vehicle.organizationId,
+      // The assignment belongs to the unit owning the material so that its
+      // inventory keeps seeing the loaded quantity.
+      unitId: material.unitId,
+      vehicleUnitId: vehicle.unitId,
+      vehicleId: vehicle.id, materialId: material.id, quantity: values.quantity,
+      position: values.position, notes: values.notes,
+      previousLocationId: material.locationId || null,
+      previousStockStructureId: material.stockStructureId || null,
+      inventoryNumberSnapshot: material.inventoryNumber,
+      materialNameSnapshot: material.name,
+      foreignMaterial: foreign,
+      createdAt: at, createdBy: actor,
+      ...extra,
+    };
+    all(vehicleLoadAssignments).push(assignment);
+    if (material.itemType === 'individual') {
+      material.locationId = vehicle.loadLocationId;
+      material.stockStructureId = null;
+    }
+    all(materialMovements).push({
+      id: nextId('movement', all(materialMovements)), materialId: material.id,
+      action: 'vehicle-load', quantity: values.quantity, fromLocationId: assignment.previousLocationId,
+      fromStockStructureId: assignment.previousStockStructureId,
+      toLocationId: vehicle.loadLocationId, toStockStructureId: null,
+      vehicleId: vehicle.id, notes: assignment.notes, actor, createdAt: at,
+      organizationId: vehicle.organizationId, unitId: material.unitId,
+    });
+    return assignment;
+  }
+
+  function publicLoadRequest(entry) {
+    const vehicle = all(vehicles).find((candidate) => candidate.id === entry.vehicleId);
+    const material = all(materials).find((candidate) => candidate.id === entry.materialId);
+    return {
+      ...entry,
+      vehicleName: vehicle ? displayName(vehicle) : 'Gelöschtes Fahrzeug',
+      inventoryNumber: material?.inventoryNumber || entry.inventoryNumberSnapshot || null,
+      materialName: material?.name || entry.materialNameSnapshot || 'Gelöschter Artikel',
+      unit: material?.unit || 'Stück',
+      requesterUnitName: unitName(entry.requesterUnitId),
+      ownerUnitName: unitName(entry.unitId),
+    };
+  }
+
+  function loadRequestVisible(req, entry) {
+    if (entry.organizationId !== req.tenant.organizationId) return false;
+    return entry.requesterUnitId === req.tenant.unitId || entry.unitId === req.tenant.unitId;
+  }
+
   function publicAssignment(entry) {
     const material = all(materials).find((candidate) => candidate.id === entry.materialId);
     return {
       ...entry,
+      materialUnitName: unitName(material?.unitId || entry.unitId),
       inventoryNumber: material?.inventoryNumber || entry.inventoryNumberSnapshot || null,
       materialName: material?.name || entry.materialNameSnapshot || 'Gelöschter Artikel',
       unit: material?.unit || 'Stück',
@@ -450,6 +549,11 @@ function registerVehicleRoutes({
         .map(publicAssignment),
       loadLists: all(vehicleLoadLists).filter((entry) => entry.vehicleId === vehicle.id)
         .sort((left, right) => Number(right.version) - Number(left.version)),
+      loadRequests: all(vehicleLoadRequests).filter((entry) => entry.vehicleId === vehicle.id
+        && loadRequestVisible(req, entry))
+        .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+        .slice(0, 200).map(publicLoadRequest),
+      materialLoadAllowed: loadableBy(req, vehicle) && !vehicle.archivedAt,
       defects: activeDefects(vehicle).map((entry) => ({
         id: entry.id, defectNumber: entry.defectNumber, title: entry.title,
         priority: entry.priority, status: entry.status,
@@ -467,7 +571,7 @@ function registerVehicleRoutes({
       organizationId: req.tenant.organizationId,
       unitId: req.tenant.unitId,
       ...values,
-      viewAllowedUnitIds: [], reservationAllowedUnitIds: [],
+      viewAllowedUnitIds: [], reservationAllowedUnitIds: [], loadAllowedUnitIds: [],
       archivedAt: values.status === 'Außer Dienst' ? createdAt : null,
       offDutyAt: values.status === 'Außer Dienst' ? createdAt : null,
       createdAt, createdBy: req.user.username, updatedAt: createdAt,
@@ -507,12 +611,30 @@ function registerVehicleRoutes({
       .filter((id) => allowed.has(id));
     const reservationsAllowed = [...new Set(Array.isArray(req.body.reservationUnitIds)
       ? req.body.reservationUnitIds.map(String) : [])].filter((id) => allowed.has(id));
+    // Older clients do not send loadUnitIds; keep the stored value then.
+    const loadsAllowed = Object.hasOwn(req.body, 'loadUnitIds')
+      ? [...new Set(Array.isArray(req.body.loadUnitIds) ? req.body.loadUnitIds.map(String) : [])]
+        .filter((id) => allowed.has(id))
+      : (vehicle.loadAllowedUnitIds || []).filter((id) => allowed.has(id));
     vehicle.reservationAllowedUnitIds = reservationsAllowed;
-    vehicle.viewAllowedUnitIds = [...new Set([...views, ...reservationsAllowed])];
+    vehicle.loadAllowedUnitIds = loadsAllowed;
+    vehicle.viewAllowedUnitIds = [...new Set([...views, ...reservationsAllowed, ...loadsAllowed])];
     vehicle.updatedAt = nowIso();
+    // Withdrawing the release also withdraws requests that were not decided yet.
+    for (const entry of all(vehicleLoadRequests)) {
+      if (entry.vehicleId === vehicle.id && entry.status === LOAD_REQUEST_PENDING
+        && !loadsAllowed.includes(entry.requesterUnitId)) {
+        entry.status = 'Zurückgezogen';
+        entry.decisionReason = 'Die Freigabe zur Materialbuchung wurde entzogen.';
+        entry.decidedAt = vehicle.updatedAt;
+        entry.decidedBy = req.user.username;
+        entry.updatedAt = vehicle.updatedAt;
+      }
+    }
     logEvent('share', 'Vehicle', {
       id: vehicle.id, viewUnitIds: vehicle.viewAllowedUnitIds,
       reservationUnitIds: vehicle.reservationAllowedUnitIds,
+      loadUnitIds: vehicle.loadAllowedUnitIds,
     }, req.user.username);
     return res.json(publicVehicle(vehicle));
   });
@@ -800,15 +922,19 @@ function registerVehicleRoutes({
       const vehicle = visibleVehicle(req, req.params.vehicleId);
       if (!vehicle) return res.status(404).json({ error: 'Fahrzeug nicht gefunden.' });
       const query = text(req.query.query, 120).toLowerCase();
+      // Units with a load release choose from their own inventory.
+      const materialUnitId = loadableBy(req, vehicle) ? req.tenant.unitId : vehicle.unitId;
       const result = all(materials).filter((item) => item.organizationId === vehicle.organizationId
-        && item.unitId === vehicle.unitId
+        && item.unitId === materialUnitId
         && !item.archived && (!query || `${item.inventoryNumber} ${item.name}`.toLowerCase().includes(query)))
         .slice(0, 100).map((item) => ({
           id: item.id, inventoryNumber: item.inventoryNumber, name: item.name,
           itemType: item.itemType, quantity: Number(item.quantity || 1), unit: item.unit,
           loadedQuantity: materialLoadedQuantity(item.id),
+          requestedQuantity: pendingRequestedQuantity(item.id),
           availableQuantity: Math.max(0, Number(item.quantity || 1)
-            - Number(item.issuedQuantity || 0) - materialLoadedQuantity(item.id)),
+            - Number(item.issuedQuantity || 0) - materialLoadedQuantity(item.id)
+            - pendingRequestedQuantity(item.id)),
         }));
       return res.json(result);
     });
@@ -820,62 +946,37 @@ function registerVehicleRoutes({
       const material = all(materials).find((entry) => entry.id === text(req.body.materialId, 64)
         && entry.organizationId === vehicle.organizationId && entry.unitId === vehicle.unitId
         && !entry.archived);
-      const quantity = Number(req.body.quantity ?? 1);
-      if (!material || !Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
-        return res.status(400).json({ error: 'Material und positive ganze Menge sind erforderlich.' });
-      }
-      const available = Number(material.quantity || 1) - Number(material.issuedQuantity || 0)
-        - materialLoadedQuantity(material.id);
-      if (quantity > available || (material.itemType === 'individual' && quantity !== 1)) {
-        return res.status(409).json({ error: 'Die gewünschte Menge ist nicht verfügbar.' });
-      }
-      const materialSafety = assessMaterialSafety(material);
-      if (materialSafety.blocked) return res.status(409).json({ error: 'Das Material ist sicherheitsbedingt gesperrt.', reasons: materialSafety.reasons });
-      if (vehicle.storagePositions?.length && !vehicle.storagePositions.includes(text(req.body.position, 160))) {
-        return res.status(400).json({ error: 'Bitte ein definiertes Fahrzeugfach wählen.' });
-      }
-      const at = nowIso();
-      const assignment = {
-        id: `vehicle-load-${randomUUID()}`,
-        organizationId: vehicle.organizationId, unitId: vehicle.unitId,
-        vehicleId: vehicle.id, materialId: material.id, quantity,
-        position: text(req.body.position, 160), notes: text(req.body.notes, 1000),
-        previousLocationId: material.locationId || null,
-        previousStockStructureId: material.stockStructureId || null,
-        inventoryNumberSnapshot: material.inventoryNumber,
-        materialNameSnapshot: material.name,
-        createdAt: at, createdBy: req.user.username,
-      };
-      all(vehicleLoadAssignments).push(assignment);
-      if (material.itemType === 'individual') {
-        material.locationId = vehicle.loadLocationId;
-        material.stockStructureId = null;
-      }
-      all(materialMovements).push({
-        id: nextId('movement', all(materialMovements)), materialId: material.id,
-        action: 'vehicle-load', quantity, fromLocationId: assignment.previousLocationId,
-        fromStockStructureId: assignment.previousStockStructureId,
-        toLocationId: vehicle.loadLocationId, toStockStructureId: null,
-        vehicleId: vehicle.id, notes: assignment.notes, actor: req.user.username, createdAt: at,
-        organizationId: vehicle.organizationId, unitId: material.unitId,
+      const values = validateLoad(vehicle, material, req.body, {
+        reserved: material ? pendingRequestedQuantity(material.id) : 0,
       });
+      if (values.error) {
+        return res.status(values.status).json({ error: values.error, ...(values.reasons ? { reasons: values.reasons } : {}) });
+      }
+      const assignment = bookLoad(vehicle, material, values, req.user.username);
+      const quantity = values.quantity;
       logEvent('load', 'VehicleLoad', { id: assignment.id, vehicleId: vehicle.id, materialId: material.id, quantity }, req.user.username);
       return res.status(201).json(publicAssignment(assignment));
     });
 
   app.post('/api/vehicles/:vehicleId/load/:id/unload', authMiddleware,
     requirePermission('vehicles.load.manage'), (req, res) => {
-      const vehicle = ownedVehicle(req, req.params.vehicleId);
       const assignments = all(vehicleLoadAssignments);
       const index = assignments.findIndex((entry) => entry.id === req.params.id
-        && entry.vehicleId === vehicle?.id);
-      if (index < 0) return res.status(404).json({ error: 'Beladungsbuchung nicht gefunden.' });
-      const assignment = assignments[index];
-      const material = all(materials).find((entry) => entry.id === assignment.materialId);
+        && entry.vehicleId === req.params.vehicleId
+        && entry.organizationId === req.tenant.organizationId);
+      const assignment = index >= 0 ? assignments[index] : null;
+      const material = assignment && all(materials).find((entry) => entry.id === assignment.materialId);
+      // The owning unit of the vehicle or of the loaded material may unload.
+      const vehicle = assignment && all(vehicles).find((entry) => entry.id === assignment.vehicleId
+        && (ownedBy(req, entry) || (material?.unitId === req.tenant.unitId
+          && entry.organizationId === req.tenant.organizationId)));
+      if (!assignment || !vehicle) return res.status(404).json({ error: 'Beladungsbuchung nicht gefunden.' });
       const destinationLocationId = text(req.body.locationId || assignment.previousLocationId, 64);
       const destinationStockStructureId = text(req.body.stockStructureId || assignment.previousStockStructureId, 64) || null;
+      const materialUnitId = material?.unitId || assignment.unitId;
       const destination = all(locations).find((entry) => entry.id === destinationLocationId
-        && entry.organizationId === vehicle.organizationId && !entry.vehicleId);
+        && entry.organizationId === vehicle.organizationId && !entry.vehicleId
+        && (materialUnitId === vehicle.unitId || entry.unitId === materialUnitId));
       if (!material || !destination) return res.status(400).json({ error: 'Ein gültiger Ziel-Lagerort ist erforderlich.' });
       if (material.itemType === 'individual') {
         material.locationId = destination.id; material.stockStructureId = destinationStockStructureId;
@@ -892,6 +993,119 @@ function registerVehicleRoutes({
       });
       logEvent('unload', 'VehicleLoad', { id: assignment.id, vehicleId: vehicle.id, materialId: material.id }, req.user.username);
       return res.json({ success: true });
+    });
+
+  app.get('/api/vehicle-load-requests', authMiddleware,
+    requirePermission('vehicles.load.read'), (req, res) => {
+      const status = text(req.query.status, 40);
+      return res.json(all(vehicleLoadRequests).filter((entry) => loadRequestVisible(req, entry)
+        && (!status || entry.status === status))
+        .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+        .slice(0, 500).map(publicLoadRequest));
+    });
+
+  app.post('/api/vehicles/:vehicleId/load-requests', authMiddleware,
+    requirePermission('vehicles.load.manage'), (req, res) => {
+      if (all(vehicleLoadRequests).length >= MAX_RELATED_RECORDS) {
+        return res.status(507).json({ error: 'Die maximale Anzahl an Beladungsanfragen ist erreicht.' });
+      }
+      const vehicle = visibleVehicle(req, req.params.vehicleId);
+      if (!vehicle || vehicle.archivedAt || !loadableBy(req, vehicle)) {
+        return res.status(404).json({ error: 'Für dieses Fahrzeug ist keine Materialbuchung freigegeben.' });
+      }
+      const material = all(materials).find((entry) => entry.id === text(req.body.materialId, 64)
+        && entry.organizationId === req.tenant.organizationId && entry.unitId === req.tenant.unitId
+        && !entry.archived);
+      const values = validateLoad(vehicle, material, req.body, {
+        reserved: material ? pendingRequestedQuantity(material.id) : 0,
+      });
+      if (values.error) {
+        return res.status(values.status).json({ error: values.error, ...(values.reasons ? { reasons: values.reasons } : {}) });
+      }
+      const at = nowIso();
+      const entry = {
+        id: `vehicle-load-request-${randomUUID()}`,
+        organizationId: vehicle.organizationId,
+        unitId: vehicle.unitId,
+        vehicleId: vehicle.id,
+        requesterUnitId: req.tenant.unitId,
+        requesterUserId: req.user.id,
+        requesterName: req.user.name || req.user.username,
+        materialId: material.id, quantity: values.quantity,
+        position: values.position, notes: values.notes,
+        inventoryNumberSnapshot: material.inventoryNumber,
+        materialNameSnapshot: material.name,
+        status: LOAD_REQUEST_PENDING,
+        decisionReason: null, decidedAt: null, decidedBy: null, assignmentId: null,
+        createdAt: at, createdBy: req.user.username, updatedAt: at,
+      };
+      all(vehicleLoadRequests).push(entry);
+      logEvent('load-request', 'VehicleLoad', {
+        id: entry.id, vehicleId: vehicle.id, materialId: material.id,
+        quantity: entry.quantity, requesterUnitId: entry.requesterUnitId, ownerUnitId: vehicle.unitId,
+      }, req.user.username);
+      return res.status(201).json(publicLoadRequest(entry));
+    });
+
+  app.post('/api/vehicle-load-requests/:id/decision', authMiddleware,
+    requirePermission('vehicles.load.manage'), (req, res) => {
+      const entry = all(vehicleLoadRequests).find((candidate) => candidate.id === req.params.id);
+      const vehicle = entry && ownedVehicle(req, entry.vehicleId);
+      if (!entry || !vehicle) return res.status(404).json({ error: 'Beladungsanfrage nicht gefunden.' });
+      if (entry.status !== LOAD_REQUEST_PENDING) {
+        return res.status(409).json({ error: 'Die Beladungsanfrage ist bereits entschieden.' });
+      }
+      const at = nowIso();
+      if (req.body.approved !== true) {
+        const reason = text(req.body.reason, 1000);
+        if (!reason) return res.status(400).json({ error: 'Eine Ablehnung benötigt eine Begründung.' });
+        Object.assign(entry, {
+          status: 'Abgelehnt', decisionReason: reason, decidedAt: at,
+          decidedBy: req.user.username, updatedAt: at,
+        });
+        logEvent('load-request-decision', 'VehicleLoad', { id: entry.id, vehicleId: vehicle.id, status: entry.status }, req.user.username);
+        return res.json(publicLoadRequest(entry));
+      }
+      if (vehicle.archivedAt || !vehicle.loadAllowedUnitIds?.includes(entry.requesterUnitId)) {
+        return res.status(409).json({ error: 'Das Fahrzeug ist für die anfragende Gliederung nicht mehr zur Materialbuchung freigegeben.' });
+      }
+      const material = all(materials).find((candidate) => candidate.id === entry.materialId
+        && candidate.organizationId === vehicle.organizationId
+        && candidate.unitId === entry.requesterUnitId && !candidate.archived);
+      // The owner may assign another compartment when approving.
+      const position = Object.hasOwn(req.body, 'position') ? req.body.position : entry.position;
+      const values = validateLoad(vehicle, material, { ...entry, position }, {
+        reserved: material ? pendingRequestedQuantity(material.id, entry.id) : 0,
+      });
+      if (values.error) {
+        return res.status(values.status).json({ error: values.error, ...(values.reasons ? { reasons: values.reasons } : {}) });
+      }
+      const assignment = bookLoad(vehicle, material, values, req.user.username, {
+        requestedBy: entry.createdBy, loadRequestId: entry.id,
+      });
+      Object.assign(entry, {
+        status: 'Genehmigt', position: values.position, decidedAt: at,
+        decidedBy: req.user.username, assignmentId: assignment.id, updatedAt: at,
+      });
+      logEvent('load-request-decision', 'VehicleLoad', {
+        id: entry.id, vehicleId: vehicle.id, status: entry.status, assignmentId: assignment.id,
+      }, req.user.username);
+      return res.json(publicLoadRequest(entry));
+    });
+
+  app.post('/api/vehicle-load-requests/:id/cancel', authMiddleware,
+    requirePermission('vehicles.load.manage'), (req, res) => {
+      const entry = all(vehicleLoadRequests).find((candidate) => candidate.id === req.params.id
+        && candidate.organizationId === req.tenant.organizationId
+        && candidate.requesterUnitId === req.tenant.unitId);
+      if (!entry) return res.status(404).json({ error: 'Beladungsanfrage nicht gefunden.' });
+      if (entry.status !== LOAD_REQUEST_PENDING) {
+        return res.status(409).json({ error: 'Die Beladungsanfrage kann nicht mehr storniert werden.' });
+      }
+      const at = nowIso();
+      Object.assign(entry, { status: 'Storniert', decidedAt: at, decidedBy: req.user.username, updatedAt: at });
+      logEvent('load-request-cancel', 'VehicleLoad', { id: entry.id, vehicleId: entry.vehicleId }, req.user.username);
+      return res.json(publicLoadRequest(entry));
     });
 
   app.post('/api/vehicles/:vehicleId/load-lists', authMiddleware,
@@ -989,7 +1203,7 @@ function registerVehicleRoutes({
       const offDuty = Date.parse(vehicle.offDutyAt || vehicle.archivedAt || '');
       if (!Number.isFinite(offDuty) || offDuty > cutoff || activeDefects(vehicle).length) continue;
       if (all(vehicleLoadAssignments).some((entry) => entry.vehicleId === vehicle.id)) continue;
-      for (const collection of [vehicleReservations, vehicleMaintenanceEvents, vehicleLoadLists]) {
+      for (const collection of [vehicleReservations, vehicleMaintenanceEvents, vehicleLoadLists, vehicleLoadRequests]) {
         const raw = all(collection);
         for (let child = raw.length - 1; child >= 0; child -= 1) {
           if (raw[child].vehicleId === vehicle.id) raw.splice(child, 1);

@@ -1070,6 +1070,34 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     await _mutate('/api/vehicles/${widget.vehicleId}/load', body: values);
   }
 
+  Future<void> _requestLoad() async {
+    final materials = await widget.request(
+      '/api/vehicles/${widget.vehicleId}/load-materials',
+    );
+    if (materials is! List || !mounted) return;
+    final values = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => _LoadMaterialDialog(
+        title: 'Materialbuchung anfragen',
+        submitLabel: 'Anfragen',
+        hint:
+            'Die besitzende Gliederung muss die Buchung freigeben. Erst danach '
+            'wird das Material auf das Fahrzeug gebucht.',
+        positions: (vehicle?['storagePositions'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        materials: materials
+            .map((entry) => Map<String, dynamic>.from(entry as Map))
+            .toList(),
+      ),
+    );
+    if (values == null) return;
+    await _mutate(
+      '/api/vehicles/${widget.vehicleId}/load-requests',
+      body: values,
+    );
+  }
+
   Future<void> _createLoadList() async {
     final assignments = (vehicle?['loadAssignments'] as List? ?? const [])
         .map((entry) => Map<String, dynamic>.from(entry as Map))
@@ -1121,6 +1149,9 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
             (vehicle!['reservationAllowedUnitIds'] as List? ?? const [])
                 .map((entry) => entry.toString())
                 .toSet(),
+        loadIds: (vehicle!['loadAllowedUnitIds'] as List? ?? const [])
+            .map((entry) => entry.toString())
+            .toSet(),
       ),
     );
     if (values == null) return;
@@ -1202,6 +1233,16 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     final lists = (value['loadLists'] as List? ?? const [])
         .map((entry) => Map<String, dynamic>.from(entry as Map))
         .toList();
+    final loadRequests = (value['loadRequests'] as List? ?? const [])
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+    final openLoadRequests = loadRequests
+        .where((entry) => entry['status'] == 'Ausstehend')
+        .toList();
+    final decidedLoadRequests = loadRequests
+        .where((entry) => entry['status'] != 'Ausstehend')
+        .take(10)
+        .toList();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -1239,7 +1280,8 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                             value['parkingLocationName'],
                             value['parkingSpaceName'],
                           ].whereType<String>().join(' / '),
-                    'Zugewiesener Fahrzeugstellplatz': value['parkingSpaceName'] ?? 'Keiner',
+                    'Zugewiesener Fahrzeugstellplatz':
+                        value['parkingSpaceName'] ?? 'Keiner',
                     'Kilometerstand': value['mileage'],
                     'Betriebsstunden': value['operatingHours'],
                     'Status': value['status'],
@@ -1291,6 +1333,14 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                           icon: const Icon(Icons.add_box_outlined),
                           label: const Text('Inventar buchen'),
                         ),
+                      if (!ownsVehicle &&
+                          value['materialLoadAllowed'] == true &&
+                          can('vehicles.load.manage'))
+                        FilledButton.tonalIcon(
+                          onPressed: _requestLoad,
+                          icon: const Icon(Icons.add_box_outlined),
+                          label: const Text('Material anfragen'),
+                        ),
                       if (ownsVehicle && can('vehicles.load.manage'))
                         OutlinedButton.icon(
                           onPressed: loads.isEmpty ? null : _createLoadList,
@@ -1321,6 +1371,24 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                     const Text('Kein Inventar auf dieses Fahrzeug gebucht.')
                   else
                     ...loads.map(_loadTile),
+                  if (openLoadRequests.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      ownsVehicle
+                          ? 'Offene Buchungsanfragen anderer Gliederungen'
+                          : 'Offene Buchungsanfragen',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    ...openLoadRequests.map(_loadRequestTile),
+                  ],
+                  if (decidedLoadRequests.isNotEmpty)
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: const Text('Entschiedene Buchungsanfragen'),
+                      children: decidedLoadRequests
+                          .map(_loadRequestTile)
+                          .toList(),
+                    ),
                   if (lists.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -1546,17 +1614,25 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
   }
 
   Widget _loadTile(Map<String, dynamic> entry) {
+    final foreign = entry['foreignMaterial'] == true;
+    final ownMaterial = entry['unitId']?.toString() == widget.activeUnitId;
+    final position = entry['position']?.toString() ?? '';
     return ListTile(
       leading: const Icon(Icons.inventory_2_outlined),
       title: Text('${entry['inventoryNumber']} · ${entry['materialName']}'),
       subtitle: Text(
-        '${entry['quantity']} ${entry['unit']} · ${entry['position'].toString().isEmpty ? 'Keine Position' : entry['position']}',
+        '${entry['quantity']} ${entry['unit']} · ${position.isEmpty ? 'Keine Position' : position}'
+        '${foreign ? ' · Material von ${entry['materialUnitName'] ?? 'anderer Gliederung'}' : ''}',
       ),
-      trailing: ownsVehicle && can('vehicles.load.manage')
+      trailing: (ownsVehicle || ownMaterial) && can('vehicles.load.manage')
           ? IconButton(
               tooltip: 'Vom Fahrzeug abbuchen',
               onPressed: () async {
-                final location = await _destination();
+                // Foreign material returns to its previous storage location
+                // unless the owning unit of the material chooses one itself.
+                final location = foreign && !ownMaterial
+                    ? entry['previousLocationId']?.toString()
+                    : await _destination();
                 if (location != null) {
                   await _mutate(
                     '/api/vehicles/${widget.vehicleId}/load/${entry['id']}/unload',
@@ -1567,6 +1643,69 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
               icon: const Icon(Icons.output_outlined),
             )
           : null,
+    );
+  }
+
+  Widget _loadRequestTile(Map<String, dynamic> entry) {
+    final status = entry['status']?.toString() ?? '';
+    final pending = status == 'Ausstehend';
+    final position = entry['position']?.toString() ?? '';
+    final requester = entry['requesterUnitName'] ?? entry['requesterName'];
+    final details = [
+      '${entry['quantity']} ${entry['unit'] ?? 'Stück'}',
+      position.isEmpty ? 'Keine Position' : position,
+      'angefragt von $requester',
+      if ((entry['notes']?.toString() ?? '').isNotEmpty) entry['notes'],
+      if ((entry['decisionReason']?.toString() ?? '').isNotEmpty)
+        'Begründung: ${entry['decisionReason']}',
+    ].join(' · ');
+    Widget? trailing;
+    if (pending && ownsVehicle && can('vehicles.load.manage')) {
+      trailing = Wrap(
+        spacing: 4,
+        children: [
+          IconButton(
+            tooltip: 'Buchung freigeben',
+            icon: const Icon(Icons.check_circle_outline),
+            onPressed: () => _mutate(
+              '/api/vehicle-load-requests/${entry['id']}/decision',
+              body: {'approved': true},
+            ),
+          ),
+          IconButton(
+            tooltip: 'Buchung ablehnen',
+            icon: const Icon(Icons.cancel_outlined),
+            onPressed: () async {
+              final reason = await _reason('Buchungsanfrage ablehnen');
+              if (reason != null) {
+                await _mutate(
+                  '/api/vehicle-load-requests/${entry['id']}/decision',
+                  body: {'approved': false, 'reason': reason},
+                );
+              }
+            },
+          ),
+        ],
+      );
+    } else if (pending &&
+        entry['requesterUnitId']?.toString() == widget.activeUnitId &&
+        can('vehicles.load.manage')) {
+      trailing = IconButton(
+        tooltip: 'Anfrage zurückziehen',
+        icon: const Icon(Icons.undo),
+        onPressed: () =>
+            _mutate('/api/vehicle-load-requests/${entry['id']}/cancel'),
+      );
+    }
+    return Card.outlined(
+      child: ListTile(
+        leading: Icon(pending ? Icons.pending_actions_outlined : Icons.history),
+        title: Text(
+          '${entry['inventoryNumber']} · ${entry['materialName']} · $status',
+        ),
+        subtitle: Text(details),
+        trailing: trailing,
+      ),
     );
   }
 
@@ -2027,9 +2166,18 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
 }
 
 class _LoadMaterialDialog extends StatefulWidget {
-  const _LoadMaterialDialog({required this.materials, required this.positions});
+  const _LoadMaterialDialog({
+    required this.materials,
+    required this.positions,
+    this.title = 'Inventar auf Fahrzeug buchen',
+    this.submitLabel = 'Buchen',
+    this.hint,
+  });
   final List<String> positions;
   final List<Map<String, dynamic>> materials;
+  final String title;
+  final String submitLabel;
+  final String? hint;
   @override
   State<_LoadMaterialDialog> createState() => _LoadMaterialDialogState();
 }
@@ -2041,12 +2189,17 @@ class _LoadMaterialDialogState extends State<_LoadMaterialDialog> {
   final notes = TextEditingController();
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Inventar auf Fahrzeug buchen'),
+    title: Text(widget.title),
     content: SizedBox(
       width: 620,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (widget.hint != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(widget.hint!),
+            ),
           DropdownButtonFormField<String>(
             initialValue: materialId,
             isExpanded: true,
@@ -2116,7 +2269,7 @@ class _LoadMaterialDialogState extends State<_LoadMaterialDialog> {
                 'position': position.text,
                 'notes': notes.text,
               }),
-        child: const Text('Buchen'),
+        child: Text(widget.submitLabel),
       ),
     ],
   );
@@ -2202,10 +2355,12 @@ class _SharingDialog extends StatefulWidget {
     required this.candidates,
     required this.viewIds,
     required this.reservationIds,
+    this.loadIds = const {},
   });
   final List<Map<String, dynamic>> candidates;
   final Set<String> viewIds;
   final Set<String> reservationIds;
+  final Set<String> loadIds;
   @override
   State<_SharingDialog> createState() => _SharingDialogState();
 }
@@ -2213,6 +2368,7 @@ class _SharingDialog extends StatefulWidget {
 class _SharingDialogState extends State<_SharingDialog> {
   late final viewIds = {...widget.viewIds};
   late final reservationIds = {...widget.reservationIds};
+  late final loadIds = {...widget.loadIds};
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Gliederungsfreigaben'),
@@ -2239,6 +2395,7 @@ class _SharingDialogState extends State<_SharingDialog> {
                           } else {
                             viewIds.remove(id);
                             reservationIds.remove(id);
+                            loadIds.remove(id);
                           }
                         }),
                         title: const Text('Darf Fahrzeug sehen'),
@@ -2255,6 +2412,21 @@ class _SharingDialogState extends State<_SharingDialog> {
                         }),
                         title: const Text('Darf Fahrzeug reservieren'),
                       ),
+                      CheckboxListTile(
+                        value: loadIds.contains(id),
+                        onChanged: (value) => setState(() {
+                          if (value == true) {
+                            loadIds.add(id);
+                            viewIds.add(id);
+                          } else {
+                            loadIds.remove(id);
+                          }
+                        }),
+                        title: const Text('Darf eigenes Material buchen'),
+                        subtitle: const Text(
+                          'Jede Buchung muss von dieser Gliederung freigegeben werden.',
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -2270,6 +2442,7 @@ class _SharingDialogState extends State<_SharingDialog> {
         onPressed: () => Navigator.pop(context, {
           'viewUnitIds': viewIds.toList(),
           'reservationUnitIds': reservationIds.toList(),
+          'loadUnitIds': loadIds.toList(),
         }),
         child: const Text('Speichern'),
       ),

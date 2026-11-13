@@ -20,7 +20,7 @@ const SCOPED_BACKUP_COLLECTIONS = new Set([
   'materials', 'deletedMaterials', 'materialMovements', 'materialInspections',
   'materialDocuments', 'reservations', 'maintenanceEvents', 'clothingItems',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
-  'vehicleLoadAssignments', 'vehicleLoadLists', 'clothingInspections',
+  'vehicleLoadAssignments', 'vehicleLoadLists', 'vehicleLoadRequests', 'clothingInspections',
   'deletedClothingItems', 'issueTransactions', 'defectReports', 'notifications',
   'defectEmailImports', 'procurementRequests', 'procurementOffers',
   'procurementOrders', 'procurementReceipts', 'procurementDocuments',

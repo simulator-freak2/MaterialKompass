@@ -139,7 +139,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'reservations', 'maintenanceEvents',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
-  'vehicleLoadAssignments', 'vehicleLoadLists',
+  'vehicleLoadAssignments', 'vehicleLoadLists', 'vehicleLoadRequests',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'systemMessageAcknowledgements',
@@ -332,6 +332,7 @@ function createApp(options = {}) {
   const vehicleMaintenanceEvents = (appData.vehicleMaintenanceEvents ||= []);
   const vehicleLoadAssignments = (appData.vehicleLoadAssignments ||= []);
   const vehicleLoadLists = (appData.vehicleLoadLists ||= []);
+  const vehicleLoadRequests = (appData.vehicleLoadRequests ||= []);
   const clothingItems = appData.clothingItems;
   const clothingInspections = appData.clothingInspections || [];
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
@@ -2540,7 +2541,7 @@ function createApp(options = {}) {
   const vehicleManagement = registerVehicleRoutes({
     app, authMiddleware, requirePermission, hasPermission,
     vehicles, vehicleReservations, vehicleMaintenanceEvents,
-    vehicleLoadAssignments, vehicleLoadLists, materials, materialMovements,
+    vehicleLoadAssignments, vehicleLoadLists, vehicleLoadRequests, materials, materialMovements,
     locations, organizations, organizationUnits, defectReports, logEvent, nextId,
   });
   app.locals.applyVehicleRetentionPolicy = vehicleManagement.applyVehicleRetentionPolicy;

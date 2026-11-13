@@ -156,6 +156,7 @@ const vehicleReservations = [];
 const vehicleMaintenanceEvents = [];
 const vehicleLoadAssignments = [];
 const vehicleLoadLists = [];
+const vehicleLoadRequests = [];
 const clothingInspections = [];
 
 const clothingItems = [
@@ -234,6 +235,7 @@ module.exports = {
     vehicleMaintenanceEvents,
     vehicleLoadAssignments,
     vehicleLoadLists,
+    vehicleLoadRequests,
     clothingItems,
     clothingInspections,
     issueTransactions,
