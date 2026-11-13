@@ -13,7 +13,7 @@ const {
   registerPsageRoutes,
 } = require('./psage-inspections');
 const { BUOYANCY_VALUES, RELEASE_TYPES, VEST_TYPES } = require('./psage-checklists');
-const { createContainerGuard, registerContainerRoutes } = require('./containers');
+const { createContainerGuard, registerContainerRoutes, migrateLegacyContainers } = require('./containers');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
   canAccessStocktakeEmail,
@@ -146,7 +146,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'reservations', 'maintenanceEvents',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
   'vehicleLoadAssignments', 'vehicleLoadLists', 'vehicleLoadRequests',
-  'containerContents', 'containerPackLists', 'containerChecks',
+  'containers', 'containerContents', 'containerPackLists', 'containerChecks',
   'clothingItems', 'clothingInspections', 'clothingInspectionDocuments',
   'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
@@ -317,6 +317,7 @@ function createApp(options = {}) {
   }
   const tenancyData = normalizeTenancyData(appData);
   ensureStorageHierarchy(appData);
+  migrateLegacyContainers(appData);
   wrapTenantCollections(appData);
   app.locals.appData = appData;
   const roles = appData.roles;
@@ -341,6 +342,7 @@ function createApp(options = {}) {
   const vehicleLoadAssignments = (appData.vehicleLoadAssignments ||= []);
   const vehicleLoadLists = (appData.vehicleLoadLists ||= []);
   const vehicleLoadRequests = (appData.vehicleLoadRequests ||= []);
+  const containers = (appData.containers ||= []);
   const containerContents = (appData.containerContents ||= []);
   const containerPackLists = (appData.containerPackLists ||= []);
   const containerChecks = (appData.containerChecks ||= []);
@@ -1319,8 +1321,11 @@ function createApp(options = {}) {
   }
 
   function responseClothing(item) {
+    const container = containerGuard.containerOfEntity(item);
     return {
       ...item,
+      containerId: container?.id || null,
+      containerName: containerGuard.label(container),
       psageSafety: psageManagement?.safetyFor(item) ?? null,
       inspections: clothingInspections
         .filter((entry) => entry.clothingId === item.id)
@@ -1957,7 +1962,7 @@ function createApp(options = {}) {
   };
 
   const positionIsReferenced = (id) => (
-    [...rawCollection(materials), ...rawCollection(clothingItems)].filter((entry) => entry.organizationId === currentTenant()?.organizationId && !entry.archived)
+    [...rawCollection(materials), ...rawCollection(clothingItems), ...rawCollection(containers)].filter((entry) => entry.organizationId === currentTenant()?.organizationId && !entry.archived)
       .some((entry) => entry.stockStructureId === id || entry.storagePositionId === id)
     || stocktakeReferences('stockStructureId', id)
   );
@@ -1968,7 +1973,7 @@ function createApp(options = {}) {
       .filter((entry) => ids.has(entry.id))
       .map((entry) => [entry.id, entry.locationId]));
     for (const entry of [
-      ...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems,
+      ...materials, ...deletedMaterials, ...clothingItems, ...deletedClothingItems, ...containers,
     ]) {
       const positionId = entry.stockStructureId || entry.storagePositionId;
       if (locationByPosition.has(positionId)) {
@@ -2070,12 +2075,24 @@ function createApp(options = {}) {
           if (historical && !includeHistory) continue;
           if (!(kind === 'locations' && item.locationId === id) && !ids.has(item.stockStructureId || item.storagePositionId)) continue;
           rows.push({ id: item.id, type, name: item.name, inventoryNumber: item.inventoryNumber,
+            containerName: historical ? null : containerGuard.label(containerGuard.containerOfEntity(item)),
             quantity: item.quantity ?? 1, status: historical ? (deleted.includes(item) ? 'Gelöscht' : 'Archiviert') : item.status,
             historical, locationName: locations.find((entry) => entry.id === item.locationId)?.name || item.historicalLocationName,
             path: stockStructures.find((entry) => entry.id === (item.stockStructureId || item.storagePositionId))?.path || item.historicalStoragePath || item.historicalLocationName });
         }
       }
-      return res.json({ items: rows, hiddenTypes: ['inventory.read', 'clothing.read'].filter((permission) => !hasPermission(req.user, permission)) });
+      if (hasPermission(req.user, 'containers.read')) {
+        for (const container of containers) {
+          if (container.archived) continue;
+          if (!(kind === 'locations' && container.locationId === id) && !ids.has(container.stockStructureId)) continue;
+          rows.push({ id: container.id, type: 'Kiste', name: container.name, inventoryNumber: container.code,
+            quantity: containerGuard.itemsIn(container.id).length + containerGuard.contentsOf(container.id).length,
+            status: container.completenessStatus || 'Ungeprüft', historical: false,
+            locationName: locations.find((entry) => entry.id === container.locationId)?.name || null,
+            path: stockStructures.find((entry) => entry.id === container.stockStructureId)?.path || null });
+        }
+      }
+      return res.json({ items: rows, hiddenTypes: ['inventory.read', 'clothing.read', 'containers.read'].filter((permission) => !hasPermission(req.user, permission)) });
     });
   });
 
@@ -2121,13 +2138,13 @@ function createApp(options = {}) {
     const nestedStockIds = new Set(stockStructures
       .filter((entry) => entry.locationId === req.params.id)
       .map((entry) => entry.id));
-    const inventoryReferences = [...rawCollection(materials), ...rawCollection(clothingItems)].filter((entry) => entry.organizationId === req.tenant.organizationId && !entry.archived)
+    const inventoryReferences = [...rawCollection(materials), ...rawCollection(clothingItems), ...rawCollection(containers)].filter((entry) => entry.organizationId === req.tenant.organizationId && !entry.archived)
       .some((entry) => entry.locationId === req.params.id || nestedStockIds.has(entry.stockStructureId || entry.storagePositionId));
     const stocktakeUsesLocation = stocktakeReferences('locationId', req.params.id)
       || [...nestedStockIds].some((id) => stocktakeReferences('stockStructureId', id));
     if (inventoryReferences || stocktakeUsesLocation) {
       return res.status(409).json({ error: inventoryReferences
-        ? 'Dem Lagerort sind noch aktuelle Inventarartikel oder Kleidung zugeordnet. Bitte „Zugeordnete Artikel“ öffnen und die Artikel umlagern.'
+        ? 'Dem Lagerort sind noch aktuelle Inventarartikel, Kleidung oder Kisten zugeordnet. Bitte „Zugeordnete Artikel“ öffnen und die Artikel umlagern.'
         : 'Der Lagerort wird noch von nicht abgeschlossenen Inventuren verwendet.' });
     }
     preserveStorageHistory(req.params.id, nestedStockIds);
@@ -2341,7 +2358,7 @@ function createApp(options = {}) {
     if (index >= 0 && stockStructures[index].unitId !== req.tenant.unitId) return res.status(403).json({ error: 'Nur eigene Lagerorte dürfen gelöscht werden.' });
     if (index < 0) return res.status(404).json({ error: 'Lagerplatz nicht gefunden.' });
     if (positionIsReferenced(req.params.id)) {
-      return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung oder Inventuren verwendet.' });
+      return res.status(409).json({ error: 'Der Lagerplatz wird noch von Beständen, Kleidung, Kisten oder Inventuren verwendet.' });
     }
     preserveStorageHistory(null, [req.params.id]);
     const [removed] = stockStructures.splice(index, 1);
@@ -2598,11 +2615,11 @@ function createApp(options = {}) {
   app.locals.applyDefectEmailRetentionPolicy = defectEmailService.applyRetentionPolicy;
   app.locals.defectReports = defectReports;
 
-  const containerGuard = createContainerGuard({ containerContents, materials, clothingItems });
+  const containerGuard = createContainerGuard({ containers, containerContents, materials, clothingItems });
   app.locals.containerGuard = containerGuard;
   registerContainerRoutes({
     app, authMiddleware, requirePermission, hasPermission,
-    containerContents, containerPackLists, containerChecks,
+    containers, containerContents, containerPackLists, containerChecks,
     materials, materialMovements, clothingItems, locations, stockStructures,
     vehicleLoadAssignments, defectManagement, logEvent, nextId, guard: containerGuard,
   });
@@ -2783,12 +2800,25 @@ function createApp(options = {}) {
       return res.status(400).json({ error: 'Die Größe ist für diese Kategorie nicht vorgesehen.' });
     }
     const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
-    const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
-    const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
-    const packedMessage = containerGuard.lockedMessage('ClothingItem', item.id);
-    if (packedMessage && (locationId !== (item.locationId || '')
-      || stockStructureId !== (item.stockStructureId || ''))) {
-      return res.status(409).json({ error: packedMessage });
+    let locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
+    let stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
+    // Eine Kiste ist ein eigener Lagerort; Lagerplatz und Gebäude folgen der Kiste.
+    let containerId = null;
+    const requestedContainerId = req.body.containerId === undefined
+      ? undefined : String(req.body.containerId || '').trim();
+    if (requestedContainerId) {
+      const container = containerGuard.containerById(requestedContainerId);
+      if (!container || container.organizationId !== req.tenant.organizationId
+        || container.unitId !== req.tenant.unitId || !container.stockStructureId) {
+        return res.status(400).json({ error: 'Die gewählte Kiste ist ungültig.' });
+      }
+      containerId = container.id;
+      locationId = container.locationId;
+      stockStructureId = container.stockStructureId;
+    } else if (requestedContainerId === undefined) {
+      const current = containerGuard.containerOfEntity(item);
+      if (current && current.locationId === locationId
+        && (current.stockStructureId || '') === stockStructureId) containerId = current.id;
     }
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum gewählten Gebäude.' });
@@ -2809,6 +2839,7 @@ function createApp(options = {}) {
       purchaseDate: req.body.purchaseDate ?? item.purchaseDate ?? null,
       locationId,
       stockStructureId: stockStructureId || null,
+      containerId,
       inspectionIntervalMonths,
       nextInspectionDate: addMonths(
         item.lastInspectionDate || item.createdAt,
@@ -2981,9 +3012,6 @@ function createApp(options = {}) {
     if (clothingItems[index].status === 'Ausgegeben') {
       return res.status(409).json({ error: 'Issued clothing cannot be deleted' });
     }
-    const packedMessage = containerGuard.lockedMessage('ClothingItem', clothingItems[index].id);
-    if (packedMessage) return res.status(409).json({ error: packedMessage });
-
     const removedItem = clothingItems.splice(index, 1)[0];
     deletedClothingItems.push({
       ...removedItem,
@@ -3214,8 +3242,6 @@ function createApp(options = {}) {
           inventoryNumber: item.inventoryNumber,
           reasons: psageManagement.safetyFor(item).reasons,
         });
-      } else if (action === 'ausgegeben' && containerGuard.placementOf('ClothingItem', id)) {
-        errors.push({ id, error: 'packed_in_container' });
       } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
           !(item.status === 'Defekt' && item.assignedPerson)) {
         errors.push({ id, error: 'not_issued' });

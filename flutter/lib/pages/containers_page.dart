@@ -89,12 +89,13 @@ List<Widget> containerStatusChips(
           ? Icons.verified_outlined
           : Icons.rule_outlined,
     ),
-    if (container['issued'] == true)
-      _chip(context, 'Ausgegeben', icon: Icons.outbox_outlined),
-    if (container['vehicleId'] != null)
-      _chip(context, 'Auf Fahrzeug', icon: Icons.local_shipping_outlined),
-    if (container['parentContainerId'] != null)
-      _chip(context, 'In Kiste', icon: Icons.inventory_2_outlined),
+    if (container['needsStorageAssignment'] == true)
+      _chip(
+        context,
+        'Kein Lagerplatz',
+        color: Theme.of(context).colorScheme.error,
+        icon: Icons.location_off_outlined,
+      ),
     if (missing != null && missing > 0)
       _chip(
         context,
@@ -142,8 +143,9 @@ Future<String?> showContainerScanDialog(BuildContext context) async {
               controller: manual,
               autofocus: true,
               decoration: const InputDecoration(
-                labelText: 'Handscanner / Inventarnummer',
-                helperText: 'Kiste oder einen darin gepackten Artikel scannen.',
+                labelText: 'Handscanner / Kisten- oder Inventarnummer',
+                helperText:
+                    'Kiste oder einen darin gelagerten Artikel scannen.',
               ),
               onSubmitted: (value) => Navigator.pop(context, value.trim()),
             ),
@@ -185,6 +187,36 @@ Future<String?> showContainerScanDialog(BuildContext context) async {
   final code = value?.trim() ?? '';
   return code.isEmpty ? null : code;
 }
+
+/// Lagerplätze, Gebäude und Kisten, die als Ziel ausgewählt werden können.
+class ContainerStorageTargets {
+  const ContainerStorageTargets({
+    this.locations = const [],
+    this.stockStructures = const [],
+    this.containers = const [],
+  });
+
+  factory ContainerStorageTargets.fromJson(Object? value) {
+    final data = _map(value);
+    return ContainerStorageTargets(
+      locations: _maps(data['locations']),
+      stockStructures: _maps(data['stockStructures']),
+      containers: _maps(data['containers']),
+    );
+  }
+
+  final List<Map<String, dynamic>> locations;
+  final List<Map<String, dynamic>> stockStructures;
+  final List<Map<String, dynamic>> containers;
+}
+
+Future<ContainerStorageTargets> _loadTargets(ContainerRequest request) async {
+  final result = await request('/api/containers/storage-targets');
+  return ContainerStorageTargets.fromJson(result);
+}
+
+String _containerTitle(Map<String, dynamic> container) =>
+    '${_text(container['code'])} · ${_text(container['name'], 'Kiste')}';
 
 class ContainersPage extends StatefulWidget {
   const ContainersPage({required this.token, this.request, super.key});
@@ -266,10 +298,10 @@ class _ContainersPageState extends State<ContainersPage> {
     return containers
         .where(
           (entry) => [
-            entry['inventoryNumber'],
+            entry['code'],
             entry['name'],
             entry['containerType'],
-            entry['locationName'],
+            entry['storagePath'],
           ].any((value) => '${value ?? ''}'.toLowerCase().contains(needle)),
         )
         .toList();
@@ -300,7 +332,7 @@ class _ContainersPageState extends State<ContainersPage> {
     final container = _map(data['container']);
     if (container['id'] != null) {
       if (data['match'] == 'content') {
-        _message('Der Artikel liegt in Kiste ${container['inventoryNumber']}.');
+        _message('Der Artikel liegt in Kiste ${container['code']}.');
       }
       await _open(container['id'].toString());
     } else {
@@ -312,19 +344,23 @@ class _ContainersPageState extends State<ContainersPage> {
   }
 
   Future<void> _create() async {
-    final materials = await _request('/api/material?archived=false');
-    if (materials is! List || !mounted) return;
-    final candidates = _maps(materials)
-        .where(
-          (entry) =>
-              entry['itemType'] == 'individual' &&
-              entry['isContainer'] != true &&
-              entry['readOnly'] != true,
-        )
-        .toList();
+    final targets = await _loadTargets(
+      (path, {method = 'GET', body}) =>
+          _request(path, method: method, body: body),
+    );
+    if (!mounted) return;
+    if (targets.stockStructures.isEmpty) {
+      _message(
+        'Es sind noch keine Lagerplätze angelegt. Eine Kiste muss einem '
+        'Lagerplatz zugewiesen werden.',
+        error: true,
+      );
+      return;
+    }
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => ContainerSettingsDialog(candidates: candidates),
+      builder: (_) =>
+          ContainerSettingsDialog(stockStructures: targets.stockStructures),
     );
     if (values == null) return;
     final created = await _request(
@@ -333,7 +369,7 @@ class _ContainersPageState extends State<ContainersPage> {
       body: values,
     );
     if (created is Map && mounted) {
-      _message('Kiste wurde angelegt.');
+      _message('Kiste ${created['code']} wurde angelegt.');
       await _open(created['id'].toString());
     }
   }
@@ -403,8 +439,9 @@ class _ContainersPageState extends State<ContainersPage> {
                         padding: EdgeInsets.all(32),
                         child: Center(
                           child: Text(
-                            'Noch keine Kisten vorhanden. Ein Einzelstück aus '
-                            'dem Inventar kann als Kiste angelegt werden.',
+                            'Noch keine Kisten vorhanden. Eine Kiste ist ein '
+                            'eigener Lagerort und wird einem Lagerplatz '
+                            'zugewiesen.',
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -415,17 +452,15 @@ class _ContainersPageState extends State<ContainersPage> {
                           leading: const CircleAvatar(
                             child: Icon(Icons.inventory_2_outlined),
                           ),
-                          title: Text(
-                            '${entry['inventoryNumber']} · ${entry['name']}',
-                          ),
+                          title: Text(_containerTitle(entry)),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 '${_text(entry['containerType'], 'Kiste')} · '
-                                '${entry['contentCount']} Position(en) · '
-                                '${_text(entry['locationName'])}'
-                                '${entry['stockStructureName'] != null ? ' / ${entry['stockStructureName']}' : ''}',
+                                '${entry['itemCount'] ?? 0} mit Inventarnummer · '
+                                '${entry['contentCount'] ?? 0} ohne Inventarnummer\n'
+                                'Lagerplatz: ${_text(entry['stockStructureName'] ?? entry['locationName'], 'nicht zugewiesen')}',
                               ),
                               const SizedBox(height: 4),
                               Wrap(
@@ -461,11 +496,9 @@ class _ContainersPageState extends State<ContainersPage> {
                                 ? Theme.of(context).colorScheme.error
                                 : Colors.orange.shade800,
                           ),
-                          title: Text(
-                            '${_text(entry['inventoryNumber'])} · ${entry['name']}',
-                          ),
+                          title: Text(_text(entry['name'])),
                           subtitle: Text(
-                            'Kiste ${entry['containerInventoryNumber']} · '
+                            'Kiste ${entry['containerCode']} · '
                             '${entry['containerName']}\n'
                             '${entry['quantity']} ${entry['unit']} · '
                             '${entry['expiryState']}: ${_germanDate(entry['expiresAt'])}',
@@ -505,6 +538,13 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
 
   bool can(String permission) => widget.permissions.contains(permission);
 
+  String get _base => '/api/containers/${widget.containerId}';
+
+  List<String> get _compartments =>
+      (container?['compartments'] as List? ?? const [])
+          .map((entry) => entry.toString())
+          .toList();
+
   @override
   void initState() {
     super.initState();
@@ -521,9 +561,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
   }
 
   Future<void> _load() async {
-    final result = await widget.request(
-      '/api/containers/${widget.containerId}',
-    );
+    final result = await widget.request(_base);
     if (!mounted) return;
     setState(() {
       container = result is Map ? Map<String, dynamic>.from(result) : null;
@@ -554,16 +592,23 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
   Future<void> _edit() async {
     final current = container;
     if (current == null) return;
+    final targets = await _loadTargets(widget.request);
+    if (!mounted) return;
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => ContainerSettingsDialog(container: current),
+      builder: (_) => ContainerSettingsDialog(
+        container: current,
+        stockStructures: targets.stockStructures,
+      ),
     );
     if (values == null) return;
     await _mutate(
-      '/api/containers/${widget.containerId}',
+      _base,
       method: 'PUT',
       body: values,
-      success: 'Kiste wurde gespeichert.',
+      success: values['stockStructureId'] != current['stockStructureId']
+          ? 'Kiste wurde umgesetzt. Die Artikel mit Inventarnummer wurden mitgebucht.'
+          : 'Kiste wurde gespeichert.',
     );
   }
 
@@ -573,8 +618,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       builder: (context) => AlertDialog(
         title: const Text('Kiste auflösen?'),
         content: const Text(
-          'Der Artikel bleibt im Inventar erhalten, wird aber nicht mehr als '
-          'Kiste geführt. Aktive Packlisten werden beendet.',
+          'Die leere Kiste wird als Lagerort aufgelöst. Aktive Packlisten '
+          'werden beendet, Prüfprotokolle bleiben erhalten.',
         ),
         actions: [
           TextButton(
@@ -589,25 +634,17 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       ),
     );
     if (confirmed != true) return;
-    final result = await widget.request(
-      '/api/containers/${widget.containerId}',
-      method: 'DELETE',
-    );
+    final result = await widget.request(_base, method: 'DELETE');
     if (result != null && mounted) Navigator.of(context).pop();
   }
 
-  Future<void> _pack() async {
-    final current = container;
-    if (current == null) return;
+  Future<void> _bookIn() async {
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => PackItemDialog(
-        compartments: (current['compartments'] as List? ?? const [])
-            .map((entry) => entry.toString())
-            .toList(),
+      builder: (_) => BookItemDialog(
         loadCandidates: (query) async {
           final result = await widget.request(
-            '/api/containers/${widget.containerId}/candidates?query=${Uri.encodeQueryComponent(query)}',
+            '$_base/candidates?query=${Uri.encodeQueryComponent(query)}',
           );
           return _maps(result);
         },
@@ -615,62 +652,108 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     );
     if (values == null) return;
     await _mutate(
-      '/api/containers/${widget.containerId}/contents',
+      '$_base/items',
       body: values,
-      success: 'Artikel wurde gepackt.',
+      success: 'Artikel wurde in die Kiste gebucht.',
     );
   }
 
-  Future<void> _editContent(Map<String, dynamic> entry) async {
-    final current = container;
-    if (current == null) return;
+  Future<void> _relocateItem(Map<String, dynamic> item) async {
+    final targets = await _loadTargets(widget.request);
+    if (!mounted) return;
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => ContentEditDialog(
-        entry: entry,
-        compartments: (current['compartments'] as List? ?? const [])
-            .map((value) => value.toString())
-            .toList(),
+      builder: (_) => RelocateItemDialog(
+        item: item,
+        targets: targets,
+        currentContainerId: widget.containerId,
       ),
     );
     if (values == null) return;
     await _mutate(
-      '/api/containers/${widget.containerId}/contents/${entry['id']}',
+      '$_base/items/${item['entityType']}/${item['entityId']}/relocate',
+      body: values,
+      success: '${item['inventoryNumber']} wurde umgebucht.',
+    );
+  }
+
+  Future<void> _addContent() async {
+    final values = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => ContentEditDialog(compartments: _compartments),
+    );
+    if (values == null) return;
+    await _mutate(
+      '$_base/contents',
+      body: values,
+      success: 'Inhalt wurde erfasst.',
+    );
+  }
+
+  Future<void> _editContent(Map<String, dynamic> entry) async {
+    final values = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) =>
+          ContentEditDialog(entry: entry, compartments: _compartments),
+    );
+    if (values == null) return;
+    await _mutate(
+      '$_base/contents/${entry['id']}',
       method: 'PUT',
       body: values,
       success: 'Inhalt wurde gespeichert.',
     );
   }
 
-  Future<void> _unpack(Map<String, dynamic> entry) async {
+  Future<void> _removeContent(Map<String, dynamic> entry) async {
+    var reason = 'Verbraucht';
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Aus Kiste entnehmen?'),
-        content: Text(
-          entry['itemType'] == 'bulk'
-              ? '${entry['quantity']} ${entry['unit']} ${entry['name']} werden '
-                    'wieder dem freien Bestand zugerechnet.'
-              : '${entry['name']} wird an seinen vorherigen Lagerort '
-                    'zurückgebucht.',
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Inhalt ausbuchen?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${entry['quantity']} ${entry['unit']} ${entry['name']} werden '
+                'aus der Kiste ausgebucht. Inhalte ohne Inventarnummer können '
+                'nicht auf andere Lagerorte umgebucht werden.',
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: reason,
+                decoration: const InputDecoration(labelText: 'Grund'),
+                items: const ['Verbraucht', 'Entsorgt', 'Verloren']
+                    .map(
+                      (value) =>
+                          DropdownMenuItem(value: value, child: Text(value)),
+                    )
+                    .toList(),
+                onChanged: (value) =>
+                    setDialogState(() => reason = value ?? 'Verbraucht'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Ausbuchen'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Abbrechen'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Entnehmen'),
-          ),
-        ],
       ),
     );
     if (confirmed != true) return;
     await _mutate(
-      '/api/containers/${widget.containerId}/contents/${entry['id']}/unpack',
-      body: const {},
-      success: 'Artikel wurde entnommen.',
+      '$_base/contents/${entry['id']}?reason=${Uri.encodeQueryComponent(reason)}',
+      method: 'DELETE',
+      success: 'Inhalt wurde ausgebucht.',
     );
   }
 
@@ -683,7 +766,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     );
     if (values == null) return;
     await _mutate(
-      '/api/containers/${widget.containerId}/pack-lists',
+      '$_base/pack-lists',
       body: values,
       success: 'Packliste wurde gespeichert.',
     );
@@ -691,7 +774,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
 
   Future<void> _activatePackList(Map<String, dynamic> list) async {
     await _mutate(
-      '/api/containers/${widget.containerId}/pack-lists/${list['id']}/activate',
+      '$_base/pack-lists/${list['id']}/activate',
       body: const {},
       success: 'Packliste Version ${list['version']} ist aktiv.',
     );
@@ -714,7 +797,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     );
     if (values == null) return;
     final result = await widget.request(
-      '/api/containers/${widget.containerId}/checks',
+      '$_base/checks',
       method: 'POST',
       body: values,
     );
@@ -724,20 +807,21 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       return;
     }
     final complete = result['complete'] == true;
-    final defect = result['defectNumber'];
+    final defects = (result['defectNumbers'] as List? ?? const [])
+        .map((entry) => entry.toString())
+        .toList();
     _message(
       complete
           ? 'Kiste ist vollständig.'
-          : 'Kiste ist unvollständig${defect != null ? ' – Mangel $defect angelegt' : ''}.',
+          : 'Kiste ist unvollständig'
+                '${defects.isNotEmpty ? ' – Mangel ${defects.join(', ')} angelegt' : ''}.',
       error: !complete,
     );
     setState(() => container = _map(result['container']));
   }
 
   Future<void> _print({required bool save}) async {
-    final result = await widget.request(
-      '/api/containers/${widget.containerId}/pack-list/print',
-    );
+    final result = await widget.request('$_base/pack-list/print');
     if (result is! Map) return;
     try {
       if (save) {
@@ -753,19 +837,12 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     }
   }
 
-  void _openNested(Map<String, dynamic> entry) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ContainerDetailPage(
-          containerId: entry['entityId'].toString(),
-          permissions: widget.permissions,
-          request: widget.request,
-        ),
-      ),
-    );
-  }
-
-  Widget _section(String title, List<Widget> children, {Widget? action}) {
+  Widget _section(
+    String title,
+    List<Widget> children, {
+    Widget? action,
+    String? subtitle,
+  }) {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -784,6 +861,14 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
                 ?action,
               ],
             ),
+            if (subtitle != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             const SizedBox(height: 8),
             ...children,
           ],
@@ -792,49 +877,76 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     );
   }
 
-  Widget _contentTile(Map<String, dynamic> entry, bool editable) {
-    final expiry = entry['expiryState']?.toString();
-    final safety = _map(entry['safetyStatus']);
+  Widget _itemTile(Map<String, dynamic> item, bool editable) {
+    final safety = _map(item['safetyStatus']);
     final details = <String>[
-      if (entry['itemType'] == 'bulk') '${entry['quantity']} ${entry['unit']}',
-      if (_text(entry['position'], '') != '') 'Fach ${entry['position']}',
-      if (entry['expiresAt'] != null)
-        'Ablauf ${_germanDate(entry['expiresAt'])}${expiry != null ? ' ($expiry)' : ''}',
-      if (_text(entry['batchNumber'], '') != '')
-        'Charge ${entry['batchNumber']}',
-      if (entry['entityType'] == 'ClothingItem')
-        'Kleidung${entry['size'] != null ? ' · Größe ${entry['size']}' : ''}',
-      if (entry['isContainer'] == true)
-        'Unterkiste mit ${entry['nestedContentCount']} Position(en)',
+      if (item['itemType'] == 'bulk') '${item['quantity']} ${item['unit']}',
+      if (item['entityType'] == 'ClothingItem')
+        'Kleidung${item['size'] != null ? ' · Größe ${item['size']}' : ''}',
+      if (item['issued'] == true) 'Ausgegeben',
+      if (_text(item['status'], '') != '' &&
+          item['status'] != 'Lagernd' &&
+          item['issued'] != true)
+        '${item['status']}',
       if (safety['blocked'] == true) 'Sicherheitsbedingt gesperrt',
     ];
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(
-        entry['isContainer'] == true
-            ? Icons.inventory_2_outlined
-            : entry['entityType'] == 'ClothingItem'
+        item['entityType'] == 'ClothingItem'
             ? Icons.checkroom
-            : Icons.category_outlined,
-        color: expiry == 'abgelaufen' || safety['blocked'] == true
+            : Icons.qr_code_2_outlined,
+        color: safety['blocked'] == true
+            ? Theme.of(context).colorScheme.error
+            : null,
+      ),
+      title: Text('${_text(item['inventoryNumber'])} · ${item['name']}'),
+      subtitle: details.isEmpty ? null : Text(details.join(' · ')),
+      trailing: editable && item['relocatable'] == true
+          ? IconButton(
+              tooltip: 'Umbuchen',
+              onPressed: item['issued'] == true
+                  ? null
+                  : () => _relocateItem(item),
+              icon: const Icon(Icons.move_up_outlined),
+            )
+          : null,
+    );
+  }
+
+  Widget _contentTile(Map<String, dynamic> entry, bool editable) {
+    final expiry = entry['expiryState']?.toString();
+    final details = <String>[
+      '${entry['quantity']} ${entry['unit']}',
+      if (_text(entry['position'], '') != '') 'Fach ${entry['position']}',
+      if (entry['expiresAt'] != null)
+        'Ablauf ${_germanDate(entry['expiresAt'])}${expiry != null ? ' ($expiry)' : ''}',
+      if (_text(entry['batchNumber'], '') != '')
+        'Charge ${entry['batchNumber']}',
+      if (_text(entry['notes'], '') != '') '${entry['notes']}',
+    ];
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        Icons.category_outlined,
+        color: expiry == 'abgelaufen'
             ? Theme.of(context).colorScheme.error
             : expiry != null
             ? Colors.orange.shade800
             : null,
       ),
-      title: Text('${_text(entry['inventoryNumber'])} · ${entry['name']}'),
-      subtitle: details.isEmpty ? null : Text(details.join(' · ')),
-      onTap: entry['isContainer'] == true ? () => _openNested(entry) : null,
+      title: Text(_text(entry['name'])),
+      subtitle: Text(details.join(' · ')),
       trailing: editable
           ? PopupMenuButton<String>(
               tooltip: 'Aktionen',
               onSelected: (value) {
                 if (value == 'edit') unawaited(_editContent(entry));
-                if (value == 'unpack') unawaited(_unpack(entry));
+                if (value == 'remove') unawaited(_removeContent(entry));
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'edit', child: Text('Bearbeiten')),
-                PopupMenuItem(value: 'unpack', child: Text('Entnehmen')),
+                PopupMenuItem(value: 'remove', child: Text('Ausbuchen')),
               ],
             )
           : null,
@@ -856,6 +968,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
         body: const Center(child: Text('Die Kiste wurde nicht gefunden.')),
       );
     }
+    final items = _maps(current['items']);
     final contents = _maps(current['contents']);
     final deviation = _map(current['packListDeviation']);
     final packLists = _maps(current['packLists']);
@@ -867,11 +980,11 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     final reasons = (safety['reasons'] as List? ?? const [])
         .map((entry) => entry.toString())
         .toList();
-    final issued = current['issued'] == true;
-    final editable = can('containers.pack') && !issued;
+    final editable = can('containers.pack');
+    final assigned = current['needsStorageAssignment'] != true;
     return Scaffold(
       appBar: AppBar(
-        title: Text(_text(current['name'], 'Kiste')),
+        title: Text(_containerTitle(current)),
         actions: [
           if (can('containers.print'))
             PopupMenuButton<String>(
@@ -894,10 +1007,13 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
                 if (value == 'dissolve') unawaited(_dissolve());
               },
               itemBuilder: (_) => [
-                const PopupMenuItem(value: 'edit', child: Text('Bearbeiten')),
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: Text('Bearbeiten / Lagerplatz ändern'),
+                ),
                 PopupMenuItem(
                   value: 'dissolve',
-                  enabled: contents.isEmpty,
+                  enabled: items.isEmpty && contents.isEmpty,
                   child: const Text('Kiste auflösen'),
                 ),
               ],
@@ -916,14 +1032,19 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
           children: [
-            _section('${current['inventoryNumber']}', [
+            _section('Kiste ${_text(current['code'])}', [
               Text(
-                '${_text(current['containerType'], 'Kiste')} · '
-                '${_text(current['locationName'])}'
-                '${current['stockStructureName'] != null ? ' / ${current['stockStructureName']}' : ''}',
+                '${_text(current['containerType'], 'Kiste')} · Lagerplatz: '
+                '${_text(current['stockStructureName'] ?? current['locationName'], 'nicht zugewiesen')}',
               ),
-              if (current['parentContainerName'] != null)
-                Text('Liegt in Kiste ${current['parentContainerName']}'),
+              if (_text(current['fullCode'], '') != '')
+                Text('Lagerortkennung: ${current['fullCode']}'),
+              if (!assigned)
+                Text(
+                  'Die Kiste ist noch keinem Lagerplatz zugewiesen. Bitte über '
+                  '„Bearbeiten / Lagerplatz ändern“ zuweisen.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               if (current['lastCheckAt'] != null)
                 Text(
                   'Zuletzt geprüft: ${_germanDate(current['lastCheckAt'])} '
@@ -937,14 +1058,6 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
                 runSpacing: 4,
                 children: containerStatusChips(context, current),
               ),
-              if (issued)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Die Kiste ist ausgegeben. Der Inhalt kann erst nach der '
-                    'Rückgabe geändert werden.',
-                  ),
-                ),
               ...reasons.map(
                 (reason) => Text(
                   reason,
@@ -959,16 +1072,38 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
               ),
             ]),
             _section(
-              'Inhalt (${contents.length})',
+              'Artikel mit Inventarnummer (${items.length})',
               [
-                if (contents.isEmpty) const Text('Die Kiste ist leer.'),
+                if (items.isEmpty)
+                  const Text('Keine inventarisierten Artikel in der Kiste.'),
+                ...items.map((entry) => _itemTile(entry, editable)),
+              ],
+              subtitle:
+                  'Die Kiste ist ihr Lagerort. Sie können wie bei jedem '
+                  'anderen Lagerort umgebucht werden.',
+              action: editable && assigned
+                  ? FilledButton.tonalIcon(
+                      onPressed: _bookIn,
+                      icon: const Icon(Icons.move_down_outlined),
+                      label: const Text('Einlagern'),
+                    )
+                  : null,
+            ),
+            _section(
+              'Inhalt ohne Inventarnummer (${contents.length})',
+              [
+                if (contents.isEmpty)
+                  const Text('Kein Inhalt ohne Inventarnummer erfasst.'),
                 ...contents.map((entry) => _contentTile(entry, editable)),
               ],
+              subtitle:
+                  'Gehört fest zur Kiste und kann nicht auf andere Lagerorte '
+                  'umgebucht, sondern nur geändert oder ausgebucht werden.',
               action: editable
                   ? FilledButton.tonalIcon(
-                      onPressed: _pack,
+                      onPressed: _addContent,
                       icon: const Icon(Icons.add),
-                      label: const Text('Packen'),
+                      label: const Text('Inhalt erfassen'),
                     )
                   : null,
             ),
@@ -1002,7 +1137,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
                             : Colors.green.shade700,
                       ),
                       title: Text(
-                        '${_text(row['inventoryNumber'])} · ${row['name']}',
+                        row['inventoryNumber'] == null
+                            ? _text(row['name'])
+                            : '${row['inventoryNumber']} · ${row['name']}',
                       ),
                       subtitle: Text(
                         'Soll ${row['targetQuantity']} · Ist ${row['actualQuantity']} '
@@ -1068,14 +1205,16 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
                     check['complete'] == true
                         ? 'Vollständig'
                         : '${check['deviationCount']} Abweichung(en)'
-                              '${check['defectId'] != null ? ' · Mangel angelegt' : ''}',
+                              '${(check['defectIds'] as List? ?? const []).isNotEmpty || check['defectId'] != null ? ' · Mangel angelegt' : ''}',
                   ),
                   children: [
                     ..._maps(check['results']).map(
                       (row) => ListTile(
                         dense: true,
                         title: Text(
-                          '${_text(row['inventoryNumber'])} · ${row['name']}',
+                          row['inventoryNumber'] == null
+                              ? _text(row['name'])
+                              : '${row['inventoryNumber']} · ${row['name']}',
                         ),
                         subtitle: Text(
                           '${row['result']} · Soll ${row['targetQuantity']} · Ist ${row['actualQuantity']}'
@@ -1099,11 +1238,84 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
   }
 }
 
+/// Auswahl eines Lagerplatzes mit Suchfeld.
+class _StockStructurePicker extends StatefulWidget {
+  const _StockStructurePicker({
+    required this.stockStructures,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final List<Map<String, dynamic>> stockStructures;
+  final String? value;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  State<_StockStructurePicker> createState() => _StockStructurePickerState();
+}
+
+class _StockStructurePickerState extends State<_StockStructurePicker> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final needle = query.trim().toLowerCase();
+    final options = widget.stockStructures
+        .where(
+          (entry) =>
+              entry['id'].toString() == widget.value ||
+              needle.isEmpty ||
+              '${entry['path']} ${entry['fullCode'] ?? ''}'
+                  .toLowerCase()
+                  .contains(needle),
+        )
+        .take(200)
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.stockStructures.length > 10)
+          TextField(
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              labelText: 'Lagerplatz suchen',
+            ),
+            onChanged: (value) => setState(() => query = value),
+          ),
+        DropdownButtonFormField<String>(
+          key: ValueKey('stock-${options.length}-${widget.value}'),
+          initialValue: options.any((e) => e['id'].toString() == widget.value)
+              ? widget.value
+              : null,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Lagerplatz *'),
+          items: options
+              .map(
+                (entry) => DropdownMenuItem(
+                  value: entry['id'].toString(),
+                  child: Text(
+                    _text(entry['path']),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: widget.onChanged,
+        ),
+      ],
+    );
+  }
+}
+
 class ContainerSettingsDialog extends StatefulWidget {
-  const ContainerSettingsDialog({this.container, this.candidates, super.key});
+  const ContainerSettingsDialog({
+    this.container,
+    this.stockStructures = const [],
+    super.key,
+  });
 
   final Map<String, dynamic>? container;
-  final List<Map<String, dynamic>>? candidates;
+  final List<Map<String, dynamic>> stockStructures;
 
   @override
   State<ContainerSettingsDialog> createState() =>
@@ -1111,18 +1323,21 @@ class ContainerSettingsDialog extends StatefulWidget {
 }
 
 class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
+  late final TextEditingController name;
+  late final TextEditingController code;
   late final TextEditingController type;
   late final TextEditingController compartments;
   late final TextEditingController warningDays;
   late final TextEditingController notes;
-  final search = TextEditingController();
-  String? materialId;
+  String? stockStructureId;
   String? error;
 
   @override
   void initState() {
     super.initState();
     final current = widget.container ?? const {};
+    name = TextEditingController(text: current['name']?.toString());
+    code = TextEditingController(text: current['code']?.toString());
     type = TextEditingController(text: current['containerType']?.toString());
     compartments = TextEditingController(
       text: (current['compartments'] as List? ?? const []).join(', '),
@@ -1131,21 +1346,32 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
       text: '${current['expiryWarningDays'] ?? 30}',
     );
     notes = TextEditingController(text: current['containerNotes']?.toString());
+    stockStructureId = current['stockStructureId']?.toString();
   }
 
   @override
   void dispose() {
-    for (final controller in [type, compartments, warningDays, notes, search]) {
+    for (final controller in [
+      name,
+      code,
+      type,
+      compartments,
+      warningDays,
+      notes,
+    ]) {
       controller.dispose();
     }
     super.dispose();
   }
 
   void _submit() {
-    final creating = widget.container == null;
     final days = int.tryParse(warningDays.text.trim());
-    if (creating && materialId == null) {
-      setState(() => error = 'Bitte einen Artikel wählen.');
+    if (name.text.trim().isEmpty) {
+      setState(() => error = 'Bitte eine Bezeichnung angeben.');
+      return;
+    }
+    if (stockStructureId == null) {
+      setState(() => error = 'Bitte einen Lagerplatz wählen.');
       return;
     }
     if (days == null || days < 0 || days > 365) {
@@ -1153,7 +1379,9 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
       return;
     }
     Navigator.pop(context, {
-      'materialId': ?materialId,
+      'name': name.text.trim(),
+      if (code.text.trim().isNotEmpty) 'code': code.text.trim(),
+      'stockStructureId': stockStructureId,
       'containerType': type.text.trim(),
       'compartments': compartments.text
           .split(',')
@@ -1168,17 +1396,6 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
   @override
   Widget build(BuildContext context) {
     final creating = widget.container == null;
-    final needle = search.text.trim().toLowerCase();
-    final candidates = (widget.candidates ?? const <Map<String, dynamic>>[])
-        .where(
-          (entry) =>
-              needle.isEmpty ||
-              '${entry['inventoryNumber']} ${entry['name']}'
-                  .toLowerCase()
-                  .contains(needle),
-        )
-        .take(50)
-        .toList();
     return AlertDialog(
       title: Text(creating ? 'Kiste anlegen' : 'Kiste bearbeiten'),
       content: SizedBox(
@@ -1188,50 +1405,32 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (creating) ...[
-                const Text(
-                  'Eine Kiste ist ein inventarisiertes Einzelstück. Bitte den '
-                  'Artikel wählen, der als Kiste geführt werden soll.',
+              Text(
+                creating
+                    ? 'Eine Kiste ist ein eigener Lagerort und steht auf einem '
+                          'Lagerplatz.'
+                    : 'Wird der Lagerplatz geändert, werden alle Artikel mit '
+                          'Inventarnummer in der Kiste mitgebucht.',
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: 'Bezeichnung *'),
+              ),
+              TextField(
+                controller: code,
+                decoration: InputDecoration(
+                  labelText: 'Kistennummer',
+                  helperText: creating
+                      ? 'Leer lassen für automatische Vergabe (K-001, K-002 …)'
+                      : null,
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: search,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
-                    labelText: 'Artikel suchen',
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-                SizedBox(
-                  height: 220,
-                  child: candidates.isEmpty
-                      ? const Center(
-                          child: Text('Keine passenden Einzelstücke.'),
-                        )
-                      : RadioGroup<String>(
-                          groupValue: materialId,
-                          onChanged: (value) =>
-                              setState(() => materialId = value),
-                          child: ListView(
-                            children: candidates
-                                .map(
-                                  (entry) => RadioListTile<String>(
-                                    dense: true,
-                                    value: entry['id'].toString(),
-                                    title: Text(
-                                      '${entry['inventoryNumber']} · ${entry['name']}',
-                                    ),
-                                    subtitle: Text(
-                                      _text(entry['locationName']),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ),
-                ),
-                const SizedBox(height: 8),
-              ],
+              ),
+              _StockStructurePicker(
+                stockStructures: widget.stockStructures,
+                value: stockStructureId,
+                onChanged: (value) => setState(() => stockStructureId = value),
+              ),
               TextField(
                 controller: type,
                 decoration: const InputDecoration(
@@ -1294,30 +1493,22 @@ Future<String?> _pickDate(BuildContext context, String? current) async {
   return date == null ? null : _isoDate(date);
 }
 
-class PackItemDialog extends StatefulWidget {
-  const PackItemDialog({
-    required this.compartments,
-    required this.loadCandidates,
-    super.key,
-  });
+/// Bucht einen Artikel mit Inventarnummer in die Kiste.
+class BookItemDialog extends StatefulWidget {
+  const BookItemDialog({required this.loadCandidates, super.key});
 
-  final List<String> compartments;
   final Future<List<Map<String, dynamic>>> Function(String query)
   loadCandidates;
 
   @override
-  State<PackItemDialog> createState() => _PackItemDialogState();
+  State<BookItemDialog> createState() => _BookItemDialogState();
 }
 
-class _PackItemDialogState extends State<PackItemDialog> {
+class _BookItemDialogState extends State<BookItemDialog> {
   final search = TextEditingController();
-  final quantity = TextEditingController(text: '1');
-  final batch = TextEditingController();
   final notes = TextEditingController();
   List<Map<String, dynamic>> candidates = [];
   Map<String, dynamic>? selected;
-  String? position;
-  String? expiresAt;
   String? error;
   bool loading = true;
   Timer? debounce;
@@ -1331,9 +1522,8 @@ class _PackItemDialogState extends State<PackItemDialog> {
   @override
   void dispose() {
     debounce?.cancel();
-    for (final controller in [search, quantity, batch, notes]) {
-      controller.dispose();
-    }
+    search.dispose();
+    notes.dispose();
     super.dispose();
   }
 
@@ -1363,26 +1553,9 @@ class _PackItemDialogState extends State<PackItemDialog> {
       setState(() => error = 'Bitte einen Artikel wählen.');
       return;
     }
-    final bulk = item['itemType'] == 'bulk';
-    final amount = bulk ? int.tryParse(quantity.text.trim()) : 1;
-    final available = int.tryParse('${item['availableQuantity'] ?? 0}') ?? 0;
-    if (amount == null || amount < 1 || amount > available) {
-      setState(
-        () => error = 'Bitte eine Menge zwischen 1 und $available angeben.',
-      );
-      return;
-    }
-    if (widget.compartments.isNotEmpty && position == null) {
-      setState(() => error = 'Bitte ein Fach wählen.');
-      return;
-    }
     Navigator.pop(context, {
       'entityType': item['entityType'],
       'entityId': item['entityId'],
-      'quantity': amount,
-      'position': position ?? '',
-      'expiresAt': expiresAt,
-      'batchNumber': batch.text.trim(),
       'notes': notes.text.trim(),
     });
   }
@@ -1391,7 +1564,7 @@ class _PackItemDialogState extends State<PackItemDialog> {
   Widget build(BuildContext context) {
     final item = selected;
     return AlertDialog(
-      title: const Text('In Kiste packen'),
+      title: const Text('In Kiste einlagern'),
       content: SizedBox(
         width: 600,
         child: SingleChildScrollView(
@@ -1399,6 +1572,11 @@ class _PackItemDialogState extends State<PackItemDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const Text(
+                'Nur Artikel mit Inventarnummer werden in die Kiste gebucht. '
+                'Mengenartikel wechseln vollständig in die Kiste. Inhalt ohne '
+                'Inventarnummer wird über „Inhalt erfassen“ angelegt.',
+              ),
               Row(
                 children: [
                   Expanded(
@@ -1426,7 +1604,7 @@ class _PackItemDialogState extends State<PackItemDialog> {
                 ],
               ),
               SizedBox(
-                height: 220,
+                height: 240,
                 child: loading
                     ? const Center(child: CircularProgressIndicator())
                     : candidates.isEmpty
@@ -1441,18 +1619,16 @@ class _PackItemDialogState extends State<PackItemDialog> {
                             dense: true,
                             selected: active,
                             leading: Icon(
-                              entry['isContainer'] == true
-                                  ? Icons.inventory_2_outlined
-                                  : entry['entityType'] == 'ClothingItem'
+                              entry['entityType'] == 'ClothingItem'
                                   ? Icons.checkroom
-                                  : Icons.category_outlined,
+                                  : Icons.qr_code_2_outlined,
                             ),
                             title: Text(
                               '${entry['inventoryNumber']} · ${entry['name']}',
                             ),
                             subtitle: Text(
                               entry['itemType'] == 'bulk'
-                                  ? '${entry['availableQuantity']} ${entry['unit']} frei · ${_text(entry['locationName'])}'
+                                  ? '${entry['quantity']} ${entry['unit']} · ${_text(entry['locationName'])}'
                                   : _text(entry['locationName']),
                             ),
                             trailing: active ? const Icon(Icons.check) : null,
@@ -1464,69 +1640,11 @@ class _PackItemDialogState extends State<PackItemDialog> {
                         }).toList(),
                       ),
               ),
-              if (item != null) ...[
-                const Divider(),
-                if (item['itemType'] == 'bulk')
-                  TextField(
-                    controller: quantity,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText:
-                          'Menge (${item['availableQuantity']} ${item['unit']} frei)',
-                    ),
-                  ),
-                if (widget.compartments.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    initialValue: position,
-                    decoration: const InputDecoration(labelText: 'Fach'),
-                    items: widget.compartments
-                        .map(
-                          (entry) => DropdownMenuItem(
-                            value: entry,
-                            child: Text(entry),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) => setState(() => position = value),
-                  ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Ablaufdatum / Mindesthaltbarkeit'),
-                  subtitle: Text(
-                    expiresAt == null
-                        ? 'Kein Ablaufdatum'
-                        : _germanDate(expiresAt),
-                  ),
-                  trailing: Wrap(
-                    children: [
-                      if (expiresAt != null)
-                        IconButton(
-                          tooltip: 'Ablaufdatum entfernen',
-                          onPressed: () => setState(() => expiresAt = null),
-                          icon: const Icon(Icons.clear),
-                        ),
-                      IconButton(
-                        tooltip: 'Datum wählen',
-                        onPressed: () async {
-                          final value = await _pickDate(context, expiresAt);
-                          if (value != null) setState(() => expiresAt = value);
-                        },
-                        icon: const Icon(Icons.event),
-                      ),
-                    ],
-                  ),
-                ),
-                TextField(
-                  controller: batch,
-                  decoration: const InputDecoration(
-                    labelText: 'Charge / Los (optional)',
-                  ),
-                ),
+              if (item != null)
                 TextField(
                   controller: notes,
                   decoration: const InputDecoration(labelText: 'Notiz'),
                 ),
-              ],
               if (error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -1546,130 +1664,135 @@ class _PackItemDialogState extends State<PackItemDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Abbrechen'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Packen')),
+        FilledButton(onPressed: _submit, child: const Text('Einlagern')),
       ],
     );
   }
 }
 
-class ContentEditDialog extends StatefulWidget {
-  const ContentEditDialog({
-    required this.entry,
-    required this.compartments,
+/// Bucht einen Artikel mit Inventarnummer aus der Kiste auf einen anderen
+/// Lagerort: Lagerplatz, Gebäude oder eine andere Kiste.
+class RelocateItemDialog extends StatefulWidget {
+  const RelocateItemDialog({
+    required this.item,
+    required this.targets,
+    required this.currentContainerId,
     super.key,
   });
 
-  final Map<String, dynamic> entry;
-  final List<String> compartments;
+  final Map<String, dynamic> item;
+  final ContainerStorageTargets targets;
+  final String currentContainerId;
 
   @override
-  State<ContentEditDialog> createState() => _ContentEditDialogState();
+  State<RelocateItemDialog> createState() => _RelocateItemDialogState();
 }
 
-class _ContentEditDialogState extends State<ContentEditDialog> {
-  late final TextEditingController quantity;
-  late final TextEditingController batch;
-  late final TextEditingController notes;
-  String? position;
-  String? expiresAt;
+class _RelocateItemDialogState extends State<RelocateItemDialog> {
+  final notes = TextEditingController();
+  String query = '';
+  String? target;
   String? error;
 
   @override
-  void initState() {
-    super.initState();
-    quantity = TextEditingController(text: '${widget.entry['quantity'] ?? 1}');
-    batch = TextEditingController(
-      text: widget.entry['batchNumber']?.toString(),
-    );
-    notes = TextEditingController(text: widget.entry['notes']?.toString());
-    final current = widget.entry['position']?.toString() ?? '';
-    position = current.isEmpty ? null : current;
-    expiresAt = widget.entry['expiresAt']?.toString();
-  }
-
-  @override
   void dispose() {
-    quantity.dispose();
-    batch.dispose();
     notes.dispose();
     super.dispose();
   }
 
+  List<MapEntry<String, String>> get _options => [
+    ...widget.targets.containers
+        .where((entry) => entry['id'].toString() != widget.currentContainerId)
+        .map(
+          (entry) => MapEntry(
+            'container:${entry['id']}',
+            'Kiste ${_containerTitle(entry)} (${_text(entry['path'])})',
+          ),
+        ),
+    ...widget.targets.stockStructures.map(
+      (entry) => MapEntry('stock:${entry['id']}', _text(entry['path'])),
+    ),
+    ...widget.targets.locations.map(
+      (entry) => MapEntry(
+        'location:${entry['id']}',
+        '${_text(entry['path'])} (ohne Lagerplatz)',
+      ),
+    ),
+  ];
+
   void _submit() {
-    final bulk = widget.entry['itemType'] == 'bulk';
-    final amount = int.tryParse(quantity.text.trim());
-    if (bulk && (amount == null || amount < 1)) {
-      setState(() => error = 'Bitte eine gültige Menge angeben.');
+    final selected = target;
+    if (selected == null) {
+      setState(() => error = 'Bitte einen Ziel-Lagerort wählen.');
       return;
     }
-    Navigator.pop(context, {
-      if (bulk) 'quantity': amount,
-      'position': position ?? '',
-      'expiresAt': expiresAt,
-      'batchNumber': batch.text.trim(),
-      'notes': notes.text.trim(),
-    });
+    final separator = selected.indexOf(':');
+    final kind = selected.substring(0, separator);
+    final id = selected.substring(separator + 1);
+    final body = <String, dynamic>{'notes': notes.text.trim()};
+    if (kind == 'container') {
+      body['containerId'] = id;
+    } else if (kind == 'stock') {
+      final stock = widget.targets.stockStructures.firstWhere(
+        (entry) => entry['id'].toString() == id,
+      );
+      body['locationId'] = stock['locationId'];
+      body['stockStructureId'] = id;
+    } else {
+      body['locationId'] = id;
+    }
+    Navigator.pop(context, body);
   }
 
   @override
   Widget build(BuildContext context) {
-    final bulk = widget.entry['itemType'] == 'bulk';
-    final options = {...widget.compartments, ?position}.toList();
+    final needle = query.trim().toLowerCase();
+    final options = _options
+        .where(
+          (entry) =>
+              entry.key == target ||
+              needle.isEmpty ||
+              entry.value.toLowerCase().contains(needle),
+        )
+        .take(200)
+        .toList();
     return AlertDialog(
-      title: Text('${widget.entry['name']} bearbeiten'),
+      title: const Text('Artikel umbuchen'),
       content: SizedBox(
-        width: 480,
+        width: 560,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (bulk)
-              TextField(
-                controller: quantity,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Menge (${widget.entry['unit']})',
-                ),
-              ),
-            if (options.isNotEmpty)
-              DropdownButtonFormField<String>(
-                initialValue: position,
-                decoration: const InputDecoration(labelText: 'Fach'),
-                items: options
-                    .map(
-                      (entry) =>
-                          DropdownMenuItem(value: entry, child: Text(entry)),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() => position = value),
-              ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Ablaufdatum / Mindesthaltbarkeit'),
-              subtitle: Text(
-                expiresAt == null ? 'Kein Ablaufdatum' : _germanDate(expiresAt),
-              ),
-              trailing: Wrap(
-                children: [
-                  if (expiresAt != null)
-                    IconButton(
-                      tooltip: 'Ablaufdatum entfernen',
-                      onPressed: () => setState(() => expiresAt = null),
-                      icon: const Icon(Icons.clear),
-                    ),
-                  IconButton(
-                    tooltip: 'Datum wählen',
-                    onPressed: () async {
-                      final value = await _pickDate(context, expiresAt);
-                      if (value != null) setState(() => expiresAt = value);
-                    },
-                    icon: const Icon(Icons.event),
-                  ),
-                ],
-              ),
+            Text(
+              '${widget.item['inventoryNumber']} · ${widget.item['name']}',
+              style: Theme.of(context).textTheme.titleSmall,
             ),
+            const SizedBox(height: 8),
             TextField(
-              controller: batch,
-              decoration: const InputDecoration(labelText: 'Charge / Los'),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'Ziel suchen',
+              ),
+              onChanged: (value) => setState(() => query = value),
+            ),
+            DropdownButtonFormField<String>(
+              key: ValueKey('target-${options.length}-$target'),
+              initialValue: target,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Ziel-Lagerort'),
+              items: options
+                  .map(
+                    (entry) => DropdownMenuItem(
+                      value: entry.key,
+                      child: Text(entry.value, overflow: TextOverflow.ellipsis),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() {
+                target = value;
+                error = null;
+              }),
             ),
             TextField(
               controller: notes,
@@ -1691,6 +1814,188 @@ class _ContentEditDialogState extends State<ContentEditDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Abbrechen'),
         ),
+        FilledButton(onPressed: _submit, child: const Text('Umbuchen')),
+      ],
+    );
+  }
+}
+
+/// Erfasst oder bearbeitet Kisteninhalt ohne Inventarnummer.
+class ContentEditDialog extends StatefulWidget {
+  const ContentEditDialog({this.entry, required this.compartments, super.key});
+
+  final Map<String, dynamic>? entry;
+  final List<String> compartments;
+
+  @override
+  State<ContentEditDialog> createState() => _ContentEditDialogState();
+}
+
+class _ContentEditDialogState extends State<ContentEditDialog> {
+  late final TextEditingController name;
+  late final TextEditingController quantity;
+  late final TextEditingController unit;
+  late final TextEditingController batch;
+  late final TextEditingController notes;
+  String? position;
+  String? expiresAt;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    final entry = widget.entry ?? const <String, dynamic>{};
+    name = TextEditingController(text: entry['name']?.toString());
+    quantity = TextEditingController(text: '${entry['quantity'] ?? 1}');
+    unit = TextEditingController(text: _text(entry['unit'], 'Stück'));
+    batch = TextEditingController(text: entry['batchNumber']?.toString());
+    notes = TextEditingController(text: entry['notes']?.toString());
+    final current = entry['position']?.toString() ?? '';
+    position = current.isEmpty ? null : current;
+    expiresAt = entry['expiresAt']?.toString();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in [name, quantity, unit, batch, notes]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _submit() {
+    final amount = int.tryParse(quantity.text.trim());
+    if (name.text.trim().isEmpty) {
+      setState(() => error = 'Bitte eine Bezeichnung angeben.');
+      return;
+    }
+    if (amount == null || amount < 1) {
+      setState(() => error = 'Bitte eine gültige Menge angeben.');
+      return;
+    }
+    if (widget.compartments.isNotEmpty && position == null) {
+      setState(() => error = 'Bitte ein Fach wählen.');
+      return;
+    }
+    Navigator.pop(context, {
+      'name': name.text.trim(),
+      'quantity': amount,
+      'unit': unit.text.trim().isEmpty ? 'Stück' : unit.text.trim(),
+      'position': position ?? '',
+      'expiresAt': expiresAt,
+      'batchNumber': batch.text.trim(),
+      'notes': notes.text.trim(),
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final options = {...widget.compartments, ?position}.toList();
+    return AlertDialog(
+      title: Text(
+        widget.entry == null
+            ? 'Inhalt ohne Inventarnummer erfassen'
+            : '${widget.entry!['name']} bearbeiten',
+      ),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(
+                  labelText: 'Bezeichnung *',
+                  hintText: 'z. B. Pflasterstrips, Kompresse 10x10',
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: quantity,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Menge *'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: unit,
+                      decoration: const InputDecoration(labelText: 'Einheit'),
+                    ),
+                  ),
+                ],
+              ),
+              if (options.isNotEmpty)
+                DropdownButtonFormField<String>(
+                  initialValue: position,
+                  decoration: const InputDecoration(labelText: 'Fach'),
+                  items: options
+                      .map(
+                        (entry) =>
+                            DropdownMenuItem(value: entry, child: Text(entry)),
+                      )
+                      .toList(),
+                  onChanged: (value) => setState(() => position = value),
+                ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Ablaufdatum / Mindesthaltbarkeit'),
+                subtitle: Text(
+                  expiresAt == null
+                      ? 'Kein Ablaufdatum'
+                      : _germanDate(expiresAt),
+                ),
+                trailing: Wrap(
+                  children: [
+                    if (expiresAt != null)
+                      IconButton(
+                        tooltip: 'Ablaufdatum entfernen',
+                        onPressed: () => setState(() => expiresAt = null),
+                        icon: const Icon(Icons.clear),
+                      ),
+                    IconButton(
+                      tooltip: 'Datum wählen',
+                      onPressed: () async {
+                        final value = await _pickDate(context, expiresAt);
+                        if (value != null) setState(() => expiresAt = value);
+                      },
+                      icon: const Icon(Icons.event),
+                    ),
+                  ],
+                ),
+              ),
+              TextField(
+                controller: batch,
+                decoration: const InputDecoration(
+                  labelText: 'Charge / Los (optional)',
+                ),
+              ),
+              TextField(
+                controller: notes,
+                decoration: const InputDecoration(labelText: 'Notiz'),
+              ),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton(onPressed: _submit, child: const Text('Speichern')),
       ],
     );
@@ -1701,6 +2006,8 @@ class _PackListRow {
   _PackListRow({
     required this.entityType,
     required this.entityId,
+    required this.name,
+    required this.unit,
     required this.label,
     required this.individual,
     required int target,
@@ -1708,12 +2015,18 @@ class _PackListRow {
   }) : quantity = TextEditingController(text: '$target');
 
   final String entityType;
-  final String entityId;
+  final String? entityId;
+  final String name;
+  final String unit;
   final String label;
   final bool individual;
   final String position;
   final TextEditingController quantity;
   bool included = true;
+
+  String get key => entityType == 'Content'
+      ? 'Content:${name.trim().toLowerCase()}'
+      : '$entityType:$entityId';
 }
 
 class PackListDialog extends StatefulWidget {
@@ -1739,55 +2052,68 @@ class _PackListDialogState extends State<PackListDialog> {
       orElse: () => <String, dynamic>{},
     );
     name.text = _text(active['name'], 'Packliste');
-    final seen = <String>{};
+    final individual = <String>{
+      for (final item in _maps(widget.container['items']))
+        if (item['itemType'] != 'bulk')
+          '${item['entityType']}:${item['entityId']}',
+    };
+    void add(_PackListRow row) {
+      if (rows.any((entry) => entry.key == row.key)) {
+        row.quantity.dispose();
+        return;
+      }
+      rows.add(row);
+    }
+
     for (final item in _maps(active['items'])) {
-      final key = '${item['entityType']}:${item['entityId']}';
-      seen.add(key);
-      rows.add(
+      final content = item['entityType'] == 'Content';
+      final entityType = item['entityType'].toString();
+      final entityId = content ? null : item['entityId']?.toString();
+      add(
         _PackListRow(
-          entityType: item['entityType'].toString(),
-          entityId: item['entityId'].toString(),
-          label:
-              '${_text(item['inventoryNumberSnapshot'])} · ${item['nameSnapshot']}',
-          individual: false,
+          entityType: entityType,
+          entityId: entityId,
+          name: _text(item['name'] ?? item['nameSnapshot'], ''),
+          unit: _text(item['unit'], 'Stück'),
+          label: content
+              ? _text(item['name'])
+              : '${_text(item['inventoryNumberSnapshot'])} · ${item['nameSnapshot']}',
+          individual: !content && individual.contains('$entityType:$entityId'),
           target: int.tryParse('${item['targetQuantity']}') ?? 1,
           position: item['position']?.toString() ?? '',
         ),
       );
     }
+    for (final item in _maps(widget.container['items'])) {
+      add(
+        _PackListRow(
+          entityType: item['entityType'].toString(),
+          entityId: item['entityId'].toString(),
+          name: _text(item['name'], ''),
+          unit: _text(item['unit'], 'Stück'),
+          label: '${_text(item['inventoryNumber'])} · ${item['name']}',
+          individual: item['itemType'] != 'bulk',
+          target: int.tryParse('${item['quantity']}') ?? 1,
+          position: '',
+        ),
+      );
+    }
     final grouped = <String, Map<String, dynamic>>{};
     for (final entry in _maps(widget.container['contents'])) {
-      final key = '${entry['entityType']}:${entry['entityId']}';
+      final key = '${entry['name']}'.trim().toLowerCase();
       final current = grouped.putIfAbsent(key, () => {...entry, 'sum': 0});
       current['sum'] =
           (current['sum'] as int) + (int.tryParse('${entry['quantity']}') ?? 1);
     }
-    for (final entry in grouped.entries) {
-      final item = entry.value;
-      final individual = item['itemType'] != 'bulk';
-      final index = rows.indexWhere(
-        (row) => '${row.entityType}:${row.entityId}' == entry.key,
-      );
-      if (index >= 0) {
-        final previous = rows[index];
-        rows[index] = _PackListRow(
-          entityType: previous.entityType,
-          entityId: previous.entityId,
-          label: previous.label,
-          individual: individual,
-          target: int.tryParse(previous.quantity.text) ?? 1,
-          position: previous.position,
-        );
-        previous.quantity.dispose();
-        continue;
-      }
-      if (seen.contains(entry.key)) continue;
-      rows.add(
+    for (final item in grouped.values) {
+      add(
         _PackListRow(
-          entityType: item['entityType'].toString(),
-          entityId: item['entityId'].toString(),
-          label: '${_text(item['inventoryNumber'])} · ${item['name']}',
-          individual: individual,
+          entityType: 'Content',
+          entityId: null,
+          name: _text(item['name'], ''),
+          unit: _text(item['unit'], 'Stück'),
+          label: _text(item['name']),
+          individual: false,
           target: item['sum'] as int,
           position: item['position']?.toString() ?? '',
         ),
@@ -1818,7 +2144,9 @@ class _PackListDialogState extends State<PackListDialog> {
       }
       items.add({
         'entityType': row.entityType,
-        'entityId': row.entityId,
+        if (row.entityId != null) 'entityId': row.entityId,
+        if (row.entityType == 'Content') 'name': row.name,
+        if (row.entityType == 'Content') 'unit': row.unit,
         'targetQuantity': target,
         'position': row.position,
       });
@@ -1850,14 +2178,15 @@ class _PackListDialogState extends State<PackListDialog> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Grundlage sind die aktive Packliste und der aktuelle Inhalt. '
-              'Weitere Artikel zuerst in die Kiste packen.',
+              'Grundlage sind die aktive Packliste und der aktuelle Inhalt '
+              '(mit und ohne Inventarnummer).',
             ),
             const SizedBox(height: 8),
             Flexible(
               child: rows.isEmpty
                   ? const Text(
-                      'Die Kiste ist leer. Bitte zuerst Inhalt packen.',
+                      'Die Kiste ist leer. Bitte zuerst Inhalt erfassen oder '
+                      'Artikel einlagern.',
                     )
                   : ListView(
                       shrinkWrap: true,
@@ -2040,7 +2369,9 @@ class _ContainerCheckDialogState extends State<ContainerCheckDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '${_text(row.item['inventoryNumber'])} · ${row.item['name']}',
+                              row.item['inventoryNumber'] == null
+                                  ? '${row.item['name']} (ohne Inventarnummer)'
+                                  : '${row.item['inventoryNumber']} · ${row.item['name']}',
                               style: Theme.of(context).textTheme.titleSmall,
                             ),
                             Text(
@@ -2110,9 +2441,12 @@ class _ContainerCheckDialogState extends State<ContainerCheckDialog> {
                 value: createDefect,
                 onChanged: (value) =>
                     setState(() => createDefect = value ?? false),
-                title: const Text('Mangel in der Mängelverwaltung anlegen'),
+                title: const Text(
+                  'Mängel für betroffene Artikel mit Inventarnummer anlegen',
+                ),
                 subtitle: const Text(
-                  'Nur „Kritisch“ setzt die Kiste auf „Defekt“.',
+                  'Nur „Kritisch“ setzt den Artikel auf „Defekt“. Fehlender '
+                  'Inhalt ohne Inventarnummer steht im Prüfprotokoll.',
                 ),
               ),
               if (createDefect)

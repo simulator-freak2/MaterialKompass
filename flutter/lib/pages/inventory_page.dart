@@ -79,7 +79,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
   String? categoryCode, subcategoryCode, locationId, stockId;
   bool reservationApprovalRequired = false;
   bool safetyCritical = false;
-  bool isContainer = false;
   final Set<String> reservationAllowedUnitIds = {};
 
   @override
@@ -136,7 +135,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       ),
     );
     safetyCritical = item['safetyCritical'] == true;
-    isContainer = item['isContainer'] == true;
   }
 
   @override
@@ -436,20 +434,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                         setState(() => safetyCritical = value),
                   ),
                 ),
-                if (itemType == 'individual')
-                  SizedBox(
-                    width: 520,
-                    child: SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: const Icon(Icons.all_inbox_outlined),
-                      title: const Text('Als Kiste verwenden'),
-                      subtitle: const Text(
-                        'Andere Artikel können in diesen Artikel gepackt werden und wandern bei Umbuchung, Ausgabe und Beladung mit.',
-                      ),
-                      value: isContainer,
-                      onChanged: (value) => setState(() => isContainer = value),
-                    ),
-                  ),
                 if (safetyCritical)
                   _text(
                     'safetyInstructions',
@@ -511,7 +495,6 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       'reservationAllowedUnitIds': reservationAllowedUnitIds.toList(),
       'safetyCritical': safetyCritical,
       'safetyInstructions': fields['safetyInstructions']!.text.trim(),
-      'isContainer': itemType == 'individual' && isContainer,
     });
   }
 }
@@ -1362,6 +1345,19 @@ class _InventoryPageState extends State<InventoryPage> {
     final dialogSelection = Set<String>.from(selected);
     String? locationId;
     String? stockId;
+    String? containerId;
+    // Kisten sind eigene Lagerorte und können direkt als Ziel gewählt werden.
+    var containers = <Map<String, dynamic>>[];
+    if (permissions.contains('containers.read')) {
+      final targets = await _request('/api/containers/storage-targets');
+      if (targets is Map && targets['containers'] is List) {
+        containers = (targets['containers'] as List)
+            .whereType<Map>()
+            .map(Map<String, dynamic>.from)
+            .toList();
+      }
+      if (!mounted) return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1461,6 +1457,39 @@ class _InventoryPageState extends State<InventoryPage> {
                       ),
                     ],
                   ),
+                  if (containers.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey('relocate-container-$containerId'),
+                      initialValue: containerId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Oder in Kiste einlagern',
+                        helperText:
+                            'Standort und Lagerplatz ergeben sich aus der Kiste.',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: '',
+                          child: Text('Keine Kiste'),
+                        ),
+                        ...containers.map(
+                          (entry) => DropdownMenuItem(
+                            value: entry['id'].toString(),
+                            child: Text(
+                              '${entry['code']} · ${entry['name']} (${entry['path'] ?? '-'})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => update(
+                        () => containerId = value == null || value.isEmpty
+                            ? null
+                            : value,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: materialSearch,
@@ -1522,7 +1551,9 @@ class _InventoryPageState extends State<InventoryPage> {
                 child: const Text('Abbrechen'),
               ),
               FilledButton(
-                onPressed: locationId == null || dialogSelection.isEmpty
+                onPressed:
+                    (locationId == null && containerId == null) ||
+                        dialogSelection.isEmpty
                     ? null
                     : () => Navigator.pop(context, true),
                 child: const Text('Umbuchen'),
@@ -1538,8 +1569,12 @@ class _InventoryPageState extends State<InventoryPage> {
       method: 'POST',
       body: {
         'materialIds': dialogSelection.toList(),
-        'locationId': locationId,
-        'stockStructureId': stockId,
+        if (containerId != null)
+          'containerId': containerId
+        else ...{
+          'locationId': locationId,
+          'stockStructureId': stockId,
+        },
       },
     );
     if (result != null) {
@@ -2054,7 +2089,8 @@ class _InventoryPageState extends State<InventoryPage> {
                   'Kategorie: ${_name(categories, item['categoryCode'])} / ${_name(categories, item['subcategoryCode'])}',
                 ),
                 Text(
-                  'Standort: ${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}',
+                  'Standort: ${_name(locations, item['locationId'])} · ${_name(stocks, item['stockStructureId'])}'
+                  '${item['containerName'] != null ? ' · Kiste ${item['containerName']}' : ''}',
                 ),
                 Text(
                   'Verfügbar: ${item['availableQuantity']} von ${item['quantity']} ${item['unit']}',
@@ -2322,7 +2358,8 @@ class _InventoryTableSource extends DataTableSource {
         DataCell(
           Text(
             '${locationName(item['locationId'])} · '
-            '${stockName(item['stockStructureId'])}',
+            '${stockName(item['stockStructureId'])}'
+            '${item['containerName'] != null ? ' · Kiste ${item['containerName']}' : ''}',
           ),
         ),
         DataCell(
@@ -2546,19 +2583,8 @@ class InventoryDetailDialog extends StatelessWidget {
                             'Bestand',
                             '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}',
                           ),
-                          if (item['isContainer'] == true)
-                            _line('Kiste', 'Ja – Inhalt unter „Kisten“'),
                           if (item['containerName'] != null)
-                            _line('Liegt in Kiste', item['containerName']),
-                          if ((num.tryParse(
-                                    '${item['containerPackedQuantity'] ?? 0}',
-                                  ) ??
-                                  0) >
-                              0)
-                            _line(
-                              'In Kisten gepackt',
-                              '${item['containerPackedQuantity']} ${item['unit']}',
-                            ),
+                            _line('Lagerort Kiste', item['containerName']),
                           _line(
                             'Hersteller / Modell',
                             '${item['manufacturer'] ?? ''} ${item['model'] ?? ''}',

@@ -6,6 +6,16 @@
 
 ## Unveroeffentlicht
 
+- Kisten sind jetzt eigenständige Lagerorte, die einem Lagerplatz zugewiesen sind
+  (Kistennummer, z. B. `K-001`). Artikel mit Inventarnummer (Inventar und Kleidung)
+  werden in die Kiste ein- und aus ihr auf andere Lagerorte umgebucht; die Kiste ist
+  auch Ziel der Sammelumbuchung. Inhalt ohne Inventarnummer (z. B. Pflaster) wird
+  direkt in der Kiste mit Menge, Fach, Ablaufdatum und Charge erfasst und kann nicht
+  umgebucht, sondern nur geändert oder ausgebucht werden. Wird die Kiste einem
+  anderen Lagerplatz zugewiesen, wandert der Inhalt mit. Bestehende Kisten werden
+  beim Start automatisch übernommen; gepackte Teilmengen von Mengenartikeln werden
+  dabei zu Inhalt ohne Inventarnummer. Mängel aus der Vollständigkeitsprüfung
+  werden für die betroffenen Artikel mit Inventarnummer angelegt.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

@@ -1403,10 +1403,11 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
       builder: (context) => AlertDialog(
         title: const Text('Kiste als Einheit bestätigen'),
         content: Text(
-          'Die Kiste ${entry['inventoryNumber']} wurde verschlossen und '
-          'vollständig vorgefunden. Kiste und alle darin liegenden, noch nicht '
-          'gezählten Einzelstücke werden als „vorhanden“ erfasst. '
-          'Mengenartikel bleiben separat zu zählen.',
+          'Die Kiste ${entry['containerCode'] ?? entry['containerInventoryNumber'] ?? ''} '
+          'wurde verschlossen und vollständig vorgefunden. Alle darin '
+          'liegenden, noch nicht gezählten Einzelstücke mit Inventarnummer '
+          'werden als „vorhanden“ erfasst. Mengenartikel bleiben separat zu '
+          'zählen.',
         ),
         actions: [
           TextButton(
@@ -1422,7 +1423,7 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
     );
     if (confirmed != true) return;
     final data = await request(
-      '/api/stocktakes/${widget.stocktakeId}/containers/${entry['entityId']}/confirm',
+      '/api/stocktakes/${widget.stocktakeId}/containers/${entry['containerId']}/confirm',
       method: 'POST',
       body: const {},
     );
@@ -1724,7 +1725,7 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                   ),
                   title: Text('${entry['inventoryNumber']} · ${entry['name']}'),
                   subtitle: Text(
-                    '${entry['containerInventoryNumber'] != null ? 'In Kiste ${entry['containerInventoryNumber']} · ' : ''}${entry['isContainer'] == true ? 'Kiste · ' : ''}${entry['expectedLocationName'] ?? '-'} / ${entry['expectedStockStructureName'] ?? '-'}\n${counted
+                    '${(entry['containerCode'] ?? entry['containerInventoryNumber']) != null ? 'In Kiste ${entry['containerCode'] ?? entry['containerInventoryNumber']} · ' : ''}${entry['expectedLocationName'] ?? '-'} / ${entry['expectedStockStructureName'] ?? '-'}\n${counted
                         ? entry['itemType'] == 'bulk'
                               ? 'Ist: ${entry['actualQuantity']} ${entry['unit']}'
                               : 'Ergebnis: ${entry['result']}'
@@ -1735,7 +1736,8 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                       ? Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (entry['isContainer'] == true)
+                            if (entry['containerId'] != null &&
+                                entry['itemType'] != 'bulk')
                               IconButton(
                                 onPressed: () => _confirmContainer(entry),
                                 tooltip: 'Kiste als Einheit bestätigen',

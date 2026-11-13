@@ -38,7 +38,7 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
   Freigabeworkflow, Konfliktprüfung, ICS-Export und organisationsbezogener Aufbewahrung
 - Fahrzeugverwaltung für Kraftfahrzeuge, Anhänger, Boote und sonstige Einsatz- oder
   Vereinsfahrzeuge mit Reservierung, Wartung, Mängeln und versionierten Beladungslisten
-- Kistenverwaltung für Einzelstücke, Teilmengen, Kleidung und verschachtelte Kisten
+- Kistenverwaltung: Kisten als eigene Lagerorte auf Lagerplätzen, mit Artikeln mit und ohne Inventarnummer
   mit mitwanderndem Inhalt, versionierten Packlisten, Vollständigkeitsprüfung,
   Ablaufdaten, Scan und Inventurbestätigung (siehe [CONTAINER_MANAGEMENT.md](CONTAINER_MANAGEMENT.md))
 - Prüfungen, vollständiges Mängelmanagement, Dokumente sowie XLSX-/ODS-Import und -Export

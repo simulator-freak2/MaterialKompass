@@ -159,6 +159,7 @@ const vehicleMaintenanceEvents = [];
 const vehicleLoadAssignments = [];
 const vehicleLoadLists = [];
 const vehicleLoadRequests = [];
+const containers = [];
 const containerContents = [];
 const containerPackLists = [];
 const containerChecks = [];
@@ -241,6 +242,7 @@ module.exports = {
     vehicleLoadAssignments,
     vehicleLoadLists,
     vehicleLoadRequests,
+    containers,
     containerContents,
     containerPackLists,
     containerChecks,

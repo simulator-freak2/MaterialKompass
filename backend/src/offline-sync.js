@@ -195,10 +195,7 @@ function registerOfflineSync({
     const materials = hasPermission(req.user, 'inventory.read') || req.sessionType === deviceSession
       ? (data.materials || []).filter((entry) => !entry.archived && include(entry)).map((entry) => ({
         ...entry,
-        availableQuantity: Number(entry.quantity || 0) - Number(entry.issuedQuantity || 0)
-          - (data.containerContents || []).reduce((sum, content) =>
-            content.entityType === 'MaterialItem' && content.entityId === entry.id
-              ? sum + Number(content.quantity || 0) : sum, 0),
+        availableQuantity: Number(entry.quantity || 0) - Number(entry.issuedQuantity || 0),
         safetyStatus: assessMaterialSafety(entry),
       })) : [];
     const clothingItems = hasPermission(req.user, 'clothing.read') || req.sessionType === deviceSession

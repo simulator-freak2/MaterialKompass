@@ -46,9 +46,8 @@ function registerInventoryRoutes({
   containerGuard = null,
 }) {
   const containers = containerGuard || {
-    packedQuantity: () => 0, placementOf: () => null, lockedMessage: () => null,
-    hasContents: () => false, contentSafety: () => ({ blocked: false, reasons: [], warnings: [] }),
-    syncContents: () => 0, syncMany: () => 0, containerOf: () => null,
+    containerById: () => null, containerOfEntity: () => null, detach: () => {},
+    placeInto: () => {}, label: () => null,
   };
   const number = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -58,9 +57,31 @@ function registerInventoryRoutes({
   const loadedQuantity = (material) => (material ? vehicleLoadAssignments.reduce((sum, entry) =>
     entry.materialId === material.id && entry.organizationId === material.organizationId
       && entry.unitId === material.unitId ? sum + number(entry.quantity) : sum, 0) : 0);
-  const packedQuantity = (materialId) => containers.packedQuantity(materialId);
-  const boundQuantity = (material) => loadedQuantity(material) + packedQuantity(material.id);
-  const syncOptions = (req) => ({ actor: req.user.username, movements: materialMovements, nextId });
+  const boundQuantity = (material) => loadedQuantity(material);
+
+  // Kisten sind eigene Lagerorte. `containerId` im Request bucht den Artikel
+  // in die Kiste (Gebäude und Lagerplatz folgen der Kiste), ein leerer Wert
+  // nimmt ihn heraus. Ohne Angabe bleibt er in der Kiste, solange Gebäude und
+  // Lagerplatz unverändert bleiben.
+  function resolveContainer(body, existing, locationId, stockStructureId) {
+    const requested = body.containerId === undefined ? undefined : String(body.containerId || '').trim();
+    const tenant = currentTenant();
+    if (requested) {
+      const container = containers.containerById(requested);
+      if (!container || (tenant && (container.organizationId !== tenant.organizationId
+        || container.unitId !== tenant.unitId))) return { error: 'Die gewählte Kiste ist ungültig.' };
+      if (!container.stockStructureId) return { error: 'Die gewählte Kiste ist keinem Lagerplatz zugewiesen.' };
+      return { container, locationId: container.locationId, stockStructureId: container.stockStructureId };
+    }
+    if (requested === undefined && existing) {
+      const current = containers.containerOfEntity(existing);
+      if (current && current.locationId === locationId
+        && (current.stockStructureId || '') === (stockStructureId || '')) {
+        return { container: current, locationId, stockStructureId };
+      }
+    }
+    return { container: null, locationId, stockStructureId };
+  }
 
   function categoryPair(categoryCode, subcategoryCode) {
     const main = categories.find((entry) => entry.id === categoryCode && !entry.parentId);
@@ -86,8 +107,11 @@ function registerInventoryRoutes({
     const name = String(body.name ?? existing?.name ?? '').trim();
     const categoryCode = String(body.categoryCode ?? existing?.categoryCode ?? '').trim();
     const subcategoryCode = String(body.subcategoryCode ?? existing?.subcategoryCode ?? '').trim();
-    const locationId = String(body.locationId ?? existing?.locationId ?? '').trim();
-    const stockStructureId = String(body.stockStructureId ?? existing?.stockStructureId ?? '').trim();
+    let locationId = String(body.locationId ?? existing?.locationId ?? '').trim();
+    let stockStructureId = String(body.stockStructureId ?? existing?.stockStructureId ?? '').trim();
+    const placement = resolveContainer(body, existing, locationId, stockStructureId);
+    if (placement.error) return { error: placement.error };
+    ({ locationId, stockStructureId } = placement);
     const status = String(body.status ?? existing?.status ?? 'Lagernd').trim();
     const itemType = String(body.itemType ?? existing?.itemType ?? 'individual').trim();
     const quantity = itemType === 'individual' ? 1 : number(body.quantity ?? existing?.quantity, 0);
@@ -103,22 +127,12 @@ function registerInventoryRoutes({
     if (!MATERIAL_STATUSES.includes(status)) return { error: 'Der gewählte Status ist ungültig.' };
     if (!['individual', 'bulk'].includes(itemType) || quantity <= 0) return { error: 'Art und Anzahl des Artikels sind ungültig.' };
     if (existing && quantity < number(existing.issuedQuantity) + boundQuantity(existing)) {
-      return { error: 'Die Anzahl darf nicht unter die ausgegebene, auf Fahrzeuge gebuchte oder in Kisten gepackte Menge fallen.' };
-    }
-    const isContainer = body.isContainer === undefined
-      ? existing?.isContainer === true : body.isContainer === true;
-    if (isContainer && itemType !== 'individual') return { error: 'Nur Einzelstücke können als Kiste verwendet werden.' };
-    if (existing?.isContainer && !isContainer && containers.hasContents(existing.id)) {
-      return { error: 'Eine Kiste mit Inhalt kann nicht in einen normalen Artikel umgewandelt werden.', status: 409 };
-    }
-    if (existing && containers.placementOf('MaterialItem', existing.id)
-      && (locationId !== existing.locationId || (stockStructureId || null) !== (existing.stockStructureId || null))) {
-      return { error: containers.lockedMessage('MaterialItem', existing.id), status: 409 };
+      return { error: 'Die Anzahl darf nicht unter die ausgegebene oder auf Fahrzeuge gebuchte Menge fallen.' };
     }
     if (existing && existing.itemType !== itemType && boundQuantity(existing) > 0) {
       return { error: 'Die Artikelart kann bei gebundenem Bestand nicht geändert werden.', status: 409 };
     }
-    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, status, itemType, quantity, isContainer };
+    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, containerId: placement.container?.id || null, status, itemType, quantity };
   }
 
   function validateReservationSharing(body, existing, req, itemType) {
@@ -150,13 +164,8 @@ function registerInventoryRoutes({
       reservationAllowedUnitIds: [...(item.reservationAllowedUnitIds || [])],
       safetyStatus: assessMaterialSafety(item),
       vehicleLoadedQuantity: loadedQuantity(item),
-      containerPackedQuantity: packedQuantity(item.id),
-      containerId: containers.containerOf('MaterialItem', item.id)?.id || null,
-      containerName: (() => {
-        const container = containers.containerOf('MaterialItem', item.id);
-        return container ? `${container.inventoryNumber} ${container.name}` : null;
-      })(),
-      isContainer: item.isContainer === true,
+      containerId: containers.containerOfEntity(item)?.id || null,
+      containerName: containers.label(containers.containerOfEntity(item)),
       availableQuantity: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item),
       movements: materialMovements.filter((entry) => entry.materialId === item.id).slice().reverse(),
       inspections: materialInspections.filter((entry) => entry.materialId === item.id).slice().reverse(),
@@ -221,7 +230,6 @@ function registerInventoryRoutes({
       safetyInstructions: String(req.body.safetyInstructions || '').trim().slice(0, 2_000),
       archived: false, createdAt: new Date().toISOString(),
     };
-    if (item.isContainer) item.completenessStatus = 'Ungeprüft';
     materials.push(item);
     logEvent('create', 'MaterialItem', {
       id: item.id,
@@ -271,10 +279,6 @@ function registerInventoryRoutes({
       id: item.id, inventoryNumber: item.inventoryNumber, issuedQuantity: item.issuedQuantity,
       archived: false, updatedAt: new Date().toISOString(),
     });
-    if (item.isContainer) {
-      item.completenessStatus ||= 'Ungeprüft';
-      containers.syncContents(item.id, syncOptions(req));
-    }
     logEvent('update', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
   });
@@ -283,8 +287,7 @@ function registerInventoryRoutes({
     const item = materials.find((entry) => entry.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
     if (number(item.issuedQuantity) > 0 || loadedQuantity(item) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht archiviert werden.' });
-    if (packedQuantity(item.id) > 0) return res.status(409).json({ error: 'In Kisten gepacktes Material kann nicht archiviert werden. Bitte zuerst aus der Kiste entnehmen.' });
-    if (containers.hasContents(item.id)) return res.status(409).json({ error: 'Eine Kiste mit Inhalt kann nicht archiviert werden.' });
+    containers.detach(item);
     item.archived = true; item.archivedAt = new Date().toISOString(); item.archivedBy = req.user.username;
     logEvent('archive', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
@@ -307,8 +310,8 @@ function registerInventoryRoutes({
     }
     item.locationId = locationId;
     item.stockStructureId = stockStructureId || null;
+    containers.detach(item);
     item.archived = false; item.archivedAt = null; item.archivedBy = null;
-    containers.syncContents(item.id, syncOptions(req));
     logEvent('restore', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
   });
@@ -318,7 +321,7 @@ function registerInventoryRoutes({
     if (index === -1) return res.status(404).json({ error: 'Material nicht gefunden.' });
     const item = materials[index];
     if (!item.archived) return res.status(409).json({ error: 'Material muss vor dem Löschen archiviert werden.' });
-    if (number(item.issuedQuantity) > 0 || boundQuantity(item) > 0 || containers.hasContents(item.id)) return res.status(409).json({ error: 'Ausgegebenes, auf Fahrzeuge gebuchtes oder in Kisten gepacktes Material kann nicht gelöscht werden.' });
+    if (number(item.issuedQuantity) > 0 || boundQuantity(item) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht gelöscht werden.' });
 
     const removedItem = materials.splice(index, 1)[0];
     deletedMaterials.push({
@@ -342,16 +345,10 @@ function registerInventoryRoutes({
     const checked = entries.map((entry) => {
       const item = materials.find((candidate) => candidate.id === entry.materialId);
       const quantity = number(entry.quantity, 0);
-      const ownSafety = action === 'issue' && item ? assessMaterialSafety(item) : null;
-      const contentSafety = action === 'issue' && item?.isContainer
-        ? containers.contentSafety(item.id) : null;
-      const safety = ownSafety && contentSafety?.blocked
-        ? { blocked: true, reasons: [...ownSafety.reasons, ...contentSafety.reasons] }
-        : ownSafety;
+      const safety = action === 'issue' && item ? assessMaterialSafety(item) : null;
       let error = null;
       if (!item || item.archived) error = 'not_found';
       else if (quantity <= 0) error = 'invalid_quantity';
-      else if (action === 'issue' && containers.placementOf('MaterialItem', item.id)) error = 'packed_in_container';
       else if (safety?.blocked) error = 'safety_blocked';
       else if (action === 'issue' && ['Defekt', 'In Reparatur', 'Ausgesondert', 'Verloren'].includes(item.status)) error = 'invalid_status';
       else if (action === 'issue' && quantity > number(item.quantity) - number(item.issuedQuantity)
@@ -379,21 +376,26 @@ function registerInventoryRoutes({
 
   app.post('/api/material/relocate/bulk', authMiddleware, requirePermission('inventory.relocate'), (req, res) => {
     const ids = Array.from(new Set(Array.isArray(req.body.materialIds) ? req.body.materialIds : []));
-    const locationId = String(req.body.locationId || '').trim();
-    const stockStructureId = String(req.body.stockStructureId || '').trim();
+    const target = resolveContainer({ containerId: String(req.body.containerId || '') }, null,
+      String(req.body.locationId || '').trim(), String(req.body.stockStructureId || '').trim());
+    if (target.error) return res.status(400).json({ error: target.error });
+    const { locationId, stockStructureId, container: targetContainer } = target;
     const targetLocation = locations.find((entry) => entry.id === locationId);
     const targetStock = stockStructureId ? stockStructures.find((entry) => entry.id === stockStructureId && entry.locationId === locationId) : null;
     const items = ids.map((id) => materials.find((entry) => entry.id === id));
     if (!ids.length || ids.length > MAX_BULK_ITEMS || !targetLocation || (stockStructureId && !targetStock)) return res.status(400).json({ error: 'Material, Standort oder Lagerplatz ist ungültig.' });
     if (items.some((item) => !item || item.archived || number(item.issuedQuantity) > 0
       || loadedQuantity(item) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes, auf Fahrzeuge gebuchtes oder archiviertes Material ist nicht zulässig.' });
-    const packed = items.find((item) => containers.placementOf('MaterialItem', item.id));
-    if (packed) return res.status(409).json({ error: `Die Sammelumbuchung wurde nicht durchgeführt. ${containers.lockedMessage('MaterialItem', packed.id)}` });
     const created = items.map((item) => {
-      const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
-      item.locationId = locationId; item.stockStructureId = stockStructureId || null; materialMovements.push(movement); return movement;
+      const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, fromContainerId: containers.containerOfEntity(item)?.id || null, toLocationId: locationId, toStockStructureId: stockStructureId || null, toContainerId: targetContainer?.id || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
+      if (targetContainer) containers.placeInto(item, targetContainer);
+      else {
+        containers.detach(item);
+        item.locationId = locationId; item.stockStructureId = stockStructureId || null;
+      }
+      materialMovements.push(movement); return movement;
     });
-    containers.syncMany(ids, syncOptions(req));
+    if (targetContainer) targetContainer.completenessStatus = 'Ungeprüft';
     logEvent('relocate', 'MaterialMovement', { materialIds: ids, locationId }, req.user.username);
     res.status(201).json(created);
   });
@@ -525,7 +527,7 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => withReadAccess(req, () => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item), 'Auf Fahrzeugen': loadedQuantity(item), 'In Kisten': packedQuantity(item.id), Kiste: item.isContainer ? 'Ja' : 'Nein', Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item), 'Auf Fahrzeugen': loadedQuantity(item), Kiste: containers.label(containers.containerOfEntity(item)) || '', Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
       .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');
