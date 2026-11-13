@@ -2,8 +2,18 @@ const { simpleParser } = require('mailparser');
 const { normalizeOfferInput } = require('./procurement-offers');
 
 const MAX_MAIL_BYTES = 25 * 1024 * 1024;
+// Der Postfacheingang ist von außen beschreibbar. Ohne Obergrenzen könnte
+// ein Absender Arbeitsspeicher und Datenbank beliebig füllen.
+const MAX_EMAIL_IMPORT_RECORDS = 10_000;
+const MAX_IMPORT_STORAGE_BYTES = 256 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'ods']);
+
+function storedAttachmentBytes(entries) {
+  return entries.reduce((sum, entry) => sum + (entry.attachments || [])
+    .reduce((inner, attachment) => inner
+      + Buffer.byteLength(attachment.fileBase64 || '', 'base64'), 0), 0);
+}
 
 function text(value, max = 10_000) {
   return String(value ?? '').trim().slice(0, max);
@@ -42,6 +52,9 @@ function createProcurementEmailService({
   }
 
   async function ingestSource(source, sourceInfo = {}) {
+    if (procurementEmailImports.length >= MAX_EMAIL_IMPORT_RECORDS) {
+      throw new Error('Die maximale Anzahl gespeicherter Angebots-E-Mails ist erreicht.');
+    }
     const bytes = Buffer.isBuffer(source) ? source : Buffer.from(source || '');
     if (!bytes.length || bytes.length > MAX_MAIL_BYTES) {
       throw new Error('Die Angebots-E-Mail ist leer oder größer als 25 MB.');
@@ -63,6 +76,10 @@ function createProcurementEmailService({
       sizeBytes: attachment.content.length,
       fileBase64: attachment.content.toString('base64'),
     }));
+    const incomingBytes = attachments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
+    if (storedAttachmentBytes(procurementEmailImports) + incomingBytes > MAX_IMPORT_STORAGE_BYTES) {
+      throw new Error('Das Speicherlimit für E-Mail-Anhänge ist erreicht.');
+    }
     const entry = {
       id: nextId('procurement-email', procurementEmailImports),
       requestId: request?.id || null,
@@ -93,6 +110,7 @@ function createProcurementEmailService({
       problem: text(error?.message || error, 1000), createdAt: new Date().toISOString(),
       processedAt: null, processedBy: null, offerId: null, emailSource: { ...sourceInfo },
     };
+    if (procurementEmailImports.length >= MAX_EMAIL_IMPORT_RECORDS) return entry;
     procurementEmailImports.push(entry);
     await persistData();
     return entry;

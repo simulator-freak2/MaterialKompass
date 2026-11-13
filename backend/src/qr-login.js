@@ -161,6 +161,13 @@ function registerQrLoginRoutes({
   });
 
   app.post('/api/auth/qr-credentials/me', authMiddleware, (req, res) => {
+    // A personal session on a shared service device must not be turned into a
+    // long-lived login credential by whoever finds it left open.
+    if (req.sessionType && req.sessionType !== 'normal') {
+      return res.status(403).json({
+        error: 'Anmeldecodes können nur in einer regulären Sitzung erstellt werden, nicht an einem Dienstgerät.',
+      });
+    }
     const requestedValidity = validityFrom(req.body);
     if (requestedValidity.error) return res.status(400).json({ error: requestedValidity.error });
     const requestedTitle = titleFrom(req.body);

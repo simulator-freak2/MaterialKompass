@@ -1004,6 +1004,17 @@ function registerTenancyRoutes({
     if (unit.parentId === null && parentId !== null) {
       return res.status(409).json({ error: 'Die Wurzeleinheit kann nicht verschoben werden.' });
     }
+    // Moving a unit or turning it into a youth organization attaches it to
+    // another unit and grants access to that unit's data. This needs the same
+    // authority over the new parent as creating a sub-unit there.
+    const structureChanged = parentId !== unit.parentId
+      || requestedKind !== (unit.unitKind || UNIT_KIND_STANDARD);
+    if (structureChanged && (!canCreateOrganizationStructure(req)
+      || !unitIdsForPermission(req, 'organizations.write').has(parentId))) {
+      return res.status(403).json({
+        error: 'Nur Organisationsadministratoren mit organizations.write für die übergeordnete Einheit dürfen die Struktur ändern.',
+      });
+    }
     if (!validateUnitTree(units, unit.organizationId, parentId, unit.id)) {
       return res.status(400).json({ error: 'Die Hierarchie würde ungültig oder zyklisch.' });
     }

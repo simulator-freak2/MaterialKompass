@@ -235,6 +235,11 @@ test('primary response vehicle requires vehicle and operational approval', async
       method: 'POST', headers, body: JSON.stringify({ mileage: 12000, fuelLevel: 'voll' }),
     });
     assert.equal((await issued.json()).status, 'Ausgegeben');
+    const lateRejection = await fetch(
+      `${baseUrl}/api/vehicle-reservations/${reservation.id}/operational-decision`,
+      { method: 'POST', headers, body: JSON.stringify({ approved: false, reason: 'Zu spät' }) },
+    );
+    assert.equal(lateRejection.status, 409);
     const returned = await fetch(`${baseUrl}/api/vehicle-reservations/${reservation.id}/return`, {
       method: 'POST', headers,
       body: JSON.stringify({ mileage: 12042, fuelLevel: '3/4', damageReported: false }),

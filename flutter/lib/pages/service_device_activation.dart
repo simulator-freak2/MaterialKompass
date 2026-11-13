@@ -104,6 +104,7 @@ class _ServiceDeviceActivationPageState
     extends State<ServiceDeviceActivationPage> {
   final identifier = TextEditingController();
   final password = TextEditingController();
+  final mfaCode = TextEditingController();
   List<Map<String, dynamic>> devices = [];
   String? selectedId;
   bool loading = false;
@@ -112,6 +113,7 @@ class _ServiceDeviceActivationPageState
   void dispose() {
     identifier.dispose();
     password.dispose();
+    mfaCode.dispose();
     super.dispose();
   }
 
@@ -128,6 +130,7 @@ class _ServiceDeviceActivationPageState
         body: jsonEncode({
           'identifier': identifier.text,
           'password': password.text,
+          'mfaCode': mfaCode.text.trim(),
         }),
       );
       if (!mounted) return;
@@ -160,6 +163,7 @@ class _ServiceDeviceActivationPageState
         body: jsonEncode({
           'identifier': identifier.text,
           'password': password.text,
+          'mfaCode': mfaCode.text.trim(),
           'deviceId': selectedId,
           ...await _clientInfo(),
         }),
@@ -234,6 +238,16 @@ class _ServiceDeviceActivationPageState
                           obscureText: true,
                           decoration: const InputDecoration(
                             labelText: 'Admin-Passwort',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: mfaCode,
+                          keyboardType: TextInputType.number,
+                          autofillHints: const [AutofillHints.oneTimeCode],
+                          decoration: const InputDecoration(
+                            labelText: '2-FA-Code (falls eingerichtet)',
                             border: OutlineInputBorder(),
                           ),
                         ),

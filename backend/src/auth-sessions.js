@@ -59,6 +59,11 @@ function createAuthSessions({
         normalized[key] = context[key];
       }
     }
+    // Device sessions must end when an administrator resets or reconfigures
+    // the device; the access-token check (dsv) alone does not cover refresh.
+    if (Number.isInteger(context.deviceSecurityVersion)) {
+      normalized.deviceSecurityVersion = context.deviceSecurityVersion;
+    }
     return normalized;
   }
 

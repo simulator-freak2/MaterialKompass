@@ -967,6 +967,7 @@ function createApp(options = {}) {
       if (context.sessionType !== PERSONAL_DEVICE_SESSION) return false;
       const device = serviceDevices.find((entry) => entry.id === context.deviceId);
       return Boolean(device?.active
+        && device.securityVersion === context.deviceSecurityVersion
         && device.organizationId === context.organizationId
         && device.unitId === context.unitId
         && ipAllowed(
@@ -2545,7 +2546,7 @@ function createApp(options = {}) {
     app, authMiddleware, requirePermission, hasPermission,
     vehicles, vehicleReservations, vehicleMaintenanceEvents,
     vehicleLoadAssignments, vehicleLoadLists, vehicleLoadRequests, materials, materialMovements,
-    locations, organizations, organizationUnits, defectReports, logEvent, nextId,
+    locations, stockStructures, organizations, organizationUnits, defectReports, logEvent, nextId,
   });
   app.locals.applyVehicleRetentionPolicy = vehicleManagement.applyVehicleRetentionPolicy;
 
