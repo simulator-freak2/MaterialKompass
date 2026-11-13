@@ -6,6 +6,11 @@
 
 ## Unveroeffentlicht
 
+- Beschaffung/Postbox: Anhänge einer E-Mail lassen sich einzeln einem oder mehreren
+  Vorgängen zuweisen, mit Dokumenttyp je Vorgang. Der E-Mail-Text landet im Verlauf
+  des Vorgangs. Abgeschlossene Vorgänge nehmen nachträglich nur Rechnungen an.
+  Nach Zuweisen, Angebotsübernahme oder Verwerfen wird die E-Mail aus der Postbox
+  entfernt und beim nächsten IMAP-Abruf auch im Postfach endgültig gelöscht.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

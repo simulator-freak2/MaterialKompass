@@ -30,6 +30,46 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
     if (!(await connection.list()).some((entry) => entry.path === processedMailbox)) await connection.mailboxCreate(processedMailbox);
   }
 
+  async function locateMessage(connection, source) {
+    if (source.uid) {
+      try {
+        const found = await connection.fetchOne(source.uid, { uid: true, envelope: true }, { uid: true });
+        const foundId = String(found?.envelope?.messageId || '');
+        if (found?.uid && (!source.messageId || !foundId || foundId === source.messageId)) return [found.uid];
+      } catch (_) {
+        // Der Ordner kann außerhalb von MaterialKompass verändert worden sein;
+        // dann wird unten über die Message-ID gesucht.
+      }
+    }
+    if (!source.messageId) return [];
+    return (await connection.search({ header: { 'message-id': source.messageId } }, { uid: true })) || [];
+  }
+
+  // Zugewiesene, übernommene oder verworfene E-Mails werden auch im Postfach
+  // gelöscht. Fehlschläge bleiben vorgemerkt und werden im nächsten Lauf wiederholt.
+  async function deleteReleasedMessages(connection) {
+    const pending = service.pendingMailDeletions ? service.pendingMailDeletions() : [];
+    if (!pending.length) return;
+    const folders = new Set((await connection.list()).map((entry) => entry.path));
+    for (const entry of pending) {
+      const source = entry.emailSource || {};
+      const folder = source.mailbox || processedMailbox;
+      try {
+        let uids = [];
+        if (folders.has(folder)) {
+          await connection.mailboxOpen(folder);
+          uids = await locateMessage(connection, source);
+          if (uids.length) await connection.messageDelete(uids, { uid: true });
+        }
+        if (!uids.length) logger.warn?.(`Angebots-E-Mail ${entry.id} war im Postfach nicht mehr vorhanden.`);
+        await service.completeMailDeletion(entry);
+      } catch (error) {
+        source.deleteError = String(error?.message || error).slice(0, 1000);
+        logger.error(`Angebots-E-Mail ${entry.id} konnte im Postfach nicht gelöscht werden:`, error.message);
+      }
+    }
+  }
+
   async function runOnce() {
     if (running || !env.PROCUREMENT_IMAP_HOST) return false;
     return runInContext(async () => {
@@ -65,6 +105,7 @@ function createProcurementMailMonitor({ store, service, persistData = async () =
         // trotzdem abschließen, damit kein leerer Bereich endlos abgefragt wird.
         if (state.lastUid < lastUid) { state.lastUid = lastUid; await store.saveMailboxProcessingState(state); }
       }
+        await deleteReleasedMessages(connection);
         await persistData(); return true;
       } finally {
         if (connection.usable) await connection.logout().catch(() => connection.close());

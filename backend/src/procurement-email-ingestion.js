@@ -8,6 +8,21 @@ const MAX_EMAIL_IMPORT_RECORDS = 10_000;
 const MAX_IMPORT_STORAGE_BYTES = 256 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'ods']);
+const DOCUMENT_TYPES = new Set([
+  'Angebot', 'Genehmigung', 'Bestellung', 'Auftragsbestätigung', 'Lieferschein',
+  'Rechnung', 'Sonstiges',
+]);
+// Dokumente aus der Postbox dürfen jedem laufenden Vorgang zugewiesen werden.
+// Abgeschlossene Vorgänge nehmen nur noch nachträglich eingehende Rechnungen an.
+const ASSIGNABLE_STATUSES = new Set([
+  'Beantragt', 'Genehmigt', 'Bestellt', 'Teilweise geliefert', 'Geliefert',
+]);
+const INVOICE_ONLY_STATUSES = new Set(['Abgeschlossen']);
+const MAX_DOCUMENTS_PER_REQUEST = 20;
+const MAX_DOCUMENTS_TOTAL = 5_000;
+const MAX_DOCUMENT_STORAGE_BYTES = 256 * 1024 * 1024;
+const DELETED_STATUS = 'gelöscht';
+const CLOSED_STATUSES = new Set(['verarbeitet', 'verworfen', DELETED_STATUS]);
 
 function storedAttachmentBytes(entries) {
   return entries.reduce((sum, entry) => sum + (entry.attachments || [])
@@ -26,6 +41,32 @@ function publicEntry(entry, includeSource = false) {
   };
   if (!includeSource) delete result.emailSource;
   return result;
+}
+
+function isPendingProcurementEmail(entry) {
+  return !CLOSED_STATUSES.has(entry?.status);
+}
+
+function hasMailboxReference(entry) {
+  const source = entry?.emailSource || {};
+  return Boolean(source.uid || source.messageId);
+}
+
+// Entfernt eine abgeschlossene E-Mail aus MaterialKompass. Liegt die Nachricht
+// noch im IMAP-Postfach, bleibt bis zur dortigen Löschung nur ein inhaltsloser
+// Platzhalter mit der Postfach-Referenz bestehen; der Monitor entfernt ihn.
+function releaseProcurementEmail(entries, entry, { mailDeletionEnabled = false } = {}) {
+  if (mailDeletionEnabled && hasMailboxReference(entry)) {
+    for (const key of Object.keys(entry)) {
+      if (!['id', 'emailSource', 'createdAt'].includes(key)) delete entry[key];
+    }
+    entry.status = DELETED_STATUS;
+    entry.attachments = [];
+    entry.emailSource = { ...entry.emailSource, deleteRequestedAt: new Date().toISOString() };
+    return;
+  }
+  const index = entries.indexOf(entry);
+  if (index >= 0) entries.splice(index, 1);
 }
 
 function canAccessProcurementEmail(user, entry, procurementRequests) {
@@ -121,19 +162,40 @@ function createProcurementEmailService({
     await persistData();
   }
 
-  return { ingestSource, recordFailure, updateMoved, stop: async () => {} };
+  function pendingMailDeletions() {
+    return procurementEmailImports.filter((entry) => entry.status === DELETED_STATUS
+      && entry.emailSource?.deleteRequestedAt);
+  }
+
+  async function completeMailDeletion(entry) {
+    const index = procurementEmailImports.indexOf(entry);
+    if (index >= 0) procurementEmailImports.splice(index, 1);
+    await persistData();
+  }
+
+  return {
+    ingestSource, recordFailure, updateMoved, pendingMailDeletions, completeMailDeletion,
+    stop: async () => {},
+  };
 }
 
 function registerProcurementEmailRoutes({
   app, authMiddleware, requirePermission, procurementEmailImports,
   procurementRequests, procurementOffers, procurementDocuments, suppliers,
-  nextId, logEvent,
+  nextId, logEvent, mailDeletionEnabled = Boolean(process.env.PROCUREMENT_IMAP_HOST),
 }) {
   const address = process.env.PROCUREMENT_EMAIL_ADDRESS
     || process.env.PROCUREMENT_IMAP_USER
     || `angebote@${process.env.SCANNER_EMAIL_DOMAIN || 'materialkompass.org'}`;
-  const canSee = (req, entry) =>
-    canAccessProcurementEmail(req.user, entry, procurementRequests);
+  const canSee = (req, entry) => entry.status !== DELETED_STATUS
+    && canAccessProcurementEmail(req.user, entry, procurementRequests);
+  const release = (entry) => releaseProcurementEmail(procurementEmailImports, entry, {
+    mailDeletionEnabled,
+  });
+  const emailHistoryDetails = (entry) => ({
+    emailImportId: entry.id, sender: entry.sender, senderName: entry.senderName,
+    subject: entry.subject, messageText: entry.messageText,
+  });
   const find = (req, res) => {
     const entry = procurementEmailImports.find((candidate) => candidate.id === req.params.id);
     if (!entry || !canSee(req, entry)) {
@@ -193,14 +255,16 @@ function registerProcurementEmailRoutes({
     entry.processedBy = req.user.username;
     request.history.push({
       id: `history-${request.history.length + 1}`, action: 'Angebot aus E-Mail übernommen',
-      actor: req.user.username, details: { offerId: offer.id, emailImportId: entry.id },
+      actor: req.user.username, details: { offerId: offer.id, ...emailHistoryDetails(entry) },
       createdAt: new Date().toISOString(),
     });
     request.updatedAt = new Date().toISOString();
     logEvent('Angebot aus E-Mail übernommen', 'ProcurementRequest', {
       id: request.id, offerId: offer.id, emailImportId: entry.id,
     }, req.user.username);
-    return res.json({ entry: publicEntry(entry), offer });
+    const result = publicEntry(entry);
+    release(entry);
+    return res.json({ entry: result, offer });
   });
 
   app.post('/api/procurement-email-inbox/:id/discard', authMiddleware, requirePermission('procurement.request'), (req, res) => {
@@ -208,13 +272,114 @@ function registerProcurementEmailRoutes({
     if (entry.status === 'verarbeitet') return res.status(409).json({ error: 'Das Angebot wurde bereits übernommen.' });
     entry.status = 'verworfen'; entry.problem = text(req.body.reason || 'Manuell verworfen', 1000);
     entry.processedAt = new Date().toISOString(); entry.processedBy = req.user.username;
-    logEvent('discard', 'ProcurementEmailImport', { id: entry.id, reason: entry.problem }, req.user.username);
-    return res.json(publicEntry(entry));
+    logEvent('discard', 'ProcurementEmailImport', {
+      id: entry.id, reason: entry.problem, sender: entry.sender, subject: entry.subject,
+    }, req.user.username);
+    const result = publicEntry(entry);
+    release(entry);
+    return res.json(result);
+  });
+
+  app.post('/api/procurement-email-inbox/:id/assign', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+    const entry = find(req, res); if (!entry) return;
+    if (!isPendingProcurementEmail(entry)) {
+      return res.status(409).json({ error: 'Diese E-Mail wurde bereits abgeschlossen.' });
+    }
+    const input = Array.isArray(req.body.assignments) ? req.body.assignments : [];
+    if (!input.length) return res.status(400).json({ error: 'Mindestens ein Beschaffungsvorgang ist erforderlich.' });
+    if (input.length > 50) return res.status(400).json({ error: 'Es können höchstens 50 Vorgänge gleichzeitig zugewiesen werden.' });
+    const attachmentsById = new Map(entry.attachments.map((attachment) => [attachment.id, attachment]));
+    const seenRequests = new Set();
+    const plan = [];
+    // Erst alles prüfen, dann schreiben: Eine ungültige Zuweisung darf keine
+    // Teilübernahme hinterlassen, weil die E-Mail anschließend gelöscht wird.
+    for (const assignment of input) {
+      const requestId = String(assignment?.requestId || '');
+      const request = procurementRequests.find((candidate) => candidate.id === requestId);
+      if (!request || !canAccessProcurementEmail(req.user, { requestId }, procurementRequests)) {
+        return res.status(400).json({ error: 'Ein ausgewählter Beschaffungsvorgang wurde nicht gefunden.' });
+      }
+      if (seenRequests.has(request.id)) {
+        return res.status(400).json({ error: `Der Vorgang ${request.number} wurde mehrfach ausgewählt.` });
+      }
+      seenRequests.add(request.id);
+      const documentType = String(assignment.documentType || '');
+      if (!DOCUMENT_TYPES.has(documentType)) {
+        return res.status(400).json({ error: `Für ${request.number} ist kein gültiger Dokumenttyp gewählt.` });
+      }
+      if (INVOICE_ONLY_STATUSES.has(request.status)) {
+        if (documentType !== 'Rechnung') {
+          return res.status(409).json({ error: `Dem abgeschlossenen Vorgang ${request.number} können nur Rechnungen zugewiesen werden.` });
+        }
+      } else if (!ASSIGNABLE_STATUSES.has(request.status)) {
+        return res.status(409).json({ error: `Dem Vorgang ${request.number} können im Status „${request.status}“ keine Dokumente zugewiesen werden.` });
+      }
+      const ids = [...new Set((Array.isArray(assignment.attachmentIds) ? assignment.attachmentIds : []).map(String))];
+      const attachments = ids.map((id) => attachmentsById.get(id));
+      if (attachments.some((attachment) => !attachment)) {
+        return res.status(400).json({ error: 'Ein ausgewählter Anhang wurde nicht gefunden.' });
+      }
+      if (!attachments.length && entry.attachments.length) {
+        return res.status(400).json({ error: `Für ${request.number} ist kein Anhang ausgewählt.` });
+      }
+      const existing = procurementDocuments.filter((document) => document.requestId === request.id).length;
+      if (existing + attachments.length > MAX_DOCUMENTS_PER_REQUEST) {
+        return res.status(409).json({ error: `Pro Vorgang sind maximal ${MAX_DOCUMENTS_PER_REQUEST} Dokumente erlaubt (${request.number}).` });
+      }
+      plan.push({ request, documentType, attachments });
+    }
+    const newDocuments = plan.flatMap((item) => item.attachments);
+    if (procurementDocuments.length + newDocuments.length > MAX_DOCUMENTS_TOTAL) {
+      return res.status(507).json({ error: 'Die maximale Gesamtzahl an Beschaffungsdokumenten ist erreicht.' });
+    }
+    const storedBytes = procurementDocuments.reduce((sum, document) =>
+      sum + Buffer.byteLength(document.fileBase64 || '', 'base64'), 0);
+    const incomingBytes = newDocuments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
+    if (storedBytes + incomingBytes > MAX_DOCUMENT_STORAGE_BYTES) {
+      return res.status(507).json({ error: 'Das Speicherlimit für Beschaffungsdokumente ist erreicht.' });
+    }
+
+    const timestamp = new Date().toISOString();
+    const results = [];
+    for (const { request, documentType, attachments } of plan) {
+      const documentIds = [];
+      for (const attachment of attachments) {
+        const document = {
+          id: nextId('proc-document', procurementDocuments), requestId: request.id,
+          entityType: 'Antrag', entityId: request.id, documentType,
+          fileName: attachment.fileName, mimeType: attachment.mimeType,
+          fileBase64: attachment.fileBase64, createdBy: req.user.username,
+          createdAt: timestamp, sourceEmailImportId: entry.id,
+        };
+        procurementDocuments.push(document);
+        documentIds.push(document.id);
+      }
+      request.history.push({
+        id: `history-${request.history.length + 1}`, action: 'Dokumente aus Postbox zugewiesen',
+        actor: req.user.username,
+        details: {
+          documentType, documentIds,
+          fileNames: attachments.map((attachment) => attachment.fileName),
+          ...emailHistoryDetails(entry),
+        },
+        createdAt: timestamp,
+      });
+      request.updatedAt = timestamp;
+      logEvent('Dokumente aus Postbox zugewiesen', 'ProcurementRequest', {
+        id: request.id, documentIds, emailImportId: entry.id,
+      }, req.user.username);
+      results.push({ requestId: request.id, number: request.number, documentIds });
+    }
+    release(entry);
+    return res.json({ assignments: results });
   });
 }
 
 module.exports = {
+  DOCUMENT_TYPES,
   canAccessProcurementEmail,
+  isPendingProcurementEmail,
+  releaseProcurementEmail,
   createProcurementEmailService,
   registerProcurementEmailRoutes,
 };

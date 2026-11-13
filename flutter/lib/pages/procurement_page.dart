@@ -881,8 +881,57 @@ class _ProcurementPageState extends State<ProcurementPage>
     }
   }
 
+  Future<void> _assignEmailDocuments(Map<String, dynamic> email) async {
+    final eligibleRequests =
+        _requests
+            .where(
+              (request) =>
+                  PostboxAssignDialog.assignableStatuses.contains(
+                    request['status'],
+                  ) ||
+                  PostboxAssignDialog.invoiceOnlyStatuses.contains(
+                    request['status'],
+                  ),
+            )
+            .toList()
+          ..sort(
+            (a, b) => (b['number']?.toString() ?? '').compareTo(
+              a['number']?.toString() ?? '',
+            ),
+          );
+    if (eligibleRequests.isEmpty) {
+      _message(
+        'Es gibt keinen Vorgang, dem Dokumente zugewiesen werden können.',
+        error: true,
+      );
+      return;
+    }
+    final assignments = await showDialog<List<Map<String, dynamic>>>(
+      context: context,
+      builder: (_) =>
+          PostboxAssignDialog(email: email, requests: eligibleRequests),
+    );
+    if (assignments == null) return;
+    final result = await _request(
+      '/api/procurement-email-inbox/${email['id']}/assign',
+      method: 'POST',
+      body: {'assignments': assignments},
+    );
+    if (result != null) {
+      _message(
+        assignments.length == 1
+            ? 'Dokumente wurden zugewiesen, die E-Mail wird gelöscht.'
+            : 'Dokumente wurden ${assignments.length} Vorgängen zugewiesen, die E-Mail wird gelöscht.',
+      );
+      await _load();
+    }
+  }
+
   Future<void> _discardEmailOffer(Map<String, dynamic> email) async {
-    final reason = await _textPrompt('E-Mail verwerfen', 'Begründung');
+    final reason = await _textPrompt(
+      'E-Mail verwerfen und löschen',
+      'Begründung',
+    );
     if (reason == null) return;
     final result = await _request(
       '/api/procurement-email-inbox/${email['id']}/discard',
@@ -1197,7 +1246,7 @@ class _ProcurementPageState extends State<ProcurementPage>
               leading: const Icon(Icons.forward_to_inbox_outlined),
               title: const Text('Angebote per E-Mail empfangen'),
               subtitle: Text(
-                'Lieferanten senden Angebote an $_offerEmailAddress. Die Vorgangsnummer im Betreff ermöglicht die automatische Zuordnung.',
+                'Lieferanten senden Angebote, Lieferscheine und Rechnungen an $_offerEmailAddress. Die Vorgangsnummer im Betreff ermöglicht die automatische Zuordnung. Nach dem Zuweisen, Übernehmen oder Verwerfen wird die E-Mail gelöscht.',
               ),
               trailing: Chip(label: Text('${open.length} offen')),
             ),
@@ -1303,13 +1352,20 @@ class _ProcurementPageState extends State<ProcurementPage>
                           ),
                           if (!completed && _can('procurement.request')) ...[
                             const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
+                            Wrap(
+                              alignment: WrapAlignment.end,
+                              runSpacing: 8,
                               children: [
                                 TextButton.icon(
                                   onPressed: () => _discardEmailOffer(email),
                                   icon: const Icon(Icons.delete_outline),
                                   label: const Text('Verwerfen'),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  onPressed: () => _assignEmailDocuments(email),
+                                  icon: const Icon(Icons.assignment_outlined),
+                                  label: const Text('Vorgängen zuweisen'),
                                 ),
                                 const SizedBox(width: 8),
                                 FilledButton.icon(
@@ -2538,6 +2594,313 @@ class _OfferComponentLine {
   }
 }
 
+class PostboxAssignDialog extends StatefulWidget {
+  const PostboxAssignDialog({
+    super.key,
+    required this.email,
+    required this.requests,
+  });
+
+  static const documentTypes = [
+    'Angebot',
+    'Genehmigung',
+    'Bestellung',
+    'Auftragsbestätigung',
+    'Lieferschein',
+    'Rechnung',
+    'Sonstiges',
+  ];
+  static const assignableStatuses = {
+    'Beantragt',
+    'Genehmigt',
+    'Bestellt',
+    'Teilweise geliefert',
+    'Geliefert',
+  };
+  // Abgeschlossene Vorgänge nehmen nur noch nachträgliche Rechnungen an.
+  static const invoiceOnlyStatuses = {'Abgeschlossen'};
+
+  final Map<String, dynamic> email;
+  final List<Map<String, dynamic>> requests;
+
+  @override
+  State<PostboxAssignDialog> createState() => _PostboxAssignDialogState();
+}
+
+class _PostboxAssignment {
+  _PostboxAssignment({this.requestId, Set<String>? attachmentIds})
+    : attachmentIds = attachmentIds ?? <String>{};
+
+  String? requestId;
+  String documentType = 'Angebot';
+  final Set<String> attachmentIds;
+}
+
+class _PostboxAssignDialogState extends State<PostboxAssignDialog> {
+  late final List<Map<String, dynamic>> _attachments;
+  final List<_PostboxAssignment> _assignments = [];
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _attachments = ((widget.email['attachments'] as List?) ?? const [])
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
+    final suggested = widget.email['requestId']?.toString();
+    final assignment = _PostboxAssignment(
+      requestId: widget.requests.any((entry) => entry['id'] == suggested)
+          ? suggested
+          : null,
+      attachmentIds: _attachments
+          .map((entry) => entry['id'].toString())
+          .toSet(),
+    );
+    _normalizeType(assignment);
+    _assignments.add(assignment);
+  }
+
+  Map<String, dynamic>? _request(String? id) =>
+      widget.requests.where((entry) => entry['id'] == id).firstOrNull;
+
+  bool _invoiceOnly(String? requestId) => PostboxAssignDialog
+      .invoiceOnlyStatuses
+      .contains(_request(requestId)?['status']);
+
+  void _normalizeType(_PostboxAssignment assignment) {
+    if (_invoiceOnly(assignment.requestId)) {
+      assignment.documentType = 'Rechnung';
+    }
+  }
+
+  Set<String> get _unassignedAttachments {
+    final assigned = _assignments.expand((entry) => entry.attachmentIds);
+    return _attachments
+        .map((entry) => entry['id'].toString())
+        .toSet()
+        .difference(assigned.toSet());
+  }
+
+  void _submit() {
+    final seen = <String>{};
+    for (final assignment in _assignments) {
+      final request = _request(assignment.requestId);
+      if (request == null) {
+        setState(() => _error = 'Bitte für jede Zeile einen Vorgang wählen.');
+        return;
+      }
+      if (!seen.add(assignment.requestId!)) {
+        setState(
+          () =>
+              _error = 'Der Vorgang ${request['number']} ist doppelt gewählt.',
+        );
+        return;
+      }
+      if (_attachments.isNotEmpty && assignment.attachmentIds.isEmpty) {
+        setState(
+          () => _error = 'Für ${request['number']} ist kein Anhang ausgewählt.',
+        );
+        return;
+      }
+    }
+    Navigator.pop(
+      context,
+      _assignments
+          .map(
+            (entry) => {
+              'requestId': entry.requestId,
+              'documentType': entry.documentType,
+              'attachmentIds': entry.attachmentIds.toList(),
+            },
+          )
+          .toList(),
+    );
+  }
+
+  Widget _assignmentCard(int index, _PostboxAssignment assignment) {
+    final invoiceOnly = _invoiceOnly(assignment.requestId);
+    return Card(
+      key: ObjectKey(assignment),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: assignment.requestId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Beschaffungsvorgang *',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: widget.requests
+                        .map(
+                          (entry) => DropdownMenuItem(
+                            value: entry['id'].toString(),
+                            child: Text(
+                              '${entry['number']} · ${entry['title']} (${entry['status']})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() {
+                      assignment.requestId = value;
+                      _normalizeType(assignment);
+                      _error = null;
+                    }),
+                  ),
+                ),
+                if (_assignments.length > 1)
+                  IconButton(
+                    tooltip: 'Zuweisung entfernen',
+                    onPressed: () =>
+                        setState(() => _assignments.removeAt(index)),
+                    icon: const Icon(Icons.close),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: ValueKey('type-${assignment.requestId}'),
+              initialValue: assignment.documentType,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Dokumenttyp',
+                border: const OutlineInputBorder(),
+                helperText: invoiceOnly
+                    ? 'Abgeschlossene Vorgänge nehmen nur Rechnungen an.'
+                    : null,
+              ),
+              items:
+                  (invoiceOnly
+                          ? const ['Rechnung']
+                          : PostboxAssignDialog.documentTypes)
+                      .map(
+                        (value) =>
+                            DropdownMenuItem(value: value, child: Text(value)),
+                      )
+                      .toList(),
+              onChanged: (value) =>
+                  setState(() => assignment.documentType = value!),
+            ),
+            if (_attachments.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Anhänge', style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _attachments.map((attachment) {
+                  final id = attachment['id'].toString();
+                  return FilterChip(
+                    label: Text(attachment['fileName'].toString()),
+                    selected: assignment.attachmentIds.contains(id),
+                    onSelected: (selected) => setState(() {
+                      selected
+                          ? assignment.attachmentIds.add(id)
+                          : assignment.attachmentIds.remove(id);
+                      _error = null;
+                    }),
+                  );
+                }).toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unassigned = _unassignedAttachments;
+    final unassignedNames = _attachments
+        .where((entry) => unassigned.contains(entry['id'].toString()))
+        .map((entry) => entry['fileName'].toString())
+        .toList();
+    return AlertDialog(
+      title: const Text('Dokumente Vorgängen zuweisen'),
+      content: SizedBox(
+        width: 640,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.email['subject']?.toString() ?? 'Ohne Betreff',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Der E-Mail-Text wird in den Verlauf jedes gewählten Vorgangs übernommen.',
+              ),
+              const SizedBox(height: 16),
+              for (var i = 0; i < _assignments.length; i++)
+                _assignmentCard(i, _assignments[i]),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _assignments.length >= widget.requests.length
+                      ? null
+                      : () => setState(
+                          () => _assignments.add(
+                            _PostboxAssignment(attachmentIds: unassigned),
+                          ),
+                        ),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Weiteren Vorgang hinzufügen'),
+                ),
+              ),
+              if (unassignedNames.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Nicht zugewiesen und damit verworfen: ${unassignedNames.join(', ')}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.tertiary,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              Text(
+                'Nach dem Zuweisen wird die E-Mail aus der Postbox und dem E-Mail-Postfach endgültig gelöscht.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
+        FilledButton.icon(
+          onPressed: _submit,
+          icon: const Icon(Icons.assignment_turned_in_outlined),
+          label: const Text('Zuweisen und löschen'),
+        ),
+      ],
+    );
+  }
+}
+
 class OrderDialog extends StatefulWidget {
   final Map<String, dynamic> request;
   final List<Map<String, dynamic>> suppliers;
@@ -3757,24 +4120,53 @@ class ProcurementDetail extends StatelessWidget {
                 section(
                   context,
                   'Verlauf',
-                  history.reversed
-                      .map(
-                        (h) => ListTile(
-                          dense: true,
-                          leading: const Icon(Icons.history, size: 20),
-                          title: Text(h['action']),
-                          subtitle: Text(
-                            '${h['actor']} · ${date(h['createdAt'])}',
-                          ),
-                        ),
-                      )
-                      .toList(),
+                  history.reversed.map((h) => historyTile(h)).toList(),
                 ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget historyTile(Map<String, dynamic> h) {
+    final details = h['details'] is Map
+        ? Map<String, dynamic>.from(h['details'] as Map)
+        : const <String, dynamic>{};
+    final subtitle = Text('${h['actor']} · ${date(h['createdAt'])}');
+    final messageText = details['messageText']?.toString() ?? '';
+    final subject = details['subject']?.toString() ?? '';
+    final sender = details['sender']?.toString() ?? '';
+    final fileNames = (details['fileNames'] as List? ?? const [])
+        .map((entry) => entry.toString())
+        .toList();
+    if (messageText.isEmpty && subject.isEmpty) {
+      return ListTile(
+        dense: true,
+        leading: const Icon(Icons.history, size: 20),
+        title: Text(h['action']?.toString() ?? ''),
+        subtitle: subtitle,
+      );
+    }
+    return ExpansionTile(
+      leading: const Icon(Icons.mail_outline, size: 20),
+      title: Text(h['action']?.toString() ?? ''),
+      subtitle: subtitle,
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      childrenPadding: const EdgeInsets.fromLTRB(56, 0, 16, 12),
+      children: [
+        if (sender.isNotEmpty) Text('Von: $sender'),
+        if (subject.isNotEmpty) Text('Betreff: $subject'),
+        if (fileNames.isNotEmpty)
+          Text(
+            '${details['documentType'] ?? 'Dokumente'}: ${fileNames.join(', ')}',
+          ),
+        if (messageText.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SelectableText(messageText),
+        ],
+      ],
     );
   }
 

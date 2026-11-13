@@ -24,6 +24,7 @@ const { registerProcurementRoutes } = require('./procurement');
 const { registerAddressLookupRoutes } = require('./address-routes');
 const {
   canAccessProcurementEmail,
+  isPendingProcurementEmail,
   createProcurementEmailService,
   registerProcurementEmailRoutes,
 } = require('./procurement-email-ingestion');
@@ -3404,7 +3405,7 @@ function createApp(options = {}) {
       Object.assign(summary, {
         procurementCount: procurementRequests.length,
         pendingProcurementEmailCount: procurementEmailImports.filter((item) =>
-          !['verarbeitet', 'verworfen'].includes(item.status)
+          isPendingProcurementEmail(item)
           && canAccessProcurementEmail(req.user, item, procurementRequests)).length,
       });
     }

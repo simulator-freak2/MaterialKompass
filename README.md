@@ -1005,6 +1005,23 @@ Nach Auswahl des zugehörigen Beschaffungsvorgangs verwendet die Übernahme aus 
 Postbox dieselbe positionsbasierte Erfassung und Kontrollsumme wie die manuelle
 Angebotseingabe.
 
+Über „Vorgängen zuweisen“ lassen sich Lieferscheine, Rechnungen und andere Anhänge
+ohne Angebotserfassung als Dokumente ablegen. Jeder Anhang kann einem oder mehreren
+Vorgängen zugewiesen werden; der Dokumenttyp wird je Vorgang gewählt. Zuweisbar sind
+Vorgänge in den Status Beantragt, Genehmigt, Bestellt, Teilweise geliefert und
+Geliefert; abgeschlossene Vorgänge nehmen nur noch Rechnungen an. Absender, Betreff
+und E-Mail-Text werden in den Verlauf jedes gewählten Vorgangs übernommen. Zuweisen
+darf, wer Beschaffungen beantragen darf und den Vorgang sehen kann (Antragsteller,
+Fachbereich oder Admin, Vorsitz, Schatzmeister, Material- und Kleiderwart). Schlägt
+eine Zuweisung fehl, wird keine übernommen.
+
+Nach dem Zuweisen, der Angebotsübernahme oder dem Verwerfen wird die E-Mail samt
+Anhängen sofort aus MaterialKompass entfernt; nachvollziehbar bleibt sie über den
+Vorgangsverlauf und das Audit-Log. Beim nächsten IMAP-Abruf wird die Nachricht auch
+im Ordner `Verarbeitet` des Postfachs endgültig gelöscht (gesucht über UID, ersatzweise
+Message-ID). Ist das Postfach nicht erreichbar, bleibt die Löschung vorgemerkt und
+wird beim nächsten Lauf wiederholt.
+
 Für den produktiven Betrieb werden `PROCUREMENT_IMAP_HOST`,
 `PROCUREMENT_IMAP_USER` (üblicherweise `angebote@materialkompass.org`) und
 `PROCUREMENT_IMAP_PASSWORD` benötigt. Port, TLS, Postfach, Zielordner und Prüfintervall
