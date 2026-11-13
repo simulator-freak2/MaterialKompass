@@ -1,12 +1,22 @@
 const { simpleParser } = require('mailparser');
 
 const MAX_MAIL_BYTES = 25 * 1024 * 1024;
+// Der Postfacheingang ist von außen beschreibbar. Ohne Obergrenzen könnte
+// ein Absender Arbeitsspeicher und Datenbank beliebig füllen.
+const MAX_EMAIL_IMPORT_RECORDS = 10_000;
+const MAX_IMPORT_STORAGE_BYTES = 256 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
   'application/pdf', 'image/jpeg', 'image/png',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.oasis.opendocument.spreadsheet',
 ]);
+
+function storedAttachmentBytes(entries) {
+  return entries.reduce((sum, entry) => sum + (entry.attachments || [])
+    .reduce((inner, attachment) => inner
+      + Buffer.byteLength(attachment.fileBase64 || '', 'base64'), 0), 0);
+}
 
 function text(value, max = 10_000) {
   return String(value ?? '').trim().slice(0, max);
@@ -23,6 +33,9 @@ function createStocktakeEmailService({
   }
 
   async function ingestSource(source, sourceInfo = {}) {
+    if (stocktakeEmailImports.length >= MAX_EMAIL_IMPORT_RECORDS) {
+      throw new Error('Die maximale Anzahl gespeicherter Inventur-E-Mails ist erreicht.');
+    }
     const bytes = Buffer.isBuffer(source) ? source : Buffer.from(source || '');
     if (!bytes.length || bytes.length > MAX_MAIL_BYTES) throw new Error('Die Inventur-E-Mail ist leer oder größer als 25 MB.');
     const parsed = await simpleParser(bytes, { skipHtmlToText: false, skipTextToHtml: true });
@@ -40,6 +53,10 @@ function createStocktakeEmailService({
       sizeBytes: attachment.content.length,
       fileBase64: attachment.content.toString('base64'),
     }));
+    const incomingBytes = attachments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
+    if (storedAttachmentBytes(stocktakeEmailImports) + incomingBytes > MAX_IMPORT_STORAGE_BYTES) {
+      throw new Error('Das Speicherlimit für E-Mail-Anhänge ist erreicht.');
+    }
     const createdAt = new Date().toISOString();
     const entry = {
       id: nextId('stocktake-email', stocktakeEmailImports),
@@ -69,6 +86,7 @@ function createStocktakeEmailService({
       createdAt: new Date().toISOString(), processedAt: null, processedBy: null,
       emailSource: { ...sourceInfo },
     };
+    if (stocktakeEmailImports.length >= MAX_EMAIL_IMPORT_RECORDS) return entry;
     stocktakeEmailImports.push(entry); await persistData(); return entry;
   }
 

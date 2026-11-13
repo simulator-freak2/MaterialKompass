@@ -368,7 +368,7 @@ test('posting invalid transaction action returns 400', async () => {
 
     assert.equal(response.status, 400);
     const errorData = await response.json();
-    assert.equal(errorData.error, 'Invalid action. Use ausgegeben or zurückgegeben.');
+    assert.equal(errorData.error, 'Invalid action. Use ausgegeben, zurückgegeben or umgebucht.');
   } finally {
     server.close();
   }
@@ -604,6 +604,47 @@ test('bulk transactions are atomic when one item is invalid', async () => {
     const item = clothing.find((entry) => entry.id === 'clothing-1');
     assert.equal(item.status, 'Lagernd');
     assert.equal(item.assignedPerson, null);
+  } finally {
+    server.close();
+  }
+});
+
+test('issued clothing can be transferred directly to another person', async () => {
+  const { server, baseUrl } = await startServer();
+  try {
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@materialkompass.org', password: 'MaterialKompass2026!' }),
+    });
+    const token = (await loginResponse.json()).token;
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const post = (body) => fetch(`${baseUrl}/api/transactions`, {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+
+    const notIssued = await post({ clothingId: 'clothing-1', personName: 'Max Mustermann', action: 'umgebucht' });
+    assert.equal(notIssued.status, 409);
+
+    assert.equal((await post({ clothingId: 'clothing-1', personName: 'Erika Musterfrau', action: 'ausgegeben' })).status, 201);
+
+    const withoutPerson = await post({ clothingId: 'clothing-1', action: 'umgebucht' });
+    assert.equal(withoutPerson.status, 400);
+
+    const samePerson = await post({ clothingId: 'clothing-1', personName: 'erika musterfrau', action: 'umgebucht' });
+    assert.equal(samePerson.status, 409);
+
+    const transferResponse = await post({ clothingId: 'clothing-1', personName: 'Max Mustermann', action: 'umgebucht' });
+    assert.equal(transferResponse.status, 201);
+    const transaction = await transferResponse.json();
+    assert.equal(transaction.action, 'umgebucht');
+    assert.equal(transaction.personName, 'Max Mustermann');
+    assert.equal(transaction.previousPersonName, 'Erika Musterfrau');
+
+    const clothing = await fetch(`${baseUrl}/api/clothing`, { headers }).then((response) => response.json());
+    const item = clothing.find((entry) => entry.id === 'clothing-1');
+    assert.equal(item.status, 'Ausgegeben');
+    assert.equal(item.assignedPerson, 'Max Mustermann');
   } finally {
     server.close();
   }

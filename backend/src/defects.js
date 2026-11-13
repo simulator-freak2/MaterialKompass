@@ -1335,6 +1335,19 @@ function registerDefectManagement({
       });
       return { report: publicDefect(report, true) };
     },
+    createFromContainerCheck({
+      containerId, title, description, priority = 'Normal', user, request = null,
+    }) {
+      // Fehlteile machen eine Kiste nur bei kritischer Priorität „Defekt“;
+      // sonst bleibt der Materialstatus erhalten und die Kiste ist „Unvollständig“.
+      const critical = priority === 'Kritisch';
+      return createReport({
+        entityType: 'MaterialItem', entityId: containerId, affectedQuantity: 1,
+        title, description, priority, damageType: 'Unvollständige Kiste',
+        riskLevel: critical ? 'Hoch' : 'Mittel',
+        operationalSafety: critical ? 'Nicht einsatzfähig' : 'Eingeschränkt',
+      }, user, { request, preserveEntityStatus: !critical });
+    },
     createFromInspection({ entityType, entityId, inspectionId, notes, user }) {
       return createReport({
         entityType, entityId, affectedQuantity: 1,

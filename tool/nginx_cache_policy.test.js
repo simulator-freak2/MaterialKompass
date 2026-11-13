@@ -39,3 +39,31 @@ test('Dart deferred chunks are never served from an immutable cache', () => {
     'the specific Dart part-file rule must precede the generic immutable asset rule',
   );
 });
+
+test('every location with its own add_header repeats the security headers', () => {
+  // nginx only inherits server-level add_header directives into locations
+  // that define none themselves.
+  const securityHeaders = [
+    'X-Content-Type-Options',
+    'X-Frame-Options',
+    'Content-Security-Policy',
+    'Referrer-Policy',
+    'Permissions-Policy',
+  ];
+  const locationPattern = /\n {4}location [^\n]*\{\n([\s\S]*?)\n {4}\}/g;
+  let checked = 0;
+  for (const match of nginxConfig.matchAll(locationPattern)) {
+    const body = match[1];
+    if (!/add_header /.test(body)) continue;
+    checked += 1;
+    for (const header of securityHeaders) {
+      assert.match(
+        body,
+        new RegExp(`add_header ${header} .* always;`),
+        `${match[0].split('\n')[1].trim()} must repeat ${header}`,
+      );
+    }
+  }
+  assert.ok(checked >= 6, 'expected the cache-policy locations to be checked');
+  assert.match(nginxConfig, /frame-ancestors 'none'/);
+});

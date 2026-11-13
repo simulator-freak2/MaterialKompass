@@ -235,6 +235,11 @@ test('primary response vehicle requires vehicle and operational approval', async
       method: 'POST', headers, body: JSON.stringify({ mileage: 12000, fuelLevel: 'voll' }),
     });
     assert.equal((await issued.json()).status, 'Ausgegeben');
+    const lateRejection = await fetch(
+      `${baseUrl}/api/vehicle-reservations/${reservation.id}/operational-decision`,
+      { method: 'POST', headers, body: JSON.stringify({ approved: false, reason: 'Zu spät' }) },
+    );
+    assert.equal(lateRejection.status, 409);
     const returned = await fetch(`${baseUrl}/api/vehicle-reservations/${reservation.id}/return`, {
       method: 'POST', headers,
       body: JSON.stringify({ mileage: 12042, fuelLevel: '3/4', damageReported: false }),
@@ -460,5 +465,127 @@ test('building parking spaces support multiple vehicles and protect assignments'
       assert.equal((await send('/api/vehicles/' + id, 'PUT', { parkingLocationId: null, parkingSpaceId: null })).status, 200);
     }
     assert.equal((await send('/api/locations/' + building.id, 'PUT', { parkingSpaces: [] })).status, 200);
+  } finally { server.close(); }
+});
+
+test('other units book material onto shared vehicles only after owner approval', async () => {
+  const { app, server, baseUrl, headers } = await setup();
+  const json = async (path, method = 'GET', body, requestHeaders = headers) => {
+    const response = await fetch(baseUrl + path, {
+      method, headers: requestHeaders, body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, data: await response.json() };
+  };
+  try {
+    const vehicle = (await json('/api/vehicles', 'POST', vehicleBody({ storagePositions: ['G1', 'G2'] }))).data;
+    const data = app.locals.appData;
+    const owner = data.organizationUnits.find(entry => entry.id === vehicle.unitId);
+    const guestId = 'vehicle-load-guest';
+    data.organizationUnits.push({
+      id: guestId, organizationId: owner.organizationId, parentId: owner.id,
+      name: 'Gastgliederung', type: 'Ortsgruppe', status: 'active', unitKind: 'standard',
+    });
+    data.locations.push({
+      id: 'guest-location', organizationId: owner.organizationId, unitId: guestId,
+      name: 'Gastlager', code: 'GAST', type: 'Gebäude',
+    });
+    data.materials.push({
+      id: 'guest-material', organizationId: owner.organizationId, unitId: guestId,
+      inventoryNumber: 'GAST-1', name: 'Gastpumpe', itemType: 'individual', quantity: 1,
+      unit: 'Stück', locationId: 'guest-location', status: 'Lagernd', archived: false,
+    });
+    const membership = data.memberships.find(entry => entry.organizationId === owner.organizationId
+      && entry.scopes?.some(scope => scope.unitId === owner.id));
+    membership.scopes.push({ unitId: guestId, roles: ['Fahrzeugwart', 'Materialwart'], departmentIds: [] });
+    const switched = await json('/api/auth/context', 'POST', {
+      organizationId: owner.organizationId, unitId: guestId,
+    });
+    assert.equal(switched.status, 200);
+    const guestHeaders = { ...headers, Authorization: `Bearer ${switched.data.token}` };
+
+    const notShared = await json(`/api/vehicles/${vehicle.id}/load-requests`, 'POST',
+      { materialId: 'guest-material', position: 'G1' }, guestHeaders);
+    assert.equal(notShared.status, 404);
+
+    // Viewing alone does not allow material bookings.
+    await json(`/api/vehicles/${vehicle.id}/sharing`, 'PUT', { viewUnitIds: [guestId] });
+    assert.equal((await json(`/api/vehicles/${vehicle.id}/load-requests`, 'POST',
+      { materialId: 'guest-material', position: 'G1' }, guestHeaders)).status, 404);
+
+    const shared = await json(`/api/vehicles/${vehicle.id}/sharing`, 'PUT', {
+      viewUnitIds: [], reservationUnitIds: [], loadUnitIds: [guestId],
+    });
+    assert.deepEqual(shared.data.loadAllowedUnitIds, [guestId]);
+    assert.deepEqual(shared.data.viewAllowedUnitIds, [guestId]);
+    // Clients without the new field keep the stored load release.
+    const legacy = await json(`/api/vehicles/${vehicle.id}/sharing`, 'PUT', { viewUnitIds: [guestId] });
+    assert.deepEqual(legacy.data.loadAllowedUnitIds, [guestId]);
+
+    const guestDetail = await json(`/api/vehicles/${vehicle.id}`, 'GET', undefined, guestHeaders);
+    assert.equal(guestDetail.status, 200);
+    assert.equal(guestDetail.data.materialLoadAllowed, true);
+    const choices = await json(`/api/vehicles/${vehicle.id}/load-materials`, 'GET', undefined, guestHeaders);
+    assert.deepEqual(choices.data.map(entry => entry.id), ['guest-material']);
+
+    // The guest cannot book directly and cannot use foreign material.
+    assert.equal((await json(`/api/vehicles/${vehicle.id}/load`, 'POST',
+      { materialId: 'guest-material', position: 'G1' }, guestHeaders)).status, 404);
+    assert.equal((await json(`/api/vehicles/${vehicle.id}/load-requests`, 'POST',
+      { materialId: 'guest-material', position: 'X' }, guestHeaders)).status, 400);
+
+    const requested = await json(`/api/vehicles/${vehicle.id}/load-requests`, 'POST',
+      { materialId: 'guest-material', position: 'G1', notes: 'Für Übung' }, guestHeaders);
+    assert.equal(requested.status, 201);
+    assert.equal(requested.data.status, 'Ausstehend');
+    assert.equal(requested.data.requesterUnitName, 'Gastgliederung');
+    // Pending quantity is reserved for the request.
+    assert.equal((await json(`/api/vehicles/${vehicle.id}/load-requests`, 'POST',
+      { materialId: 'guest-material', position: 'G1' }, guestHeaders)).status, 409);
+    assert.equal(data.materials.find(entry => entry.id === 'guest-material').locationId, 'guest-location');
+    assert.equal(data.vehicleLoadAssignments.length, 0);
+
+    // Only the owner decides.
+    assert.equal((await json(`/api/vehicle-load-requests/${requested.data.id}/decision`, 'POST',
+      { approved: true }, guestHeaders)).status, 404);
+    const ownerList = await json('/api/vehicle-load-requests?status=Ausstehend');
+    assert.deepEqual(ownerList.data.map(entry => entry.id), [requested.data.id]);
+    assert.equal((await json(`/api/vehicle-load-requests/${requested.data.id}/decision`, 'POST',
+      { approved: false })).status, 400);
+
+    const approved = await json(`/api/vehicle-load-requests/${requested.data.id}/decision`, 'POST',
+      { approved: true, position: 'G2' });
+    assert.equal(approved.status, 200);
+    assert.equal(approved.data.status, 'Genehmigt');
+    assert.equal(approved.data.position, 'G2');
+    const material = data.materials.find(entry => entry.id === 'guest-material');
+    assert.equal(material.locationId, vehicle.loadLocationId);
+    const assignment = data.vehicleLoadAssignments.find(entry => entry.id === approved.data.assignmentId);
+    assert.equal(assignment.unitId, guestId);
+    assert.equal(assignment.vehicleUnitId, vehicle.unitId);
+    assert.equal((await json(`/api/vehicle-load-requests/${requested.data.id}/decision`, 'POST',
+      { approved: true })).status, 409);
+
+    const ownerDetail = await json(`/api/vehicles/${vehicle.id}`);
+    assert.equal(ownerDetail.data.loadAssignments[0].materialUnitName, 'Gastgliederung');
+    const guestMaterial = await json('/api/material/guest-material', 'GET', undefined, guestHeaders);
+    assert.equal(guestMaterial.data.vehicleLoadedQuantity, 1);
+
+    // Foreign material returns only to a location of the owning unit.
+    assert.equal((await json(`/api/vehicles/${vehicle.id}/load/${assignment.id}/unload`, 'POST',
+      { locationId: 'loc-1' })).status, 400);
+    const unloaded = await json(`/api/vehicles/${vehicle.id}/load/${assignment.id}/unload`, 'POST',
+      {}, guestHeaders);
+    assert.equal(unloaded.status, 200);
+    assert.equal(material.locationId, 'guest-location');
+
+    // Withdrawing the release withdraws open requests.
+    const second = await json(`/api/vehicles/${vehicle.id}/load-requests`, 'POST',
+      { materialId: 'guest-material', position: 'G1' }, guestHeaders);
+    assert.equal(second.status, 201);
+    await json(`/api/vehicles/${vehicle.id}/sharing`, 'PUT', { viewUnitIds: [guestId], loadUnitIds: [] });
+    const withdrawn = data.vehicleLoadRequests.find(entry => entry.id === second.data.id);
+    assert.equal(withdrawn.status, 'Zurückgezogen');
+    assert.equal((await json(`/api/vehicle-load-requests/${second.data.id}/decision`, 'POST',
+      { approved: true })).status, 409);
   } finally { server.close(); }
 });

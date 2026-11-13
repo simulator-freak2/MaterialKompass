@@ -8,6 +8,12 @@ const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
 const { registerCalendarRoutes } = require('./calendar');
 const { registerVehicleRoutes } = require('./vehicles');
+const {
+  normalizeManufactureDate,
+  registerPsageRoutes,
+} = require('./psage-inspections');
+const { BUOYANCY_VALUES, RELEASE_TYPES, VEST_TYPES } = require('./psage-checklists');
+const { createContainerGuard, registerContainerRoutes } = require('./containers');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
   canAccessStocktakeEmail,
@@ -139,8 +145,10 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'deletedMaterials', 'materialMovements', 'materialInspections', 'materialDocuments',
   'reservations', 'maintenanceEvents',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
-  'vehicleLoadAssignments', 'vehicleLoadLists',
-  'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
+  'vehicleLoadAssignments', 'vehicleLoadLists', 'vehicleLoadRequests',
+  'containerContents', 'containerPackLists', 'containerChecks',
+  'clothingItems', 'clothingInspections', 'clothingInspectionDocuments',
+  'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'systemMessageAcknowledgements',
   'authSessions',
@@ -332,8 +340,13 @@ function createApp(options = {}) {
   const vehicleMaintenanceEvents = (appData.vehicleMaintenanceEvents ||= []);
   const vehicleLoadAssignments = (appData.vehicleLoadAssignments ||= []);
   const vehicleLoadLists = (appData.vehicleLoadLists ||= []);
+  const vehicleLoadRequests = (appData.vehicleLoadRequests ||= []);
+  const containerContents = (appData.containerContents ||= []);
+  const containerPackLists = (appData.containerPackLists ||= []);
+  const containerChecks = (appData.containerChecks ||= []);
   const clothingItems = appData.clothingItems;
-  const clothingInspections = appData.clothingInspections || [];
+  const clothingInspections = (appData.clothingInspections ||= []);
+  const clothingInspectionDocuments = (appData.clothingInspectionDocuments ||= []);
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
@@ -564,7 +577,10 @@ function createApp(options = {}) {
   function defaultTenantContext(user, requestedOrganizationId, requestedUnitId) {
     const activeMemberships = memberships.filter((entry) => entry.userId === user.id
       && entry.status === 'active'
-      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true));
+      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true)
+      // Memberships of archived (deleted) organizations must not shadow other access.
+      && organizations.some((organization) => organization.id === entry.organizationId
+        && organization.status === 'active'));
     const contextFor = (membership, activeUnitId) => {
       const context = contextForMembership({ membership, units: organizationUnits, roles, activeUnitId });
       if (context?.organizationId === PLATFORM_ORGANIZATION_ID) {
@@ -924,6 +940,32 @@ function createApp(options = {}) {
     if (role) role.permissions = [...youthAccessPermissions];
   }
 
+  const containerPermissions = [
+    'containers.read', 'containers.manage', 'containers.pack',
+    'containers.packlists', 'containers.check', 'containers.print',
+  ];
+  containerPermissions.forEach((permission) => {
+    if (!permissions.includes(permission)) permissions.push(permission);
+  });
+  const containerRolePermissions = {
+    Admin: containerPermissions,
+    Materialwart: containerPermissions,
+    Fahrzeugwart: ['containers.read', 'containers.pack', 'containers.check', 'containers.print'],
+    Kleiderwart: ['containers.read', 'containers.pack', 'containers.check'],
+    Fachbereichsleiter: ['containers.read', 'containers.check', 'containers.print'],
+    Vorsitz: ['containers.read', 'containers.print'],
+  };
+  roles.forEach((role) => {
+    (containerRolePermissions[role.name] || []).forEach((permission) => {
+      if (!role.permissions.includes(permission)) role.permissions.push(permission);
+    });
+  });
+  users.forEach((user) => {
+    user.roles.flatMap((name) => containerRolePermissions[name] || []).forEach((permission) => {
+      if (!user.permissions.includes(permission)) user.permissions.push(permission);
+    });
+  });
+
   if (!permissions.includes('offline.access')) permissions.push('offline.access');
   const offlineRoles = new Set([
     'Admin', 'Materialwart', 'Kleiderwart', 'Fachbereichsleiter', 'Fahrzeugwart',
@@ -963,6 +1005,7 @@ function createApp(options = {}) {
       if (context.sessionType !== PERSONAL_DEVICE_SESSION) return false;
       const device = serviceDevices.find((entry) => entry.id === context.deviceId);
       return Boolean(device?.active
+        && device.securityVersion === context.deviceSecurityVersion
         && device.organizationId === context.organizationId
         && device.unitId === context.unitId
         && ipAllowed(
@@ -1077,6 +1120,7 @@ function createApp(options = {}) {
     VehicleReservation: { permission: 'vehicles.read', label: 'Fahrzeuge' },
     VehicleMaintenance: { permission: 'vehicles.read', label: 'Fahrzeuge' },
     VehicleLoad: { permission: 'vehicles.read', label: 'Fahrzeuge' },
+    Container: { permission: 'containers.read', label: 'Kisten' },
     ExportLog: { permission: 'reports.read', label: 'Berichte' },
   });
 
@@ -1219,22 +1263,65 @@ function createApp(options = {}) {
       : Number.isInteger(parsedInterval) && parsedInterval > 0 && parsedInterval <= 1200
         ? parsedInterval
         : null;
+    const requestedVestType = body.psageVestType === undefined
+      ? existing?.psageVestType
+      : body.psageVestType;
+    const psageVestType = wardrobeCategory && Boolean(parent)
+      && Object.hasOwn(VEST_TYPES, String(requestedVestType || ''))
+      ? String(requestedVestType)
+      : null;
     return {
       sizes: wardrobeCategory
         ? normalizedCategorySizes(body.sizes, existing?.sizes || [])
         : [],
       inspectionIntervalMonths: wardrobeCategory ? inspectionIntervalMonths : null,
+      // Westen mit hinterlegtem PSAgE-Typ dürfen immer nur Sachkundige prüfen.
       requiresPsageInspection: wardrobeCategory && Boolean(parent)
-        ? body.requiresPsageInspection === undefined
+        ? psageVestType !== null || (body.requiresPsageInspection === undefined
           ? existing?.requiresPsageInspection === true
-          : body.requiresPsageInspection === true
+          : body.requiresPsageInspection === true)
         : false,
+      psageVestType,
+    };
+  }
+
+  function clothingVestFields(body, existing = {}) {
+    const pick = (name) => (body[name] === undefined ? existing[name] : body[name]);
+    const rawManufactureDate = pick('manufactureDate');
+    const manufactureDate = rawManufactureDate === null || rawManufactureDate === undefined
+      || String(rawManufactureDate).trim() === ''
+      ? null
+      : normalizeManufactureDate(rawManufactureDate);
+    if (manufactureDate === null && rawManufactureDate && String(rawManufactureDate).trim()) {
+      return { error: 'Das Herstellungsdatum ist ungültig (TT.MM.JJJJ, JJJJ-MM oder JJJJ).' };
+    }
+    if (manufactureDate && manufactureDate > new Date().toISOString().slice(0, 10)) {
+      return { error: 'Das Herstellungsdatum darf nicht in der Zukunft liegen.' };
+    }
+    const serialNumber = String(pick('serialNumber') || '').trim();
+    if (serialNumber.length > 128) return { error: 'Die Seriennummer ist zu lang.' };
+    const releaseType = String(pick('psageReleaseType') || '').trim();
+    const buoyancy = pick('psageBuoyancyNewton');
+    const buoyancyNewton = buoyancy === null || buoyancy === undefined || buoyancy === ''
+      ? null : Number(buoyancy);
+    if (buoyancyNewton !== null && !BUOYANCY_VALUES.includes(buoyancyNewton)) {
+      return { error: `Der Auftrieb muss einer der Werte ${BUOYANCY_VALUES.join(', ')} N sein.` };
+    }
+    return {
+      fields: {
+        manufactureDate,
+        serialNumber,
+        psageReleaseType: Object.hasOwn(RELEASE_TYPES, releaseType) ? releaseType : null,
+        psageBuoyancyNewton: buoyancyNewton,
+        psageSwiftwaterRescue: pick('psageSwiftwaterRescue') === true,
+      },
     };
   }
 
   function responseClothing(item) {
     return {
       ...item,
+      psageSafety: psageManagement?.safetyFor(item) ?? null,
       inspections: clothingInspections
         .filter((entry) => entry.clothingId === item.id)
         .slice()
@@ -2483,6 +2570,11 @@ function createApp(options = {}) {
     organizationUnits,
   });
   app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
+  const psageManagement = registerPsageRoutes({
+    app, authMiddleware, requirePermission, hasPermission, organizations, categories,
+    clothingItems, clothingInspections, inspectionDocuments: clothingInspectionDocuments,
+    defectManagement, logEvent, nextId, addMonths, categoryInspectionInterval,
+  });
   const defectEmailService = createDefectEmailService({
     defectEmailImports,
     defectManagement,
@@ -2506,12 +2598,21 @@ function createApp(options = {}) {
   app.locals.applyDefectEmailRetentionPolicy = defectEmailService.applyRetentionPolicy;
   app.locals.defectReports = defectReports;
 
+  const containerGuard = createContainerGuard({ containerContents, materials, clothingItems });
+  app.locals.containerGuard = containerGuard;
+  registerContainerRoutes({
+    app, authMiddleware, requirePermission, hasPermission,
+    containerContents, containerPackLists, containerChecks,
+    materials, materialMovements, clothingItems, locations, stockStructures,
+    vehicleLoadAssignments, defectManagement, logEvent, nextId, guard: containerGuard,
+  });
+
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
     stockStructures, vehicleLoadAssignments, clothingItems, deletedClothingItems,
     logEvent, nextId, XLSX,
-    defectManagement,
+    defectManagement, containerGuard,
     withReadAccess: (req, callback) => runWithTenant({
       ...req.tenant,
       allowedUnitIds: inventoryReadableUnitIds(
@@ -2540,15 +2641,16 @@ function createApp(options = {}) {
   const vehicleManagement = registerVehicleRoutes({
     app, authMiddleware, requirePermission, hasPermission,
     vehicles, vehicleReservations, vehicleMaintenanceEvents,
-    vehicleLoadAssignments, vehicleLoadLists, materials, materialMovements,
-    locations, organizations, organizationUnits, defectReports, logEvent, nextId,
+    vehicleLoadAssignments, vehicleLoadLists, vehicleLoadRequests, materials, materialMovements,
+    locations, stockStructures, organizations, organizationUnits, defectReports, logEvent, nextId,
+    containerGuard,
   });
   app.locals.applyVehicleRetentionPolicy = vehicleManagement.applyVehicleRetentionPolicy;
 
   registerStocktakeRoutes({
     app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
     clothingItems, locations, stockStructures, departments, users, logEvent, nextId,
-    XLSX, defectManagement,
+    XLSX, defectManagement, containerGuard,
   });
   app.locals.stocktakes = stocktakes;
   app.locals.stocktakeEmailImports = stocktakeEmailImports;
@@ -2605,6 +2707,9 @@ function createApp(options = {}) {
       return res.status(409).json({ error: 'inventoryNumber already exists' });
     }
 
+    const vestFields = clothingVestFields(req.body);
+    if (vestFields.error) return res.status(400).json({ error: vestFields.error });
+
     const item = {
       id: nextId('clothing', [...clothingItems, ...deletedClothingItems]),
       name,
@@ -2616,6 +2721,7 @@ function createApp(options = {}) {
       manufacturer: String(req.body.manufacturer || '').trim(),
       manufacturingYear: String(req.body.manufacturingYear || '').trim(),
       purchaseDate: req.body.purchaseDate || null,
+      ...vestFields.fields,
       inspectionIntervalMonths: categoryInspectionInterval(categoryId),
       lastInspectionDate: null,
       nextInspectionDate: addMonths(
@@ -2679,11 +2785,20 @@ function createApp(options = {}) {
     const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
     const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
     const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
+    const packedMessage = containerGuard.lockedMessage('ClothingItem', item.id);
+    if (packedMessage && (locationId !== (item.locationId || '')
+      || stockStructureId !== (item.stockStructureId || ''))) {
+      return res.status(409).json({ error: packedMessage });
+    }
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum gewählten Gebäude.' });
 
+    const vestFields = clothingVestFields(req.body, item);
+    if (vestFields.error) return res.status(400).json({ error: vestFields.error });
+
     const updatedItem = {
       ...item,
+      ...vestFields.fields,
       id: item.id,
       name,
       inventoryNumber,
@@ -2808,6 +2923,11 @@ function createApp(options = {}) {
     if (!item) return res.status(404).json({ error: 'Kleidungsstück nicht gefunden.' });
     if (item.archived) return res.status(409).json({ error: 'Ausgesonderte Kleidung kann nicht geprüft werden.' });
     const category = categories.find((entry) => entry.id === item.categoryId);
+    if (psageManagement.isVestCategory(item.categoryId)) {
+      return res.status(409).json({
+        error: 'Westen mit PSAgE-Westentyp werden über die PSAgE-Checkliste geprüft.',
+      });
+    }
     if (category?.requiresPsageInspection === true &&
         !req.user.roles?.includes('Sachkundiger PSAgE') &&
         !req.user.roles?.includes('Admin')) {
@@ -2861,6 +2981,8 @@ function createApp(options = {}) {
     if (clothingItems[index].status === 'Ausgegeben') {
       return res.status(409).json({ error: 'Issued clothing cannot be deleted' });
     }
+    const packedMessage = containerGuard.lockedMessage('ClothingItem', clothingItems[index].id);
+    if (packedMessage) return res.status(409).json({ error: packedMessage });
 
     const removedItem = clothingItems.splice(index, 1)[0];
     deletedClothingItems.push({
@@ -3055,9 +3177,9 @@ function createApp(options = {}) {
     const action = req.body.action;
     const submittedPersonName = String(req.body.personName || '').trim();
 
-    const validActions = ['ausgegeben', 'zurückgegeben'];
+    const validActions = ['ausgegeben', 'zurückgegeben', 'umgebucht'];
     if (!validActions.includes(action)) {
-      return res.status(400).json({ error: 'Invalid action. Use ausgegeben or zurückgegeben.' });
+      return res.status(400).json({ error: 'Invalid action. Use ausgegeben, zurückgegeben or umgebucht.' });
     }
 
     if (clothingIds.length === 0 || clothingIds.length > MAX_BULK_ITEMS) {
@@ -3066,6 +3188,12 @@ function createApp(options = {}) {
 
     if (action === 'ausgegeben' && !submittedPersonName) {
       return res.status(400).json({ error: 'personName is required when issuing clothing' });
+    }
+    if (action === 'umgebucht' && !submittedPersonName) {
+      return res.status(400).json({ error: 'personName is required when transferring clothing' });
+    }
+    if (submittedPersonName.length > 255) {
+      return res.status(400).json({ error: 'personName is too long' });
     }
 
     const personName =
@@ -3079,15 +3207,44 @@ function createApp(options = {}) {
         errors.push({ id, error: 'defective' });
       } else if (action === 'ausgegeben' && item.status === 'Ausgegeben') {
         errors.push({ id, error: 'already_issued' });
+      } else if (action === 'ausgegeben' && psageManagement.safetyFor(item)?.blocked) {
+        errors.push({
+          id,
+          error: 'psage_blocked',
+          inventoryNumber: item.inventoryNumber,
+          reasons: psageManagement.safetyFor(item).reasons,
+        });
+      } else if (action === 'ausgegeben' && containerGuard.placementOf('ClothingItem', id)) {
+        errors.push({ id, error: 'packed_in_container' });
       } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
           !(item.status === 'Defekt' && item.assignedPerson)) {
         errors.push({ id, error: 'not_issued' });
+      } else if (action === 'umgebucht' && item.status !== 'Ausgegeben') {
+        errors.push({ id, error: 'not_issued' });
+      } else if (action === 'umgebucht' &&
+          String(item.assignedPerson || '').trim().toLowerCase() === personName.toLowerCase()) {
+        errors.push({ id, error: 'same_person' });
+      } else if (action === 'umgebucht' && psageManagement.safetyFor(item)?.blocked) {
+        // Handing a blocked vest to another person is a new issue.
+        errors.push({
+          id,
+          error: 'psage_blocked',
+          inventoryNumber: item.inventoryNumber,
+          reasons: psageManagement.safetyFor(item).reasons,
+        });
       }
       return errors;
     }, []);
 
     if (invalidItems.length > 0) {
-      return res.status(409).json({ error: 'Some items could not be processed', details: invalidItems });
+      const blocked = invalidItems.filter((entry) => entry.error === 'psage_blocked');
+      return res.status(409).json({
+        error: blocked.length
+          ? `Ausgabe gesperrt (PSAgE): ${blocked.map((entry) =>
+            `${entry.inventoryNumber || entry.id}: ${entry.reasons.join(' ')}`).join(' | ')}`
+          : 'Some items could not be processed',
+        details: invalidItems,
+      });
     }
 
     const transactions = clothingIds.map((id) => {
@@ -3098,6 +3255,10 @@ function createApp(options = {}) {
         action,
         createdAt: new Date().toISOString(),
       };
+      if (action === 'umgebucht') {
+        transaction.previousPersonName =
+          clothingItems.find((item) => item.id === id)?.assignedPerson || null;
+      }
       issueTransactions.push(transaction);
       return transaction;
     });
@@ -3105,7 +3266,7 @@ function createApp(options = {}) {
     clothingIds.forEach((id) => {
       const clothingItem = clothingItems.find((item) => item.id === id);
       if (!clothingItem) return;
-      if (action === 'ausgegeben') {
+      if (action === 'ausgegeben' || action === 'umgebucht') {
         clothingItem.status = 'Ausgegeben';
         clothingItem.assignedPerson = personName || clothingItem.assignedPerson || null;
       } else if (action === 'zurückgegeben') {

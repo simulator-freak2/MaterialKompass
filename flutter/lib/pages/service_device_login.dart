@@ -255,6 +255,7 @@ class _ServiceDeviceLoginPageState extends State<ServiceDeviceLoginPage> {
         'deviceCredential': widget.deviceCredential,
         'identifier': admin[0],
         'password': admin[1],
+        'mfaCode': admin[2],
       }),
     );
     if (!mounted) return;
@@ -449,10 +450,12 @@ class _AdminCredentialDialog extends StatefulWidget {
 class _AdminCredentialDialogState extends State<_AdminCredentialDialog> {
   final user = TextEditingController();
   final password = TextEditingController();
+  final mfaCode = TextEditingController();
   @override
   void dispose() {
     user.dispose();
     password.dispose();
+    mfaCode.dispose();
     super.dispose();
   }
 
@@ -471,6 +474,14 @@ class _AdminCredentialDialogState extends State<_AdminCredentialDialog> {
           obscureText: true,
           decoration: const InputDecoration(labelText: 'Passwort'),
         ),
+        TextField(
+          controller: mfaCode,
+          keyboardType: TextInputType.number,
+          autofillHints: const [AutofillHints.oneTimeCode],
+          decoration: const InputDecoration(
+            labelText: '2-FA-Code (falls eingerichtet)',
+          ),
+        ),
       ],
     ),
     actions: [
@@ -479,7 +490,11 @@ class _AdminCredentialDialogState extends State<_AdminCredentialDialog> {
         child: const Text('Abbrechen'),
       ),
       FilledButton(
-        onPressed: () => Navigator.pop(context, [user.text, password.text]),
+        onPressed: () => Navigator.pop(context, [
+          user.text,
+          password.text,
+          mfaCode.text.trim(),
+        ]),
         child: const Text('Aktivierung entfernen'),
       ),
     ],

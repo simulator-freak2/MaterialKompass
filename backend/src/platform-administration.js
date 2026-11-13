@@ -75,6 +75,8 @@ function administrationRouteAllowed(req) {
   if (['/api/auth/me', '/api/auth/logout', '/api/auth/context', '/api/dashboard', '/api/updater/authorization'].includes(req.path)) return true;
   if (req.path.startsWith('/api/system/backup')) return true;
   if (req.path === '/api/organizations') return ['GET', 'POST'].includes(req.method);
+  if (req.path === '/api/platform/organizations') return req.method === 'GET';
+  if (/^\/api\/organizations\/[^/]+$/.test(req.path)) return ['PUT', 'DELETE'].includes(req.method);
   if (['/api/organization-units', '/api/departments', '/api/roles'].includes(req.path)) return req.method === 'GET';
   if (req.path === '/api/users') return ['GET', 'POST'].includes(req.method);
   if (['/api/users/identity-conflicts', '/api/platform/service-devices'].includes(req.path)) return req.method === 'GET';

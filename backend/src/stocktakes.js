@@ -28,9 +28,10 @@ function number(value) {
 function registerStocktakeRoutes({
   app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
   clothingItems, locations, stockStructures, departments, users, logEvent, nextId,
-  XLSX, defectManagement,
+  XLSX, defectManagement, containerGuard = null,
 }) {
   const nowIso = () => new Date().toISOString();
+  const containerOf = (entityType, entityId) => containerGuard?.containerOf(entityType, entityId) || null;
 
   function roles(user) {
     return new Set(user?.roles || []);
@@ -88,7 +89,12 @@ function registerStocktakeRoutes({
 
   function snapshotEntry(item, entityType, index) {
     const isBulk = entityType === 'MaterialItem' && item.itemType === 'bulk';
+    const container = isBulk ? null : containerOf(entityType, item.id);
     return {
+      containerId: container?.id || null,
+      containerInventoryNumber: container?.inventoryNumber || null,
+      containerName: container?.name || null,
+      isContainer: entityType === 'MaterialItem' && item.isContainer === true,
       id: `stocktake-entry-${index + 1}`,
       entityType,
       entityId: item.id,
@@ -288,6 +294,47 @@ function registerStocktakeRoutes({
     addHistory(stocktake, req.user, 'gezählt', { entryId: entry.id, inventoryNumber: entry.inventoryNumber, attempt: entry.attempts.length });
     res.json(publicStocktake(stocktake, true));
   });
+
+  // Eine verschlossen vorgefundene, vollständige Kiste kann als Einheit gezählt
+  // werden: Kiste und alle darin liegenden Einzelstücke gelten als vorhanden.
+  // Bereits gezählte Positionen bleiben unverändert.
+  app.post('/api/stocktakes/:id/containers/:containerId/confirm', authMiddleware,
+    requirePermission('stocktakes.count'), (req, res) => {
+      const stocktake = findStocktake(req, res);
+      if (!stocktake) return;
+      if (stocktake.status !== 'In Arbeit') return res.status(409).json({ error: 'Zählungen sind nur im Status „In Arbeit“ möglich.' });
+      const containerEntry = stocktake.entries.find((entry) => entry.entityType === 'MaterialItem'
+        && entry.entityId === req.params.containerId);
+      const container = materials.find((entry) => entry.id === req.params.containerId);
+      if (!containerEntry || !container?.isContainer || !containerGuard) {
+        return res.status(404).json({ error: 'Die Kiste ist nicht Teil dieser Inventur.' });
+      }
+      const contained = new Set(containerGuard.descendantEntries(container.id)
+        .filter((entry) => entry.individual)
+        .map((entry) => `${entry.entityType}:${entry.entityId}`));
+      const targets = stocktake.entries.filter((entry) => !entry.countedAt && entry.itemType === 'individual'
+        && (entry === containerEntry || contained.has(`${entry.entityType}:${entry.entityId}`)));
+      const at = nowIso();
+      for (const entry of targets) {
+        const attempt = {
+          id: nextId('count', entry.attempts), actualQuantity: 1, result: 'vorhanden',
+          actualLocationId: entry.expectedLocationId, actualStockStructureId: entry.expectedStockStructureId || null,
+          notes: text(req.body?.notes, 2000) || `Mit Kiste ${container.inventoryNumber} bestätigt.`,
+          at, actor: req.user.username, actorName: req.user.name || req.user.username,
+          viaContainerId: container.id,
+        };
+        entry.attempts.push(attempt);
+        Object.assign(entry, {
+          actualQuantity: 1, result: 'vorhanden',
+          actualLocationId: attempt.actualLocationId, actualStockStructureId: attempt.actualStockStructureId,
+          notes: attempt.notes, countedAt: at, countedBy: attempt.actor, countedByName: attempt.actorName,
+        });
+      }
+      addHistory(stocktake, req.user, 'kiste-bestätigt', {
+        containerId: container.id, inventoryNumber: container.inventoryNumber, entryCount: targets.length,
+      });
+      res.json(publicStocktake(stocktake, true));
+    });
 
   app.post('/api/stocktakes/:id/findings', authMiddleware, requirePermission('stocktakes.count'), (req, res) => {
     const stocktake = findStocktake(req, res);

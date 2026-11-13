@@ -121,7 +121,34 @@ function registerServiceDeviceRoutes({
     return user?.active && user.emailVerifiedAt && user.roles?.includes('Admin');
   }
 
-  async function authenticateAdmin(identifier, password, organizationId, unitId) {
+  // Device activation is an unauthenticated route, so it must enforce the
+  // administrator's second factor itself. Without it a leaked password alone
+  // would be enough to take over a service device of the organization.
+  async function adminSecondFactorFailure(user, mfaCode) {
+    if (userMfa?.mfaEnabled(user)) {
+      const verification = await userMfa.verifyUserCode(user, mfaCode, { allowRecovery: false });
+      return verification.valid ? null : {
+        status: 401,
+        body: { error: 'Bitte den gültigen 2-FA-Code des Administrators eingeben.', mfaRequired: true },
+      };
+    }
+    if (userMfa?.strongAuthenticationEnabled(user)) {
+      return {
+        status: 403,
+        body: {
+          error: 'Die Geräteaktivierung erfordert für Administratoren mit Push- oder Passkey-Anmeldung zusätzlich eine Authenticator-App (TOTP).',
+        },
+      };
+    }
+    return null;
+  }
+
+  function sendAdminFailure(res, authenticated, fallbackError) {
+    if (authenticated?.failure) return res.status(authenticated.failure.status).json(authenticated.failure.body);
+    return res.status(401).json({ error: fallbackError });
+  }
+
+  async function authenticateAdmin(identifier, password, organizationId, unitId, mfaCode) {
     const user = findUser(identifier);
     const supplied = typeof password === 'string' ? password : '';
     const withinBcryptLimit = Buffer.byteLength(supplied, 'utf8') <= 72;
@@ -133,7 +160,9 @@ function registerServiceDeviceRoutes({
     );
     if (!withinBcryptLimit || !passwordMatches || !user?.active || !user.emailVerifiedAt) return null;
     const tenant = tenantForUser(user, organizationId, unitId);
-    return tenant?.roles?.includes('Admin') ? { user, tenant } : null;
+    if (!tenant?.roles?.includes('Admin')) return null;
+    const failure = await adminSecondFactorFailure(user, mfaCode);
+    return failure ? { failure } : { user, tenant };
   }
   function clientIp(req) { return String(req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, ''); }
   function userInOrganization(user, organizationId, unitId) {
@@ -397,8 +426,9 @@ function registerServiceDeviceRoutes({
   app.post('/api/service-devices/activation/options', authRateLimit, async (req, res) => {
     const authenticated = await authenticateAdmin(
       req.body.identifier, req.body.password, req.body.organizationId, req.body.unitId,
+      req.body.mfaCode,
     );
-    if (!authenticated) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
+    if (!authenticated?.user) return sendAdminFailure(res, authenticated, 'Administrativer Login fehlgeschlagen.');
     return runWithTenant(authenticated.tenant, () => res.json(devices
       .filter((entry) => entry.active
         && entry.organizationId === authenticated.tenant.organizationId
@@ -409,8 +439,9 @@ function registerServiceDeviceRoutes({
   app.post('/api/service-devices/activate', authRateLimit, async (req, res) => {
     const authenticated = await authenticateAdmin(
       req.body.identifier, req.body.password, req.body.organizationId, req.body.unitId,
+      req.body.mfaCode,
     );
-    if (!authenticated) return res.status(401).json({ error: 'Administrativer Login fehlgeschlagen.' });
+    if (!authenticated?.user) return sendAdminFailure(res, authenticated, 'Administrativer Login fehlgeschlagen.');
     if (!NATIVE_CLIENT_PLATFORMS.has(String(req.body.clientPlatform || '').toLowerCase())) {
       return res.status(400).json({
         error: 'Dienstgeräte können nur in einer installierten App aktiviert werden.',
@@ -441,8 +472,9 @@ function registerServiceDeviceRoutes({
     const device = findActivatedDevice(req.body.deviceCredential);
     const authenticated = device && await authenticateAdmin(
       req.body.identifier, req.body.password, device.organizationId, device.unitId,
+      req.body.mfaCode,
     );
-    if (!authenticated || !device) return res.status(401).json({ error: 'Administrative Bestätigung fehlgeschlagen.' });
+    if (!authenticated?.user || !device) return sendAdminFailure(res, authenticated, 'Administrative Bestätigung fehlgeschlagen.');
     replaceDeviceCredential(device);
     device.activatedAt = null; device.activatedBy = null; device.securityVersion += 1;
     return runWithTenant(authenticated.tenant, () => {
@@ -554,6 +586,7 @@ function registerServiceDeviceRoutes({
       return runWithTenant(personalTenant, () => {
         const session = issueSession(verifiedUser, {
           deviceId: device.id,
+          deviceSecurityVersion: device.securityVersion,
           sessionType: PERSONAL_DEVICE_SESSION,
           organizationId: device.organizationId,
           unitId: personalTenant.unitId,
