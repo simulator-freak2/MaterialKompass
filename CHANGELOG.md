@@ -1,5 +1,9 @@
 # Aenderungsprotokoll
 
+## [1.7.8] - 2026-11-13
+
+-Update
+
 ## Unveroeffentlicht
 
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
