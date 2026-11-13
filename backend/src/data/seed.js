@@ -26,6 +26,8 @@ const permissions = [
   'vehicles.load.read', 'vehicles.load.manage', 'vehicles.print',
   'vehicle_reservations.create', 'vehicle_reservations.manage',
   'vehicle_reservations.operational_approve', 'vehicle_maintenance.manage',
+  'containers.read', 'containers.manage', 'containers.pack',
+  'containers.packlists', 'containers.check', 'containers.print',
 ];
 
 const roles = [
@@ -156,6 +158,9 @@ const vehicleReservations = [];
 const vehicleMaintenanceEvents = [];
 const vehicleLoadAssignments = [];
 const vehicleLoadLists = [];
+const containerContents = [];
+const containerPackLists = [];
+const containerChecks = [];
 const clothingInspections = [];
 
 const clothingItems = [
@@ -234,6 +239,9 @@ module.exports = {
     vehicleMaintenanceEvents,
     vehicleLoadAssignments,
     vehicleLoadLists,
+    containerContents,
+    containerPackLists,
+    containerChecks,
     clothingItems,
     clothingInspections,
     issueTransactions,

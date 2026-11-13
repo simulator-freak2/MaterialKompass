@@ -1397,6 +1397,41 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
     }
   }
 
+  Future<void> _confirmContainer(Map<String, dynamic> entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Kiste als Einheit bestätigen'),
+        content: Text(
+          'Die Kiste ${entry['inventoryNumber']} wurde verschlossen und '
+          'vollständig vorgefunden. Kiste und alle darin liegenden, noch nicht '
+          'gezählten Einzelstücke werden als „vorhanden“ erfasst. '
+          'Mengenartikel bleiben separat zu zählen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Bestätigen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final data = await request(
+      '/api/stocktakes/${widget.stocktakeId}/containers/${entry['entityId']}/confirm',
+      method: 'POST',
+      body: const {},
+    );
+    if (data != null && mounted) {
+      setState(() => stocktake = Map<String, dynamic>.from(data));
+      message('Kisteninhalt wurde als vorhanden erfasst.');
+    }
+  }
+
   Future<void> _export(String selection) async {
     final parts = selection.split(':');
     final format = parts[0];
@@ -1689,7 +1724,7 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                   ),
                   title: Text('${entry['inventoryNumber']} · ${entry['name']}'),
                   subtitle: Text(
-                    '${entry['expectedLocationName'] ?? '-'} / ${entry['expectedStockStructureName'] ?? '-'}\n${counted
+                    '${entry['containerInventoryNumber'] != null ? 'In Kiste ${entry['containerInventoryNumber']} · ' : ''}${entry['isContainer'] == true ? 'Kiste · ' : ''}${entry['expectedLocationName'] ?? '-'} / ${entry['expectedStockStructureName'] ?? '-'}\n${counted
                         ? entry['itemType'] == 'bulk'
                               ? 'Ist: ${entry['actualQuantity']} ${entry['unit']}'
                               : 'Ergebnis: ${entry['result']}'
@@ -1697,12 +1732,23 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                   ),
                   isThreeLine: true,
                   trailing: status == 'In Arbeit' && can('stocktakes.count')
-                      ? IconButton(
-                          onPressed: () => _count(entry),
-                          tooltip: counted ? 'Nachzählen' : 'Zählen',
-                          icon: Icon(
-                            counted ? Icons.replay : Icons.edit_outlined,
-                          ),
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (entry['isContainer'] == true)
+                              IconButton(
+                                onPressed: () => _confirmContainer(entry),
+                                tooltip: 'Kiste als Einheit bestätigen',
+                                icon: const Icon(Icons.inventory_outlined),
+                              ),
+                            IconButton(
+                              onPressed: () => _count(entry),
+                              tooltip: counted ? 'Nachzählen' : 'Zählen',
+                              icon: Icon(
+                                counted ? Icons.replay : Icons.edit_outlined,
+                              ),
+                            ),
+                          ],
                         )
                       : null,
                   onTap: status == 'In Arbeit' && can('stocktakes.count')

@@ -1,5 +1,13 @@
 # Aenderungsprotokoll
 
+## Unveroeffentlicht
+
+- Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
+  Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
+  bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte
+  Packlisten mit PDF, Vollständigkeitsprüfung mit optionalem Mangel, Ablaufdaten,
+  Scan-Suche, Inventurbestätigung als Einheit und offline erfassbare Prüfungen.
+
 ## [1.7.7] - 2026-11-12
 
 -Update

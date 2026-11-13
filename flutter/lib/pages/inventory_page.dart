@@ -79,6 +79,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
   String? categoryCode, subcategoryCode, locationId, stockId;
   bool reservationApprovalRequired = false;
   bool safetyCritical = false;
+  bool isContainer = false;
   final Set<String> reservationAllowedUnitIds = {};
 
   @override
@@ -135,6 +136,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       ),
     );
     safetyCritical = item['safetyCritical'] == true;
+    isContainer = item['isContainer'] == true;
   }
 
   @override
@@ -434,6 +436,20 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                         setState(() => safetyCritical = value),
                   ),
                 ),
+                if (itemType == 'individual')
+                  SizedBox(
+                    width: 520,
+                    child: SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.all_inbox_outlined),
+                      title: const Text('Als Kiste verwenden'),
+                      subtitle: const Text(
+                        'Andere Artikel können in diesen Artikel gepackt werden und wandern bei Umbuchung, Ausgabe und Beladung mit.',
+                      ),
+                      value: isContainer,
+                      onChanged: (value) => setState(() => isContainer = value),
+                    ),
+                  ),
                 if (safetyCritical)
                   _text(
                     'safetyInstructions',
@@ -495,6 +511,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
       'reservationAllowedUnitIds': reservationAllowedUnitIds.toList(),
       'safetyCritical': safetyCritical,
       'safetyInstructions': fields['safetyInstructions']!.text.trim(),
+      'isContainer': itemType == 'individual' && isContainer,
     });
   }
 }
@@ -2529,6 +2546,19 @@ class InventoryDetailDialog extends StatelessWidget {
                             'Bestand',
                             '${item['availableQuantity']} verfügbar / ${item['quantity']} ${item['unit']}',
                           ),
+                          if (item['isContainer'] == true)
+                            _line('Kiste', 'Ja – Inhalt unter „Kisten“'),
+                          if (item['containerName'] != null)
+                            _line('Liegt in Kiste', item['containerName']),
+                          if ((num.tryParse(
+                                    '${item['containerPackedQuantity'] ?? 0}',
+                                  ) ??
+                                  0) >
+                              0)
+                            _line(
+                              'In Kisten gepackt',
+                              '${item['containerPackedQuantity']} ${item['unit']}',
+                            ),
                           _line(
                             'Hersteller / Modell',
                             '${item['manufacturer'] ?? ''} ${item['model'] ?? ''}',

@@ -43,13 +43,22 @@ function registerInventoryRoutes({
   clothingItems = [], deletedClothingItems = [], logEvent, nextId, XLSX, defectManagement,
   withReadAccess = (_req, callback) => callback(), unitName = () => null,
   reservationShareCandidates = () => [],
+  containerGuard = null,
 }) {
+  const containers = containerGuard || {
+    packedQuantity: () => 0, placementOf: () => null, lockedMessage: () => null,
+    hasContents: () => false, contentSafety: () => ({ blocked: false, reasons: [], warnings: [] }),
+    syncContents: () => 0, syncMany: () => 0, containerOf: () => null,
+  };
   const number = (value, fallback = 0) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
   const loadedQuantity = (materialId) => vehicleLoadAssignments.reduce((sum, entry) =>
     entry.materialId === materialId ? sum + number(entry.quantity) : sum, 0);
+  const packedQuantity = (materialId) => containers.packedQuantity(materialId);
+  const boundQuantity = (materialId) => loadedQuantity(materialId) + packedQuantity(materialId);
+  const syncOptions = (req) => ({ actor: req.user.username, movements: materialMovements, nextId });
 
   function categoryPair(categoryCode, subcategoryCode) {
     const main = categories.find((entry) => entry.id === categoryCode && !entry.parentId);
@@ -91,10 +100,23 @@ function registerInventoryRoutes({
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return { error: 'Der Lagerplatz gehört nicht zum gewählten Standort.' };
     if (!MATERIAL_STATUSES.includes(status)) return { error: 'Der gewählte Status ist ungültig.' };
     if (!['individual', 'bulk'].includes(itemType) || quantity <= 0) return { error: 'Art und Anzahl des Artikels sind ungültig.' };
-    if (existing && quantity < number(existing.issuedQuantity) + loadedQuantity(existing.id)) {
-      return { error: 'Die Anzahl darf nicht unter die ausgegebene oder auf Fahrzeuge gebuchte Menge fallen.' };
+    if (existing && quantity < number(existing.issuedQuantity) + boundQuantity(existing.id)) {
+      return { error: 'Die Anzahl darf nicht unter die ausgegebene, auf Fahrzeuge gebuchte oder in Kisten gepackte Menge fallen.' };
     }
-    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, status, itemType, quantity };
+    const isContainer = body.isContainer === undefined
+      ? existing?.isContainer === true : body.isContainer === true;
+    if (isContainer && itemType !== 'individual') return { error: 'Nur Einzelstücke können als Kiste verwendet werden.' };
+    if (existing?.isContainer && !isContainer && containers.hasContents(existing.id)) {
+      return { error: 'Eine Kiste mit Inhalt kann nicht in einen normalen Artikel umgewandelt werden.', status: 409 };
+    }
+    if (existing && containers.placementOf('MaterialItem', existing.id)
+      && (locationId !== existing.locationId || (stockStructureId || null) !== (existing.stockStructureId || null))) {
+      return { error: containers.lockedMessage('MaterialItem', existing.id), status: 409 };
+    }
+    if (existing && existing.itemType !== itemType && boundQuantity(existing.id) > 0) {
+      return { error: 'Die Artikelart kann bei gebundenem Bestand nicht geändert werden.', status: 409 };
+    }
+    return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, status, itemType, quantity, isContainer };
   }
 
   function validateReservationSharing(body, existing, req, itemType) {
@@ -126,7 +148,14 @@ function registerInventoryRoutes({
       reservationAllowedUnitIds: [...(item.reservationAllowedUnitIds || [])],
       safetyStatus: assessMaterialSafety(item),
       vehicleLoadedQuantity: loadedQuantity(item.id),
-      availableQuantity: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item.id),
+      containerPackedQuantity: packedQuantity(item.id),
+      containerId: containers.containerOf('MaterialItem', item.id)?.id || null,
+      containerName: (() => {
+        const container = containers.containerOf('MaterialItem', item.id);
+        return container ? `${container.inventoryNumber} ${container.name}` : null;
+      })(),
+      isContainer: item.isContainer === true,
+      availableQuantity: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item.id),
       movements: materialMovements.filter((entry) => entry.materialId === item.id).slice().reverse(),
       inspections: materialInspections.filter((entry) => entry.materialId === item.id).slice().reverse(),
       documents: materialDocuments.filter((entry) => entry.materialId === item.id).map(({ fileBase64, ...entry }) => entry),
@@ -164,7 +193,7 @@ function registerInventoryRoutes({
       return res.status(507).json({ error: 'Die maximale Anzahl an Materialdatensätzen ist erreicht.' });
     }
     const values = validate(req.body);
-    if (values.error) return res.status(400).json({ error: values.error });
+    if (values.error) return res.status(values.status || 400).json({ error: values.error });
     const sharing = validateReservationSharing(req.body, null, req, values.itemType);
     if (sharing.error) return res.status(400).json({ error: sharing.error });
     const requested = String(req.body.inventoryNumber || '').trim();
@@ -190,6 +219,7 @@ function registerInventoryRoutes({
       safetyInstructions: String(req.body.safetyInstructions || '').trim().slice(0, 2_000),
       archived: false, createdAt: new Date().toISOString(),
     };
+    if (item.isContainer) item.completenessStatus = 'Ungeprüft';
     materials.push(item);
     logEvent('create', 'MaterialItem', {
       id: item.id,
@@ -207,7 +237,7 @@ function registerInventoryRoutes({
     if (item.archived) return res.status(409).json({ error: 'Archiviertes Material kann nicht bearbeitet werden.' });
     if (req.body.inventoryNumber && req.body.inventoryNumber !== item.inventoryNumber) return res.status(400).json({ error: 'Die Inventarnummer kann nachträglich nicht geändert werden.' });
     const values = validate(req.body, item);
-    if (values.error) return res.status(400).json({ error: values.error });
+    if (values.error) return res.status(values.status || 400).json({ error: values.error });
     const sharing = validateReservationSharing(req.body, item, req, values.itemType);
     if (sharing.error) return res.status(400).json({ error: sharing.error });
     Object.assign(item, values, {
@@ -239,6 +269,10 @@ function registerInventoryRoutes({
       id: item.id, inventoryNumber: item.inventoryNumber, issuedQuantity: item.issuedQuantity,
       archived: false, updatedAt: new Date().toISOString(),
     });
+    if (item.isContainer) {
+      item.completenessStatus ||= 'Ungeprüft';
+      containers.syncContents(item.id, syncOptions(req));
+    }
     logEvent('update', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
   });
@@ -247,6 +281,8 @@ function registerInventoryRoutes({
     const item = materials.find((entry) => entry.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
     if (number(item.issuedQuantity) > 0 || loadedQuantity(item.id) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht archiviert werden.' });
+    if (packedQuantity(item.id) > 0) return res.status(409).json({ error: 'In Kisten gepacktes Material kann nicht archiviert werden. Bitte zuerst aus der Kiste entnehmen.' });
+    if (containers.hasContents(item.id)) return res.status(409).json({ error: 'Eine Kiste mit Inhalt kann nicht archiviert werden.' });
     item.archived = true; item.archivedAt = new Date().toISOString(); item.archivedBy = req.user.username;
     logEvent('archive', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
@@ -270,6 +306,7 @@ function registerInventoryRoutes({
     item.locationId = locationId;
     item.stockStructureId = stockStructureId || null;
     item.archived = false; item.archivedAt = null; item.archivedBy = null;
+    containers.syncContents(item.id, syncOptions(req));
     logEvent('restore', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
   });
@@ -279,7 +316,7 @@ function registerInventoryRoutes({
     if (index === -1) return res.status(404).json({ error: 'Material nicht gefunden.' });
     const item = materials[index];
     if (!item.archived) return res.status(409).json({ error: 'Material muss vor dem Löschen archiviert werden.' });
-    if (number(item.issuedQuantity) > 0 || loadedQuantity(item.id) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht gelöscht werden.' });
+    if (number(item.issuedQuantity) > 0 || boundQuantity(item.id) > 0 || containers.hasContents(item.id)) return res.status(409).json({ error: 'Ausgegebenes, auf Fahrzeuge gebuchtes oder in Kisten gepacktes Material kann nicht gelöscht werden.' });
 
     const removedItem = materials.splice(index, 1)[0];
     deletedMaterials.push({
@@ -303,14 +340,20 @@ function registerInventoryRoutes({
     const checked = entries.map((entry) => {
       const item = materials.find((candidate) => candidate.id === entry.materialId);
       const quantity = number(entry.quantity, 0);
-      const safety = action === 'issue' && item ? assessMaterialSafety(item) : null;
+      const ownSafety = action === 'issue' && item ? assessMaterialSafety(item) : null;
+      const contentSafety = action === 'issue' && item?.isContainer
+        ? containers.contentSafety(item.id) : null;
+      const safety = ownSafety && contentSafety?.blocked
+        ? { blocked: true, reasons: [...ownSafety.reasons, ...contentSafety.reasons] }
+        : ownSafety;
       let error = null;
       if (!item || item.archived) error = 'not_found';
       else if (quantity <= 0) error = 'invalid_quantity';
+      else if (action === 'issue' && containers.placementOf('MaterialItem', item.id)) error = 'packed_in_container';
       else if (safety?.blocked) error = 'safety_blocked';
       else if (action === 'issue' && ['Defekt', 'In Reparatur', 'Ausgesondert', 'Verloren'].includes(item.status)) error = 'invalid_status';
       else if (action === 'issue' && quantity > number(item.quantity) - number(item.issuedQuantity)
-        - loadedQuantity(item.id)) error = 'insufficient_stock';
+        - boundQuantity(item.id)) error = 'insufficient_stock';
       else if (action === 'return' && quantity > number(item.issuedQuantity)) error = 'too_much_returned';
       return { item, quantity, error, safetyReasons: safety?.reasons || [] };
     });
@@ -342,10 +385,13 @@ function registerInventoryRoutes({
     if (!ids.length || ids.length > MAX_BULK_ITEMS || !targetLocation || (stockStructureId && !targetStock)) return res.status(400).json({ error: 'Material, Standort oder Lagerplatz ist ungültig.' });
     if (items.some((item) => !item || item.archived || number(item.issuedQuantity) > 0
       || loadedQuantity(item?.id) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes, auf Fahrzeuge gebuchtes oder archiviertes Material ist nicht zulässig.' });
+    const packed = items.find((item) => containers.placementOf('MaterialItem', item.id));
+    if (packed) return res.status(409).json({ error: `Die Sammelumbuchung wurde nicht durchgeführt. ${containers.lockedMessage('MaterialItem', packed.id)}` });
     const created = items.map((item) => {
       const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
       item.locationId = locationId; item.stockStructureId = stockStructureId || null; materialMovements.push(movement); return movement;
     });
+    containers.syncMany(ids, syncOptions(req));
     logEvent('relocate', 'MaterialMovement', { materialIds: ids, locationId }, req.user.username);
     res.status(201).json(created);
   });
@@ -477,7 +523,7 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => withReadAccess(req, () => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item.id), 'Auf Fahrzeugen': loadedQuantity(item.id), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item.id), 'Auf Fahrzeugen': loadedQuantity(item.id), 'In Kisten': packedQuantity(item.id), Kiste: item.isContainer ? 'Ja' : 'Nein', Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
       .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');

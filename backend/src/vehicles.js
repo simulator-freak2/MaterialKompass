@@ -94,8 +94,16 @@ function registerVehicleRoutes({
   defectReports,
   logEvent,
   nextId,
+  containerGuard = null,
 }) {
   const all = (collection) => rawCollection(collection);
+  const containers = containerGuard || {
+    packedQuantity: () => 0, placementOf: () => null, lockedMessage: () => null,
+    contentSafety: () => ({ blocked: false, reasons: [] }), syncContents: () => 0,
+  };
+  const syncOptions = (req) => ({
+    actor: req.user.username, movements: materialMovements, nextId,
+  });
   const nowIso = () => new Date().toISOString();
 
   function organizationSetting(organizationId) {
@@ -807,8 +815,10 @@ function registerVehicleRoutes({
           id: item.id, inventoryNumber: item.inventoryNumber, name: item.name,
           itemType: item.itemType, quantity: Number(item.quantity || 1), unit: item.unit,
           loadedQuantity: materialLoadedQuantity(item.id),
-          availableQuantity: Math.max(0, Number(item.quantity || 1)
-            - Number(item.issuedQuantity || 0) - materialLoadedQuantity(item.id)),
+          availableQuantity: containers.placementOf('MaterialItem', item.id) ? 0
+            : Math.max(0, Number(item.quantity || 1) - Number(item.issuedQuantity || 0)
+              - materialLoadedQuantity(item.id) - containers.packedQuantity(item.id)),
+          isContainer: item.isContainer === true,
         }));
       return res.json(result);
     });
@@ -825,12 +835,18 @@ function registerVehicleRoutes({
         return res.status(400).json({ error: 'Material und positive ganze Menge sind erforderlich.' });
       }
       const available = Number(material.quantity || 1) - Number(material.issuedQuantity || 0)
-        - materialLoadedQuantity(material.id);
+        - materialLoadedQuantity(material.id) - containers.packedQuantity(material.id);
+      const packedMessage = containers.lockedMessage('MaterialItem', material.id);
+      if (packedMessage) return res.status(409).json({ error: packedMessage });
       if (quantity > available || (material.itemType === 'individual' && quantity !== 1)) {
         return res.status(409).json({ error: 'Die gewünschte Menge ist nicht verfügbar.' });
       }
       const materialSafety = assessMaterialSafety(material);
       if (materialSafety.blocked) return res.status(409).json({ error: 'Das Material ist sicherheitsbedingt gesperrt.', reasons: materialSafety.reasons });
+      if (material.isContainer) {
+        const contentSafety = containers.contentSafety(material.id);
+        if (contentSafety.blocked) return res.status(409).json({ error: 'Die Kiste enthält sicherheitsbedingt gesperrtes Material.', reasons: contentSafety.reasons });
+      }
       if (vehicle.storagePositions?.length && !vehicle.storagePositions.includes(text(req.body.position, 160))) {
         return res.status(400).json({ error: 'Bitte ein definiertes Fahrzeugfach wählen.' });
       }
@@ -850,6 +866,7 @@ function registerVehicleRoutes({
       if (material.itemType === 'individual') {
         material.locationId = vehicle.loadLocationId;
         material.stockStructureId = null;
+        containers.syncContents(material.id, syncOptions(req));
       }
       all(materialMovements).push({
         id: nextId('movement', all(materialMovements)), materialId: material.id,
@@ -879,6 +896,7 @@ function registerVehicleRoutes({
       if (!material || !destination) return res.status(400).json({ error: 'Ein gültiger Ziel-Lagerort ist erforderlich.' });
       if (material.itemType === 'individual') {
         material.locationId = destination.id; material.stockStructureId = destinationStockStructureId;
+        containers.syncContents(material.id, syncOptions(req));
       }
       assignments.splice(index, 1);
       const at = nowIso();

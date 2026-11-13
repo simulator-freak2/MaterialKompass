@@ -1173,6 +1173,67 @@ const _articles = [
     keywords: ['ausleihe', 'rückgabe', 'empfänger', 'buchung', 'offline'],
   ),
   _GuideArticle(
+    category: 'Inventar',
+    title: 'Kisten anlegen und packen',
+    summary:
+        'Einzelstücke als Kiste führen, Inhalt packen und mit der Kiste bewegen.',
+    icon: Icons.all_inbox_outlined,
+    readingMinutes: 5,
+    audience: 'Für Materialwarte, Fahrzeugwarte und Kleiderwarte',
+    prerequisite:
+        'Die Kiste ist als individuell geführtes Einzelstück im Inventar angelegt.',
+    steps: [
+      'Öffne „Kisten“ im Dashboard und wähle „Kiste anlegen“. Alternativ aktivierst du im Inventarformular „Als Kiste verwenden“.',
+      'Lege Kistenart, optionale Fächer wie „Deckel“ oder „Boden“ und die Vorwarnzeit für Ablaufdaten fest.',
+      'Öffne die Kiste und wähle „Packen“. Suche oder scanne den Artikel. Einzelstücke, Kleidung und andere Kisten werden einzeln gepackt, von Mengenartikeln eine Teilmenge.',
+      'Erfasse bei Verbrauchsmaterial das Ablaufdatum und bei Bedarf die Charge.',
+      'Gepackte Einzelstücke sind gesperrt. Sie können nicht einzeln umgebucht, ausgegeben oder auf ein Fahrzeug geladen werden.',
+      'Wird die Kiste umgebucht, ausgegeben oder auf ein Fahrzeug geladen, wandert der gesamte Inhalt einschließlich Unterkisten mit.',
+      'Über „Entnehmen“ wird ein Artikel an seinen vorherigen Lagerort zurückgebucht, eine Teilmenge wieder dem freien Bestand zugerechnet.',
+    ],
+    tip:
+        'Scanne in der Kistenübersicht die Inventarnummer eines beliebigen Artikels. MaterialKompass öffnet dann die Kiste, in der er liegt.',
+    keywords: [
+      'kiste',
+      'behälter',
+      'packen',
+      'entnehmen',
+      'sanitätskiste',
+      'unterkiste',
+      'ablaufdatum',
+      'charge',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Inventar',
+    title: 'Packliste pflegen und Kiste prüfen',
+    summary:
+        'Soll-Inhalt versionieren, Vollständigkeit prüfen und Fehlteile melden.',
+    icon: Icons.fact_check_outlined,
+    readingMinutes: 4,
+    audience: 'Für Materialwarte und prüfende Einsatzkräfte',
+    prerequisite: 'Die Kiste ist angelegt und gepackt.',
+    steps: [
+      'Wähle in der Kiste unter „Soll-Packliste“ die Aktion „Neue Version“. Der aktuelle Inhalt und die bisherige Liste werden als Vorlage übernommen.',
+      'Passe die Sollmengen an und speichere die Version direkt aktiv oder als Entwurf. Eine neue aktive Version ersetzt die vorherige, die Historie bleibt erhalten.',
+      'Starte „Vollständigkeit prüfen“ und erfasse pro Position Ergebnis und Ist-Menge. Abgelaufene Inhalte sind bereits als „abgelaufen“ vorbelegt.',
+      'Bei Abweichungen erhält die Kiste den Status „Unvollständig“. Optional legst du direkt einen Mangel an. Nur die Priorität „Kritisch“ setzt die Kiste auf „Defekt“.',
+      'Über das Drucksymbol erhältst du die Packliste als PDF mit Soll-, Ist- und Ablaufangaben sowie einem Unterschriftsfeld.',
+      'Bei einer Inventur kann eine verschlossene, vollständige Kiste als Einheit bestätigt werden. Mengenartikel werden weiterhin separat gezählt.',
+    ],
+    tip:
+        'Prüfungen lassen sich in den nativen Apps auch offline erfassen. Sie werden bei der nächsten Verbindung übertragen.',
+    keywords: [
+      'packliste',
+      'soll ist',
+      'vollständigkeit',
+      'prüfung',
+      'unvollständig',
+      'kiste drucken',
+      'inventur kiste',
+    ],
+  ),
+  _GuideArticle(
     category: 'Fahrzeuge',
     title: 'Fahrzeug anlegen und freigeben',
     summary:

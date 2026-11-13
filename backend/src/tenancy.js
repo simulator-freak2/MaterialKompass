@@ -17,6 +17,7 @@ const UNIT_SCOPED_COLLECTIONS = new Set([
   'materialDocuments', 'reservations', 'maintenanceEvents', 'clothingItems',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
   'vehicleLoadAssignments', 'vehicleLoadLists',
+  'containerContents', 'containerPackLists', 'containerChecks',
   'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports', 'procurementRequests',
   'procurementOffers', 'procurementOrders', 'procurementReceipts',

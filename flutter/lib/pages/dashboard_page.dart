@@ -18,6 +18,7 @@ import '../widgets/stat_card.dart';
 import '../widgets/system_message_card.dart';
 import 'categories_page.dart' as categories_page;
 import 'calendar_page.dart' as calendar_page;
+import 'containers_page.dart' as containers_page;
 import 'defects_page.dart' as defects_page;
 import 'login_page.dart';
 import 'inventory_page.dart' as inventory_page;
@@ -915,6 +916,7 @@ class _DashboardPageState extends State<DashboardPage>
                 'Inventuren': 'stocktakes.read',
                 'Kalender': 'calendar.read',
                 'Fahrzeuge': 'vehicles.read',
+                'Kisten': 'containers.read',
               };
               final activities = (data['recentActivity'] as List? ?? const [])
                   .where((entry) {
@@ -955,6 +957,16 @@ class _DashboardPageState extends State<DashboardPage>
                         token: _token,
                         onLogout: () => _logout(context),
                       ),
+                    ),
+                  ),
+                if (can('containers.read'))
+                  _DashboardAction(
+                    icon: Icons.all_inbox_outlined,
+                    label: 'Kisten',
+                    description:
+                        'Kisteninhalt, Packlisten, Prüfungen und Ablaufdaten',
+                    onTap: () => _loadAndOpen(
+                      () => containers_page.ContainersPage(token: _token),
                     ),
                   ),
                 if (can('calendar.read'))

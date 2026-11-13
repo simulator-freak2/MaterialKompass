@@ -8,6 +8,7 @@ const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
 const { registerCalendarRoutes } = require('./calendar');
 const { registerVehicleRoutes } = require('./vehicles');
+const { createContainerGuard, registerContainerRoutes } = require('./containers');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
   canAccessStocktakeEmail,
@@ -140,6 +141,7 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'reservations', 'maintenanceEvents',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
   'vehicleLoadAssignments', 'vehicleLoadLists',
+  'containerContents', 'containerPackLists', 'containerChecks',
   'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'systemMessageAcknowledgements',
@@ -332,6 +334,9 @@ function createApp(options = {}) {
   const vehicleMaintenanceEvents = (appData.vehicleMaintenanceEvents ||= []);
   const vehicleLoadAssignments = (appData.vehicleLoadAssignments ||= []);
   const vehicleLoadLists = (appData.vehicleLoadLists ||= []);
+  const containerContents = (appData.containerContents ||= []);
+  const containerPackLists = (appData.containerPackLists ||= []);
+  const containerChecks = (appData.containerChecks ||= []);
   const clothingItems = appData.clothingItems;
   const clothingInspections = appData.clothingInspections || [];
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
@@ -924,6 +929,32 @@ function createApp(options = {}) {
     if (role) role.permissions = [...youthAccessPermissions];
   }
 
+  const containerPermissions = [
+    'containers.read', 'containers.manage', 'containers.pack',
+    'containers.packlists', 'containers.check', 'containers.print',
+  ];
+  containerPermissions.forEach((permission) => {
+    if (!permissions.includes(permission)) permissions.push(permission);
+  });
+  const containerRolePermissions = {
+    Admin: containerPermissions,
+    Materialwart: containerPermissions,
+    Fahrzeugwart: ['containers.read', 'containers.pack', 'containers.check', 'containers.print'],
+    Kleiderwart: ['containers.read', 'containers.pack', 'containers.check'],
+    Fachbereichsleiter: ['containers.read', 'containers.check', 'containers.print'],
+    Vorsitz: ['containers.read', 'containers.print'],
+  };
+  roles.forEach((role) => {
+    (containerRolePermissions[role.name] || []).forEach((permission) => {
+      if (!role.permissions.includes(permission)) role.permissions.push(permission);
+    });
+  });
+  users.forEach((user) => {
+    user.roles.flatMap((name) => containerRolePermissions[name] || []).forEach((permission) => {
+      if (!user.permissions.includes(permission)) user.permissions.push(permission);
+    });
+  });
+
   if (!permissions.includes('offline.access')) permissions.push('offline.access');
   const offlineRoles = new Set([
     'Admin', 'Materialwart', 'Kleiderwart', 'Fachbereichsleiter', 'Fahrzeugwart',
@@ -1077,6 +1108,7 @@ function createApp(options = {}) {
     VehicleReservation: { permission: 'vehicles.read', label: 'Fahrzeuge' },
     VehicleMaintenance: { permission: 'vehicles.read', label: 'Fahrzeuge' },
     VehicleLoad: { permission: 'vehicles.read', label: 'Fahrzeuge' },
+    Container: { permission: 'containers.read', label: 'Kisten' },
     ExportLog: { permission: 'reports.read', label: 'Berichte' },
   });
 
@@ -2506,12 +2538,21 @@ function createApp(options = {}) {
   app.locals.applyDefectEmailRetentionPolicy = defectEmailService.applyRetentionPolicy;
   app.locals.defectReports = defectReports;
 
+  const containerGuard = createContainerGuard({ containerContents, materials, clothingItems });
+  app.locals.containerGuard = containerGuard;
+  registerContainerRoutes({
+    app, authMiddleware, requirePermission, hasPermission,
+    containerContents, containerPackLists, containerChecks,
+    materials, materialMovements, clothingItems, locations, stockStructures,
+    vehicleLoadAssignments, defectManagement, logEvent, nextId, guard: containerGuard,
+  });
+
   registerInventoryRoutes({
     app, authMiddleware, requirePermission, materials, deletedMaterials, materialMovements,
     materialInspections, materialDocuments, defectReports, categories, locations,
     stockStructures, vehicleLoadAssignments, clothingItems, deletedClothingItems,
     logEvent, nextId, XLSX,
-    defectManagement,
+    defectManagement, containerGuard,
     withReadAccess: (req, callback) => runWithTenant({
       ...req.tenant,
       allowedUnitIds: inventoryReadableUnitIds(
@@ -2542,13 +2583,14 @@ function createApp(options = {}) {
     vehicles, vehicleReservations, vehicleMaintenanceEvents,
     vehicleLoadAssignments, vehicleLoadLists, materials, materialMovements,
     locations, organizations, organizationUnits, defectReports, logEvent, nextId,
+    containerGuard,
   });
   app.locals.applyVehicleRetentionPolicy = vehicleManagement.applyVehicleRetentionPolicy;
 
   registerStocktakeRoutes({
     app, authMiddleware, requirePermission, hasPermission, stocktakes, materials,
     clothingItems, locations, stockStructures, departments, users, logEvent, nextId,
-    XLSX, defectManagement,
+    XLSX, defectManagement, containerGuard,
   });
   app.locals.stocktakes = stocktakes;
   app.locals.stocktakeEmailImports = stocktakeEmailImports;
@@ -2679,6 +2721,11 @@ function createApp(options = {}) {
     const inspectionIntervalMonths = categoryInspectionInterval(categoryId);
     const locationId = String(req.body.locationId ?? item.locationId ?? 'loc-2').trim();
     const stockStructureId = String(req.body.stockStructureId ?? item.stockStructureId ?? '').trim();
+    const packedMessage = containerGuard.lockedMessage('ClothingItem', item.id);
+    if (packedMessage && (locationId !== (item.locationId || '')
+      || stockStructureId !== (item.stockStructureId || ''))) {
+      return res.status(409).json({ error: packedMessage });
+    }
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum gewählten Gebäude.' });
 
@@ -2861,6 +2908,8 @@ function createApp(options = {}) {
     if (clothingItems[index].status === 'Ausgegeben') {
       return res.status(409).json({ error: 'Issued clothing cannot be deleted' });
     }
+    const packedMessage = containerGuard.lockedMessage('ClothingItem', clothingItems[index].id);
+    if (packedMessage) return res.status(409).json({ error: packedMessage });
 
     const removedItem = clothingItems.splice(index, 1)[0];
     deletedClothingItems.push({
@@ -3079,6 +3128,8 @@ function createApp(options = {}) {
         errors.push({ id, error: 'defective' });
       } else if (action === 'ausgegeben' && item.status === 'Ausgegeben') {
         errors.push({ id, error: 'already_issued' });
+      } else if (action === 'ausgegeben' && containerGuard.placementOf('ClothingItem', id)) {
+        errors.push({ id, error: 'packed_in_container' });
       } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
           !(item.status === 'Defekt' && item.assignedPerson)) {
         errors.push({ id, error: 'not_issued' });
