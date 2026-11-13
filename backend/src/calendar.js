@@ -78,9 +78,9 @@ function registerCalendarRoutes({
   function vehicleAccessible(vehicle) {
     const tenant = currentTenant();
     return Boolean(vehicle && tenant && vehicle.organizationId === tenant.organizationId
+      // Vehicles follow the explicit sharing of the vehicle management; a youth
+      // link alone does not reveal them (same rule as /api/vehicles).
       && (vehicle.unitId === tenant.unitId
-        || youthUnitsAreLinked(organizationUnits, tenant.organizationId,
-          tenant.unitId, vehicle.unitId)
         || vehicle.viewAllowedUnitIds?.includes(tenant.unitId)
         || vehicle.reservationAllowedUnitIds?.includes(tenant.unitId)));
   }
@@ -476,7 +476,7 @@ function registerCalendarRoutes({
         inventoryNumbers: [vehicle.registrationNumber],
         materialNames: [vehicleName(vehicle)],
         locationIds: [vehicle.parkingLocationId].filter(Boolean),
-        responsible: entry.workshop || null,
+        responsible: entry.provider || entry.workshop || null,
         description: entry.description || '',
         readOnly: true,
       });

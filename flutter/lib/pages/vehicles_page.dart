@@ -38,6 +38,18 @@ String _vehicleUsageOf(Map<String, dynamic> vehicle) {
       : 'sonstige Verwendung';
 }
 
+/// Text value without the literal "null" that `toString()` produces.
+String _text(dynamic value) => value?.toString().trim() ?? '';
+
+String _parkingOf(Map<String, dynamic> vehicle) {
+  final details = _text(vehicle['parkingDetails']);
+  if (details.isNotEmpty) return details;
+  return [
+    _text(vehicle['parkingLocationName']),
+    _text(vehicle['parkingSpaceName']),
+  ].where((entry) => entry.isNotEmpty).join(' / ');
+}
+
 String _vehicleDisplayName(Map<String, dynamic> vehicle) {
   for (final key in ['registrationNumber', 'radioCallName', 'type']) {
     final value = vehicle[key]?.toString().trim() ?? '';
@@ -62,6 +74,7 @@ class _VehiclesPageState extends State<VehiclesPage> {
   Map<String, dynamic> options = {};
   Set<String> permissions = {};
   String? activeUnitId;
+  String? currentUserId;
   bool loading = true;
   bool showArchived = false;
   String query = '';
@@ -125,6 +138,7 @@ class _VehiclesPageState extends State<VehiclesPage> {
           .map((entry) => entry.toString())
           .toSet();
       activeUnitId = unit['id']?.toString();
+      currentUserId = user['id']?.toString();
       vehicles = results[1] is List
           ? (results[1] as List)
                 .map((entry) => Map<String, dynamic>.from(entry as Map))
@@ -151,7 +165,7 @@ class _VehiclesPageState extends State<VehiclesPage> {
         vehicle['usage'],
         vehicle['type'],
         vehicle['ownerUnitName'],
-      ].any((entry) => entry.toString().toLowerCase().contains(needle));
+      ].any((entry) => _text(entry).toLowerCase().contains(needle));
     }).toList();
   }
 
@@ -182,6 +196,7 @@ class _VehiclesPageState extends State<VehiclesPage> {
         request: _request,
         permissions: permissions,
         activeUnitId: activeUnitId,
+        currentUserId: currentUserId,
         options: options,
         onEdit: _editVehicle,
       ),
@@ -311,12 +326,20 @@ class _VehiclesPageState extends State<VehiclesPage> {
     );
     final blocked = safety['blocked'] == true;
     final subtitle = [
-      if (vehicle['radioCallName'].toString().isNotEmpty)
-        vehicle['radioCallName'],
-      '${_vehicleKindOf(vehicle)} · ${_vehicleUsageOf(vehicle)} · ${vehicle['type']}'
-          .trim(),
-      '${vehicle['manufacturer']} ${vehicle['model']}'.trim(),
-      'Stellplatz: ${vehicle['parkingDetails'].toString().isNotEmpty ? vehicle['parkingDetails'] : [vehicle['parkingLocationName'], vehicle['parkingSpaceName']].whereType<String>().join(' / ')}',
+      if (_text(vehicle['radioCallName']).isNotEmpty) vehicle['radioCallName'],
+      [
+        _vehicleKindOf(vehicle),
+        _vehicleUsageOf(vehicle),
+        _text(vehicle['type']),
+      ].where((entry) => entry.isNotEmpty).join(' · '),
+      if ('${_text(vehicle['manufacturer'])} ${_text(vehicle['model'])}'
+          .trim()
+          .isNotEmpty)
+        '${_text(vehicle['manufacturer'])} ${_text(vehicle['model'])}'.trim(),
+      'Stellplatz: ${_parkingOf(vehicle).isEmpty ? '-' : _parkingOf(vehicle)}',
+      if (_text(vehicle['status']).isNotEmpty &&
+          vehicle['status'] != 'Verfügbar')
+        'Status: ${vehicle['status']}',
       if (vehicle['unitId'] != activeUnitId)
         'Freigegeben durch ${vehicle['ownerUnitName'] ?? 'andere Gliederung'}',
     ].join('\n');
@@ -976,6 +999,7 @@ class _VehicleDetailDialog extends StatefulWidget {
     required this.activeUnitId,
     required this.options,
     required this.onEdit,
+    this.currentUserId,
   });
 
   final String vehicleId;
@@ -988,6 +1012,7 @@ class _VehicleDetailDialog extends StatefulWidget {
   request;
   final Set<String> permissions;
   final String? activeUnitId;
+  final String? currentUserId;
   final Map<String, dynamic> options;
   final Future<void> Function([Map<String, dynamic>? vehicle]) onEdit;
 
@@ -1001,6 +1026,11 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
 
   bool can(String permission) => widget.permissions.contains(permission);
   bool get ownsVehicle => vehicle?['unitId']?.toString() == widget.activeUnitId;
+  bool get mayOverride =>
+      ownsVehicle &&
+      (can('vehicle_maintenance.manage') || can('vehicle_reservations.manage'));
+  Map<String, dynamic> get safety =>
+      Map<String, dynamic>.from(vehicle?['safetyStatus'] as Map? ?? const {});
 
   @override
   void initState() {
@@ -1017,19 +1047,22 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     });
   }
 
-  Future<void> _mutate(
+  Future<bool> _mutate(
     String path, {
     String method = 'POST',
     Object? body,
   }) async {
     final result = await widget.request(path, method: method, body: body);
     if (result != null) await _load();
+    return result != null;
   }
 
   Future<void> _reserve() async {
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _ReservationDialog(),
+      builder: (_) => _ReservationDialog(
+        allowOverride: mayOverride && can('vehicle_maintenance.manage'),
+      ),
     );
     if (values == null) return;
     await _mutate(
@@ -1041,7 +1074,7 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
   Future<void> _maintenance() async {
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _MaintenanceDialog(),
+      builder: (_) => const _MaintenanceDialog(),
     );
     if (values == null) return;
     await _mutate(
@@ -1110,9 +1143,11 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     await _mutate('/api/vehicles/${widget.vehicleId}/load-lists', body: values);
   }
 
-  Future<void> _print({required bool save}) async {
+  Future<void> _print({required bool save, String? listId}) async {
     final result = await widget.request(
-      '/api/vehicles/${widget.vehicleId}/load-list/print',
+      listId == null
+          ? '/api/vehicles/${widget.vehicleId}/load-list/print'
+          : '/api/vehicles/${widget.vehicleId}/load-lists/$listId/print',
     );
     if (result is! Map) return;
     try {
@@ -1162,10 +1197,10 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     );
   }
 
-  Future<void> _reportDefect() async {
+  Future<void> _reportDefect({String? description}) async {
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => const _VehicleDefectDialog(),
+      builder: (_) => _VehicleDefectDialog(description: description),
     );
     if (values == null) return;
     await _mutate(
@@ -1218,9 +1253,7 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
 
   Widget _body() {
     final value = vehicle!;
-    final safety = Map<String, dynamic>.from(
-      value['safetyStatus'] as Map? ?? const {},
-    );
+    final safety = this.safety;
     final reservations = (value['reservations'] as List? ?? const [])
         .map((entry) => Map<String, dynamic>.from(entry as Map))
         .toList();
@@ -1272,14 +1305,9 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                     'Verwendung': _vehicleUsageOf(value),
                     'Fahrzeugtyp': value['type'],
                     'Hersteller/Modell':
-                        '${value['manufacturer']} ${value['model']}',
+                        '${_text(value['manufacturer'])} ${_text(value['model'])}',
                     'Baujahr': value['year'],
-                    'Stellplatz': value['parkingDetails'].toString().isNotEmpty
-                        ? value['parkingDetails']
-                        : [
-                            value['parkingLocationName'],
-                            value['parkingSpaceName'],
-                          ].whereType<String>().join(' / '),
+                    'Stellplatz': _parkingOf(value),
                     'Zugewiesener Fahrzeugstellplatz':
                         value['parkingSpaceName'] ?? 'Keiner',
                     'Kilometerstand': value['mileage'],
@@ -1322,81 +1350,84 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                   else
                     ...maintenance.map(_maintenanceTile),
                 ]),
-                _section('Beladung', Icons.inventory_2_outlined, [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (ownsVehicle && can('vehicles.load.manage'))
-                        FilledButton.tonalIcon(
-                          onPressed: _loadMaterial,
-                          icon: const Icon(Icons.add_box_outlined),
-                          label: const Text('Inventar buchen'),
-                        ),
-                      if (!ownsVehicle &&
-                          value['materialLoadAllowed'] == true &&
-                          can('vehicles.load.manage'))
-                        FilledButton.tonalIcon(
-                          onPressed: _requestLoad,
-                          icon: const Icon(Icons.add_box_outlined),
-                          label: const Text('Material anfragen'),
-                        ),
-                      if (ownsVehicle && can('vehicles.load.manage'))
-                        OutlinedButton.icon(
-                          onPressed: loads.isEmpty ? null : _createLoadList,
-                          icon: const Icon(Icons.playlist_add_check),
-                          label: const Text('Soll-Liste erstellen'),
-                        ),
-                      if (can('vehicles.print')) ...[
-                        OutlinedButton.icon(
-                          onPressed:
-                              lists.any((entry) => entry['status'] == 'Aktiv')
-                              ? () => _print(save: false)
-                              : null,
-                          icon: const Icon(Icons.print_outlined),
-                          label: const Text('Drucken'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed:
-                              lists.any((entry) => entry['status'] == 'Aktiv')
-                              ? () => _print(save: true)
-                              : null,
-                          icon: const Icon(Icons.download_outlined),
-                          label: const Text('PDF'),
-                        ),
+                if (can('vehicles.load.read'))
+                  _section('Beladung', Icons.inventory_2_outlined, [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (ownsVehicle &&
+                            can('vehicles.load.manage') &&
+                            value['archivedAt'] == null)
+                          FilledButton.tonalIcon(
+                            onPressed: _loadMaterial,
+                            icon: const Icon(Icons.add_box_outlined),
+                            label: const Text('Inventar buchen'),
+                          ),
+                        if (!ownsVehicle &&
+                            value['materialLoadAllowed'] == true &&
+                            can('vehicles.load.manage'))
+                          FilledButton.tonalIcon(
+                            onPressed: _requestLoad,
+                            icon: const Icon(Icons.add_box_outlined),
+                            label: const Text('Material anfragen'),
+                          ),
+                        if (ownsVehicle && can('vehicles.load.manage'))
+                          OutlinedButton.icon(
+                            onPressed: loads.isEmpty ? null : _createLoadList,
+                            icon: const Icon(Icons.playlist_add_check),
+                            label: const Text('Soll-Liste erstellen'),
+                          ),
+                        if (can('vehicles.print')) ...[
+                          OutlinedButton.icon(
+                            onPressed:
+                                lists.any((entry) => entry['status'] == 'Aktiv')
+                                ? () => _print(save: false)
+                                : null,
+                            icon: const Icon(Icons.print_outlined),
+                            label: const Text('Drucken'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed:
+                                lists.any((entry) => entry['status'] == 'Aktiv')
+                                ? () => _print(save: true)
+                                : null,
+                            icon: const Icon(Icons.download_outlined),
+                            label: const Text('PDF'),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                  if (loads.isEmpty)
-                    const Text('Kein Inventar auf dieses Fahrzeug gebucht.')
-                  else
-                    ...loads.map(_loadTile),
-                  if (openLoadRequests.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      ownsVehicle
-                          ? 'Offene Buchungsanfragen anderer Gliederungen'
-                          : 'Offene Buchungsanfragen',
-                      style: Theme.of(context).textTheme.titleSmall,
                     ),
-                    ...openLoadRequests.map(_loadRequestTile),
-                  ],
-                  if (decidedLoadRequests.isNotEmpty)
-                    ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: const Text('Entschiedene Buchungsanfragen'),
-                      children: decidedLoadRequests
-                          .map(_loadRequestTile)
-                          .toList(),
-                    ),
-                  if (lists.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        'Beladungslisten: ${lists.map((entry) => 'v${entry['version']} ${entry['status']}').join(' · ')}',
+                    if (loads.isEmpty)
+                      const Text('Kein Inventar auf dieses Fahrzeug gebucht.')
+                    else
+                      ...loads.map(_loadTile),
+                    if (openLoadRequests.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        ownsVehicle
+                            ? 'Offene Buchungsanfragen anderer Gliederungen'
+                            : 'Offene Buchungsanfragen',
+                        style: Theme.of(context).textTheme.titleSmall,
                       ),
-                    ),
-                ]),
+                      ...openLoadRequests.map(_loadRequestTile),
+                    ],
+                    if (decidedLoadRequests.isNotEmpty)
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        title: const Text('Entschiedene Buchungsanfragen'),
+                        children: decidedLoadRequests
+                            .map(_loadRequestTile)
+                            .toList(),
+                      ),
+                    if (lists.isNotEmpty) ...[
+                      Text(
+                        'Beladungslisten',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      ...lists.map(_loadListTile),
+                    ],
+                  ]),
                 _section('Mängel', Icons.report_problem_outlined, [
                   if (can('defects.report'))
                     Align(
@@ -1489,128 +1520,241 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     );
   }
 
-  Widget _reservationTile(Map<String, dynamic> entry) {
-    final status = entry['status']?.toString();
-    return Card.outlined(
-      child: ListTile(
-        leading: const Icon(Icons.event_outlined),
-        title: Text('${entry['title'] ?? entry['purpose']} · $status'),
-        subtitle: Text(
-          '${_date(entry['startAt'])} – ${_date(entry['endAt'])}\n${entry['purpose']} · ${entry['destination']} · ${entry['requesterName']}',
-        ),
-        isThreeLine: true,
-        trailing: PopupMenuButton<String>(
-          onSelected: (action) async {
-            if (action == 'approve') {
-              await _mutate(
-                '/api/vehicle-reservations/${entry['id']}/decision',
-                body: {'approved': true},
-              );
-            } else if (action == 'tle') {
-              await _mutate(
-                '/api/vehicle-reservations/${entry['id']}/operational-decision',
-                body: {'approved': true},
-              );
-            } else if (action == 'reject') {
-              final reason = await _reason('Reservierung ablehnen');
-              if (reason != null) {
-                await _mutate(
-                  '/api/vehicle-reservations/${entry['id']}/decision',
-                  body: {'approved': false, 'reason': reason},
-                );
-              }
-            } else if (action == 'issue') {
-              final handover = await _handover('Fahrzeug übergeben');
-              if (handover != null) {
-                await _mutate(
-                  '/api/vehicle-reservations/${entry['id']}/issue',
-                  body: handover,
-                );
-              }
-            } else if (action == 'return') {
-              final handover = await _handover(
-                'Fahrzeug zurücknehmen',
-                allowDamage: true,
-              );
-              if (handover != null) {
-                await _mutate(
-                  '/api/vehicle-reservations/${entry['id']}/return',
-                  body: handover,
-                );
-              }
-            } else if (action == 'cancel') {
-              await _mutate('/api/vehicle-reservations/${entry['id']}/cancel');
-            }
-          },
-          itemBuilder: (_) => [
-            if (ownsVehicle &&
-                can('vehicle_reservations.manage') &&
-                status == 'Ausstehend')
-              const PopupMenuItem(
-                value: 'approve',
-                child: Text('Fahrzeug freigeben'),
+  Widget _loadListTile(Map<String, dynamic> entry) {
+    final id = entry['id'].toString();
+    final items = entry['items'] as List? ?? const [];
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        entry['status'] == 'Aktiv'
+            ? Icons.check_circle_outline
+            : entry['status'] == 'Entwurf'
+            ? Icons.edit_note
+            : Icons.history,
+      ),
+      title: Text('v${entry['version']} · ${_text(entry['name'])}'),
+      subtitle: Text('${entry['status']} · ${items.length} Positionen'),
+      trailing: Wrap(
+        spacing: 4,
+        children: [
+          if (ownsVehicle &&
+              can('vehicles.load.manage') &&
+              entry['status'] != 'Aktiv')
+            TextButton(
+              onPressed: () => _mutate(
+                '/api/vehicles/${widget.vehicleId}/load-lists/$id/activate',
               ),
-            if (can('vehicle_reservations.operational_approve') &&
-                status == 'TLE-Freigabe ausstehend')
-              const PopupMenuItem(
-                value: 'tle',
-                child: Text('TLE-Freigabe erteilen'),
-              ),
-            if (ownsVehicle &&
-                can('vehicle_reservations.manage') &&
-                ['Ausstehend', 'TLE-Freigabe ausstehend'].contains(status))
-              const PopupMenuItem(value: 'reject', child: Text('Ablehnen')),
-            if (ownsVehicle &&
-                can('vehicle_reservations.manage') &&
-                status == 'Freigegeben')
-              const PopupMenuItem(value: 'issue', child: Text('Übergeben')),
-            if (ownsVehicle &&
-                can('vehicle_reservations.manage') &&
-                status == 'Ausgegeben')
-              const PopupMenuItem(value: 'return', child: Text('Zurücknehmen')),
-            if (![
-              'Abgeschlossen',
-              'Abgelehnt',
-              'Storniert',
-              'Ausgegeben',
-            ].contains(status))
-              const PopupMenuItem(value: 'cancel', child: Text('Stornieren')),
-          ],
-        ),
+              child: const Text('Aktivieren'),
+            ),
+          if (can('vehicles.print'))
+            IconButton(
+              tooltip: 'Diese Version als PDF',
+              onPressed: () => _print(save: true, listId: id),
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+            ),
+        ],
       ),
     );
   }
 
+  Widget _reservationTile(Map<String, dynamic> entry) {
+    final status = entry['status']?.toString();
+    final manages = ownsVehicle && can('vehicle_reservations.manage');
+    final ownRequest =
+        widget.currentUserId != null &&
+        entry['requesterUserId']?.toString() == widget.currentUserId;
+    final open = !const [
+      'Abgeschlossen',
+      'Abgelehnt',
+      'Storniert',
+      'Ausgegeben',
+    ].contains(status);
+    final actions = <PopupMenuEntry<String>>[
+      if (manages && entry['vehicleApprovedAt'] == null && open)
+        const PopupMenuItem(
+          value: 'approve',
+          child: Text('Fahrzeug freigeben'),
+        ),
+      if (can('vehicle_reservations.operational_approve') &&
+          entry['operationalApprovalRequired'] == true &&
+          entry['operationalApprovedAt'] == null &&
+          open)
+        const PopupMenuItem(value: 'tle', child: Text('TLE-Freigabe erteilen')),
+      if (manages && open)
+        const PopupMenuItem(value: 'reject', child: Text('Ablehnen')),
+      if (!manages &&
+          can('vehicle_reservations.operational_approve') &&
+          entry['operationalApprovalRequired'] == true &&
+          open)
+        const PopupMenuItem(value: 'tle-reject', child: Text('TLE: Ablehnen')),
+      if (manages && status == 'Freigegeben')
+        const PopupMenuItem(value: 'issue', child: Text('Übergeben')),
+      if (manages && status == 'Ausgegeben')
+        const PopupMenuItem(value: 'return', child: Text('Zurücknehmen')),
+      if ((ownRequest || manages) && open)
+        const PopupMenuItem(value: 'cancel', child: Text('Stornieren')),
+    ];
+    final details = [
+      _text(entry['purpose']),
+      _text(entry['destination']),
+      _text(entry['requesterName']),
+    ].where((value) => value.isNotEmpty).join(' · ');
+    final reason = _text(entry['decisionReason']);
+    return Card.outlined(
+      child: ListTile(
+        leading: const Icon(Icons.event_outlined),
+        title: Text('${_text(entry['title'] ?? entry['purpose'])} · $status'),
+        subtitle: Text(
+          [
+            '${_date(entry['startAt'])} – ${_date(entry['endAt'])}',
+            if (details.isNotEmpty) details,
+            if (reason.isNotEmpty) 'Begründung: $reason',
+          ].join('\n'),
+        ),
+        isThreeLine: true,
+        trailing: actions.isEmpty
+            ? null
+            : PopupMenuButton<String>(
+                tooltip: 'Aktionen',
+                onSelected: (action) => _reservationAction(entry, action),
+                itemBuilder: (_) => actions,
+              ),
+      ),
+    );
+  }
+
+  Future<void> _reservationAction(
+    Map<String, dynamic> entry,
+    String action,
+  ) async {
+    final id = entry['id'];
+    if (action == 'approve') {
+      await _mutate(
+        '/api/vehicle-reservations/$id/decision',
+        body: {'approved': true},
+      );
+    } else if (action == 'tle') {
+      await _mutate(
+        '/api/vehicle-reservations/$id/operational-decision',
+        body: {'approved': true},
+      );
+    } else if (action == 'reject' || action == 'tle-reject') {
+      final reason = await _reason('Reservierung ablehnen');
+      if (reason == null) return;
+      await _mutate(
+        action == 'reject'
+            ? '/api/vehicle-reservations/$id/decision'
+            : '/api/vehicle-reservations/$id/operational-decision',
+        body: {'approved': false, 'reason': reason},
+      );
+    } else if (action == 'issue') {
+      final blocked = safety['blocked'] == true;
+      final handover = await _handover(
+        'Fahrzeug übergeben',
+        overrideReasons: blocked && safety['critical'] != true && mayOverride
+            ? (safety['reasons'] as List? ?? const [])
+                  .map((entry) => entry.toString())
+                  .toList()
+            : null,
+      );
+      if (handover != null) {
+        await _mutate('/api/vehicle-reservations/$id/issue', body: handover);
+      }
+    } else if (action == 'return') {
+      final handover = await _handover(
+        'Fahrzeug zurücknehmen',
+        allowDamage: true,
+      );
+      if (handover == null) return;
+      final returned = await _mutate(
+        '/api/vehicle-reservations/$id/return',
+        body: handover,
+      );
+      if (returned && handover['damageReported'] == true && mounted) {
+        if (can('defects.report')) {
+          await _reportDefect(
+            description: _text(handover['notes']).isEmpty
+                ? 'Schaden bei Rückgabe festgestellt.'
+                : handover['notes'].toString(),
+          );
+        }
+      }
+    } else if (action == 'cancel') {
+      await _mutate('/api/vehicle-reservations/$id/cancel');
+    }
+  }
+
   Widget _maintenanceTile(Map<String, dynamic> entry) {
+    final open = !['Abgeschlossen', 'Abgebrochen'].contains(entry['status']);
+    final period = entry['startAt'] != null
+        ? '${_date(entry['startAt'])} – ${_date(entry['endAt'])}'
+        : null;
     return ListTile(
       leading: Icon(
         entry['safetyCritical'] == true
             ? Icons.health_and_safety
             : Icons.build_outlined,
       ),
-      title: Text('${entry['type']} · ${entry['status']}'),
+      title: Text('${_text(entry['type'])} · ${entry['status']}'),
       subtitle: Text(
         [
+          ?period,
           if (entry['dueDate'] != null) 'Fällig ${entry['dueDate']}',
-          if (entry['provider'].toString().isNotEmpty) entry['provider'],
+          if (_text(entry['provider']).isNotEmpty) _text(entry['provider']),
+          if (_text(entry['result']).isNotEmpty)
+            'Ergebnis: ${_text(entry['result'])}',
           if (entry['nextDueDate'] != null)
             'Folgetermin ${entry['nextDueDate']}',
         ].join(' · '),
       ),
-      trailing:
-          ownsVehicle &&
-              can('vehicle_maintenance.manage') &&
-              !['Abgeschlossen', 'Abgebrochen'].contains(entry['status'])
-          ? TextButton(
-              onPressed: () => _mutate(
-                '/api/vehicles/${widget.vehicleId}/maintenance/${entry['id']}',
-                method: 'PUT',
-                body: {'status': 'Abgeschlossen'},
-              ),
-              child: const Text('Abschließen'),
+      trailing: ownsVehicle && can('vehicle_maintenance.manage') && open
+          ? PopupMenuButton<String>(
+              tooltip: 'Wartung bearbeiten',
+              onSelected: (action) => _maintenanceAction(entry, action),
+              itemBuilder: (_) => [
+                if (entry['status'] == 'Geplant')
+                  const PopupMenuItem(
+                    value: 'start',
+                    child: Text('In Arbeit setzen'),
+                  ),
+                const PopupMenuItem(
+                  value: 'complete',
+                  child: Text('Abschließen'),
+                ),
+                const PopupMenuItem(value: 'abort', child: Text('Abbrechen')),
+              ],
             )
           : null,
     );
+  }
+
+  Future<void> _maintenanceAction(
+    Map<String, dynamic> entry,
+    String action,
+  ) async {
+    final path = '/api/vehicles/${widget.vehicleId}/maintenance/${entry['id']}';
+    if (action == 'start') {
+      await _mutate(path, method: 'PUT', body: {'status': 'In Arbeit'});
+    } else if (action == 'abort') {
+      final reason = await _reason('Wartung abbrechen');
+      if (reason == null) return;
+      await _mutate(
+        path,
+        method: 'PUT',
+        body: {'status': 'Abgebrochen', 'result': reason},
+      );
+    } else if (action == 'complete') {
+      final values = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => _MaintenanceCompletionDialog(entry: entry),
+      );
+      if (values == null) return;
+      await _mutate(
+        path,
+        method: 'PUT',
+        body: {'status': 'Abgeschlossen', ...values},
+      );
+    }
   }
 
   Widget _loadTile(Map<String, dynamic> entry) {
@@ -1621,7 +1765,7 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
       leading: const Icon(Icons.inventory_2_outlined),
       title: Text('${entry['inventoryNumber']} · ${entry['materialName']}'),
       subtitle: Text(
-        '${entry['quantity']} ${entry['unit']} · ${position.isEmpty ? 'Keine Position' : position}'
+        '${entry['quantity']} ${_text(entry['unit'])} · ${position.isEmpty ? 'Keine Position' : position}'
         '${foreign ? ' · Material von ${entry['materialUnitName'] ?? 'anderer Gliederung'}' : ''}',
       ),
       trailing: (ownsVehicle || ownMaterial) && can('vehicles.load.manage')
@@ -1636,7 +1780,7 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
                 if (location != null) {
                   await _mutate(
                     '/api/vehicles/${widget.vehicleId}/load/${entry['id']}/unload',
-                    body: {'locationId': location},
+                    body: {if (location.isNotEmpty) 'locationId': location},
                   );
                 }
               },
@@ -1713,21 +1857,23 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     final locations = (widget.options['parkingLocations'] as List? ?? const [])
         .map((entry) => Map<String, dynamic>.from(entry as Map))
         .toList();
-    if (locations.isEmpty) return null;
+    // An empty id sends the item back to where it was loaded from.
     return showDialog<String>(
       context: context,
       builder: (context) => SimpleDialog(
         title: const Text('Ziel-Lagerort wählen'),
-        children: locations
-            .map(
-              (entry) => SimpleDialogOption(
-                onPressed: () => Navigator.pop(context, entry['id'].toString()),
-                child: Text(
-                  entry['path']?.toString() ?? entry['name'].toString(),
-                ),
-              ),
-            )
-            .toList(),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, ''),
+            child: const Text('Zurück an den ursprünglichen Lagerort'),
+          ),
+          ...locations.map(
+            (entry) => SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, entry['id'].toString()),
+              child: Text(_text(entry['path'] ?? entry['name'])),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1766,11 +1912,14 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
   Future<Map<String, dynamic>?> _handover(
     String title, {
     bool allowDamage = false,
+    List<String>? overrideReasons,
   }) async {
-    final mileage = TextEditingController();
+    final mileage = TextEditingController(text: _text(vehicle?['mileage']));
     final fuel = TextEditingController();
     final notes = TextEditingController();
+    final override = TextEditingController();
     var damage = false;
+    var missingOverride = false;
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1781,6 +1930,24 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (overrideReasons != null) ...[
+                  Card(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    child: ListTile(
+                      leading: const Icon(Icons.warning_amber),
+                      title: const Text('Fahrzeug ist gesperrt'),
+                      subtitle: Text(overrideReasons.join('\n')),
+                    ),
+                  ),
+                  TextField(
+                    controller: override,
+                    maxLines: 2,
+                    decoration: InputDecoration(
+                      labelText: 'Begründung der Übersteuerung *',
+                      errorText: missingOverride ? 'Pflichtfeld' : null,
+                    ),
+                  ),
+                ],
                 TextField(
                   controller: mileage,
                   keyboardType: TextInputType.number,
@@ -1815,12 +1982,20 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
               child: const Text('Abbrechen'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, {
-                'mileage': mileage.text,
-                'fuelLevel': fuel.text,
-                'notes': notes.text,
-                if (allowDamage) 'damageReported': damage,
-              }),
+              onPressed: () {
+                if (overrideReasons != null && override.text.trim().isEmpty) {
+                  setDialogState(() => missingOverride = true);
+                  return;
+                }
+                Navigator.pop(context, {
+                  'mileage': mileage.text.trim(),
+                  'fuelLevel': fuel.text,
+                  'notes': notes.text,
+                  if (allowDamage) 'damageReported': damage,
+                  if (overrideReasons != null)
+                    'overrideReason': override.text.trim(),
+                });
+              },
               child: const Text('Speichern'),
             ),
           ],
@@ -1830,6 +2005,7 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
     mileage.dispose();
     fuel.dispose();
     notes.dispose();
+    override.dispose();
     return result;
   }
 
@@ -1841,6 +2017,11 @@ class _VehicleDetailDialogState extends State<_VehicleDetailDialog> {
 }
 
 class _ReservationDialog extends StatefulWidget {
+  const _ReservationDialog({this.allowOverride = false});
+
+  /// Owners with maintenance rights may justify a non-critical conflict.
+  final bool allowOverride;
+
   @override
   State<_ReservationDialog> createState() => _ReservationDialogState();
 }
@@ -1852,8 +2033,10 @@ class _ReservationDialogState extends State<_ReservationDialog> {
   final destination = TextEditingController();
   final contact = TextEditingController();
   final note = TextEditingController();
+  final overrideReason = TextEditingController();
   DateTime start = DateTime.now().add(const Duration(days: 1));
   DateTime end = DateTime.now().add(const Duration(days: 1, hours: 2));
+  String? periodError;
 
   @override
   void dispose() {
@@ -1862,6 +2045,7 @@ class _ReservationDialogState extends State<_ReservationDialog> {
     destination.dispose();
     contact.dispose();
     note.dispose();
+    overrideReason.dispose();
     super.dispose();
   }
 
@@ -1950,6 +2134,26 @@ class _ReservationDialogState extends State<_ReservationDialog> {
                 maxLines: 3,
                 decoration: const InputDecoration(labelText: 'Notiz'),
               ),
+              if (widget.allowOverride)
+                TextFormField(
+                  controller: overrideReason,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Begründung bei Wartungskonflikt (optional)',
+                    helperText:
+                        'Nur für nicht sicherheitskritische Sperren wirksam.',
+                  ),
+                ),
+              if (periodError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    periodError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1962,7 +2166,13 @@ class _ReservationDialogState extends State<_ReservationDialog> {
       ),
       FilledButton(
         onPressed: () {
-          if (formKey.currentState?.validate() != true || !end.isAfter(start)) {
+          final error = !end.isAfter(start)
+              ? 'Das Ende muss nach dem Beginn liegen.'
+              : !end.isAfter(DateTime.now())
+              ? 'Der Zeitraum liegt in der Vergangenheit.'
+              : null;
+          setState(() => periodError = error);
+          if (formKey.currentState?.validate() != true || error != null) {
             return;
           }
           Navigator.pop(context, {
@@ -1973,6 +2183,8 @@ class _ReservationDialogState extends State<_ReservationDialog> {
             'destination': destination.text,
             'contact': contact.text,
             'note': note.text,
+            if (overrideReason.text.trim().isNotEmpty)
+              'overrideReason': overrideReason.text.trim(),
           });
         },
         child: const Text('Beantragen'),
@@ -1986,7 +2198,32 @@ class _ReservationDialogState extends State<_ReservationDialog> {
       '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 }
 
+String? _validDateOnly(String value) {
+  final raw = value.trim();
+  if (raw.isEmpty) return '';
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw);
+  if (match == null) return null;
+  final parsed = DateTime.utc(
+    int.parse(match[1]!),
+    int.parse(match[2]!),
+    int.parse(match[3]!),
+  );
+  return parsed.toIso8601String().substring(0, 10) == raw ? raw : null;
+}
+
+String? _optionalNumber(String? value, {bool integer = false}) {
+  final raw = value?.trim().replaceAll(',', '.') ?? '';
+  if (raw.isEmpty) return null;
+  final parsed = num.tryParse(raw);
+  if (parsed == null || parsed < 0 || (integer && parsed % 1 != 0)) {
+    return integer ? 'Ganze Zahl ≥ 0' : 'Zahl ≥ 0';
+  }
+  return null;
+}
+
 class _MaintenanceDialog extends StatefulWidget {
+  const _MaintenanceDialog();
+
   @override
   State<_MaintenanceDialog> createState() => _MaintenanceDialogState();
 }
@@ -2002,7 +2239,27 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
   final description = TextEditingController();
   DateTime start = DateTime.now().add(const Duration(days: 1));
   DateTime end = DateTime.now().add(const Duration(days: 1, hours: 4));
+
+  /// Only a real workshop slot blocks reservations; a pure due date does not.
+  bool withPeriod = false;
   bool critical = false;
+  String? formError;
+
+  @override
+  void dispose() {
+    for (final controller in [
+      type,
+      due,
+      provider,
+      interval,
+      mileage,
+      cost,
+      description,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
 
   Future<void> pick(bool isStart) async {
     final current = isStart ? start : end;
@@ -2045,42 +2302,60 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => pick(true),
-                      icon: const Icon(Icons.event),
-                      label: Text(
-                        'Beginn: ${_ReservationDialogState._short(start)}',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => pick(false),
-                      icon: const Icon(Icons.event),
-                      label: Text(
-                        'Ende: ${_ReservationDialogState._short(end)}',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
               TextFormField(
                 controller: type,
                 decoration: const InputDecoration(labelText: 'Wartungsart *'),
                 validator: _ReservationDialogState._required,
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: withPeriod,
+                onChanged: (value) => setState(() => withPeriod = value),
+                title: const Text('Werkstatttermin mit Zeitraum'),
+                subtitle: const Text(
+                  'Das Fahrzeug ist in diesem Zeitraum nicht reservierbar.',
+                ),
+              ),
+              if (withPeriod)
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => pick(true),
+                        icon: const Icon(Icons.event),
+                        label: Text(
+                          'Beginn: ${_ReservationDialogState._short(start)}',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => pick(false),
+                        icon: const Icon(Icons.event),
+                        label: Text(
+                          'Ende: ${_ReservationDialogState._short(end)}',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
                       controller: due,
-                      decoration: const InputDecoration(
-                        labelText: 'Fälligkeit (JJJJ-MM-TT)',
+                      decoration: InputDecoration(
+                        labelText: withPeriod
+                            ? 'Fälligkeit (JJJJ-MM-TT)'
+                            : 'Fälligkeit (JJJJ-MM-TT) *',
                       ),
+                      validator: (value) {
+                        final parsed = _validDateOnly(value ?? '');
+                        if (parsed == null) return 'Ungültiges Datum';
+                        if (parsed.isEmpty && !withPeriod) return 'Pflichtfeld';
+                        return null;
+                      },
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -2090,7 +2365,10 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: 'Intervall Monate',
+                        helperText: 'Legt beim Abschluss den Folgetermin an.',
                       ),
+                      validator: (value) =>
+                          _optionalNumber(value, integer: true),
                     ),
                   ),
                 ],
@@ -2110,14 +2388,18 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
                       decoration: const InputDecoration(
                         labelText: 'Kilometerstand',
                       ),
+                      validator: _optionalNumber,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextFormField(
                       controller: cost,
-                      keyboardType: TextInputType.number,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                       decoration: const InputDecoration(labelText: 'Kosten'),
+                      validator: _optionalNumber,
                     ),
                   ),
                 ],
@@ -2128,10 +2410,20 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
                 decoration: const InputDecoration(labelText: 'Beschreibung'),
               ),
               SwitchListTile(
+                contentPadding: EdgeInsets.zero,
                 value: critical,
                 onChanged: (value) => setState(() => critical = value),
                 title: const Text('Sicherheitskritische Wartung'),
+                subtitle: const Text(
+                  'Sperrt das Fahrzeug ohne Übersteuerung, sobald die Wartung '
+                  'aktiv oder überfällig ist.',
+                ),
               ),
+              if (formError != null)
+                Text(
+                  formError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
             ],
           ),
         ),
@@ -2144,17 +2436,23 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
       ),
       FilledButton(
         onPressed: () {
-          if (formKey.currentState?.validate() != true) return;
+          final error = withPeriod && !end.isAfter(start)
+              ? 'Das Ende muss nach dem Beginn liegen.'
+              : null;
+          setState(() => formError = error);
+          if (formKey.currentState?.validate() != true || error != null) {
+            return;
+          }
           Navigator.pop(context, {
-            'type': type.text,
+            'type': type.text.trim(),
             'status': 'Geplant',
-            'startAt': start.toUtc().toIso8601String(),
-            'endAt': end.toUtc().toIso8601String(),
-            'dueDate': due.text,
-            'intervalMonths': interval.text,
-            'mileage': mileage.text,
+            if (withPeriod) 'startAt': start.toUtc().toIso8601String(),
+            if (withPeriod) 'endAt': end.toUtc().toIso8601String(),
+            'dueDate': due.text.trim(),
+            'intervalMonths': interval.text.trim(),
+            'mileage': mileage.text.trim().replaceAll(',', '.'),
             'provider': provider.text,
-            'cost': cost.text,
+            'cost': cost.text.trim().replaceAll(',', '.'),
             'description': description.text,
             'safetyCritical': critical,
           });
@@ -2163,6 +2461,109 @@ class _MaintenanceDialogState extends State<_MaintenanceDialog> {
       ),
     ],
   );
+}
+
+class _MaintenanceCompletionDialog extends StatefulWidget {
+  const _MaintenanceCompletionDialog({required this.entry});
+
+  final Map<String, dynamic> entry;
+
+  @override
+  State<_MaintenanceCompletionDialog> createState() =>
+      _MaintenanceCompletionDialogState();
+}
+
+class _MaintenanceCompletionDialogState
+    extends State<_MaintenanceCompletionDialog> {
+  final formKey = GlobalKey<FormState>();
+  late final result = TextEditingController(
+    text: _text(widget.entry['result']),
+  );
+  late final cost = TextEditingController(text: _text(widget.entry['cost']));
+  late final mileage = TextEditingController(
+    text: _text(widget.entry['mileage']),
+  );
+  late final nextDue = TextEditingController(
+    text: _text(widget.entry['nextDueDate']),
+  );
+
+  @override
+  void dispose() {
+    result.dispose();
+    cost.dispose();
+    mileage.dispose();
+    nextDue.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final interval = _text(widget.entry['intervalMonths']);
+    return AlertDialog(
+      title: Text('Wartung „${_text(widget.entry['type'])}“ abschließen'),
+      content: SizedBox(
+        width: 520,
+        child: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: result,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Ergebnis *'),
+                validator: _ReservationDialogState._required,
+              ),
+              TextFormField(
+                controller: mileage,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Kilometerstand'),
+                validator: _optionalNumber,
+              ),
+              TextFormField(
+                controller: cost,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(labelText: 'Kosten'),
+                validator: _optionalNumber,
+              ),
+              TextFormField(
+                controller: nextDue,
+                decoration: InputDecoration(
+                  labelText: 'Folgetermin (JJJJ-MM-TT)',
+                  helperText: interval.isEmpty
+                      ? 'Legt automatisch eine neue geplante Wartung an.'
+                      : 'Leer lassen: automatisch in $interval Monaten.',
+                ),
+                validator: (value) => _validDateOnly(value ?? '') == null
+                    ? 'Ungültiges Datum'
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (formKey.currentState?.validate() != true) return;
+            Navigator.pop(context, {
+              'result': result.text.trim(),
+              'mileage': mileage.text.trim().replaceAll(',', '.'),
+              'cost': cost.text.trim().replaceAll(',', '.'),
+              'nextDueDate': nextDue.text.trim(),
+            });
+          },
+          child: const Text('Abschließen'),
+        ),
+      ],
+    );
+  }
 }
 
 class _LoadMaterialDialog extends StatefulWidget {
@@ -2284,6 +2685,7 @@ class _LoadListDialog extends StatefulWidget {
 
 class _LoadListDialogState extends State<_LoadListDialog> {
   final name = TextEditingController(text: 'Standardbeladung');
+  bool activateNow = true;
   late final quantities = widget.assignments
       .map((entry) => TextEditingController(text: entry['quantity'].toString()))
       .toList();
@@ -2299,6 +2701,15 @@ class _LoadListDialogState extends State<_LoadListDialog> {
             controller: name,
             decoration: const InputDecoration(labelText: 'Bezeichnung'),
           ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: activateNow,
+            onChanged: (value) => setState(() => activateNow = value),
+            title: const Text('Sofort aktivieren'),
+            subtitle: const Text(
+              'Ersetzt die bisher aktive Liste. Sonst als Entwurf speichern.',
+            ),
+          ),
           const SizedBox(height: 8),
           Expanded(
             child: ListView.builder(
@@ -2309,7 +2720,7 @@ class _LoadListDialogState extends State<_LoadListDialog> {
                   title: Text(
                     '${entry['inventoryNumber']} · ${entry['materialName']}',
                   ),
-                  subtitle: Text(entry['position']?.toString() ?? ''),
+                  subtitle: Text(_text(entry['position'])),
                   trailing: SizedBox(
                     width: 100,
                     child: TextField(
@@ -2333,7 +2744,7 @@ class _LoadListDialogState extends State<_LoadListDialog> {
       FilledButton(
         onPressed: () => Navigator.pop(context, {
           'name': name.text,
-          'activate': true,
+          'activate': activateNow,
           'items': List.generate(
             widget.assignments.length,
             (index) => {
@@ -2344,7 +2755,7 @@ class _LoadListDialogState extends State<_LoadListDialog> {
             },
           ),
         }),
-        child: const Text('Aktivieren'),
+        child: Text(activateNow ? 'Aktivieren' : 'Als Entwurf speichern'),
       ),
     ],
   );
@@ -2451,14 +2862,16 @@ class _SharingDialogState extends State<_SharingDialog> {
 }
 
 class _VehicleDefectDialog extends StatefulWidget {
-  const _VehicleDefectDialog();
+  const _VehicleDefectDialog({this.description});
+
+  final String? description;
   @override
   State<_VehicleDefectDialog> createState() => _VehicleDefectDialogState();
 }
 
 class _VehicleDefectDialogState extends State<_VehicleDefectDialog> {
   final title = TextEditingController();
-  final description = TextEditingController();
+  late final description = TextEditingController(text: widget.description);
   String priority = 'Normal';
   bool notOperational = true;
   @override

@@ -529,7 +529,7 @@ void main() {
     await tester.tap(find.text('Ausgeben/Zurücknehmen'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ausgeben / Zurücknehmen'), findsOneWidget);
+    expect(find.text('Ausgeben / Zurücknehmen / Umbuchen'), findsOneWidget);
     expect(find.text('Kleidung suchen'), findsOneWidget);
     expect(
       find.text('Name, Inventarnummer, Größe, Kategorie oder Person'),

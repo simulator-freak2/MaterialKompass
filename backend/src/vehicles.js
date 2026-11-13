@@ -68,6 +68,24 @@ function nullableNumber(value, { integer = false, maximum = Number.MAX_SAFE_INTE
   return parsed;
 }
 
+// Standard PDF fonts only support WinAnsi; replace unsupported characters
+// instead of failing the whole print job.
+function pdfText(value) {
+  return String(value ?? '')
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/[\u2018\u2019\u201a]/g, "'")
+    .replace(/[\u201c\u201d\u201e]/g, '"')
+    .replace(/[^\x20-\x7e\xa0-\xff€]/g, '?');
+}
+
+function addMonths(dateOnly, months) {
+  const [year, month, day] = dateOnly.split('-').map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(day, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+
 function overlaps(leftStart, leftEnd, rightStart, rightEnd) {
   return new Date(leftStart).getTime() < new Date(rightEnd).getTime()
     && new Date(leftEnd).getTime() > new Date(rightStart).getTime();
@@ -291,8 +309,10 @@ function registerVehicleRoutes({
     if (mileage === undefined || operatingHours === undefined) {
       return { error: 'Kilometerstand oder Betriebsstunden sind ungültig.' };
     }
-    if (parkingLocationId && !all(locations).some((entry) => entry.id === parkingLocationId
-      && entry.organizationId === req.tenant.organizationId && !entry.vehicleId)) {
+    if (parkingLocationId && parkingLocationId !== existing?.parkingLocationId
+      && !all(locations).some((entry) => entry.id === parkingLocationId
+        && entry.organizationId === req.tenant.organizationId
+        && entry.unitId === req.tenant.unitId && !entry.vehicleId)) {
       return { error: 'Der gewählte Stellplatz ist ungültig.' };
     }
     const duplicate = all(vehicles).find((entry) => entry.id !== existing?.id
@@ -315,7 +335,7 @@ function registerVehicleRoutes({
       storagePositions,
       registrationNumber, vin, radioCallName, parkingLocationId, parkingSpaceId, parkingDetails,
       year, manufacturer, model, vehicleKind, usage, type, status, mileage, operatingHours, notes,
-      primaryResponseVehicle: body.primaryResponseVehicle ?? existing?.primaryResponseVehicle ?? false,
+      primaryResponseVehicle: (body.primaryResponseVehicle ?? existing?.primaryResponseVehicle) === true,
     };
   }
 
@@ -337,7 +357,7 @@ function registerVehicleRoutes({
       unitId: vehicle.unitId,
       vehicleId: vehicle.id,
       name: `Fahrzeug ${displayName(vehicle)}`,
-      code: locationCode(vehicle.registrationNumber),
+      code: locationCode(normalizeIdentifier(vehicle.registrationNumber || vehicle.radioCallName)),
       type: 'Fahrzeug', street: '', houseNumber: '', postalCode: '', city: '', country: '',
     };
     all(locations).push(location);
@@ -399,6 +419,41 @@ function registerVehicleRoutes({
     return all(vehicleMaintenanceEvents).find((entry) => entry.vehicleId === vehicleId
       && !['Abgeschlossen', 'Abgebrochen'].includes(entry.status)
       && entry.startAt && entry.endAt && overlaps(startAt, endAt, entry.startAt, entry.endAt));
+  }
+
+  function mayOverrideBlock(req, vehicle) {
+    return ownedBy(req, vehicle) && (hasPermission(req.user, 'vehicle_maintenance.manage')
+      || req.user.roles?.includes('Admin') === true);
+  }
+
+  // Shared availability check for creating and changing reservations.
+  function reservationBlocker(req, vehicle, values, overrideReason, ignoredId = null) {
+    if (Date.parse(values.endAt) <= Date.now()) {
+      return { status: 400, body: { error: 'Der Reservierungszeitraum liegt in der Vergangenheit.' } };
+    }
+    if (hasReservationConflict(vehicle.id, values.startAt, values.endAt, ignoredId)) {
+      return { status: 409, body: { error: 'Das Fahrzeug ist im gewählten Zeitraum bereits reserviert.' } };
+    }
+    const maintenance = maintenanceConflict(vehicle.id, values.startAt, values.endAt);
+    const safety = assessVehicleSafety(vehicle, new Date(values.startAt));
+    const critical = safety.critical || maintenance?.safetyCritical === true;
+    if ((maintenance || safety.blocked)
+        && (critical || !mayOverrideBlock(req, vehicle) || !overrideReason)) {
+      return {
+        status: 409,
+        body: {
+          error: critical
+            ? 'Das Fahrzeug ist sicherheitskritisch gesperrt und darf nicht reserviert werden.'
+            : 'Wartung oder Fahrzeugstatus blockieren den Zeitraum. Eine berechtigte Übersteuerung benötigt eine Begründung.',
+          reasons: [
+            ...safety.reasons,
+            ...(maintenance ? [`Geplante Wartung „${maintenance.type}“ im Zeitraum.`] : []),
+          ],
+          overridable: !critical && mayOverrideBlock(req, vehicle),
+        },
+      };
+    }
+    return null;
   }
 
   function activeLoadList(vehicleId) {
@@ -540,6 +595,7 @@ function registerVehicleRoutes({
       && (!query || [entry.registrationNumber, entry.vin, entry.radioCallName,
         entry.manufacturer, entry.model, entry.vehicleKind, entry.usage, entry.type]
         .some((value) => String(value || '').toLowerCase().includes(query))))
+      .sort((left, right) => displayName(left).localeCompare(displayName(right), 'de'))
       .slice(0, limit).map(publicVehicle);
     return res.json(result);
   });
@@ -572,19 +628,22 @@ function registerVehicleRoutes({
   app.get('/api/vehicles/:id', authMiddleware, requirePermission('vehicles.read'), (req, res) => {
     const vehicle = visibleVehicle(req, req.params.id);
     if (!vehicle) return res.status(404).json({ error: 'Fahrzeug nicht gefunden.' });
+    const mayReadLoad = hasPermission(req.user, 'vehicles.load.read');
     return res.json({
       ...publicVehicle(vehicle),
       reservations: all(vehicleReservations).filter((entry) => entry.vehicleId === vehicle.id
         && reservationVisible(req, entry)).map(publicReservation),
-      maintenance: all(vehicleMaintenanceEvents).filter((entry) => entry.vehicleId === vehicle.id),
-      loadAssignments: all(vehicleLoadAssignments).filter((entry) => entry.vehicleId === vehicle.id)
-        .map(publicAssignment),
-      loadLists: all(vehicleLoadLists).filter((entry) => entry.vehicleId === vehicle.id)
-        .sort((left, right) => Number(right.version) - Number(left.version)),
-      loadRequests: all(vehicleLoadRequests).filter((entry) => entry.vehicleId === vehicle.id
+      maintenance: all(vehicleMaintenanceEvents).filter((entry) => entry.vehicleId === vehicle.id)
+        .sort((left, right) => String(right.startAt || right.dueDate || right.createdAt || '')
+          .localeCompare(String(left.startAt || left.dueDate || left.createdAt || ''))),
+      loadAssignments: mayReadLoad ? all(vehicleLoadAssignments)
+        .filter((entry) => entry.vehicleId === vehicle.id).map(publicAssignment) : [],
+      loadLists: mayReadLoad ? all(vehicleLoadLists).filter((entry) => entry.vehicleId === vehicle.id)
+        .sort((left, right) => Number(right.version) - Number(left.version)) : [],
+      loadRequests: mayReadLoad ? all(vehicleLoadRequests).filter((entry) => entry.vehicleId === vehicle.id
         && loadRequestVisible(req, entry))
         .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
-        .slice(0, 200).map(publicLoadRequest),
+        .slice(0, 200).map(publicLoadRequest) : [],
       materialLoadAllowed: loadableBy(req, vehicle) && !vehicle.archivedAt,
       defects: activeDefects(vehicle).map((entry) => ({
         id: entry.id, defectNumber: entry.defectNumber, title: entry.title,
@@ -619,11 +678,33 @@ function registerVehicleRoutes({
     if (!vehicle) return res.status(404).json({ error: 'Fahrzeug nicht gefunden oder nicht in dieser Gliederung verwaltbar.' });
     const values = vehicleValues(req, req.body, vehicle);
     if (values.error) return res.status(values.status || 400).json({ error: values.error });
+    const retiring = values.status === 'Außer Dienst' && !vehicle.archivedAt;
+    const ownReservations = all(vehicleReservations).filter((entry) => entry.vehicleId === vehicle.id);
+    if (retiring && ownReservations.some((entry) => entry.status === 'Ausgegeben')) {
+      return res.status(409).json({ error: 'Ein ausgegebenes Fahrzeug muss vor der Außerdienststellung zurückgenommen werden.' });
+    }
     const now = nowIso();
     Object.assign(vehicle, values, { updatedAt: now, updatedBy: req.user.username });
     if (values.status === 'Außer Dienst') {
       vehicle.offDutyAt ||= now;
       vehicle.archivedAt ||= now;
+      if (retiring) {
+        // Open requests cannot be fulfilled any more; close them visibly.
+        const cancelled = ownReservations.filter((entry) =>
+          !RESERVATION_TERMINAL.has(entry.status) && entry.status !== 'Ausgegeben');
+        for (const entry of cancelled) {
+          Object.assign(entry, {
+            status: 'Storniert', decisionReason: 'Fahrzeug wurde außer Dienst gestellt.',
+            cancelledAt: now, cancelledBy: req.user.username, updatedAt: now,
+          });
+        }
+        if (cancelled.length) {
+          logEvent('cancel', 'VehicleReservation', {
+            vehicleId: vehicle.id, reservationIds: cancelled.map((entry) => entry.id),
+            reason: 'off-duty',
+          }, req.user.username);
+        }
+      }
     } else {
       vehicle.offDutyAt = null;
       vehicle.archivedAt = null;
@@ -733,21 +814,9 @@ function registerVehicleRoutes({
       }
       const values = reservationInput(req.body);
       if (values.error) return res.status(400).json({ error: values.error });
-      if (hasReservationConflict(vehicle.id, values.startAt, values.endAt)) {
-        return res.status(409).json({ error: 'Das Fahrzeug ist im gewählten Zeitraum bereits reserviert.' });
-      }
-      const maintenance = maintenanceConflict(vehicle.id, values.startAt, values.endAt);
-      const safety = assessVehicleSafety(vehicle, new Date(values.startAt));
       const overrideReason = text(req.body.overrideReason, 1000);
-      const mayOverride = hasPermission(req.user, 'vehicle_maintenance.manage') || req.user.roles?.includes('Admin');
-      if ((maintenance || safety.blocked) && (safety.critical || !mayOverride || !overrideReason)) {
-        return res.status(409).json({
-          error: safety.critical
-            ? 'Das Fahrzeug ist sicherheitskritisch gesperrt und darf nicht reserviert werden.'
-            : 'Wartung oder Fahrzeugstatus blockieren den Zeitraum. Eine berechtigte Übersteuerung benötigt eine Begründung.',
-          reasons: safety.reasons,
-        });
-      }
+      const blocker = reservationBlocker(req, vehicle, values, overrideReason);
+      if (blocker) return res.status(blocker.status).json(blocker.body);
       const createdAt = nowIso();
       const entry = {
         id: `vehicle-reservation-${randomUUID()}`,
@@ -780,16 +849,25 @@ function registerVehicleRoutes({
         || RESERVATION_TERMINAL.has(entry.status)) {
         return res.status(409).json({ error: 'Diese Reservierung kann nicht mehr geändert werden.' });
       }
+      const vehicle = visibleVehicle(req, entry.vehicleId);
+      if (!vehicle || !reservableBy(req, vehicle) || vehicle.archivedAt) {
+        return res.status(409).json({ error: 'Das Fahrzeug ist nicht mehr reservierbar.' });
+      }
       const values = reservationInput(req.body, entry);
       if (values.error) return res.status(400).json({ error: values.error });
-      if (hasReservationConflict(entry.vehicleId, values.startAt, values.endAt, entry.id)) {
-        return res.status(409).json({ error: 'Das Fahrzeug ist im gewählten Zeitraum bereits reserviert.' });
-      }
+      const overrideReason = text(req.body.overrideReason ?? entry.overrideReason, 1000);
+      const blocker = reservationBlocker(req, vehicle, values, overrideReason, entry.id);
+      if (blocker) return res.status(blocker.status).json(blocker.body);
       Object.assign(entry, values, {
         vehicleApprovedAt: null, vehicleApprovedBy: null,
+        operationalApprovalRequired: vehicle.primaryResponseVehicle === true
+          && organizationSetting(vehicle.organizationId),
         operationalApprovedAt: null, operationalApprovedBy: null,
+        overrideReason: overrideReason || null,
+        decisionReason: null,
         status: 'Ausstehend', updatedAt: nowIso(),
       });
+      logEvent('update', 'VehicleReservation', { id: entry.id, vehicleId: vehicle.id }, req.user.username);
       return res.json(publicReservation(entry));
     });
 
@@ -852,6 +930,8 @@ function registerVehicleRoutes({
         return res.status(409).json({ error: 'Die Reservierung kann nicht storniert werden.' });
       }
       entry.status = 'Storniert'; entry.updatedAt = nowIso();
+      entry.cancelledAt = entry.updatedAt; entry.cancelledBy = req.user.username;
+      logEvent('cancel', 'VehicleReservation', { id: entry.id, vehicleId: entry.vehicleId }, req.user.username);
       return res.json(publicReservation(entry));
     });
 
@@ -861,15 +941,37 @@ function registerVehicleRoutes({
       const vehicle = entry && ownedVehicle(req, entry.vehicleId);
       if (!entry || !vehicle) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
       if (reservationStatus(entry) !== 'Freigegeben') return res.status(409).json({ error: 'Nur vollständig freigegebene Reservierungen können übergeben werden.' });
+      if (Date.parse(entry.endAt) <= Date.now()) {
+        return res.status(409).json({ error: 'Der Reservierungszeitraum ist bereits abgelaufen.' });
+      }
+      if (all(vehicleReservations).some((candidate) => candidate.id !== entry.id
+        && candidate.vehicleId === vehicle.id && candidate.status === 'Ausgegeben')) {
+        return res.status(409).json({ error: 'Das Fahrzeug ist noch aus einer anderen Reservierung ausgegeben.' });
+      }
       const safety = assessVehicleSafety(vehicle);
-      if (safety.blocked) return res.status(409).json({ error: 'Das Fahrzeug ist gesperrt und darf nicht übergeben werden.', reasons: safety.reasons });
+      const overrideReason = text(req.body.overrideReason, 1000);
+      if (safety.blocked && (safety.critical || !mayOverrideBlock(req, vehicle) || !overrideReason)) {
+        return res.status(409).json({
+          error: safety.critical
+            ? 'Das Fahrzeug ist sicherheitskritisch gesperrt und darf nicht übergeben werden.'
+            : 'Das Fahrzeug ist gesperrt. Eine berechtigte Übersteuerung benötigt eine Begründung.',
+          reasons: safety.reasons,
+          overridable: !safety.critical && mayOverrideBlock(req, vehicle),
+        });
+      }
       const mileage = nullableNumber(req.body.mileage, { maximum: 100_000_000 });
-      if (mileage === undefined) return res.status(400).json({ error: 'Der Kilometerstand ist ungültig.' });
+      if (mileage === undefined || (mileage !== null && mileage < Number(vehicle.mileage || 0))) {
+        return res.status(400).json({ error: 'Der Kilometerstand ist ungültig oder kleiner als der zuletzt erfasste Stand.' });
+      }
       entry.status = 'Ausgegeben'; entry.issuedAt = nowIso(); entry.issuedBy = req.user.username;
       entry.issueMileage = mileage; entry.issueFuelLevel = text(req.body.fuelLevel, 80);
       entry.issueNotes = text(req.body.notes, 2000); entry.updatedAt = nowIso();
-      if (mileage !== null) vehicle.mileage = Math.max(Number(vehicle.mileage || 0), mileage);
-      logEvent('issue', 'VehicleReservation', { id: entry.id, vehicleId: vehicle.id }, req.user.username);
+      entry.issueOverrideReason = safety.blocked ? overrideReason : null;
+      if (mileage !== null) vehicle.mileage = mileage;
+      logEvent('issue', 'VehicleReservation', {
+        id: entry.id, vehicleId: vehicle.id,
+        ...(safety.blocked ? { overrideReason, reasons: safety.reasons } : {}),
+      }, req.user.username);
       return res.json(publicReservation(entry));
     });
 
@@ -880,81 +982,136 @@ function registerVehicleRoutes({
       if (!entry || !vehicle) return res.status(404).json({ error: 'Reservierung nicht gefunden.' });
       if (entry.status !== 'Ausgegeben') return res.status(409).json({ error: 'Das Fahrzeug ist nicht ausgegeben.' });
       const mileage = nullableNumber(req.body.mileage, { maximum: 100_000_000 });
-      if (mileage === undefined || (mileage !== null && mileage < Number(entry.issueMileage || 0))) {
+      if (mileage === undefined || (mileage !== null
+        && mileage < Number(entry.issueMileage ?? vehicle.mileage ?? 0))) {
         return res.status(400).json({ error: 'Der Rückgabe-Kilometerstand ist ungültig.' });
       }
       entry.status = 'Abgeschlossen'; entry.returnedAt = nowIso(); entry.returnedBy = req.user.username;
       entry.returnMileage = mileage; entry.returnFuelLevel = text(req.body.fuelLevel, 80);
       entry.returnNotes = text(req.body.notes, 2000); entry.damageReported = req.body.damageReported === true;
       entry.updatedAt = nowIso();
-      if (mileage !== null) vehicle.mileage = mileage;
+      if (mileage !== null) vehicle.mileage = Math.max(Number(vehicle.mileage || 0), mileage);
       logEvent('return', 'VehicleReservation', { id: entry.id, vehicleId: vehicle.id, damageReported: entry.damageReported }, req.user.username);
       return res.json(publicReservation(entry));
     });
+
+  function maintenanceInput(body, existing = null) {
+    const pick = (key) => (Object.hasOwn(body, key) ? body[key] : existing?.[key]);
+    const type = text(pick('type'), 160);
+    const status = text(pick('status') || 'Geplant', 40);
+    const startRaw = pick('startAt');
+    const endRaw = pick('endAt');
+    const start = startRaw ? parseInstant(startRaw, 'Beginn') : { value: null };
+    const end = endRaw ? parseInstant(endRaw, 'Ende') : { value: null };
+    const dueRaw = pick('dueDate');
+    const dueDate = dueRaw ? validDateOnly(dueRaw) : null;
+    const nextRaw = pick('nextDueDate');
+    const nextDueDate = nextRaw ? validDateOnly(nextRaw) : null;
+    const intervalMonths = nullableNumber(pick('intervalMonths'), { integer: true, maximum: 1200 });
+    const mileage = nullableNumber(pick('mileage'), { maximum: 100_000_000 });
+    const cost = nullableNumber(pick('cost'), { maximum: 100_000_000 });
+    const safetyCritical = pick('safetyCritical');
+    if (!type) return { error: 'Die Wartungsart ist erforderlich.' };
+    if (!MAINTENANCE_STATUSES.includes(status)) return { error: 'Der Wartungsstatus ist ungültig.' };
+    if (start.error || end.error) return { error: start.error || end.error };
+    if (Boolean(start.value) !== Boolean(end.value)) {
+      return { error: 'Beginn und Ende der Wartung müssen gemeinsam angegeben werden.' };
+    }
+    if (start.value && Date.parse(end.value) <= Date.parse(start.value)) {
+      return { error: 'Das Ende der Wartung muss nach dem Beginn liegen.' };
+    }
+    if (!existing && !start.value && !dueRaw) {
+      return { error: 'Bitte einen Zeitraum oder eine Fälligkeit angeben.' };
+    }
+    if ((dueRaw && !dueDate) || (nextRaw && !nextDueDate)) {
+      return { error: 'Fälligkeit oder Folgetermin ist ungültig.' };
+    }
+    if (intervalMonths === undefined || mileage === undefined || cost === undefined) {
+      return { error: 'Intervall, Kilometerstand oder Kosten sind ungültig.' };
+    }
+    if (safetyCritical !== undefined && safetyCritical !== null && typeof safetyCritical !== 'boolean') {
+      return { error: 'Die Sicherheitskennzeichnung ist ungültig.' };
+    }
+    return {
+      type, status, startAt: start.value, endAt: end.value, dueDate, nextDueDate,
+      intervalMonths, mileage, cost,
+      provider: text(pick('provider'), 255),
+      description: text(pick('description'), 5000),
+      result: text(pick('result'), 5000),
+      safetyCritical: safetyCritical === true,
+    };
+  }
+
+  function completeMaintenance(req, vehicle, entry) {
+    const completedAt = nowIso();
+    entry.completedAt = completedAt;
+    entry.completedBy = req.user.username;
+    if (entry.mileage !== null && entry.mileage !== undefined) {
+      vehicle.mileage = Math.max(Number(vehicle.mileage || 0), Number(entry.mileage));
+    }
+    // A recurring maintenance schedules its successor exactly once.
+    const nextDueDate = entry.nextDueDate
+      || (entry.intervalMonths ? addMonths(completedAt.slice(0, 10), entry.intervalMonths) : null);
+    if (!nextDueDate || entry.followUpId) return null;
+    const followUp = {
+      id: `vehicle-maintenance-${randomUUID()}`,
+      organizationId: entry.organizationId, unitId: entry.unitId, vehicleId: entry.vehicleId,
+      type: entry.type, status: 'Geplant', startAt: null, endAt: null, dueDate: nextDueDate,
+      intervalMonths: entry.intervalMonths ?? null, mileage: null, provider: entry.provider || '',
+      cost: null, description: entry.description || '', result: '', nextDueDate: null,
+      safetyCritical: entry.safetyCritical === true, previousId: entry.id,
+      createdAt: completedAt, createdBy: req.user.username,
+    };
+    entry.nextDueDate = nextDueDate;
+    entry.followUpId = followUp.id;
+    all(vehicleMaintenanceEvents).push(followUp);
+    return followUp;
+  }
 
   app.post('/api/vehicles/:vehicleId/maintenance', authMiddleware,
     requirePermission('vehicle_maintenance.manage'), (req, res) => {
       const vehicle = ownedVehicle(req, req.params.vehicleId);
       if (!vehicle) return res.status(404).json({ error: 'Fahrzeug nicht gefunden.' });
       if (all(vehicleMaintenanceEvents).length >= MAX_RELATED_RECORDS) return res.status(507).json({ error: 'Die maximale Anzahl an Wartungen ist erreicht.' });
-      const type = text(req.body.type, 160);
-      const status = text(req.body.status || 'Geplant', 40);
-      const start = req.body.startAt ? parseInstant(req.body.startAt, 'Beginn') : { value: null };
-      const end = req.body.endAt ? parseInstant(req.body.endAt, 'Ende') : { value: null };
-      const dueDate = req.body.dueDate ? validDateOnly(req.body.dueDate) : null;
-      const intervalMonths = nullableNumber(req.body.intervalMonths, { integer: true, maximum: 1200 });
-      const mileage = nullableNumber(req.body.mileage, { maximum: 100_000_000 });
-      const cost = nullableNumber(req.body.cost, { maximum: 100_000_000 });
-      if (!type || !MAINTENANCE_STATUSES.includes(status) || start.error || end.error
-        || (start.value && end.value && Date.parse(end.value) <= Date.parse(start.value))
-        || (req.body.dueDate && !dueDate) || intervalMonths === undefined || mileage === undefined || cost === undefined) {
-        return res.status(400).json({ error: 'Die Wartungsangaben sind ungültig.' });
-      }
+      const values = maintenanceInput(req.body);
+      if (values.error) return res.status(400).json({ error: values.error });
       const entry = {
         id: `vehicle-maintenance-${randomUUID()}`,
         organizationId: vehicle.organizationId, unitId: vehicle.unitId, vehicleId: vehicle.id,
-        type, status, startAt: start.value, endAt: end.value, dueDate,
-        intervalMonths, mileage, provider: text(req.body.provider, 255), cost,
-        description: text(req.body.description, 5000), result: text(req.body.result, 5000),
-        nextDueDate: req.body.nextDueDate ? validDateOnly(req.body.nextDueDate) : null,
-        safetyCritical: req.body.safetyCritical === true,
+        ...values,
         createdAt: nowIso(), createdBy: req.user.username,
       };
-      if (req.body.nextDueDate && !entry.nextDueDate) return res.status(400).json({ error: 'Der Folgetermin ist ungültig.' });
       all(vehicleMaintenanceEvents).push(entry);
-      logEvent('maintenance', 'VehicleMaintenance', { id: entry.id, vehicleId: vehicle.id }, req.user.username);
+      const followUp = entry.status === 'Abgeschlossen' ? completeMaintenance(req, vehicle, entry) : null;
+      logEvent('maintenance', 'VehicleMaintenance', { id: entry.id, vehicleId: vehicle.id, followUpId: followUp?.id }, req.user.username);
       return res.status(201).json(entry);
     });
 
   app.put('/api/vehicles/:vehicleId/maintenance/:id', authMiddleware,
     requirePermission('vehicle_maintenance.manage'), (req, res) => {
       const vehicle = ownedVehicle(req, req.params.vehicleId);
-      const entry = all(vehicleMaintenanceEvents).find((candidate) =>
-        candidate.id === req.params.id && candidate.vehicleId === vehicle?.id);
+      const entry = vehicle && all(vehicleMaintenanceEvents).find((candidate) =>
+        candidate.id === req.params.id && candidate.vehicleId === vehicle.id);
       if (!entry) return res.status(404).json({ error: 'Wartung nicht gefunden.' });
-      const status = text(req.body.status ?? entry.status, 40);
-      if (!MAINTENANCE_STATUSES.includes(status)) return res.status(400).json({ error: 'Der Wartungsstatus ist ungültig.' });
-      const nextDueDate = req.body.nextDueDate === null || req.body.nextDueDate === ''
-        ? null : validDateOnly(req.body.nextDueDate ?? entry.nextDueDate);
-      if ((req.body.nextDueDate ?? entry.nextDueDate) && !nextDueDate) return res.status(400).json({ error: 'Der Folgetermin ist ungültig.' });
-      Object.assign(entry, {
-        status, result: text(req.body.result ?? entry.result, 5000), nextDueDate,
-        cost: nullableNumber(req.body.cost ?? entry.cost, { maximum: 100_000_000 }),
-        provider: text(req.body.provider ?? entry.provider, 255),
-        description: text(req.body.description ?? entry.description, 5000),
-        safetyCritical: req.body.safetyCritical ?? entry.safetyCritical,
-        completedAt: status === 'Abgeschlossen' ? nowIso() : entry.completedAt || null,
-        completedBy: status === 'Abgeschlossen' ? req.user.username : entry.completedBy || null,
-        updatedAt: nowIso(),
-      });
-      if (entry.cost === undefined) return res.status(400).json({ error: 'Die Kosten sind ungültig.' });
-      logEvent('maintenance-update', 'VehicleMaintenance', { id: entry.id, vehicleId: vehicle.id, status }, req.user.username);
+      const values = maintenanceInput(req.body, entry);
+      if (values.error) return res.status(400).json({ error: values.error });
+      const closed = ['Abgeschlossen', 'Abgebrochen'].includes(entry.status);
+      if (closed && values.status !== entry.status) {
+        return res.status(409).json({ error: 'Abgeschlossene oder abgebrochene Wartungen können nicht wieder geöffnet werden.' });
+      }
+      const completing = values.status === 'Abgeschlossen' && entry.status !== 'Abgeschlossen';
+      Object.assign(entry, values, { updatedAt: nowIso(), updatedBy: req.user.username });
+      const followUp = completing ? completeMaintenance(req, vehicle, entry) : null;
+      logEvent('maintenance-update', 'VehicleMaintenance', {
+        id: entry.id, vehicleId: vehicle.id, status: entry.status, followUpId: followUp?.id,
+      }, req.user.username);
       return res.json(entry);
     });
 
   app.get('/api/vehicles/:vehicleId/load-materials', authMiddleware,
-    requirePermission('vehicles.load.read'), (req, res) => {
-      const vehicle = visibleVehicle(req, req.params.vehicleId);
+    requirePermission('vehicles.load.manage'), (req, res) => {
+      const visible = visibleVehicle(req, req.params.vehicleId);
+      const vehicle = visible && (ownedBy(req, visible) || loadableBy(req, visible)) ? visible : null;
       if (!vehicle) return res.status(404).json({ error: 'Fahrzeug nicht gefunden.' });
       const query = text(req.query.query, 120).toLowerCase();
       // Units with a load release choose from their own inventory.
@@ -1009,7 +1166,11 @@ function registerVehicleRoutes({
           && entry.organizationId === req.tenant.organizationId)));
       if (!assignment || !vehicle) return res.status(404).json({ error: 'Beladungsbuchung nicht gefunden.' });
       const destinationLocationId = text(req.body.locationId || assignment.previousLocationId, 64);
-      const destinationStockStructureId = text(req.body.stockStructureId || assignment.previousStockStructureId, 64) || null;
+      const returnsToOrigin = destinationLocationId === assignment.previousLocationId;
+      // A storage structure belongs to one location; only reuse the old one
+      // when the item goes back to where it came from.
+      const destinationStockStructureId = text(req.body.stockStructureId
+        || (returnsToOrigin ? assignment.previousStockStructureId : ''), 64) || null;
       const materialUnitId = material?.unitId || assignment.unitId;
       const destination = all(locations).find((entry) => entry.id === destinationLocationId
         && entry.organizationId === vehicle.organizationId && !entry.vehicleId
@@ -1157,6 +1318,7 @@ function registerVehicleRoutes({
       const items = Array.isArray(req.body.items) ? req.body.items : [];
       if (!name || items.length > 1000) return res.status(400).json({ error: 'Bezeichnung oder Umfang der Beladungsliste ist ungültig.' });
       const normalized = [];
+      const byMaterial = new Map();
       for (const item of items) {
         const material = all(materials).find((entry) => entry.id === text(item.materialId, 64)
           && entry.organizationId === vehicle.organizationId && entry.unitId === vehicle.unitId);
@@ -1164,12 +1326,32 @@ function registerVehicleRoutes({
         if (!material || !Number.isInteger(targetQuantity) || targetQuantity < 1) {
           return res.status(400).json({ error: 'Jede Listenposition benötigt gültiges Material und eine Sollmenge.' });
         }
-        normalized.push({
+        if (material.itemType === 'individual' && targetQuantity !== 1) {
+          return res.status(400).json({ error: 'Einzelstücke haben immer die Sollmenge 1.' });
+        }
+        // The printed target/actual comparison is per material, so the same
+        // material must appear only once.
+        const existingItem = byMaterial.get(material.id);
+        if (existingItem) {
+          if (material.itemType === 'individual') {
+            return res.status(400).json({ error: 'Ein Einzelstück kann nur einmal in der Liste stehen.' });
+          }
+          existingItem.targetQuantity += targetQuantity;
+          const position = text(item.position, 160);
+          if (position && !existingItem.position.split(', ').includes(position)) {
+            existingItem.position = text([existingItem.position, position].filter(Boolean).join(', '), 160);
+          }
+          continue;
+        }
+        const normalizedItem = {
           materialId: material.id, targetQuantity,
           position: text(item.position, 160), notes: text(item.notes, 1000),
           inventoryNumberSnapshot: material.inventoryNumber, materialNameSnapshot: material.name,
-        });
+        };
+        byMaterial.set(material.id, normalizedItem);
+        normalized.push(normalizedItem);
       }
+      if (normalized.length === 0) return res.status(400).json({ error: 'Die Beladungsliste benötigt mindestens eine Position.' });
       const version = all(vehicleLoadLists).filter((entry) => entry.vehicleId === vehicle.id)
         .reduce((highest, entry) => Math.max(highest, Number(entry.version || 0)), 0) + 1;
       const activate = req.body.activate !== false;
@@ -1186,51 +1368,93 @@ function registerVehicleRoutes({
       return res.status(201).json(list);
     });
 
+  app.post('/api/vehicles/:vehicleId/load-lists/:id/activate', authMiddleware,
+    requirePermission('vehicles.load.manage'), (req, res) => {
+      const vehicle = ownedVehicle(req, req.params.vehicleId);
+      const list = vehicle && all(vehicleLoadLists).find((entry) =>
+        entry.id === req.params.id && entry.vehicleId === vehicle.id);
+      if (!list) return res.status(404).json({ error: 'Beladungsliste nicht gefunden.' });
+      if (list.status === 'Aktiv') return res.json(list);
+      const now = nowIso();
+      all(vehicleLoadLists).filter((entry) => entry.vehicleId === vehicle.id && entry.status === 'Aktiv')
+        .forEach((entry) => { entry.status = 'Ersetzt'; entry.replacedAt = now; });
+      Object.assign(list, { status: 'Aktiv', activatedAt: now, activatedBy: req.user.username });
+      logEvent('load-list-activate', 'VehicleLoad', { id: list.id, vehicleId: vehicle.id, version: list.version }, req.user.username);
+      return res.json(list);
+    });
+
+  async function printLoadList(req, res, vehicle, list) {
+    const actual = all(vehicleLoadAssignments).filter((entry) => entry.vehicleId === vehicle.id);
+    const details = publicVehicle(vehicle);
+    const { PDFDocument, StandardFonts, rgb } = pdfLib();
+    const pdf = await PDFDocument.create();
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    let page = pdf.addPage([595, 842]); let y = 800;
+    const line = (value, options = {}) => {
+      if (y < 55) { page = pdf.addPage([595, 842]); y = 800; }
+      page.drawText(pdfText(value).slice(0, 110), {
+        x: options.x || 42, y, size: options.size || 9,
+        font: options.bold ? bold : font, color: options.color || rgb(0, 0, 0),
+      });
+      y -= options.gap || 15;
+    };
+    const parking = details.parkingDetails
+      || [details.parkingLocationName, details.parkingSpaceName].filter(Boolean).join(' / ') || '-';
+    line('Beladungsliste', { size: 18, bold: true, gap: 25 });
+    line(`Fahrzeug: ${displayName(vehicle)} | Kennzeichen: ${vehicle.registrationNumber || '-'}`, { bold: true });
+    line(`Fahrzeugart: ${details.vehicleKind} | Verwendung: ${details.usage}`);
+    line(`Fahrzeugtyp: ${details.type} | Stellplatz: ${parking}`);
+    line(`Liste: ${list.name} | Version: ${list.version} (${list.status}) | Stand: ${new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}`);
+    y -= 8;
+    line('Inventarnummer | Bezeichnung | Position | Soll | Ist | Abweichung', { bold: true, gap: 18 });
+    const listed = new Set();
+    for (const item of list.items) {
+      listed.add(item.materialId);
+      const material = ownedMaterial(item.materialId, vehicle);
+      const actualQuantity = actual.filter((entry) => entry.materialId === item.materialId
+        && entry.unitId === vehicle.unitId)
+        .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+      const deviation = actualQuantity - Number(item.targetQuantity || 0);
+      line(`${material?.inventoryNumber || item.inventoryNumberSnapshot || '-'} | ${material?.name || item.materialNameSnapshot || '-'} | ${item.position || '-'} | ${item.targetQuantity} | ${actualQuantity} | ${deviation >= 0 ? '+' : ''}${deviation}`,
+        { color: deviation < 0 ? rgb(0.75, 0, 0) : rgb(0, 0, 0) });
+    }
+    // Material of other units is never part of the owner's target list.
+    const unlisted = actual.filter((entry) => entry.unitId !== vehicle.unitId || !listed.has(entry.materialId));
+    if (unlisted.length) {
+      y -= 8;
+      line('Zusätzlich geladen (nicht in der Soll-Liste)', { bold: true, gap: 18 });
+      for (const entry of unlisted.map(publicAssignment)) {
+        line(`${entry.inventoryNumber || '-'} | ${entry.materialName} | ${entry.position || '-'} | - | ${entry.quantity} | +${entry.quantity}`);
+      }
+    }
+    y -= 20;
+    line('Geprüft am: ____________________   durch: ______________________________');
+    line('Unterschrift: ________________________________________________________');
+    const bytes = await pdf.save();
+    logEvent('print', 'VehicleLoad', { vehicleId: vehicle.id, loadListId: list.id }, req.user.username);
+    return res.json({
+      fileName: `beladungsliste-${displayName(vehicle).replace(/[^A-Za-z0-9_-]/g, '-')}-v${list.version}.pdf`,
+      mimeType: 'application/pdf', fileBase64: Buffer.from(bytes).toString('base64'),
+    });
+  }
+
   app.get('/api/vehicles/:vehicleId/load-list/print', authMiddleware,
-    requirePermission('vehicles.print'), async (req, res) => {
+    requirePermission('vehicles.print'), requirePermission('vehicles.load.read'), async (req, res) => {
       const vehicle = visibleVehicle(req, req.params.vehicleId);
       if (!vehicle) return res.status(404).json({ error: 'Fahrzeug nicht gefunden.' });
       const list = activeLoadList(vehicle.id);
       if (!list) return res.status(404).json({ error: 'Für das Fahrzeug ist keine aktive Soll-Beladungsliste vorhanden.' });
-      const actual = all(vehicleLoadAssignments).filter((entry) => entry.vehicleId === vehicle.id);
-      const { PDFDocument, StandardFonts, rgb } = pdfLib();
-      const pdf = await PDFDocument.create();
-      const font = await pdf.embedFont(StandardFonts.Helvetica);
-      const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-      let page = pdf.addPage([595, 842]); let y = 800;
-      const line = (value, options = {}) => {
-        if (y < 55) { page = pdf.addPage([595, 842]); y = 800; }
-        page.drawText(String(value).slice(0, 110), {
-          x: options.x || 42, y, size: options.size || 9,
-          font: options.bold ? bold : font, color: options.color || rgb(0, 0, 0),
-        });
-        y -= options.gap || 15;
-      };
-      line('Beladungsliste', { size: 18, bold: true, gap: 25 });
-      line(`Fahrzeug: ${displayName(vehicle)} | Kennzeichen: ${vehicle.registrationNumber}`, { bold: true });
-      const classification = vehicleClassification(vehicle);
-      line(`Fahrzeugart: ${classification.vehicleKind} | Verwendung: ${classification.usage}`);
-      line(`Fahrzeugtyp: ${classification.type} | Stellplatz: ${vehicle.parkingDetails || vehicle.parkingLocationId || '-'}`);
-      line(`Liste: ${list.name} | Version: ${list.version} | Stand: ${new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}`);
-      y -= 8;
-      line('Inventarnummer | Bezeichnung | Position | Soll | Ist | Abweichung', { bold: true, gap: 18 });
-      for (const item of list.items) {
-        const material = ownedMaterial(item.materialId, vehicle);
-        const actualQuantity = actual.filter((entry) => entry.materialId === item.materialId)
-          .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
-        const deviation = actualQuantity - Number(item.targetQuantity || 0);
-        line(`${material?.inventoryNumber || item.inventoryNumberSnapshot || '-'} | ${material?.name || item.materialNameSnapshot || '-'} | ${item.position || '-'} | ${item.targetQuantity} | ${actualQuantity} | ${deviation >= 0 ? '+' : ''}${deviation}`,
-          { color: deviation < 0 ? rgb(0.75, 0, 0) : rgb(0, 0, 0) });
-      }
-      y -= 20;
-      line('Geprüft am: ____________________   durch: ______________________________');
-      line('Unterschrift: ________________________________________________________');
-      const bytes = await pdf.save();
-      logEvent('print', 'VehicleLoad', { vehicleId: vehicle.id, loadListId: list.id }, req.user.username);
-      return res.json({
-        fileName: `beladungsliste-${displayName(vehicle).replace(/[^A-Za-z0-9_-]/g, '-')}-v${list.version}.pdf`,
-        mimeType: 'application/pdf', fileBase64: Buffer.from(bytes).toString('base64'),
-      });
+      return printLoadList(req, res, vehicle, list);
+    });
+
+  app.get('/api/vehicles/:vehicleId/load-lists/:id/print', authMiddleware,
+    requirePermission('vehicles.print'), requirePermission('vehicles.load.read'), async (req, res) => {
+      const vehicle = visibleVehicle(req, req.params.vehicleId);
+      const list = vehicle && all(vehicleLoadLists).find((entry) =>
+        entry.id === req.params.id && entry.vehicleId === vehicle.id);
+      if (!list) return res.status(404).json({ error: 'Beladungsliste nicht gefunden.' });
+      return printLoadList(req, res, vehicle, list);
     });
 
   async function applyVehicleRetentionPolicy(referenceTime = Date.now()) {
