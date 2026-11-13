@@ -52,9 +52,30 @@ void main() {
     await tester.tap(find.text('Zwei-Faktor-Authentifizierung einrichten'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Stand 1.5.0'), findsOneWidget);
+    expect(find.text('Stand 1.7.8'), findsOneWidget);
     expect(find.text('Für alle persönlichen Konten'), findsOneWidget);
     expect(find.text('Bevor du beginnst'), findsOneWidget);
+    expect(find.byType(Image), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('knowledge base explains stocktakes with screenshots', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: KnowledgeBasePage()));
+    await tester.enterText(find.byType(SearchBar), 'Blindzählung');
+    await tester.pump();
+
+    expect(find.text('Inventur durchführen'), findsOneWidget);
+    await tester.tap(find.text('Inventur durchführen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Inventur starten'), findsOneWidget);
     expect(find.byType(Image), findsWidgets);
     expect(tester.takeException(), isNull);
   });

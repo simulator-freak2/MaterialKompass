@@ -607,7 +607,7 @@ class _ArticleView extends StatelessWidget {
                         const SizedBox(width: 18),
                         const Icon(Icons.verified_outlined, size: 17),
                         const SizedBox(width: 6),
-                        const Text('Stand 1.5.0'),
+                        const Text('Stand $_handbookVersion'),
                         const SizedBox(width: 18),
                         const Icon(Icons.groups_outlined, size: 17),
                         const SizedBox(width: 6),
@@ -1015,6 +1015,8 @@ class _GuideIllustration {
   });
 }
 
+const _handbookVersion = '1.7.8';
+
 const _categories = [
   _GuideCategory('Erste Schritte', Icons.rocket_launch_outlined),
   _GuideCategory('Inventar', Icons.inventory_2_outlined),
@@ -1039,23 +1041,24 @@ const _articles = [
     audience: 'Für alle Rollen',
     prerequisite: 'Du benötigst ein aktives MaterialKompass-Konto.',
     steps: [
-      'Melde dich an. Auf dem Dashboard erscheinen nur die Bereiche, für die dein Konto berechtigt ist.',
-      'Öffne häufig verwendete Bereiche über die Kacheln unter „Schnellzugriff“.',
-      'Prüfe „Aufgaben & Hinweise“ auf fällige Prüfungen, offene Mängel, Zuweisungen oder Freigaben.',
-      'Über das Kontosymbol oben rechts erreichst du „Mein Account“, deine Sicherheitsfunktionen und Datenschutzoptionen.',
-      'Nutze das Wolken-Symbol für den Offline-Status und die Synchronisation, wenn du eine installierte App verwendest.',
+      'Melde dich an. Auf dem Dashboard erscheinen nur die Bereiche, für die dein Konto in der aktiven Organisation berechtigt ist.',
+      'Die Karte „Organisationsbereich“ ganz oben zeigt, in welcher Organisation und Einheit du gerade arbeitest. Über das Wechselsymbol daneben oder das Gebäudesymbol in der Titelleiste wechselst du die Ebene.',
+      'Öffne häufig verwendete Bereiche über die Kacheln unter „Schnellzugriff“, zum Beispiel Inventar, Kisten, Kalender, Fahrzeuge, Kleiderkammer, Mängel oder Beschaffung.',
+      'Prüfe weiter unten „Aufgaben & Hinweise“ und „Übersicht“ auf fällige Prüfungen, offene Mängel, Zuweisungen oder Freigaben.',
+      'Über das Personensymbol oben rechts erreichst du „Mein Account“ mit Passwort, Passkeys, 2-FA, QR-Anmeldung und Datenschutzrechten. Das Pfeilsymbol ganz rechts meldet dich ab.',
+      'Das Wolken-Symbol zeigt den Verbindungsstatus und die Anzahl ausstehender Offline-Änderungen und öffnet die Synchronisation.',
     ],
     tip:
         'Auf einem Mobilgerät kannst du die Seite nach unten ziehen, um die Dashboard-Daten zu aktualisieren.',
     keywords: ['dashboard', 'navigation', 'anmelden', 'start', 'aufgaben'],
     illustrations: [
       _GuideIllustration(
-        assetPath: 'assets/handbook/dashboard_overview.png',
+        assetPath: 'assets/handbook/dashboard_overview.jpg',
         caption:
-            'Das Dashboard bündelt die freigeschalteten Bereiche und zeigt oben den Offline-Status sowie deinen Account.',
+            'Das Dashboard zeigt oben den aktiven Organisationsbereich und darunter die freigeschalteten Bereiche als Schnellzugriff. Rechts in der Titelleiste liegen Synchronisation, Ebenenwechsel, Aktualisieren, Mein Account und Abmelden.',
         altText:
-            'Echtes MaterialKompass-Dashboard mit Schnellzugriffen auf Handbuch, Inventar, Kleiderkammer, Inventuren, Mängel, Beschaffung, Kategorien, Lagerorte und Nutzerverwaltung.',
-        afterStep: 2,
+            'MaterialKompass-Dashboard der Ortsgruppe Musterstadt mit Begrüßung und Schnellzugriffen auf Etikettenvorlagen, Handbuch, Inventar, Kisten, Kalender, Fahrzeuge, Kleiderkammer, Inventuren und Mängel.',
+        afterStep: 3,
       ),
     ],
   ),
@@ -1120,9 +1123,9 @@ const _articles = [
     ],
     illustrations: [
       _GuideIllustration(
-        assetPath: 'assets/handbook/qr_login.png',
+        assetPath: 'assets/handbook/login_qr.jpg',
         caption:
-            'Die Loginseite bietet die QR-Anmeldung zusätzlich zu Nutzername und Passwort an.',
+            'Die Loginseite bietet „Mit QR-Code anmelden“ zusätzlich zu Nutzername und Passwort an.',
         altText:
             'Loginansicht mit den Eingabefeldern für Nutzername und Passwort sowie der Schaltfläche Mit QR-Code anmelden.',
         afterStep: 2,
@@ -1140,16 +1143,34 @@ const _articles = [
     prerequisite:
         'Du brauchst Schreibrechte für das Inventar sowie eine passende Kategorie und einen Lagerplatz.',
     steps: [
-      'Öffne „Inventar“ und wähle „Material anlegen“.',
-      'Trage eine eindeutige Bezeichnung ein und ordne Kategorie, Gebäude und bei Bedarf einen konkreten Lagerplatz zu.',
-      'Lege fest, ob der Datensatz einen einzeln verfolgten Artikel oder einen Mengenbestand beschreibt.',
-      'Ergänze Seriennummer, Anschaffungsdaten und Dokumente, wenn sie für Nachweis oder Wartung benötigt werden.',
-      'Hinterlege bei prüfpflichtigem Material Prüfintervall und nächsten Prüftermin.',
-      'Kontrolliere die Angaben und speichere den Datensatz.',
+      'Öffne „Inventar“ und wähle den grünen Button „Neues Material anlegen“.',
+      'Trage eine eindeutige Bezeichnung ein und wähle Hauptkategorie, Unterkategorie, Standort und bei Bedarf einen konkreten Lagerplatz. Lässt du die Inventarnummer leer, vergibt MaterialKompass sie automatisch.',
+      'Wähle unter „Artikelart“ entweder „Einzelartikel“ für ein einzeln verfolgtes Stück oder „Mengenartikel“ für einen Bestand mit Anzahl und Einheit.',
+      'Ergänze Hersteller, Modell, Seriennummer, Baujahr, Anschaffungsdatum, Kaufpreis und verantwortlichen Fachbereich, wenn sie für Nachweis oder Wartung benötigt werden.',
+      'Hinterlege bei prüf- oder wartungspflichtigem Material Prüf- beziehungsweise Wartungsintervall und den nächsten Termin. Aktiviere „Reservierung erfordert Freigabe“, wenn Reservierungen bestätigt werden müssen.',
+      'Kontrolliere die Angaben und wähle „Speichern“. Dokumente lädst du anschließend am gespeicherten Artikel hoch.',
     ],
     tip:
         'Erfasse Seriennummern besonders bei sicherheitsrelevantem Material und vermeide austauschbare Bezeichnungen.',
     keywords: ['bestand', 'artikel', 'menge', 'seriennummer', 'prüfintervall'],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/inventory_list.jpg',
+        caption:
+            'Die Inventarverwaltung bündelt Suche, Filter und alle Buchungsaktionen. „Neues Material anlegen“ steht ganz links.',
+        altText:
+            'Inventarverwaltung mit Suchfeld, Filtern für Kategorie, Standort, Status, Fachbereich und Prüfung, farbigen Aktionsbuttons und den Artikeln Kettensäge und Rettungsweste 275N.',
+        afterStep: 1,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/inventory_new.jpg',
+        caption:
+            'Die Maske „Material anlegen“ mit Pflichtfeldern, Artikelart sowie Prüf- und Wartungsangaben.',
+        altText:
+            'Dialog Material anlegen mit den Feldern Bezeichnung, Inventarnummer, Hauptkategorie, Unterkategorie, Standort, Lagerplatz, Artikelart, Anzahl, Einheit, Status, Hersteller, Modell, Seriennummer, Baujahr, Anschaffungsdatum, Kaufpreis, Fachbereich und Prüf- und Wartungsintervallen.',
+        afterStep: 3,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Inventar',
@@ -1162,15 +1183,25 @@ const _articles = [
     prerequisite:
         'Der Materialdatensatz muss vorhanden und für die gewünschte Buchung verfügbar sein.',
     steps: [
-      'Suche oder scanne den gewünschten Artikel.',
-      'Öffne die Aktion zur Ausgabe beziehungsweise Rücknahme.',
-      'Wähle Empfänger, Menge und bei Bedarf einen Rückgabetermin.',
-      'Kontrolliere Zustand und Zuordnung und bestätige anschließend die Buchung.',
+      'Öffne „Inventar“ und wähle „Ausgeben“ beziehungsweise „Zurücknehmen“. Alternativ markierst du die Artikel vorher in der Liste.',
+      'Wähle beim Ausgeben den Empfängertyp „Person“ oder „Verwendungsziel“ und trage den Empfänger ein, zum Beispiel eine Person oder einen Wachdienst.',
+      'Suche oder scanne die Artikel und hake alle gewünschten Positionen an. Es können mehrere Einträge in einem Vorgang gebucht werden.',
+      'Trage unter „Menge je ausgewähltem Eintrag“ die Anzahl ein, kontrolliere Auswahl und Verfügbarkeit und bestätige mit „Ausgeben“.',
       'Melde einen erkannten Schaden direkt als Mangel. Defektes Material bleibt für neue Ausgaben gesperrt.',
     ],
     tip:
         'Offline erfasste Buchungen sind zunächst vorgemerkt. Prüfe nach der Synchronisation, ob ein Konflikt gemeldet wurde.',
     keywords: ['ausleihe', 'rückgabe', 'empfänger', 'buchung', 'offline'],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/inventory_issue.jpg',
+        caption:
+            'Mehrere Artikel werden in einem Vorgang an einen Empfänger ausgegeben.',
+        altText:
+            'Dialog Material ausgeben mit Empfängertyp Person, Empfänger Wachdienst Strandbad und zwei angehakten Positionen Stromerzeuger 5 kVA und Wurfsack 20 m.',
+        afterStep: 4,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Inventar',
@@ -1203,6 +1234,24 @@ const _articles = [
       'ablaufdatum',
       'charge',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/containers_list.jpg',
+        caption:
+            'Die Kistenübersicht zeigt Prüfstatus und Anzahl der Positionen. Über „Ablaufende Inhalte“ findest du bald ablaufendes Verbrauchsmaterial.',
+        altText:
+            'Kistenübersicht mit der Sanitätskiste 1 im Status Ungeprüft und dem Button Kiste anlegen.',
+        afterStep: 1,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/container_detail.jpg',
+        caption:
+            'In der Kiste stehen Inhalt mit Fach, Soll-Packliste und Prüfprotokolle untereinander.',
+        altText:
+            'Detailansicht der Sanitätskiste 1 mit dem Inhalt Sanitätsrucksack im Fach Boden sowie den Buttons Packen, Neue Version und Vollständigkeit prüfen.',
+        afterStep: 3,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Inventar',
@@ -1232,6 +1281,124 @@ const _articles = [
       'kiste drucken',
       'inventur kiste',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/container_detail.jpg',
+        caption:
+            '„Neue Version“ legt die Soll-Packliste an, „Vollständigkeit prüfen“ startet die Prüfung. Das Drucksymbol oben rechts erzeugt die PDF-Packliste.',
+        altText:
+            'Detailansicht einer Kiste mit den Abschnitten Inhalt, Soll-Packliste mit dem Button Neue Version, Prüfprotokolle und dem Button Vollständigkeit prüfen.',
+        afterStep: 1,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Inventar',
+    title: 'Inventur durchführen',
+    summary:
+        'Bestände digital oder mit Zähllisten aufnehmen, Abweichungen auswerten und abschließen.',
+    icon: Icons.fact_check_outlined,
+    readingMinutes: 6,
+    audience: 'Für Materialwarte, Kleiderwarte und Zählende',
+    prerequisite:
+        'Zum Anlegen und Auswerten brauchst du Inventurrechte. Zählende benötigen nur das Recht zum Zählen.',
+    steps: [
+      'Öffne auf dem Dashboard „Inventuren“ und wähle „Inventur anlegen“.',
+      'Vergib eine Bezeichnung und wähle verantwortliche Person, Beginn, Art („Digital“ oder „Papier/Offline“) und Zählmodus („Blindzählung“ oder „Sollbestand sichtbar“). Wähle die Bereiche Inventar und/oder Kleiderkammer und schränke bei Bedarf auf Standorte ein; ohne Standortauswahl werden alle Positionen des Bereichs aufgenommen.',
+      'Speichere mit „Anlegen“, öffne die Inventur und wähle „Inventur starten“. Der Status wechselt auf „In Arbeit“.',
+      'Scanne Inventarnummern mit dem Handscanner in das Feld „Handscanner: Inventarnummer scannen“, nutze „Scannen“ für die Kamera oder öffne eine Position direkt über das Stiftsymbol.',
+      'Erfasse das Ergebnis „Vorhanden“, „Beschädigt“ oder „Nicht vorhanden“ sowie den gefundenen Standort und Lagerplatz und wähle „Zählung speichern“. Unbekannte Gegenstände merkst du als Fundstück vor; eine verschlossene, vollständige Kiste kannst du als Einheit bestätigen.',
+      'Bei einer Papierinventur druckst du über „Listen und Berichte“ die Zählliste als PDF, XLSX oder ODS. Eingescannte Listen, die per E-Mail eingehen, ordnest du unter „Unbearbeitete Inventur-E-Mails“ der Inventur zu.',
+      'Wähle „Auswertung starten“, kläre Abweichungen und Fundstücke und schließe die Inventur mit „Abschließen“ ab. Ergebnis- und Differenzliste stehen unter „Listen und Berichte“ bereit.',
+    ],
+    tip:
+        'Verwende die Blindzählung, damit Zählende den Sollbestand nicht sehen. Der Fortschrittsbalken zeigt jederzeit gezählte Positionen, Abweichungen und Fundstücke.',
+    keywords: [
+      'inventur',
+      'zählung',
+      'blindzählung',
+      'zählliste',
+      'differenz',
+      'fundstück',
+      'handscanner',
+      'jahresinventur',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/stocktake_new.jpg',
+        caption:
+            'Beim Anlegen legst du Art, Zählmodus, Bereiche und Standorte der Inventur fest.',
+        altText:
+            'Dialog Inventur anlegen mit Bezeichnung, verantwortlicher Person, Beginn, Art Digital, Zählmodus Blindzählung, Bereichen Inventar und Kleiderkammer sowie auswählbaren Standorten.',
+        afterStep: 2,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/stocktake_detail.jpg',
+        caption:
+            'Die laufende Inventur mit Fortschritt, Handscannerfeld, Suche und den noch zu zählenden Positionen.',
+        altText:
+            'Inventur Jahresinventur Hauptlager im Status In Arbeit mit 0 von 8 gezählten Positionen, Button Auswertung starten, Handscannerfeld und Positionsliste.',
+        afterStep: 4,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/stocktake_count.jpg',
+        caption:
+            'Für jede Position erfasst du Ergebnis, gefundenen Standort und Lagerplatz.',
+        altText:
+            'Zähldialog für die Kettensäge mit Ergebnis Vorhanden, gefundenem Standort Hauptlager und Lagerplatz sowie dem Button Zählung speichern.',
+        afterStep: 5,
+      ),
+    ],
+  ),
+  _GuideArticle(
+    category: 'Inventar',
+    title: 'Etikettenvorlagen hochladen und freigeben',
+    summary:
+        'Im Herstellerprogramm gestaltete Etiketten zentral speichern, Feldern zuordnen und freigeben.',
+    icon: Icons.label_outline,
+    readingMinutes: 4,
+    audience: 'Für Organisationsadmins, Materialwarte und Kleiderwarte',
+    prerequisite:
+        'Organisationsadmins verwalten Material- und Kleidungsvorlagen, Materialwarte Materialvorlagen und Kleiderwarte Kleidungsvorlagen. Das Layout muss bereits im Herstellerprogramm erstellt sein.',
+    steps: [
+      'Gestalte das Etikett im Programm von Zebra, DYMO, Epson oder Brother und lege dort Variablen für die Felder an, die MaterialKompass befüllen soll.',
+      'Öffne auf dem Dashboard „Etikettenvorlagen“ und wähle „Vorlage hochladen“. Wähle die Originaldatei (maximal 5 MB), vergib einen Vorlagennamen und wähle Hersteller sowie den Bereich „Material“ oder „Kleidung“.',
+      'Markiere unter „Kategorien · Mehrfachauswahl“ alle Kategorien, für die das Etikett verwendet werden soll.',
+      'Ordne über „Variable hinzufügen“ jeden Variablennamen exakt wie im Herstellerprogramm einem MaterialKompass-Feld zu: Seriennummer, Inventarnummer, Bezeichnung, Baujahr oder Größe.',
+      'Lege unter „Freigabe“ fest, wer die Vorlage nutzen darf: nicht freigegeben, gesamte Organisation, eigene und unterliegende Einheiten oder ausgewählte zugeordnete Nutzer. Wähle anschließend „Speichern“.',
+      'Finde Vorlagen über die Suche sowie die Filter „Bereich“ und „Hersteller“ wieder. Vorlagen, die eine andere Einheit freigegeben hat, sind für dich nur lesbar.',
+    ],
+    tip:
+        'Unterstützt werden Zebra .nlbl/.lbl, DYMO .dymo/.label, Epson .leb und Brother .lbx/.lbl. Für Vorschau und Druck der Originaldatei muss der Herstellerdienst eingerichtet sein; die Dateiendung allein bestätigt keine Druckkompatibilität.',
+    keywords: [
+      'etikett',
+      'etikettenvorlage',
+      'label',
+      'zebra',
+      'dymo',
+      'brother',
+      'epson',
+      'variable',
+      'drucken',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/label_upload.jpg',
+        caption:
+            'Beim Hochladen ordnest du die Vorlage Hersteller, Bereich und Kategorien zu.',
+        altText:
+            'Dialog Etikettenvorlage hochladen mit Dateiauswahl, Vorlagenname, Hersteller Zebra, Bereich Material und den auswählbaren Kategorien.',
+        afterStep: 2,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/label_templates.jpg',
+        caption:
+            'Die Übersicht „Etikettenvorlagen“ mit Suche, Filtern für Bereich und Hersteller und den unterstützten Dateiformaten.',
+        altText:
+            'Seite Etikettenvorlagen mit dem Button Vorlage hochladen, einem Hinweis zum Herstellerdienst, Suchfeld und den Filtern Bereich und Hersteller.',
+        afterStep: 6,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Fahrzeuge',
@@ -1244,12 +1411,12 @@ const _articles = [
     prerequisite:
         'Du brauchst Fahrzeug-Schreibrechte; für Freigaben muss das Fahrzeug deiner aktiven Gliederung gehören.',
     steps: [
-      'Öffne auf dem Dashboard „Fahrzeuge“ und wähle unten „Fahrzeug“.',
-      'Erfasse Kennzeichen und Fahrgestellnummer. Nur diese beiden Angaben sind Pflicht; Funkrufname, Fahrzeugtyp, Hersteller, Modell, Baujahr, Kilometerstand und Betriebsstunden sind optional.',
+      'Öffne auf dem Dashboard „Fahrzeuge“ und wähle unten rechts „Fahrzeug“.',
+      'Wähle Fahrzeugart, Verwendung und Fahrzeugtyp. Für Kraftfahrzeuge und Anhänger sind Kennzeichen und Fahrgestellnummer Pflicht; Funkrufname, Hersteller, Modell, Baujahr, Kilometerstand und Betriebsstunden sind optional.',
       'Ordne bei Bedarf einen Stellplatz-Lagerort und genauere Stellplatz-Details zu. Der zusätzliche, geschützte Fahrzeug-Lagerort für die Beladung wird automatisch angelegt.',
-      'Kennzeichne ein primär ausrückendes Fahrzeug ausdrücklich. Wenn die Organisation die TLE-Zweitfreigabe aktiviert hat, benötigen dessen Reservierungen später eine zusätzliche Zustimmung.',
+      'Beschreibe unter „Lagermöglichkeiten im Fahrzeug“ die Beladungspositionen wie G1, G2 oder Heck und kennzeichne ein primär ausrückendes Fahrzeug ausdrücklich. Wenn die Organisation die TLE-Zweitfreigabe aktiviert hat, benötigen dessen Reservierungen später eine zusätzliche Zustimmung.',
       'Speichere das Fahrzeug. Kennzeichen und Fahrgestellnummer müssen innerhalb der Organisation eindeutig sein.',
-      'Öffne das Fahrzeug und wähle oben „Für Gliederungen freigeben“. Lege getrennt fest, welche Gliederungen das Fahrzeug sehen und welche es reservieren dürfen.',
+      'Öffne das Fahrzeug und wähle oben rechts das Teilen-Symbol „Für Gliederungen freigeben“. Lege getrennt fest, welche Gliederungen das Fahrzeug sehen und welche es reservieren dürfen.',
       'Speichere die Freigaben. Eine Reservierungsfreigabe schließt die Sichtfreigabe ein; Organisationsgrenzen werden niemals überschritten.',
     ],
     tip:
@@ -1265,6 +1432,24 @@ const _articles = [
       'sichtfreigabe',
       'reservierungsfreigabe',
       'primärfahrzeug',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicles_list.jpg',
+        caption:
+            'Die Fahrzeugverwaltung listet alle sichtbaren Fahrzeuge. Neue Fahrzeuge legst du über „Fahrzeug“ unten rechts an.',
+        altText:
+            'Fahrzeugverwaltung mit den Fahrzeugen MS-DL 801, MS-DL 113 und MS-DL 112, dem Filter Außer Dienst und dem Button Fahrzeug.',
+        afterStep: 1,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicle_new.jpg',
+        caption:
+            'Fahrzeugart, Verwendung und Fahrzeugtyp bestimmen, welche Angaben verpflichtend sind.',
+        altText:
+            'Dialog Fahrzeug anlegen mit den Feldern Kennzeichen, Fahrgestellnummer, Funkrufname, Fahrzeugart, Verwendung, Fahrzeugtyp, Hersteller, Modell, Baujahr, Kilometerstand, Betriebsstunden, Gebäude und Stellplatz.',
+        afterStep: 2,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1300,6 +1485,24 @@ const _articles = [
       'zweite freigabe',
       'technischer leiter einsatz',
       'kalender',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicle_reserve.jpg',
+        caption:
+            'Beginn und Ende stellst du oben ein. Titel, Zweck, Ziel und Kontakt sind Pflicht.',
+        altText:
+            'Dialog Fahrzeug reservieren für MS-DL 113 mit ausgefüllten Feldern Titel Jugendfahrt, Zweck, Ziel und Kontakt sowie dem Button Beantragen.',
+        afterStep: 3,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicle_detail.jpg',
+        caption:
+            'Beantragte Reservierungen stehen mit Status in der Fahrzeugansicht. Das Drei-Punkte-Menü enthält Freigabe, Ablehnung und Stornierung.',
+        altText:
+            'Fahrzeugdetail MS-DL 112 mit zwei ausstehenden Reservierungen, einer geplanten Hauptuntersuchung im Abschnitt Wartung und dem Beginn des Abschnitts Beladung.',
+        afterStep: 5,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1364,6 +1567,16 @@ const _articles = [
       'defekt',
       'nicht einsatzfähig',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicle_detail.jpg',
+        caption:
+            'Im Abschnitt „Wartung“ planst du Termine. Das Schild-Symbol kennzeichnet eine sicherheitskritische Wartung.',
+        altText:
+            'Fahrzeugdetail mit dem Abschnitt Wartung, dem Button Wartung planen und der geplanten Hauptuntersuchung bei der Kfz-Werkstatt Musterstadt.',
+        afterStep: 3,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Fahrzeuge',
@@ -1395,6 +1608,16 @@ const _articles = [
       'abbuchen',
       'entladen',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicle_load.jpg',
+        caption:
+            'Die Ist-Beladung zeigt jede Position mit Menge und Fach. Das Symbol rechts bucht den Eintrag wieder vom Fahrzeug ab.',
+        altText:
+            'Abschnitt Beladung des Fahrzeugs MS-DL 112 mit Rettungsweste in G1, vier Wurfsäcken in G2 und Tauchpumpe im Heck sowie den Buttons Inventar buchen, Soll-Liste erstellen, Drucken und PDF.',
+        afterStep: 4,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Fahrzeuge',
@@ -1425,6 +1648,16 @@ const _articles = [
       'drucken',
       'pdf',
       'unterschrift',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/vehicle_load.jpg',
+        caption:
+            '„Soll-Liste erstellen“ übernimmt die aktuelle Beladung als Vorlage. „Drucken“ und „PDF“ werden aktiv, sobald eine Soll-Liste existiert.',
+        altText:
+            'Abschnitt Beladung mit Ist-Beladung und den Buttons Inventar buchen, Soll-Liste erstellen, Drucken und PDF.',
+        afterStep: 2,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1482,6 +1715,24 @@ const _articles = [
       'freigabe',
       'ausgabe',
       'rückgabe',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/calendar_reserve.jpg',
+        caption:
+            'In der Reservierung legst du Zweck und Zeitraum fest und wählst darunter die Einzelstücke aus.',
+        altText:
+            'Dialog Reservierung anlegen mit Zweck Ausbildung Rettungsschwimmer, Beginn, Ende und der Einzelstücksuche mit Rettungsweste, Kettensäge und Stromerzeuger.',
+        afterStep: 3,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/calendar_list.jpg',
+        caption:
+            'Die Listenansicht des Kalenders zeigt Reservierungen, Fahrzeugtermine und Wartungen mit ihrem Status.',
+        altText:
+            'Reservierungs- und Wartungskalender in der Listenansicht mit freigegebenen und ausstehenden Reservierungen sowie einer geplanten Jahreswartung.',
+        afterStep: 4,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1555,13 +1806,23 @@ const _articles = [
     prerequisite:
         'Die Kategorie muss für die Kleiderkammer aktiviert sein und passende Größen enthalten.',
     steps: [
-      'Öffne „Kleiderkammer“ und wähle „Neue Kleidung anlegen“.',
+      'Öffne „Kleiderkammer“ und wähle den grünen Button „Neue Kleidung anlegen“.',
       'Wähle Kategorie, Größe, Gebäude und Lagerplatz.',
       'Erfasse die vorhandene Menge oder die Inventarnummer eines Einzelstücks.',
       'Ergänze bei Bedarf Beschaffungs- und Zustandsangaben.',
       'Speichere den Eintrag und kontrolliere ihn anschließend in der Übersicht.',
     ],
     keywords: ['größe', 'uniform', 'bekleidung', 'bestand', 'kleiderkammer'],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/wardrobe_list.jpg',
+        caption:
+            'Die Kleiderkammer mit Filtern für verfügbare und ausgegebene Kleidung und den Aktionen für Anlage, Scan und Ausgabe.',
+        altText:
+            'Kleiderkammer mit den Buttons Neue Kleidung anlegen, Scannen & Suchen, Ausgeben/Zurücknehmen, Kategorie ändern und einer Wetterjacke im Bestand.',
+        afterStep: 1,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Kleiderkammer',
@@ -1572,15 +1833,25 @@ const _articles = [
     audience: 'Für Kleiderkammer',
     prerequisite: 'Person und Kleidungsstück müssen im System auffindbar sein.',
     steps: [
-      'Öffne in der Kleiderkammer „Ausgeben/Zurücknehmen“.',
-      'Suche nach Name, Inventarnummer, Größe oder Kategorie.',
-      'Wähle das Kleidungsstück und die betreffende Person.',
-      'Prüfe Menge und Zustand und bestätige Ausgabe oder Rücknahme.',
+      'Öffne in der Kleiderkammer den orangefarbenen Button „Ausgeben/Zurücknehmen“.',
+      'Wähle oben „Ausgeben“, „Zurücknehmen“ oder „Umbuchen“ und trage bei einer Ausgabe die betreffende Person ein.',
+      'Suche unter „Kleidung suchen“ nach Name, Inventarnummer, Größe, Kategorie oder Person und übernimm passende Treffer mit „Auswählen“.',
+      'Prüfe die gewählten Kleidungsstücke und deren Zustand und bestätige mit „Ausführen“.',
       'Kontrolliere den neuen Bestand. Offline vorgemerkte Änderungen werden beim nächsten Serverkontakt synchronisiert.',
     ],
     tip:
         'Lege bei beschädigter Kleidung direkt einen Mangel an, damit Ausgabe und weitere Bearbeitung nachvollziehbar bleiben.',
     keywords: ['person', 'uniform', 'ausgabe', 'rückgabe', 'offline'],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/wardrobe_issue.jpg',
+        caption:
+            'Person eintragen, Kleidung suchen und auswählen, dann ausführen.',
+        altText:
+            'Dialog Ausgeben / Zurücknehmen / Umbuchen im Modus Ausgeben mit der Person Lena Muster und einer ausgewählten Einsatzhose.',
+        afterStep: 3,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Beschaffung',
@@ -1593,15 +1864,33 @@ const _articles = [
     prerequisite:
         'Du brauchst Schreibrechte im Bereich Beschaffung und möglichst bereits Vergleichspreise.',
     steps: [
-      'Öffne „Beschaffung“, wechsle zu „Vorgänge“ und lege einen neuen Antrag an.',
-      'Formuliere einen eindeutigen Titel und eine nachvollziehbare Begründung.',
-      'Füge alle Positionen mit Menge und allgemeiner Kategorie hinzu. Einzelpreise gehören nicht in den Antrag.',
-      'Trage das beantragte Bruttobudget und gegebenenfalls einen bevorzugten Lieferanten ein.',
-      'Speichere zunächst als Entwurf oder reiche den vollständigen Antrag zur Freigabe durch Vorsitz beziehungsweise Schatzmeister ein.',
+      'Öffne „Beschaffung“, bleibe im Register „Vorgänge“ und wähle „Vorgang anlegen“.',
+      'Formuliere einen eindeutigen Titel und eine nachvollziehbare Begründung und wähle Fachbereich sowie gegebenenfalls Kostenstelle.',
+      'Füge unter „Positionen“ alle Artikel mit Bezeichnung, Haupt- und Unterkategorie und Menge hinzu. Weitere Zeilen ergänzt du über „+ Position“. Einzelpreise gehören nicht in den Antrag.',
+      'Trage das beantragte Bruttobudget, Priorität, Wunschliefertermin und gegebenenfalls einen bevorzugten Lieferanten ein und wähle „Entwurf speichern“.',
+      'Öffne den Entwurf in der Vorgangsliste und reiche ihn mit „Beantragen“ zur Freigabe durch Vorsitz beziehungsweise Schatzmeister ein. Erteilte Freigaben findest du im Register „Freigaben“.',
     ],
     tip:
         'Fasse zusammengehörige Positionen in einem Antrag zusammen, damit Freigabe, Bestellung und Wareneingang übersichtlich bleiben.',
     keywords: ['antrag', 'budget', 'lieferant', 'freigabe', 'bestellung'],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/procurement_new.jpg',
+        caption:
+            'Der Antrag enthält Kopfdaten, Budget und beliebig viele Positionen.',
+        altText:
+            'Dialog Beschaffungsantrag anlegen mit den Feldern Titel, Fachbereich, Kostenstelle, Beantragtes Budget, Begründung, Wunschliefertermin, Priorität, Bevorzugter Lieferant, Notizen und einer Positionszeile.',
+        afterStep: 3,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/procurement_list.jpg',
+        caption:
+            'In „Vorgänge“ stehen alle Anträge mit Nummer, Fachbereich, Budget und Status.',
+        altText:
+            'Beschaffung im Register Vorgänge mit zwei Anträgen im Status Entwurf und dem Hinweis auf die E-Mail-Einreichung von Lieferscheinen und Angeboten.',
+        afterStep: 5,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Beschaffung',
@@ -1614,7 +1903,7 @@ const _articles = [
     prerequisite:
         'Du brauchst Schreibrechte für den betreffenden Lieferanten oder das Gebäude.',
     steps: [
-      'Öffne die Eingabemaske für einen Lieferanten oder ein Gebäude und wähle das Land.',
+      'Öffne für einen Lieferanten „Beschaffung → Lieferanten → Lieferant anlegen“ beziehungsweise für ein Gebäude „Lagerorte → Neues Gebäude“ und wähle das Land.',
       'Gib mindestens drei Zeichen einer Adresse ein. Nach kurzer Verzögerung erscheinen passende EU-Adressvorschläge.',
       'Wähle den passenden Vorschlag, um Straße, Postleitzahl, Ort und Land zu übernehmen.',
       'Trage die Hausnummer bewusst selbst ein und korrigiere übernommene Felder bei Bedarf.',
@@ -1630,6 +1919,16 @@ const _articles = [
       'lieferant',
       'gebäude',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/procurement_suppliers.jpg',
+        caption:
+            'Im Register „Lieferanten“ legst du neue Lieferanten an und bearbeitest vorhandene über das Stiftsymbol.',
+        altText:
+            'Lieferantenverwaltung mit dem Lieferanten DLRG Fachhandel und dem Button Lieferant anlegen.',
+        afterStep: 1,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Beschaffung',
@@ -1642,7 +1941,7 @@ const _articles = [
     prerequisite:
         'Die Bestellung muss ausgelöst sein und du brauchst Rechte für Wareneingänge.',
     steps: [
-      'Öffne den bestellten Beschaffungsvorgang.',
+      'Öffne den bestellten Beschaffungsvorgang in der Vorgangsliste und wähle an der Bestellung „Wareneingang“.',
       'Vergleiche Lieferung, Lieferschein und bestellte Mengen.',
       'Erfasse tatsächlich eingegangene Mengen sowie Abweichungen oder Schäden. Teil- und Mehrfachlieferungen bleiben im Vorgang sichtbar.',
       'Ordne inventarisierungspflichtige Artikel einer Kategorie, einem Gebäude und bei Bedarf einem Lagerplatz zu.',
@@ -1661,11 +1960,11 @@ const _articles = [
     prerequisite:
         'Halte Inventarnummer, Schadensbild und möglichst aussagekräftige JPEG- oder PNG-Bilder bereit.',
     steps: [
-      'Öffne „Mängel“ und wähle „Mangel melden“ oder starte die Meldung direkt am betroffenen Artikel.',
+      'Öffne „Mängel“ und wähle „Neuer Mangel“ oder starte die Meldung direkt am betroffenen Artikel beziehungsweise Fahrzeug über „Mangel melden“.',
       'Ordne Material oder Kleidung zu und beschreibe Schaden, Ursache und bereits getroffene Maßnahmen sachlich.',
       'Bewerte Gefährdung und Einsatzbereitschaft. Unsicheres Material wird für neue Ausgaben gesperrt.',
       'Ergänze bei Bedarf bis zu zehn Bilder, eine zuständige Person, einen Fachbereich und eine Frist.',
-      'Führe die Meldung über die Statusfolge „Neu“, „In Prüfung“, „Zugewiesen“, „In Bearbeitung“, „Behoben“ bis „Geprüft/Geschlossen“.',
+      'Führe die Meldung über die Statusfolge „Neu“, „In Prüfung“, „Zugewiesen“, „In Bearbeitung“, „Behoben“ bis „Geprüft/Geschlossen“. Der rote Button in der Detailansicht nennt jeweils den nächsten Schritt, zum Beispiel „Weiter: In Prüfung“.',
       'Dokumentiere Entscheidungen in Kommentaren, Checklisten, Folgeaufgaben und dem Änderungsverlauf.',
     ],
     tip:
@@ -1685,6 +1984,14 @@ const _articles = [
             'Die echte Erfassungsmaske bündelt Artikelbezug, Beschreibung, Einstufung, Zuständigkeit und Kontaktangaben.',
         altText:
             'Geöffnete MaterialKompass-Maske Mangel melden mit beispielhaft ausgefülltem Titel, Beschreibung und Schadensart sowie Feldern für Priorität, Gefährdung und Zuständigkeit.',
+        afterStep: 2,
+      ),
+      _GuideIllustration(
+        assetPath: 'assets/handbook/defects_list.jpg',
+        caption:
+            'Links stehen die gefilterten Meldungen, rechts die Details mit Statusschritt, Zuweisung, Checkliste, Kommentaren und Verlauf.',
+        altText:
+            'Mängelmanagement mit zwei Meldungen in der Liste und geöffneter Detailansicht der Meldung Akku hält keine Ladung mit den Buttons Weiter: In Prüfung, Mir zuweisen, Zuweisung & Frist und Bearbeiten.',
         afterStep: 5,
       ),
     ],
@@ -1701,10 +2008,10 @@ const _articles = [
         'Für die vorbefüllte Variante muss der Artikel eine Inventarnummer besitzen und die App online sein.',
     steps: [
       'Öffne „Mängel“ und wähle oben das Druckersymbol für die Mängelbericht-Vorlage.',
-      'Wähle „Leer drucken“, wenn das Formular vollständig von Hand ausgefüllt werden soll.',
+      'Wähle im Dialog „Mängelbericht-Vorlage“ die Aktion „Leer drucken“, wenn das Formular vollständig von Hand ausgefüllt werden soll.',
       'Wähle „Mit Inventarnummer drucken“ und anschließend Material oder Kleidung. Ausschließlich die Inventarnummer wird eingetragen; Kontakt, Datum und sämtliche Mängelfelder bleiben leer.',
       'Bestätige Drucker, Papierformat und weitere Einstellungen im System-Druckdialog von Web, Windows, Linux, Android, iOS oder macOS.',
-      'Nutze die getrennten Aktionen „Herunterladen“, wenn die PDF stattdessen als Datei gespeichert werden soll.',
+      'Nutze „Leer herunterladen“ beziehungsweise „Mit Inventarnummer herunterladen“, wenn die PDF stattdessen als Datei gespeichert werden soll.',
       'Eine vorbefüllte Vorlage lässt sich außerdem direkt am Artikel in Inventar oder Kleiderkammer drucken. Bereits erfasste Mängel besitzen einen eigenen Druckbefehl für die vollständige Meldung.',
     ],
     tip:
@@ -1717,6 +2024,16 @@ const _articles = [
       'inventarnummer',
       'herunterladen',
       'offline',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/defects_print.jpg',
+        caption:
+            'Der Dialog bietet die leere und die vorbefüllte Vorlage jeweils zum Herunterladen und zum Drucken an.',
+        altText:
+            'Dialog Mängelbericht-Vorlage mit den Buttons Leer herunterladen, Mit Inventarnummer herunterladen, Leer drucken und Mit Inventarnummer drucken.',
+        afterStep: 2,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1734,7 +2051,7 @@ const _articles = [
       'Wähle „Nutzerkonto“, wenn die verantwortliche Person ein aktives und berechtigtes Konto besitzt.',
       'Wähle andernfalls „Externe Person“ und trage den Namen eindeutig ein.',
       'Setze eine realistische Frist und speichere die Zuweisung.',
-      'Konto-Zuweisungen erzeugen eine In-App-Benachrichtigung und lassen sich über „Mir zugewiesen“ filtern.',
+      'Konto-Zuweisungen erzeugen eine In-App-Benachrichtigung. Mit dem Filter „Meine“ siehst du nur die dir zugewiesenen Meldungen.',
     ],
     tip:
         'Hebe eine Zuweisung auf oder ändere sie, sobald sich die Verantwortung ändert; der Verlauf bleibt nachvollziehbar.',
@@ -1742,8 +2059,18 @@ const _articles = [
       'zuweisung',
       'verantwortlich',
       'frist',
-      'mir zugewiesen',
+      'meine',
       'benachrichtigung',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/defects_list.jpg',
+        caption:
+            '„Mir zuweisen“ und „Zuweisung & Frist“ stehen direkt unter dem Titel der Meldung. Der Filter „Meine“ liegt oben in der Filterleiste.',
+        altText:
+            'Mängelmanagement mit geöffneter Meldung und den Buttons Mir zuweisen und Zuweisung & Frist sowie dem Abschnitt Laufende Bearbeitung mit Verantwortlich, Fachbereich und Frist.',
+        afterStep: 1,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1803,7 +2130,7 @@ const _articles = [
     prerequisite:
         'Zum Anlegen brauchst du Organisationsverwaltungsrechte. Eine Stammgliederung darf noch keine Jugendorganisation besitzen.',
     steps: [
-      'Öffne „Organisationen & Einheiten“ und wähle „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung.',
+      'Öffne auf dem Dashboard „Organisationen“ und wähle oben „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung.',
       'Ordne normale Jugendmitglieder mit der Rolle „Jugendmitglied“ zu. Vergib an die vorsitzende Person in der Jugendorganisation die Rolle „Vorsitz“.',
       'Die Rolle „Jugendvorsitzender“ wird in der Jugendorganisation nicht vergeben: Der dortige Vorsitz erhält sie beim Wechsel in die Stammgliederung automatisch.',
       'Jugend- und Stammgliederung können gegenseitig Lagerorte durchsuchen, Inventar und Fahrzeuge reservieren sowie Mängel melden. Fremde Stammdaten bleiben schreibgeschützt.',
@@ -1820,6 +2147,16 @@ const _articles = [
       'vorsitz',
       'verknüpfung',
       'reservierung',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/organizations.jpg',
+        caption:
+            '„Jugendorganisation anlegen“ steht oben in der Ansicht „Organisationen & Einheiten“.',
+        altText:
+            'Ansicht Organisationen & Einheiten mit dem Button Jugendorganisation anlegen.',
+        afterStep: 1,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1869,9 +2206,10 @@ const _articles = [
     prerequisite:
         'Plane die gewünschte Struktur, bevor du bestehende Kategorien veränderst.',
     steps: [
-      'Öffne „Kategorien“ und prüfe die vorhandenen Hauptkategorien.',
+      'Öffne „Kategorien“ und prüfe unter „Bestehende Kategorien“ die vorhandenen Haupt- und Unterkategorien.',
+      'Lege eine neue Kategorie unter „Neue Kategorie“ mit Kategorie-ID und Name an. Wähle als „Übergeordnete Hauptkategorie“ eine vorhandene Kategorie, um eine Unterkategorie zu erzeugen, und bestätige mit „Kategorie hinzufügen“.',
       'Lege Unterkategorien nur an, wenn du sie dauerhaft für Suche, Rechte oder Auswertungen brauchst.',
-      'Aktiviere bei Bekleidung die Nutzung in der Kleiderkammer und hinterlege die zulässigen Größen.',
+      'Aktiviere bei Bekleidung „In Kleiderkammer nutzen“ und hinterlege über „Bearbeiten“ die zulässigen Größen.',
       'Definiere bei prüfpflichtigen Gruppen ein fachlich sinnvolles Prüfintervall.',
       'Prüfe nach Änderungen stichprobenartig die zugeordneten Datensätze.',
     ],
@@ -1881,6 +2219,16 @@ const _articles = [
       'unterkategorie',
       'größe',
       'prüfintervall',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/categories.jpg',
+        caption:
+            'Oben legst du neue Kategorien an, darunter stehen alle Haupt- und Unterkategorien mit Bearbeiten und Löschen.',
+        altText:
+            'Kategorieverwaltung mit dem Formular Neue Kategorie, der Option In Kleiderkammer nutzen und der Liste bestehender Kategorien.',
+        afterStep: 2,
+      ),
     ],
   ),
   _GuideArticle(
@@ -1894,7 +2242,7 @@ const _articles = [
     prerequisite:
         'Du brauchst Adminrechte und einen nativen Windows-, Linux-, macOS-, Android- oder iOS-Client. Webbrowser lassen sich nicht als Dienstgerät aktivieren.',
     steps: [
-      'Öffne „Nutzerverwaltung“ und den Bereich „Dienstgeräte“.',
+      'Öffne auf dem Dashboard „Berechtigungen dieser Ebene“ und wechsle in das Register „Dienstgeräte“.',
       'Wähle „Gerät anlegen“ und erfasse Standort, Halle oder Raum, Geräte-Inventarnummer, verantwortliche Person und Fachbereiche.',
       'Lege ein eigenes Gerätepasswort fest. Eine MAC-Adresse dient nur der Dokumentation und ist kein Sicherheitsmerkmal.',
       'Konfiguriere bei Bedarf erlaubte IP-Adressen beziehungsweise IPv4-/IPv6-Netze sowie einen zusätzlichen TOTP- oder NFC-Faktor.',
@@ -1913,11 +2261,11 @@ const _articles = [
     ],
     illustrations: [
       _GuideIllustration(
-        assetPath: 'assets/handbook/service_devices.png',
+        assetPath: 'assets/handbook/service_devices.jpg',
         caption:
-            'Im echten Register „Dienstgeräte“ siehst du Aktivierungs- und Freigabestatus und erreichst Offline-Installationen sowie die Geräteanlage.',
+            'Im Register „Dienstgeräte“ siehst du Aktivierungs- und Freigabestatus sowie den letzten Kontakt jedes Geräts und erreichst Offline-Installationen und die Geräteanlage.',
         altText:
-            'MaterialKompass-Nutzerverwaltung im Register Dienstgeräte mit einem aktivierten Beispielgerät und den Schaltflächen Offline-Installationen und Gerät anlegen.',
+            'Berechtigungen dieser Ebene im Register Dienstgeräte mit zwei aktivierten Beispielgeräten Terminal Fahrzeughalle und Tablet Kleiderkammer sowie den Schaltflächen Offline-Installationen und Gerät anlegen.',
         afterStep: 4,
       ),
     ],
@@ -1950,11 +2298,11 @@ const _articles = [
     ],
     illustrations: [
       _GuideIllustration(
-        assetPath: 'assets/handbook/service_device_login.png',
+        assetPath: 'assets/handbook/service_device_login.jpg',
         caption:
             'Die aufgeklappte Geräteverwaltung zeigt die verfügbaren Anmeldewege und Faktoren wie System-QR-Code, NFC, Offline-QR-Code und TOTP.',
         altText:
-            'Aufgeklapptes Beispielgerät in der MaterialKompass-Dienstgeräteverwaltung mit Aktionen für System-QR-Code, NFC-Karten, Offline-QR-Code, TOTP, Aktivierungsreset und Sperrung.',
+            'Aufgeklapptes Beispielgerät Terminal Fahrzeughalle in der Dienstgeräteverwaltung mit Aktionen für Bearbeiten, System-QR-Code, NFC-Karte, persönliche NFC-Karte, Offline-QR-Code, TOTP, Aktivierungsreset und Sperrung.',
         afterStep: 1,
       ),
     ],
@@ -2045,9 +2393,9 @@ const _articles = [
     ],
     illustrations: [
       _GuideIllustration(
-        assetPath: 'assets/handbook/offline_sync.png',
+        assetPath: 'assets/handbook/offline_sync.jpg',
         caption:
-            'Der echte Synchronisationsdialog zeigt den aktuellen Übertragungsstand und bietet eine manuelle Synchronisation an.',
+            'Der Synchronisationsdialog zeigt den aktuellen Übertragungsstand und bietet eine manuelle Synchronisation an.',
         altText:
             'MaterialKompass-Dashboard mit geöffnetem Dialog Offline-Synchronisation, dem Hinweis dass alle Änderungen synchronisiert wurden und der Schaltfläche Jetzt synchronisieren.',
         afterStep: 3,
@@ -2095,7 +2443,7 @@ const _articles = [
     prerequisite:
         'Du benötigst ein unterstütztes Gerät mit eingerichteter Gerätesperre oder einen FIDO2-Sicherheitsschlüssel.',
     steps: [
-      'Öffne auf dem Dashboard „Mein Account“ und den Abschnitt „Passkeys“.',
+      'Öffne über das Personensymbol oben rechts „Mein Account“ und den Abschnitt „Passkeys“.',
       'Wähle „Passkey hinzufügen“, vergib einen verständlichen Gerätenamen und bestätige dein aktuelles Passwort. Ist 2-FA aktiv, gib zusätzlich einen 2-FA- oder Wiederherstellungscode ein.',
       'Bestätige die Einrichtung mit Windows Hello, Touch ID, Face ID, Geräte-PIN oder deinem Sicherheitsschlüssel. MaterialKompass erhält nur den öffentlichen Schlüssel.',
       'Wähle bei der nächsten Anmeldung „Mit Passkey anmelden“ und bestätige die lokale Geräteabfrage. Nutzername, Passwort und ein zusätzlicher 2-FA-Code sind dabei nicht nötig.',
@@ -2113,6 +2461,16 @@ const _articles = [
       'sicherheitsschlüssel',
       'phishing',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/account_overview.jpg',
+        caption:
+            '„Mein Account“ mit Kontodaten, Passwortänderung und dem Abschnitt „Passkeys“.',
+        altText:
+            'Seite Mein Account mit E-Mail-Adresse, Feldern für aktuelles und neues Passwort und dem Abschnitt Passkeys mit dem Button Passkey hinzufügen.',
+        afterStep: 1,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
@@ -2125,12 +2483,12 @@ const _articles = [
     prerequisite:
         'Installiere eine vertrauenswürdige Authenticator-App und halte einen sicheren Ort für die Wiederherstellungscodes bereit.',
     steps: [
-      'Öffne auf dem Dashboard „Mein Account“ und den Abschnitt „Zwei-Faktor-Authentifizierung“.',
+      'Öffne über das Personensymbol oben rechts „Mein Account“ und scrolle zum Abschnitt „Zwei-Faktor-Authentifizierung“.',
       'Wähle „2-FA einrichten“ und übernimm den angezeigten Schlüssel in deine Authenticator-App.',
       'Gib den aktuellen sechsstelligen Code ein und aktiviere 2-FA.',
       'Sichere die zehn einmal verwendbaren Wiederherstellungscodes. Diese Codes werden nur bei der Erstellung vollständig angezeigt.',
       'Bei späteren Anmeldungen bestätigst du nach Passwort, QR-Code oder Dienstgeräte-Anmeldung zusätzlich den kurzlebigen 2-FA-Code.',
-      'Für eine Anmeldung ganz ohne Code und ohne Passkey registrierst du unter „Mein Account → Push-Bestätigung“ die MaterialKompass-App auf deinem Telefon. Erlaube Benachrichtigungen und bestätige die Registrierung mit deinem Passwort; nur wenn TOTP bereits aktiv ist, wird dabei einmalig der aktuelle Code verlangt.',
+      'Für eine Anmeldung ganz ohne Code und ohne Passkey wählst du unter „Mein Account → Push-Bestätigung“ die Aktion „Authenticator koppeln“ und registrierst die MaterialKompass-App auf deinem Telefon. Erlaube Benachrichtigungen und bestätige die Registrierung mit deinem Passwort; nur wenn TOTP bereits aktiv ist, wird dabei einmalig der aktuelle Code verlangt.',
       'Bei späteren Anmeldungen erhältst du eine MaterialKompass-Benachrichtigung. Öffne sie und beantworte „Warst du das?“ mit „Ja, bestätigen“ oder „Nein, ablehnen“. Widerrufe verlorene oder nicht mehr verwendete Push-Geräte sofort im Accountbereich.',
       'Erzeuge bei Bedarf neue Recovery-Codes; alle alten Codes werden dadurch ungültig.',
     ],
@@ -2146,11 +2504,11 @@ const _articles = [
     ],
     illustrations: [
       _GuideIllustration(
-        assetPath: 'assets/handbook/two_factor_authentication.png',
+        assetPath: 'assets/handbook/two_factor_authentication.jpg',
         caption:
-            'Unter „Mein Account“ startest du die 2-FA-Einrichtung und verwaltest außerdem deine persönlichen Anmelde-QR-Codes.',
+            'Unter „Mein Account“ startest du die 2-FA-Einrichtung, koppelst die Authenticator-App für Push-Bestätigungen und verwaltest deine persönlichen Anmelde-QR-Codes.',
         altText:
-            'Echter MaterialKompass-Accountbereich mit dem Abschnitt Zwei-Faktor-Authentifizierung, der Schaltfläche 2-FA einrichten und dem Abschnitt QR-Anmeldung.',
+            'Accountbereich mit den Abschnitten Zwei-Faktor-Authentifizierung mit der Schaltfläche 2-FA einrichten, Push-Bestätigung mit Authenticator koppeln und QR-Anmeldung mit Anmelde-QR-Code erstellen.',
         afterStep: 1,
       ),
     ],
@@ -2240,6 +2598,16 @@ const _articles = [
       'konten',
       'duplikate',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/organization_switch.jpg',
+        caption:
+            'Der Ebenenwechsel listet alle Organisationen und Einheiten, auf die dein Konto zugreifen darf.',
+        altText:
+            'Dialog Organisation und Einheit wechseln mit den Einträgen MaterialKompass – Zentrale Verwaltung und Ortsgruppe Musterstadt.',
+        afterStep: 1,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
@@ -2275,6 +2643,16 @@ const _articles = [
       'konto',
       'fachbereich',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/permissions_level.jpg',
+        caption:
+            '„Berechtigungen dieser Ebene“ zeigt nur die Freigaben der aktiven Ebene. Weitere Register verwalten Rollen, Fachbereiche, E-Mails, Dienstgeräte und Datensicherung.',
+        altText:
+            'Berechtigungen dieser Ebene im Register Freigaben mit Suche, dem Button Bestehendes Konto aufnehmen und zwei Konten mit ihren Rollen.',
+        afterStep: 2,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Konten & Sicherheit',
@@ -2287,7 +2665,7 @@ const _articles = [
     prerequisite:
         'Du brauchst die Rolle Admin in der aktiven Einheit, dein aktuelles Passwort und gegebenenfalls einen 2-FA-Code. Nur Plattformadministratoren dürfen den gesamten Plattformbestand sichern.',
     steps: [
-      'Öffne „MaterialKompass – Zentrale Verwaltung → Zentrale Kontenverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf.',
+      'Öffne „Berechtigungen dieser Ebene → Datensicherung“ in der zu sichernden Einheit beziehungsweise als Plattformadministrator „MaterialKompass – Zentrale Verwaltung → Zentrale Kontenverwaltung → Datensicherung“. Wähle „Sicherung exportieren“ und bewahre das unveränderte Original geschützt auf.',
       'Prüfe vorher die aktive Einheit: Jugend Ingelheim sichert nur sich selbst. Die Ortsgruppe Ingelheim sichert sich und ihre direkt zugehörige Jugend. Der Bezirk sichert sich und die Bezirksjugend, keine Ortsgruppen oder deren Jugend. Weitere Untereinheiten, Bestandsfreigaben und zusätzliche Mitgliedschaften erweitern diesen Bereich nicht.',
       'Eine Bereichssicherung enthält die zugeordneten Fachdaten einschließlich Dokumenten und einheitenbezogenen Kategorien und Protokollen. Zentrale Konten, Rollen, Passkeys, Mitgliedschaften, Organisationsstruktur, Gerätezugänge und gemeinsame Einstellungen bleiben der Plattformsicherung vorbehalten und werden beim Bereichsimport nicht verändert.',
       'Arbeite nur an einer Kopie der UTF-8-JSON-Datei. Jede benannte Sektion besitzt eine Liste „records“; entferne dort ausschließlich den nachweislich fehlerhaften vollständigen Datensatz.',
@@ -2307,6 +2685,16 @@ const _articles = [
       'import',
       'wiederherstellung',
     ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/data_backup.jpg',
+        caption:
+            'Das Register „Datensicherung“ beschreibt den Sicherungsbereich der aktiven Einheit und bietet Export und Import an.',
+        altText:
+            'Register Datensicherung mit Erläuterung der Gesamtdatensicherung und den Buttons Sicherung exportieren und Sicherung importieren.',
+        afterStep: 1,
+      ),
+    ],
   ),
   _GuideArticle(
     category: 'Struktur & Lagerorte',
@@ -2319,8 +2707,8 @@ const _articles = [
     prerequisite:
         'Du brauchst Organisationsverwaltungsrechte, dein aktuelles Passwort, gegebenenfalls einen 2-FA-Code und eine geprüfte Sicherung.',
     steps: [
-      'Erstelle zuerst unter „Nutzerverwaltung → Datensicherung“ eine aktuelle Sicherung und prüfe, dass die Datei lesbar und vollständig ist.',
-      'Öffne „Organisationen & Einheiten“. Am Eintrag der aktiven Organisation löscht „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
+      'Erstelle zuerst unter „Berechtigungen dieser Ebene → Datensicherung“ eine aktuelle Sicherung und prüfe, dass die Datei lesbar und vollständig ist.',
+      'Öffne auf dem Dashboard „Organisationen“. In der Ansicht „Organisationen & Einheiten“ löscht am Eintrag der aktiven Organisation die Aktion „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
       'Am Menü einer Unterorganisation löscht „Alle Daten löschen“ nur deren fachliche Daten und die Daten ihrer Untereinheiten. Geschwister- und übergeordnete Einheiten bleiben erhalten.',
       'Prüfe Zielname, EDV-Nummer und den im Dialog beschriebenen Umfang. Gib Passwort, gegebenenfalls 2-FA und exakt „DATEN <EDV-NUMMER> LÖSCHEN“ ein.',
       'Kontrolliere die gemeldete Datensatzanzahl. Organisationsstruktur, Konten, Rollen, Passkeys und Nutzerfreigaben bleiben erhalten.',
@@ -2335,6 +2723,16 @@ const _articles = [
       'zurücksetzen',
       'edv-nummer',
       'wiederherstellung',
+    ],
+    illustrations: [
+      _GuideIllustration(
+        assetPath: 'assets/handbook/organizations.jpg',
+        caption:
+            'Unter „Organisationen & Einheiten“ erreichst du die Löschaktionen über das Drei-Punkte-Menü am jeweiligen Eintrag.',
+        altText:
+            'Ansicht Organisationen & Einheiten mit den Buttons Einheit anlegen und Jugendorganisation anlegen, der Liste Meine Organisationen und der Hierarchie.',
+        afterStep: 2,
+      ),
     ],
   ),
 ];
