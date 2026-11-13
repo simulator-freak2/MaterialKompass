@@ -264,7 +264,8 @@ Die Verknüpfung stellt folgende gegenseitige Funktionen bereit:
 
 - Lagerorte einschließlich Adresse und vollständigem Lagerpfad durchsuchen;
 - aktive Einzelinventargegenstände mit Inventarnummer reservieren;
-- sichtbare Fahrzeuge reservieren;
+- ausdrücklich zur Reservierung freigegebene Fahrzeuge reservieren (Fahrzeuge
+  werden auch zwischen verknüpften Gliederungen nur über die Fahrzeugfreigabe sichtbar);
 - Mängel zu Inventar oder Fahrzeugen melden und den Status eigener Meldungen lesen.
 
 Fremde Ressourcen bleiben schreibgeschützt. Insbesondere sind Bearbeiten, Löschen,

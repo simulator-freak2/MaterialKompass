@@ -427,4 +427,89 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('maintenance workflow sends validated values', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final calls = <Map<String, dynamic>>[];
+    Future<dynamic> recording(
+      String path, {
+      String method = 'GET',
+      Object? body,
+    }) async {
+      if (method != 'GET') {
+        calls.add({'path': path, 'method': method, 'body': body});
+        return <String, dynamic>{'ok': true};
+      }
+      return request(path, method: method, body: body);
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VehiclesPage(token: 'test', request: recording),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DLRG 1'));
+    await tester.pumpAndSettle();
+
+    // Missing optional values must not be rendered as "null".
+    expect(find.textContaining('null'), findsNothing);
+
+    // Planning without a workshop slot needs a due date and sends no period.
+    await tester.ensureVisible(find.text('Wartung planen'));
+    await tester.tap(find.text('Wartung planen'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Wartungsart *'),
+      'HU',
+    );
+    await tester.tap(find.text('Speichern'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pflichtfeld'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Fälligkeit (JJJJ-MM-TT) *'),
+      '2027-02-30',
+    );
+    await tester.tap(find.text('Speichern'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ungültiges Datum'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Fälligkeit (JJJJ-MM-TT) *'),
+      '2027-02-28',
+    );
+    await tester.tap(find.text('Speichern'));
+    await tester.pumpAndSettle();
+    final planned = calls.single;
+    expect(planned['path'], '/api/vehicles/vehicle-1/maintenance');
+    final plannedBody = planned['body'] as Map;
+    expect(plannedBody.containsKey('startAt'), isFalse);
+    expect(plannedBody['dueDate'], '2027-02-28');
+
+    // Completing asks for a result and forwards the follow-up date.
+    await tester.ensureVisible(find.byTooltip('Wartung bearbeiten'));
+    await tester.tap(find.byTooltip('Wartung bearbeiten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abschließen').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('abschließen'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Ergebnis *'),
+      'Ohne Befund',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Abschließen'));
+    await tester.pumpAndSettle();
+    final completed = calls.last;
+    expect(completed['method'], 'PUT');
+    expect(
+      completed['path'],
+      '/api/vehicles/vehicle-1/maintenance/maintenance-1',
+    );
+    expect((completed['body'] as Map)['status'], 'Abgeschlossen');
+    expect((completed['body'] as Map)['result'], 'Ohne Befund');
+    expect((completed['body'] as Map)['nextDueDate'], '2027-11-01');
+    expect(tester.takeException(), isNull);
+  });
 }
