@@ -30,6 +30,7 @@ Passworteingabe und können serverseitig widerrufen werden.
 | Beschaffung | `flutter/lib/pages/procurement_page.dart`, `backend/src/procurement.js` |
 | Inventar | `flutter/lib/pages/inventory_page.dart`, `backend/src/inventory.js` |
 | Fahrzeuge, Reservierungen, Wartung und Beladung | `flutter/lib/pages/vehicles_page.dart`, `backend/src/vehicles.js`; Kalendereinbindung in `backend/src/calendar.js` |
+| Kisten, Packlisten und Vollständigkeitsprüfung | `flutter/lib/pages/containers_page.dart`, `backend/src/containers.js`; Sperr- und Mitwanderlogik über `createContainerGuard` in Inventar, Fahrzeugen, Kleiderkammer und Inventur |
 | Kleiderkammer | `flutter/lib/pages/wardrobe_page.dart`, Routen in `backend/src/app.js` |
 | Mängel | `flutter/lib/pages/defects_page.dart`, `backend/src/defects.js` |
 | Nutzer, Rollen, Anmeldung | `backend/src/user-management.js`, Authentifizierung in `backend/src/app.js` |

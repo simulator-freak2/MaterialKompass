@@ -28,6 +28,9 @@ bool _cacheableRead(Uri uri) {
       path == '/api/transactions' ||
       path == '/api/material/history' ||
       path == '/api/defects' ||
+      path == '/api/containers' ||
+      path == '/api/containers/expiring' ||
+      RegExp(r'^/api/containers/[^/]+$').hasMatch(path) ||
       path == '/api/defect-report-items' ||
       path == '/api/defect-report-template' ||
       path == '/api/device/search' ||
@@ -42,6 +45,10 @@ bool _queueable(String method, Uri uri, Object? body) {
   if (method == 'POST' && path == '/api/material/relocate/bulk') return true;
   if (method == 'POST' && path == '/api/transactions') return true;
   if (method == 'POST' && path == '/api/defects') return true;
+  if (method == 'POST' &&
+      RegExp(r'^/api/containers/[^/]+/checks$').hasMatch(path)) {
+    return true;
+  }
   if (method == 'POST' && path == '/api/device/defects') return true;
   if (method == 'PUT' && RegExp(r'^/api/clothing/[^/]+$').hasMatch(path)) {
     final value = body?.toString() ?? '';

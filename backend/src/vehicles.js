@@ -97,8 +97,16 @@ function registerVehicleRoutes({
   defectReports,
   logEvent,
   nextId,
+  containerGuard = null,
 }) {
   const all = (collection) => rawCollection(collection);
+  const containers = containerGuard || {
+    packedQuantity: () => 0, placementOf: () => null, lockedMessage: () => null,
+    contentSafety: () => ({ blocked: false, reasons: [] }), syncContents: () => 0,
+  };
+  const syncOptions = (req) => ({
+    actor: req.user.username, movements: materialMovements, nextId,
+  });
   const nowIso = () => new Date().toISOString();
 
   function organizationSetting(organizationId) {
@@ -430,14 +438,22 @@ function registerVehicleRoutes({
     if (!material || !Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
       return { status: 400, error: 'Material und positive ganze Menge sind erforderlich.' };
     }
+    const packedMessage = containers.lockedMessage('MaterialItem', material.id);
+    if (packedMessage) return { status: 409, error: packedMessage };
     const available = Number(material.quantity || 1) - Number(material.issuedQuantity || 0)
-      - materialLoadedQuantity(material) - reserved;
+      - materialLoadedQuantity(material) - containers.packedQuantity(material.id) - reserved;
     if (quantity > available || (material.itemType === 'individual' && quantity !== 1)) {
       return { status: 409, error: 'Die gewünschte Menge ist nicht verfügbar.' };
     }
     const materialSafety = assessMaterialSafety(material);
     if (materialSafety.blocked) {
       return { status: 409, error: 'Das Material ist sicherheitsbedingt gesperrt.', reasons: materialSafety.reasons };
+    }
+    if (material.isContainer) {
+      const contentSafety = containers.contentSafety(material.id);
+      if (contentSafety.blocked) {
+        return { status: 409, error: 'Die Kiste enthält sicherheitsbedingt gesperrtes Material.', reasons: contentSafety.reasons };
+      }
     }
     const position = text(body.position, 160);
     if (vehicle.storagePositions?.length && !vehicle.storagePositions.includes(position)) {
@@ -470,6 +486,7 @@ function registerVehicleRoutes({
     if (material.itemType === 'individual') {
       material.locationId = vehicle.loadLocationId;
       material.stockStructureId = null;
+      containers.syncContents(material.id, { actor, movements: materialMovements, nextId });
     }
     all(materialMovements).push({
       id: nextId('movement', all(materialMovements)), materialId: material.id,
@@ -950,9 +967,11 @@ function registerVehicleRoutes({
           itemType: item.itemType, quantity: Number(item.quantity || 1), unit: item.unit,
           loadedQuantity: materialLoadedQuantity(item),
           requestedQuantity: pendingRequestedQuantity(item),
-          availableQuantity: Math.max(0, Number(item.quantity || 1)
-            - Number(item.issuedQuantity || 0) - materialLoadedQuantity(item)
-            - pendingRequestedQuantity(item)),
+          availableQuantity: containers.placementOf('MaterialItem', item.id) ? 0
+            : Math.max(0, Number(item.quantity || 1) - Number(item.issuedQuantity || 0)
+              - materialLoadedQuantity(item) - containers.packedQuantity(item.id)
+              - pendingRequestedQuantity(item)),
+          isContainer: item.isContainer === true,
         }));
       return res.json(result);
     });
@@ -1001,6 +1020,7 @@ function registerVehicleRoutes({
       if (!material || !destination || !destinationStructureValid) return res.status(400).json({ error: 'Ein gültiger Ziel-Lagerort ist erforderlich.' });
       if (material.itemType === 'individual') {
         material.locationId = destination.id; material.stockStructureId = destinationStockStructureId;
+        containers.syncContents(material.id, syncOptions(req));
       }
       assignments.splice(index, 1);
       const at = nowIso();
