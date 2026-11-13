@@ -6,6 +6,13 @@
 
 ## Unveroeffentlicht
 
+- Handbuch überarbeitet: 36 aktuelle Screenshots aus der Anwendung (Dashboard,
+  Inventar, Kisten, Fahrzeuge, Kalender, Kleiderkammer, Beschaffung, Mängel,
+  Kategorien, Konten, Dienstgeräte, Datensicherung, Organisationen); veraltete
+  Bilder ersetzt. Neue Anleitungen „Inventur durchführen“ und „Etikettenvorlagen
+  hochladen und freigeben“. Schrittbeschreibungen an die aktuellen Button- und
+  Menübezeichnungen angepasst (u. a. „Berechtigungen dieser Ebene“ statt
+  „Nutzerverwaltung“, „Neuer Mangel“, „Vorgang anlegen“); Stand 1.7.8.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte
