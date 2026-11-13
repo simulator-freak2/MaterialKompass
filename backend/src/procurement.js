@@ -27,8 +27,19 @@ const MAX_OFFERS_PER_REQUEST = 20;
 const MAX_ORDERS_PER_REQUEST = 20;
 const MAX_RECEIPTS_PER_ORDER = 100;
 const MAX_SUPPLIER_RECORDS = 10_000;
+const MAX_SUPPLIER_ARTICLES = 2_000;
+const MAX_ARTICLE_SIZES = 100;
 const MAX_INVENTORY_RECORDS = 200_000;
 const MAX_DOCUMENT_STORAGE_BYTES = 256 * 1024 * 1024;
+
+function isWebUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
 
 function registerProcurementRoutes({
   app, authMiddleware, requirePermission, data, categories, departments = [], locations,
@@ -85,6 +96,9 @@ function registerProcurementRoutes({
     unit: String(item.unit || 'Stück').trim(),
     taxRate: Number.isFinite(Number(item.taxRate)) ? Number(item.taxRate) : 19,
     notes: String(item.notes || '').trim(),
+    supplierArticleId: String(item.supplierArticleId || '').trim() || null,
+    manufacturerArticleNumber: String(item.manufacturerArticleNumber || '').trim(),
+    articleUrl: String(item.articleUrl || '').trim(),
   }));
   const validateItems = (items) => {
     if (!items.length) return 'Mindestens eine Position ist erforderlich.';
@@ -92,8 +106,13 @@ function registerProcurementRoutes({
       if (!item.name || item.quantity <= 0) return 'Positionen benötigen Bezeichnung und eine positive Menge.';
       if (item.name.length > 255 || item.categoryId.length > 64
         || String(item.subcategoryId || '').length > 64 || item.size.length > 32
-        || item.unit.length > 32 || item.notes.length > 5000) {
+        || item.unit.length > 32 || item.notes.length > 5000
+        || String(item.supplierArticleId || '').length > 64
+        || item.manufacturerArticleNumber.length > 128 || item.articleUrl.length > 2048) {
         return 'Mindestens ein Feld einer Position überschreitet die zulässige Länge.';
+      }
+      if (item.articleUrl && !isWebUrl(item.articleUrl)) {
+        return 'Die Artikel-URL muss mit http:// oder https:// beginnen.';
       }
       if (item.quantity > MAX_QUANTITY) return `Eine Positionsmenge darf ${MAX_QUANTITY} nicht überschreiten.`;
       if (!item.categoryId || !categoryExists(item.categoryId)) return 'Jede Position benötigt eine gültige Hauptkategorie.';
@@ -151,6 +170,49 @@ function registerProcurementRoutes({
     if (countryCode(address.country) === 'de' && !/^\d{5}$/.test(address.postalCode)) {
       return 'Eine deutsche Postleitzahl muss aus genau fünf Ziffern bestehen.';
     }
+    return null;
+  };
+  const supplierArticleText = (value) => String(value ?? '').trim();
+  const normalizeSupplierArticle = (input = {}, existing = {}) => {
+    const pick = (field) => supplierArticleText(Object.hasOwn(input, field) ? input[field] : existing[field]);
+    const rawSizes = Object.hasOwn(input, 'sizes') ? input.sizes : existing.sizes;
+    const sizes = [...new Set((Array.isArray(rawSizes) ? rawSizes : String(rawSizes || '').split(','))
+      .map((size) => supplierArticleText(size)).filter(Boolean))];
+    return {
+      manufacturerArticleNumber: pick('manufacturerArticleNumber'),
+      name: pick('name'),
+      url: pick('url'),
+      categoryId: pick('categoryId'),
+      subcategoryId: pick('subcategoryId') || null,
+      unit: pick('unit') || 'Stück',
+      notes: pick('notes'),
+      sizes,
+    };
+  };
+  const validateSupplierArticle = (article) => {
+    if (!article.name) return 'Die Bezeichnung des Artikels ist erforderlich.';
+    if (article.name.length > 255 || article.manufacturerArticleNumber.length > 128
+      || article.url.length > 2048 || article.categoryId.length > 64
+      || String(article.subcategoryId || '').length > 64 || article.unit.length > 32
+      || article.notes.length > 2000 || article.sizes.some((size) => size.length > 32)) {
+      return 'Mindestens ein Artikelfeld überschreitet die zulässige Länge.';
+    }
+    if (article.url && !isWebUrl(article.url)) return 'Die Artikel-URL muss mit http:// oder https:// beginnen.';
+    if (!article.categoryId || !categoryExists(article.categoryId)) return 'Eine gültige Hauptkategorie ist erforderlich.';
+    const main = categories.find((entry) => entry.id === article.categoryId);
+    if (main?.parentId) return 'Als Hauptkategorie muss eine oberste Kategorie gewählt werden.';
+    if (article.subcategoryId) {
+      const child = categories.find((entry) => entry.id === article.subcategoryId);
+      if (!child || child.parentId !== article.categoryId) return 'Die Unterkategorie gehört nicht zur Hauptkategorie.';
+    }
+    if (main?.useInWardrobe !== true) {
+      if (article.sizes.length) return 'Größen können nur für Kleidungsartikel hinterlegt werden.';
+      return null;
+    }
+    if (article.sizes.length > MAX_ARTICLE_SIZES) return `Es können höchstens ${MAX_ARTICLE_SIZES} Größen hinterlegt werden.`;
+    const allowedSizes = categorySizes(article.subcategoryId || article.categoryId);
+    const invalid = allowedSizes.length ? article.sizes.filter((size) => !allowedSizes.includes(size)) : [];
+    if (invalid.length) return `Für diese Kategorie nicht definierte Größen: ${invalid.join(', ')}.`;
     return null;
   };
   const formatSupplierAddress = (address) => (
@@ -573,7 +635,7 @@ function registerProcurementRoutes({
       ...Object.fromEntries(supplierTextFields.map((field) => [field, String(req.body[field] || '').trim()])),
       ...address,
       address: formatSupplierAddress(address),
-      active: req.body.active !== false, createdAt: now(),
+      active: req.body.active !== false, articles: [], createdAt: now(),
     };
     suppliers.push(supplier); res.status(201).json(supplier);
   });
@@ -596,6 +658,59 @@ function registerProcurementRoutes({
     Object.assign(supplier, address, { address: formatSupplierAddress(address) });
     if (Object.hasOwn(req.body, 'active')) supplier.active = req.body.active !== false;
     res.json(supplier);
+  });
+
+  // Artikelstamm je Lieferant: häufig bestellte Artikel mit Herstellerartikel-
+  // nummer, Bezeichnung, Web-Link und Kategorie (bei Kleidung inkl. Größen),
+  // damit Beschaffungspositionen schnell übernommen werden können.
+  const findSupplier = (req, res) => {
+    const supplier = suppliers.find((entry) => entry.id === req.params.id);
+    if (!supplier) { res.status(404).json({ error: 'Lieferant nicht gefunden.' }); return null; }
+    if (!Array.isArray(supplier.articles)) supplier.articles = [];
+    return supplier;
+  };
+  app.get('/api/suppliers/:id/articles', authMiddleware, requirePermission('procurement.read'), (req, res) => {
+    const supplier = findSupplier(req, res); if (supplier) res.json(supplier.articles);
+  });
+  app.post('/api/suppliers/:id/articles', authMiddleware, requirePermission('suppliers.write'), (req, res) => {
+    const supplier = findSupplier(req, res); if (!supplier) return;
+    if (supplier.articles.length >= MAX_SUPPLIER_ARTICLES) {
+      return res.status(507).json({ error: 'Die maximale Anzahl an Artikeln für diesen Lieferanten ist erreicht.' });
+    }
+    const article = normalizeSupplierArticle(req.body);
+    const error = validateSupplierArticle(article);
+    if (error) return res.status(400).json({ error });
+    if (article.manufacturerArticleNumber && supplier.articles.some((entry) =>
+      entry.manufacturerArticleNumber.toLowerCase() === article.manufacturerArticleNumber.toLowerCase())) {
+      return res.status(409).json({ error: 'Diese Herstellerartikelnummer ist für den Lieferanten bereits hinterlegt.' });
+    }
+    const created = { id: nextId('supplier-article', suppliers.flatMap((entry) => entry.articles || [])), ...article, createdAt: now(), updatedAt: now() };
+    supplier.articles.push(created);
+    logEvent('Lieferantenartikel angelegt', 'Supplier', { id: supplier.id, articleId: created.id }, req.user.username);
+    res.status(201).json(created);
+  });
+  app.put('/api/suppliers/:id/articles/:articleId', authMiddleware, requirePermission('suppliers.write'), (req, res) => {
+    const supplier = findSupplier(req, res); if (!supplier) return;
+    const existing = supplier.articles.find((entry) => entry.id === req.params.articleId);
+    if (!existing) return res.status(404).json({ error: 'Artikel nicht gefunden.' });
+    const article = normalizeSupplierArticle(req.body, existing);
+    const error = validateSupplierArticle(article);
+    if (error) return res.status(400).json({ error });
+    if (article.manufacturerArticleNumber && supplier.articles.some((entry) => entry.id !== existing.id
+      && entry.manufacturerArticleNumber.toLowerCase() === article.manufacturerArticleNumber.toLowerCase())) {
+      return res.status(409).json({ error: 'Diese Herstellerartikelnummer ist für den Lieferanten bereits hinterlegt.' });
+    }
+    Object.assign(existing, article, { updatedAt: now() });
+    logEvent('Lieferantenartikel geändert', 'Supplier', { id: supplier.id, articleId: existing.id }, req.user.username);
+    res.json(existing);
+  });
+  app.delete('/api/suppliers/:id/articles/:articleId', authMiddleware, requirePermission('suppliers.write'), (req, res) => {
+    const supplier = findSupplier(req, res); if (!supplier) return;
+    const index = supplier.articles.findIndex((entry) => entry.id === req.params.articleId);
+    if (index < 0) return res.status(404).json({ error: 'Artikel nicht gefunden.' });
+    supplier.articles.splice(index, 1);
+    logEvent('Lieferantenartikel gelöscht', 'Supplier', { id: supplier.id, articleId: req.params.articleId }, req.user.username);
+    res.json({ deleted: true, id: req.params.articleId });
   });
 
   app.post('/api/procurement/:id/documents', authMiddleware, requirePermission('procurement.request'), (req, res) => {

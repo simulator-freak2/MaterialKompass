@@ -464,3 +464,70 @@ test('procurement creates category-based clothing inventory numbers', async () =
     ]);
   } finally { server.close(); }
 });
+
+test('suppliers keep frequently ordered articles including clothing sizes', async () => {
+  const { server, baseUrl, login, admin } = await start();
+  try {
+    const material = await login('materialwart@materialkompass.local', 'Material123!');
+    const base = `${baseUrl}/api/suppliers/supplier-1/articles`;
+
+    const jacket = await jsonRequest(base, material, 'POST', {
+      manufacturerArticleNumber: 'SJ-4711', name: 'Schutzjacke', url: 'https://shop.example/sj-4711',
+      categoryId: '04', subcategoryId: '04-04', sizes: ['M', 'L', 'M', ' XL '],
+    });
+    assert.equal(jacket.response.status, 201);
+    assert.deepEqual(jacket.data.sizes, ['M', 'L', 'XL']);
+
+    const invalidSize = await jsonRequest(base, material, 'POST', {
+      name: 'Schutzhose', categoryId: '04', subcategoryId: '04-04', sizes: ['XXXL'],
+    });
+    assert.equal(invalidSize.response.status, 400);
+
+    const sizesOutsideClothing = await jsonRequest(base, material, 'POST', {
+      name: 'Rettungsgurt', categoryId: '02', sizes: ['M'],
+    });
+    assert.equal(sizesOutsideClothing.response.status, 400);
+
+    const badUrl = await jsonRequest(base, material, 'POST', {
+      name: 'Rettungsgurt', categoryId: '02', url: 'javascript:alert(1)',
+    });
+    assert.equal(badUrl.response.status, 400);
+
+    const duplicate = await jsonRequest(base, material, 'POST', {
+      manufacturerArticleNumber: 'sj-4711', name: 'Doppelt', categoryId: '02',
+    });
+    assert.equal(duplicate.response.status, 409);
+
+    const belt = await jsonRequest(base, material, 'POST', {
+      manufacturerArticleNumber: 'RG-1', name: 'Rettungsgurt', categoryId: '02',
+    });
+    assert.equal(belt.response.status, 201);
+    assert.notEqual(belt.data.id, jacket.data.id);
+
+    const updated = await jsonRequest(`${base}/${jacket.data.id}`, material, 'PUT', { sizes: ['S', 'M'] });
+    assert.equal(updated.response.status, 200);
+    assert.deepEqual(updated.data.sizes, ['S', 'M']);
+    assert.equal(updated.data.manufacturerArticleNumber, 'SJ-4711');
+
+    const supplierUpdate = await jsonRequest(`${baseUrl}/api/suppliers/supplier-1`, admin, 'PUT', { contact: 'Innendienst' });
+    assert.equal(supplierUpdate.response.status, 200);
+    assert.equal(supplierUpdate.data.articles.length, 2);
+
+    const removed = await jsonRequest(`${base}/${belt.data.id}`, material, 'DELETE');
+    assert.equal(removed.response.status, 200);
+    assert.equal(removed.data.deleted, true);
+    const listed = await jsonRequest(base, material);
+    assert.deepEqual(listed.data.map((entry) => entry.id), [jacket.data.id]);
+
+    const request = await jsonRequest(`${baseUrl}/api/procurement`, material, 'POST', {
+      title: 'Schutzjacken', reason: 'Ersatzbedarf', requestedBudgetGross: 80, preferredSupplierId: 'supplier-1',
+      items: [{
+        name: 'Schutzjacke', categoryId: '04', subcategoryId: '04-04', size: 'M', quantity: 1,
+        supplierArticleId: jacket.data.id, manufacturerArticleNumber: 'SJ-4711', articleUrl: 'https://shop.example/sj-4711',
+      }],
+    });
+    assert.equal(request.response.status, 201);
+    assert.equal(request.data.items[0].supplierArticleId, jacket.data.id);
+    assert.equal(request.data.items[0].manufacturerArticleNumber, 'SJ-4711');
+  } finally { server.close(); }
+});

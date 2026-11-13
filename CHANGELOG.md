@@ -6,6 +6,11 @@
 
 ## Unveroeffentlicht
 
+- Lieferanten-Artikelstamm: Je Lieferant lassen sich häufig bestellte Artikel mit
+  Herstellerartikelnummer, Bezeichnung, Web-URL, Kategorie/Unterkategorie und
+  Einheit hinterlegen, bei Kleidung zusätzlich die verfügbaren Größen. In
+  Beschaffungsanträgen kann eine Position direkt aus dem Artikelstamm übernommen
+  werden; Artikelnummer und Link werden an der Position mitgeführt.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte
