@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createApp } = require('../src/app');
 const { seedData } = require('../src/data/seed');
+const { PLATFORM_ORGANIZATION_ID } = require('../src/platform-administration');
 
 async function request(baseUrl, path, { token, method = 'GET', body } = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -297,8 +298,19 @@ test('only admins with organization permission create organizations and suborgan
   const authorized = await start();
   try {
     const token = await login(authorized.baseUrl, 'admin', 'MaterialKompass2026!');
-    const organization = await request(authorized.baseUrl, '/api/organizations', {
+    const outsideCenter = await request(authorized.baseUrl, '/api/organizations', {
       token,
+      method: 'POST',
+      body: { name: 'Organisation C', shortName: 'C', edvNumber: '10000003' },
+    });
+    assert.equal(outsideCenter.response.status, 403);
+    assert.match(outsideCenter.data.error, /MaterialKompass-Administration/);
+    const central = await request(authorized.baseUrl, '/api/auth/context', {
+      token, method: 'POST', body: { organizationId: PLATFORM_ORGANIZATION_ID },
+    });
+    assert.equal(central.response.status, 200);
+    const organization = await request(authorized.baseUrl, '/api/organizations', {
+      token: central.data.token,
       method: 'POST',
       body: { name: 'Organisation C', shortName: 'C', edvNumber: '10000003' },
     });
@@ -403,6 +415,89 @@ test('only admins with organization permission create organizations and suborgan
     assert.equal(unit.response.status, 403);
   } finally {
     await new Promise((resolve) => missingPermission.server.close(resolve));
+  }
+});
+
+test('only MaterialKompass admins in the central administration edit and delete organizations', async () => {
+  const { app, server, baseUrl } = await start();
+  try {
+    const localToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
+    const central = await request(baseUrl, '/api/auth/context', {
+      token: localToken, method: 'POST', body: { organizationId: PLATFORM_ORGANIZATION_ID },
+    });
+    assert.equal(central.response.status, 200);
+    const centralToken = central.data.token;
+
+    // Organization admins (even platform admins acting locally) are rejected.
+    assert.equal((await request(baseUrl, '/api/platform/organizations', { token: localToken })).response.status, 403);
+    assert.equal((await request(baseUrl, '/api/organizations/org-b', {
+      token: localToken, method: 'PUT', body: { name: 'Lokal umbenannt' },
+    })).response.status, 403);
+    assert.equal((await request(baseUrl, '/api/organizations/org-b', {
+      token: localToken, method: 'DELETE',
+      body: { confirmation: 'ORGANISATION 10000002 LÖSCHEN', currentPassword: 'MaterialKompass2026!' },
+    })).response.status, 403);
+    const rootEdit = await request(baseUrl, '/api/organization-units/unit-a', {
+      token: localToken, method: 'PUT', body: { name: 'Root umbenannt', type: 'Organisation', edvNumber: '10000001' },
+    });
+    assert.equal(rootEdit.response.status, 403);
+    const childEdit = await request(baseUrl, '/api/organization-units/unit-a-child', {
+      token: localToken, method: 'PUT', body: { name: 'A-Ortsgruppe neu', type: 'Ortsgruppe', edvNumber: '10000101' },
+    });
+    assert.equal(childEdit.response.status, 200);
+
+    const listed = await request(baseUrl, '/api/platform/organizations', { token: centralToken });
+    assert.equal(listed.response.status, 200);
+    assert.deepEqual(listed.data.map((entry) => entry.id).sort(), ['org-a', 'org-b']);
+
+    const duplicate = await request(baseUrl, '/api/organizations/org-b', {
+      token: centralToken, method: 'PUT', body: { edvNumber: '10000001' },
+    });
+    assert.equal(duplicate.response.status, 409);
+    const updated = await request(baseUrl, '/api/organizations/org-b', {
+      token: centralToken, method: 'PUT',
+      body: { name: 'Organisation Bravo', shortName: 'bravo', edvNumber: '10000222' },
+    });
+    assert.equal(updated.response.status, 200);
+    assert.equal(updated.data.shortName, 'BRAVO');
+    const rootB = app.locals.appData.organizationUnits.find((entry) => entry.id === 'unit-b');
+    assert.equal(rootB.name, 'Organisation Bravo');
+    assert.equal(rootB.edvNumber, '10000222');
+
+    assert.equal((await request(baseUrl, `/api/organizations/${PLATFORM_ORGANIZATION_ID}`, {
+      token: centralToken, method: 'PUT', body: { name: 'Gekapert' },
+    })).response.status, 404);
+    const wrongConfirmation = await request(baseUrl, '/api/organizations/org-b', {
+      token: centralToken, method: 'DELETE',
+      body: { confirmation: 'ORGANISATION FALSCH LÖSCHEN', currentPassword: 'MaterialKompass2026!' },
+    });
+    assert.equal(wrongConfirmation.response.status, 400);
+    const wrongPassword = await request(baseUrl, '/api/organizations/org-b', {
+      token: centralToken, method: 'DELETE',
+      body: { confirmation: 'ORGANISATION 10000222 LÖSCHEN', currentPassword: 'falsch' },
+    });
+    assert.equal(wrongPassword.response.status, 403);
+    const deleted = await request(baseUrl, '/api/organizations/org-b', {
+      token: centralToken, method: 'DELETE',
+      body: { confirmation: 'ORGANISATION 10000222 LÖSCHEN', currentPassword: 'MaterialKompass2026!' },
+    });
+    assert.equal(deleted.response.status, 200);
+    assert.equal(deleted.data.status, 'archived');
+    assert.equal(rootB.status, 'archived');
+    const afterDelete = await request(baseUrl, '/api/platform/organizations', { token: centralToken });
+    assert.equal(afterDelete.data.find((entry) => entry.id === 'org-b').status, 'archived');
+    const enterDeleted = await request(baseUrl, '/api/auth/context', {
+      token: localToken, method: 'POST', body: { organizationId: 'org-b' },
+    });
+    assert.notEqual(enterDeleted.response.status, 200);
+
+    await app.locals.purgeExpiredOrganizationUnits(Date.now() + 731 * 86_400_000);
+    const purged = app.locals.appData.organizations.find((entry) => entry.id === 'org-b');
+    assert.equal(purged.status, 'purged');
+    assert.equal(app.locals.appData.memberships.some((entry) =>
+      entry.organizationId === 'org-b' && entry.status === 'active'), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

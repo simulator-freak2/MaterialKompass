@@ -1,4 +1,6 @@
-const { PLATFORM_ORGANIZATION_ID, synchronizePlatformAdministration } = require('./platform-administration');
+const {
+  PLATFORM_ORGANIZATION_ID, synchronizePlatformAdministration, isPlatformAdministration,
+} = require('./platform-administration');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { randomUUID } = require('node:crypto');
 
@@ -584,6 +586,16 @@ function canCreateOrganizations(req) {
     && req.user?.permissions?.includes('organizations.write');
 }
 
+// Organizations (top-level tenants) are created, edited and deleted only by
+// MaterialKompass administrators inside the protected central administration.
+// Ordinary organization admins manage the hierarchy below their root unit.
+function canManageOrganizations(req) {
+  return isPlatformAdministration(req) && req.identity?.platformAdmin === true;
+}
+
+const ORGANIZATION_MANAGEMENT_FORBIDDEN = 'Organisationen werden ausschließlich durch die '
+  + 'MaterialKompass-Administration in der zentralen Verwaltung angelegt, bearbeitet und gelöscht.';
+
 function registerTenancyRoutes({
   app, organizations, units, memberships, users, roles, authMiddleware,
   requirePermission, logEvent, persistOrganization = async () => {},
@@ -674,12 +686,16 @@ function registerTenancyRoutes({
       .sort((a, b) => Number(b.id === PLATFORM_ORGANIZATION_ID) - Number(a.id === PLATFORM_ORGANIZATION_ID)).map(publicOrganization));
   });
 
+  app.get('/api/platform/organizations', authMiddleware, (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    return res.json(organizations
+      .filter((entry) => entry.id !== PLATFORM_ORGANIZATION_ID && entry.status !== 'purged')
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de'))
+      .map(publicOrganization));
+  });
+
   app.post('/api/organizations', authMiddleware, async (req, res) => {
-    if (!canCreateOrganizations(req)) {
-      return res.status(403).json({
-        error: 'Nur Plattformadministratoren mit der Berechtigung organizations.write dürfen Organisationen anlegen.',
-      });
-    }
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
     const name = text(req.body.name);
     const shortName = text(req.body.shortName, 24).toUpperCase();
     const organizationEdvNumber = edvNumber(req.body.edvNumber);
@@ -725,6 +741,75 @@ function registerTenancyRoutes({
     await persistMembership(memberships.at(-1));
     logEvent('create', 'Organization', { id: organization.id, name }, req.user.username);
     return res.status(201).json({ ...publicOrganization(organization), rootUnitId: root.id });
+  });
+
+  const managedOrganization = (id) => organizations.find((entry) => entry.id === id
+    && entry.id !== PLATFORM_ORGANIZATION_ID && entry.status === 'active');
+  const rootUnitOf = (organizationId) => units.find((entry) =>
+    entry.organizationId === organizationId && entry.parentId === null && entry.status !== 'purged');
+
+  app.put('/api/organizations/:id', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = managedOrganization(req.params.id);
+    if (!organization) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    const root = rootUnitOf(organization.id);
+    const name = text(req.body.name ?? organization.name);
+    const shortName = text(req.body.shortName ?? organization.shortName, 24).toUpperCase();
+    const organizationEdvNumber = edvNumber(req.body.edvNumber ?? organization.edvNumber);
+    if (!name || !shortName || !organizationEdvNumber) {
+      return res.status(400).json({ error: 'Name, Kurzname und EDV-Nummer sind erforderlich.' });
+    }
+    if (!EDV_NUMBER_PATTERN.test(organizationEdvNumber)) {
+      return res.status(400).json({ error: 'Die EDV-Nummer darf nur Buchstaben, Ziffern, Punkt, Schrägstrich, Unterstrich und Bindestrich enthalten.' });
+    }
+    if (edvNumberInUse(organizationEdvNumber, {
+      ignoreOrganizationId: organization.id, ignoreUnitId: root?.id ?? null,
+    })) {
+      return res.status(409).json({ error: 'Die EDV-Nummer wird bereits verwendet.' });
+    }
+    if (organizations.some((entry) => entry.id !== organization.id && entry.status !== 'purged'
+      && (String(entry.name).toLocaleLowerCase('de') === name.toLocaleLowerCase('de')
+        || String(entry.shortName).toLocaleLowerCase('de') === shortName.toLocaleLowerCase('de')))) {
+      return res.status(409).json({ error: 'Name oder Kurzname wird bereits verwendet.' });
+    }
+    Object.assign(organization, { name, shortName, edvNumber: organizationEdvNumber });
+    if (req.body.branding && typeof req.body.branding === 'object' && !Array.isArray(req.body.branding)) {
+      organization.branding = req.body.branding;
+    }
+    await persistOrganization(organization);
+    if (root) {
+      Object.assign(root, { name, edvNumber: organizationEdvNumber });
+      await persistUnit(root);
+    }
+    logEvent('update', 'Organization', { id: organization.id, name }, req.user.username);
+    return res.json(publicOrganization(organization));
+  });
+
+  app.delete('/api/organizations/:id', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = managedOrganization(req.params.id);
+    if (!organization) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    const expectedConfirmation = `ORGANISATION ${organization.edvNumber} LÖSCHEN`;
+    if (req.body?.confirmation !== expectedConfirmation) {
+      return res.status(400).json({ error: `Zur Bestätigung muss „${expectedConfirmation}“ eingegeben werden.` });
+    }
+    if (!await verifyReauthentication(req.user, req.body)) {
+      return res.status(403).json({ error: 'Passwort oder 2-FA-Code ist nicht korrekt.' });
+    }
+    // Deletion follows the existing retention model: the organization and all
+    // of its units are archived immediately (access ends at once) and purged
+    // with their data once the retention period has expired.
+    const archivedAt = nowIso();
+    const purgeAfter = new Date(Date.now() + ORGANIZATION_RETENTION_DAYS * 86_400_000).toISOString();
+    Object.assign(organization, { status: 'archived', archivedAt, purgeAfter });
+    await persistOrganization(organization);
+    for (const unit of units) {
+      if (unit.organizationId !== organization.id || unit.status !== 'active') continue;
+      Object.assign(unit, { status: 'archived', archivedAt, purgeAfter });
+      await persistUnit(unit);
+    }
+    logEvent('archive', 'Organization', { id: organization.id, purgeAfter }, req.user.username);
+    return res.json(publicOrganization(organization));
   });
 
   app.post('/api/organizations/:id/data-reset', authMiddleware, async (req, res) => {
@@ -911,6 +996,7 @@ function registerTenancyRoutes({
       && entry.organizationId === req.tenant.organizationId
       && manageableUnitIds.has(entry.id));
     if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    if (unit.parentId === null) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
     const parentId = req.body.parentId === undefined ? unit.parentId : text(req.body.parentId, 64) || null;
     const requestedKind = req.body.unitKind === undefined
       ? unit.unitKind || UNIT_KIND_STANDARD
@@ -1079,6 +1165,26 @@ function registerTenancyRoutes({
       unit.purgedAt = new Date(referenceTime).toISOString();
       await deleteOrganizationData(unit.organizationId, unit.id);
       await deleteUnit(unit.id);
+    }
+    for (const organization of organizations) {
+      if (organization.id === PLATFORM_ORGANIZATION_ID || organization.status !== 'archived'
+        || !(Date.parse(organization.purgeAfter || '') <= referenceTime)) continue;
+      for (const name of ORGANIZATION_SCOPED_COLLECTIONS) {
+        const collection = rawCollection(app.locals.appData?.[name] || []);
+        if (!Array.isArray(collection)) continue;
+        for (let index = collection.length - 1; index >= 0; index -= 1) {
+          if (collection[index]?.organizationId === organization.id) collection.splice(index, 1);
+        }
+      }
+      await persistCollections();
+      for (const membership of memberships) {
+        if (membership.organizationId !== organization.id || membership.status !== 'active') continue;
+        membership.status = 'inactive';
+        await persistMembership(membership);
+      }
+      organization.status = 'purged';
+      organization.purgedAt = new Date(referenceTime).toISOString();
+      await persistOrganization(organization);
     }
     return expired.length;
   }

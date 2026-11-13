@@ -1190,7 +1190,11 @@ class _WardrobePageState extends State<WardrobePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            action == 'ausgegeben' ? 'Ausgabe gebucht' : 'Rückgabe gebucht',
+            switch (action) {
+              'ausgegeben' => 'Ausgabe gebucht',
+              'umgebucht' => 'Umbuchung gebucht',
+              _ => 'Rückgabe gebucht',
+            },
           ),
         ),
       );
@@ -1199,9 +1203,14 @@ class _WardrobePageState extends State<WardrobePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            action == 'ausgegeben'
-                ? 'Mindestens ein Kleidungsstück ist bereits ausgegeben.'
-                : 'Mindestens ein Kleidungsstück ist nicht ausgegeben.',
+            switch (action) {
+              'ausgegeben' =>
+                'Mindestens ein Kleidungsstück ist bereits ausgegeben.',
+              'umgebucht' =>
+                'Mindestens ein Kleidungsstück ist nicht ausgegeben oder '
+                    'bereits dieser Person zugeordnet.',
+              _ => 'Mindestens ein Kleidungsstück ist nicht ausgegeben.',
+            },
           ),
         ),
       );
@@ -1262,23 +1271,44 @@ class _WardrobePageState extends State<WardrobePage> {
     }
   }
 
-  Future<void> _openTransactionDialog(String clothingId, String action) async {
+  Future<void> _openTransactionDialog(
+    String clothingId,
+    String action, {
+    String? currentPerson,
+  }) async {
+    if (action != 'zurückgegeben') transactionPersonController.clear();
     await showDialog<void>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(
-            action == 'ausgegeben'
-                ? 'Kleidung ausgeben'
-                : 'Kleidung zurücknehmen',
-          ),
-          content: action == 'ausgegeben'
-              ? TextField(
-                  controller: transactionPersonController,
-                  decoration: const InputDecoration(labelText: 'Person'),
-                )
-              : const Text(
+          title: Text(switch (action) {
+            'ausgegeben' => 'Kleidung ausgeben',
+            'umgebucht' => 'Kleidung umbuchen',
+            _ => 'Kleidung zurücknehmen',
+          }),
+          content: action == 'zurückgegeben'
+              ? const Text(
                   'Für die Rücknahme ist keine Namenseingabe erforderlich.',
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (action == 'umgebucht' &&
+                        (currentPerson?.isNotEmpty ?? false)) ...[
+                      Text('Bisher ausgegeben an: $currentPerson'),
+                      const SizedBox(height: 12),
+                    ],
+                    TextField(
+                      controller: transactionPersonController,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        labelText: action == 'umgebucht'
+                            ? 'Neue Person'
+                            : 'Person',
+                      ),
+                    ),
+                  ],
                 ),
           actions: [
             TextButton(
@@ -1296,7 +1326,11 @@ class _WardrobePageState extends State<WardrobePage> {
                   }
                 }
               },
-              child: Text(action == 'ausgegeben' ? 'Ausgeben' : 'Zurücknehmen'),
+              child: Text(switch (action) {
+                'ausgegeben' => 'Ausgeben',
+                'umgebucht' => 'Umbuchen',
+                _ => 'Zurücknehmen',
+              }),
             ),
           ],
         );
@@ -1539,7 +1573,7 @@ class _WardrobePageState extends State<WardrobePage> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
-              title: const Text('Ausgeben / Zurücknehmen'),
+              title: const Text('Ausgeben / Zurücknehmen / Umbuchen'),
               content: SizedBox(
                 width: double.maxFinite,
                 child: Column(
@@ -1550,13 +1584,22 @@ class _WardrobePageState extends State<WardrobePage> {
                       isSelected: [
                         selectedAction == 'ausgegeben',
                         selectedAction == 'zurückgegeben',
+                        selectedAction == 'umgebucht',
                       ],
                       onPressed: (index) {
                         setState(() {
-                          selectedAction = index == 0
-                              ? 'ausgegeben'
-                              : 'zurückgegeben';
-                          dialogSelectedIds.clear();
+                          final previousAction = selectedAction;
+                          selectedAction = const [
+                            'ausgegeben',
+                            'zurückgegeben',
+                            'umgebucht',
+                          ][index];
+                          // Zurücknehmen und Umbuchen arbeiten beide mit
+                          // ausgegebener Kleidung – die Auswahl bleibt dann.
+                          if (previousAction == 'ausgegeben' ||
+                              selectedAction == 'ausgegeben') {
+                            dialogSelectedIds.clear();
+                          }
                         });
                       },
                       borderRadius: BorderRadius.circular(12),
@@ -1567,14 +1610,27 @@ class _WardrobePageState extends State<WardrobePage> {
                         minHeight: 40,
                         minWidth: 120,
                       ),
-                      children: const [Text('Ausgeben'), Text('Zurücknehmen')],
+                      children: const [
+                        Text('Ausgeben'),
+                        Text('Zurücknehmen'),
+                        Text('Umbuchen'),
+                      ],
                     ),
                     const SizedBox(height: 16),
-                    if (selectedAction == 'ausgegeben') ...[
+                    if (selectedAction != 'zurückgegeben') ...[
+                      if (selectedAction == 'umgebucht') ...[
+                        const Text(
+                          'Ausgegebene Kleidung wird ohne Rücknahme direkt '
+                          'auf die neue Person umgebucht.',
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       TextField(
                         controller: transactionPersonController,
-                        decoration: const InputDecoration(
-                          labelText: 'Person',
+                        decoration: InputDecoration(
+                          labelText: selectedAction == 'umgebucht'
+                              ? 'Neue Person'
+                              : 'Person',
                           hintText: 'Name eingeben',
                           border: OutlineInputBorder(),
                           prefixIcon: Icon(Icons.person),
@@ -2478,6 +2534,21 @@ class _WardrobePageState extends State<WardrobePage> {
                                                 : 'Ausgeben',
                                           ),
                                         ),
+                                        if (isIssued)
+                                          OutlinedButton.icon(
+                                            onPressed: () =>
+                                                _openTransactionDialog(
+                                                  item['id']?.toString() ?? '',
+                                                  'umgebucht',
+                                                  currentPerson:
+                                                      item['assignedPerson']
+                                                          ?.toString(),
+                                                ),
+                                            icon: const Icon(
+                                              Icons.swap_horiz,
+                                            ),
+                                            label: const Text('Umbuchen'),
+                                          ),
                                         FilledButton.icon(
                                           onPressed: () => _deleteClothing(
                                             item['id']?.toString() ?? '',
@@ -2540,13 +2611,18 @@ class _WardrobePageState extends State<WardrobePage> {
                                       child: ListTile(
                                         dense: true,
                                         title: Text(
-                                          transaction['action']?.toString() ==
-                                                  'ausgegeben'
-                                              ? 'Ausgabe'
-                                              : 'Rückgabe',
+                                          switch (transaction['action']
+                                              ?.toString()) {
+                                            'ausgegeben' => 'Ausgabe',
+                                            'umgebucht' => 'Umbuchung',
+                                            _ => 'Rückgabe',
+                                          },
                                         ),
                                         subtitle: Text(
-                                          '${transaction['personName']?.toString() ?? '-'} • ${transaction['createdAt']?.toString() ?? ''}',
+                                          transaction['action']?.toString() ==
+                                                  'umgebucht'
+                                              ? '${transaction['previousPersonName']?.toString() ?? '-'} → ${transaction['personName']?.toString() ?? '-'} • ${transaction['createdAt']?.toString() ?? ''}'
+                                              : '${transaction['personName']?.toString() ?? '-'} • ${transaction['createdAt']?.toString() ?? ''}',
                                         ),
                                       ),
                                     );

@@ -565,7 +565,10 @@ function createApp(options = {}) {
   function defaultTenantContext(user, requestedOrganizationId, requestedUnitId) {
     const activeMemberships = memberships.filter((entry) => entry.userId === user.id
       && entry.status === 'active'
-      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true));
+      && (entry.organizationId !== PLATFORM_ORGANIZATION_ID || user.platformAdmin === true)
+      // Memberships of archived (deleted) organizations must not shadow other access.
+      && organizations.some((organization) => organization.id === entry.organizationId
+        && organization.status === 'active'));
     const contextFor = (membership, activeUnitId) => {
       const context = contextForMembership({ membership, units: organizationUnits, roles, activeUnitId });
       if (context?.organizationId === PLATFORM_ORGANIZATION_ID) {
@@ -3056,9 +3059,9 @@ function createApp(options = {}) {
     const action = req.body.action;
     const submittedPersonName = String(req.body.personName || '').trim();
 
-    const validActions = ['ausgegeben', 'zurückgegeben'];
+    const validActions = ['ausgegeben', 'zurückgegeben', 'umgebucht'];
     if (!validActions.includes(action)) {
-      return res.status(400).json({ error: 'Invalid action. Use ausgegeben or zurückgegeben.' });
+      return res.status(400).json({ error: 'Invalid action. Use ausgegeben, zurückgegeben or umgebucht.' });
     }
 
     if (clothingIds.length === 0 || clothingIds.length > MAX_BULK_ITEMS) {
@@ -3067,6 +3070,12 @@ function createApp(options = {}) {
 
     if (action === 'ausgegeben' && !submittedPersonName) {
       return res.status(400).json({ error: 'personName is required when issuing clothing' });
+    }
+    if (action === 'umgebucht' && !submittedPersonName) {
+      return res.status(400).json({ error: 'personName is required when transferring clothing' });
+    }
+    if (submittedPersonName.length > 255) {
+      return res.status(400).json({ error: 'personName is too long' });
     }
 
     const personName =
@@ -3083,6 +3092,11 @@ function createApp(options = {}) {
       } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
           !(item.status === 'Defekt' && item.assignedPerson)) {
         errors.push({ id, error: 'not_issued' });
+      } else if (action === 'umgebucht' && item.status !== 'Ausgegeben') {
+        errors.push({ id, error: 'not_issued' });
+      } else if (action === 'umgebucht' &&
+          String(item.assignedPerson || '').trim().toLowerCase() === personName.toLowerCase()) {
+        errors.push({ id, error: 'same_person' });
       }
       return errors;
     }, []);
@@ -3099,6 +3113,10 @@ function createApp(options = {}) {
         action,
         createdAt: new Date().toISOString(),
       };
+      if (action === 'umgebucht') {
+        transaction.previousPersonName =
+          clothingItems.find((item) => item.id === id)?.assignedPerson || null;
+      }
       issueTransactions.push(transaction);
       return transaction;
     });
@@ -3106,7 +3124,7 @@ function createApp(options = {}) {
     clothingIds.forEach((id) => {
       const clothingItem = clothingItems.find((item) => item.id === id);
       if (!clothingItem) return;
-      if (action === 'ausgegeben') {
+      if (action === 'ausgegeben' || action === 'umgebucht') {
         clothingItem.status = 'Ausgegeben';
         clothingItem.assignedPerson = personName || clothingItem.assignedPerson || null;
       } else if (action === 'zurückgegeben') {
