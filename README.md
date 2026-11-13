@@ -39,6 +39,7 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 - Fahrzeugverwaltung für Kraftfahrzeuge, Anhänger, Boote und sonstige Einsatz- oder
   Vereinsfahrzeuge mit Reservierung, Wartung, Mängeln und versionierten Beladungslisten
 - Prüfungen, vollständiges Mängelmanagement, Dokumente sowie XLSX-/ODS-Import und -Export
+- PSAgE-Prüfdokumentation für Westen (siehe [PSAgE-Prüfungen](#psage-prüfungen-westen))
 - Barcode-/QR-Code-Anzeige, Handscanner- und Webkamera-Unterstützung
 - ZPL-Etikettendruck über LAN für Zebra-Drucker unter Windows und Android
 - Vollständige Beschaffung mit Anträgen, allgemeinen Kategorien und Brutto-Preisen
@@ -53,6 +54,46 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
   IP-Netzregeln und sofortigem Widerruf
 - Verschlüsselter nativer Offlinebetrieb für Materiallager, Kleiderkammer,
   Mängel und Dashboard mit sicher wiederholbarer Synchronisation
+
+## PSAgE-Prüfungen (Westen)
+
+Westen der Kleiderkammer werden über ihre Unterkategorie einem PSAgE-Westentyp
+zugeordnet (**Kategorien → Kategorie bearbeiten → PSAgE-Westentyp**):
+
+- **Schwimm-, Auftriebshilfe oder Prallschutzweste**
+- **Rettungsweste (aufblasbar)** mit automatischer oder manueller Auslösung
+
+Am Kleidungsstück werden Herstellungsdatum, Seriennummer, Auftrieb (N),
+Auslöseart bzw. Strömungsretterweste gepflegt. Die Prüfung erfolgt über die fest
+hinterlegte Checkliste der Westenkunde des DLRG LV Hessen (Stand 2023-1,
+angelehnt an Merkblatt SuG 05-22); jede Position wird mit N/A, OK oder KO und
+optionaler Bemerkung bewertet. Für Rettungswesten werden Gasart, Mindest-
+Bruttomasse und Gasinhalt mit Toleranzen sowie die gewogene Ist-Masse erfasst.
+Das Ergebnis „einsatzbereit“ ermittelt ausschließlich der Server: jede KO-Position,
+eine Patronenmasse außerhalb der Toleranz, eine abgelaufene Prüfplakette oder
+eine überschrittene Altersgrenze führt zu „nicht einsatzbereit“ und legt
+automatisch einen Mangel an.
+
+- **Sachkundigenprüfung** dürfen nur „Sachkundiger PSAgE“ und Admins erfassen.
+  Sie setzt den nächsten Prüftermin (Kategorie-Intervall, ersatzweise 12 Monate
+  für Feststoffwesten bzw. 24 Monate für Rettungswesten; bei Rettungswesten über
+  10 Jahre höchstens 12 Monate, begrenzt durch Prüfplakette und Altersgrenze).
+- **Sichtprüfung durch den Nutzer** (Buddy-Check) ist je Organisation
+  zuschaltbar und für alle Nutzer mit Lesezugriff auf die Kleiderkammer
+  verfügbar. Sie ändert den Prüftermin nicht; eine nicht bestandene Sichtprüfung
+  sperrt die Weste bis zur nächsten bestandenen Sachkundigenprüfung.
+
+Die Ausgabe einer Weste wird gesperrt, solange das Herstellungsdatum fehlt, die
+Altersgrenze erreicht ist (Feststoffweste 10 Jahre, Rettungsweste 15 Jahre),
+keine bestandene Sachkundigenprüfung vorliegt, der Prüftermin überschritten ist
+oder die letzte Sichtprüfung negativ war.
+
+Administratoren stellen in der Kleiderkammer (Symbol „PSAgE-Prüfungen
+einstellen“) je Organisation ein, ob die Sichtprüfung aktiv ist, ob ein
+PDF-Prüfprotokoll erzeugt werden kann und ob es nach jeder Sachkundigenprüfung
+verpflichtend unveränderlich abgelegt wird. Die Checklisten dienen der
+Dokumentation; sie ersetzen nicht den offiziellen Dokumentationsnachweis
+bzw. dessen Neuauflagen.
 
 ## Dienstgeräte
 

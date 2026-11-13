@@ -8,6 +8,11 @@ const { seedData } = require('./data/seed');
 const { registerInventoryRoutes } = require('./inventory');
 const { registerCalendarRoutes } = require('./calendar');
 const { registerVehicleRoutes } = require('./vehicles');
+const {
+  normalizeManufactureDate,
+  registerPsageRoutes,
+} = require('./psage-inspections');
+const { BUOYANCY_VALUES, RELEASE_TYPES, VEST_TYPES } = require('./psage-checklists');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
   canAccessStocktakeEmail,
@@ -140,7 +145,8 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'reservations', 'maintenanceEvents',
   'vehicles', 'vehicleReservations', 'vehicleMaintenanceEvents',
   'vehicleLoadAssignments', 'vehicleLoadLists',
-  'clothingItems', 'clothingInspections', 'deletedClothingItems', 'issueTransactions',
+  'clothingItems', 'clothingInspections', 'clothingInspectionDocuments',
+  'deletedClothingItems', 'issueTransactions',
   'defectReports', 'notifications', 'defectEmailImports',
   'systemMessageAcknowledgements',
   'authSessions',
@@ -333,7 +339,8 @@ function createApp(options = {}) {
   const vehicleLoadAssignments = (appData.vehicleLoadAssignments ||= []);
   const vehicleLoadLists = (appData.vehicleLoadLists ||= []);
   const clothingItems = appData.clothingItems;
-  const clothingInspections = appData.clothingInspections || [];
+  const clothingInspections = (appData.clothingInspections ||= []);
+  const clothingInspectionDocuments = (appData.clothingInspectionDocuments ||= []);
   const deletedClothingItems = (appData.deletedClothingItems ||= []);
   const issueTransactions = appData.issueTransactions;
   const defectReports = appData.defectReports;
@@ -1219,22 +1226,65 @@ function createApp(options = {}) {
       : Number.isInteger(parsedInterval) && parsedInterval > 0 && parsedInterval <= 1200
         ? parsedInterval
         : null;
+    const requestedVestType = body.psageVestType === undefined
+      ? existing?.psageVestType
+      : body.psageVestType;
+    const psageVestType = wardrobeCategory && Boolean(parent)
+      && Object.hasOwn(VEST_TYPES, String(requestedVestType || ''))
+      ? String(requestedVestType)
+      : null;
     return {
       sizes: wardrobeCategory
         ? normalizedCategorySizes(body.sizes, existing?.sizes || [])
         : [],
       inspectionIntervalMonths: wardrobeCategory ? inspectionIntervalMonths : null,
+      // Westen mit hinterlegtem PSAgE-Typ dürfen immer nur Sachkundige prüfen.
       requiresPsageInspection: wardrobeCategory && Boolean(parent)
-        ? body.requiresPsageInspection === undefined
+        ? psageVestType !== null || (body.requiresPsageInspection === undefined
           ? existing?.requiresPsageInspection === true
-          : body.requiresPsageInspection === true
+          : body.requiresPsageInspection === true)
         : false,
+      psageVestType,
+    };
+  }
+
+  function clothingVestFields(body, existing = {}) {
+    const pick = (name) => (body[name] === undefined ? existing[name] : body[name]);
+    const rawManufactureDate = pick('manufactureDate');
+    const manufactureDate = rawManufactureDate === null || rawManufactureDate === undefined
+      || String(rawManufactureDate).trim() === ''
+      ? null
+      : normalizeManufactureDate(rawManufactureDate);
+    if (manufactureDate === null && rawManufactureDate && String(rawManufactureDate).trim()) {
+      return { error: 'Das Herstellungsdatum ist ungültig (TT.MM.JJJJ, JJJJ-MM oder JJJJ).' };
+    }
+    if (manufactureDate && manufactureDate > new Date().toISOString().slice(0, 10)) {
+      return { error: 'Das Herstellungsdatum darf nicht in der Zukunft liegen.' };
+    }
+    const serialNumber = String(pick('serialNumber') || '').trim();
+    if (serialNumber.length > 128) return { error: 'Die Seriennummer ist zu lang.' };
+    const releaseType = String(pick('psageReleaseType') || '').trim();
+    const buoyancy = pick('psageBuoyancyNewton');
+    const buoyancyNewton = buoyancy === null || buoyancy === undefined || buoyancy === ''
+      ? null : Number(buoyancy);
+    if (buoyancyNewton !== null && !BUOYANCY_VALUES.includes(buoyancyNewton)) {
+      return { error: `Der Auftrieb muss einer der Werte ${BUOYANCY_VALUES.join(', ')} N sein.` };
+    }
+    return {
+      fields: {
+        manufactureDate,
+        serialNumber,
+        psageReleaseType: Object.hasOwn(RELEASE_TYPES, releaseType) ? releaseType : null,
+        psageBuoyancyNewton: buoyancyNewton,
+        psageSwiftwaterRescue: pick('psageSwiftwaterRescue') === true,
+      },
     };
   }
 
   function responseClothing(item) {
     return {
       ...item,
+      psageSafety: psageManagement?.safetyFor(item) ?? null,
       inspections: clothingInspections
         .filter((entry) => entry.clothingId === item.id)
         .slice()
@@ -2483,6 +2533,11 @@ function createApp(options = {}) {
     organizationUnits,
   });
   app.locals.applyDefectRetentionPolicy = defectManagement.applyRetentionPolicy;
+  const psageManagement = registerPsageRoutes({
+    app, authMiddleware, requirePermission, hasPermission, organizations, categories,
+    clothingItems, clothingInspections, inspectionDocuments: clothingInspectionDocuments,
+    defectManagement, logEvent, nextId, addMonths, categoryInspectionInterval,
+  });
   const defectEmailService = createDefectEmailService({
     defectEmailImports,
     defectManagement,
@@ -2605,6 +2660,9 @@ function createApp(options = {}) {
       return res.status(409).json({ error: 'inventoryNumber already exists' });
     }
 
+    const vestFields = clothingVestFields(req.body);
+    if (vestFields.error) return res.status(400).json({ error: vestFields.error });
+
     const item = {
       id: nextId('clothing', [...clothingItems, ...deletedClothingItems]),
       name,
@@ -2616,6 +2674,7 @@ function createApp(options = {}) {
       manufacturer: String(req.body.manufacturer || '').trim(),
       manufacturingYear: String(req.body.manufacturingYear || '').trim(),
       purchaseDate: req.body.purchaseDate || null,
+      ...vestFields.fields,
       inspectionIntervalMonths: categoryInspectionInterval(categoryId),
       lastInspectionDate: null,
       nextInspectionDate: addMonths(
@@ -2682,8 +2741,12 @@ function createApp(options = {}) {
     if (!locations.some((entry) => entry.id === locationId)) return res.status(400).json({ error: 'Der gewählte Lagerort ist ungültig.' });
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return res.status(400).json({ error: 'Der Lagerplatz gehört nicht zum gewählten Gebäude.' });
 
+    const vestFields = clothingVestFields(req.body, item);
+    if (vestFields.error) return res.status(400).json({ error: vestFields.error });
+
     const updatedItem = {
       ...item,
+      ...vestFields.fields,
       id: item.id,
       name,
       inventoryNumber,
@@ -2808,6 +2871,11 @@ function createApp(options = {}) {
     if (!item) return res.status(404).json({ error: 'Kleidungsstück nicht gefunden.' });
     if (item.archived) return res.status(409).json({ error: 'Ausgesonderte Kleidung kann nicht geprüft werden.' });
     const category = categories.find((entry) => entry.id === item.categoryId);
+    if (psageManagement.isVestCategory(item.categoryId)) {
+      return res.status(409).json({
+        error: 'Westen mit PSAgE-Westentyp werden über die PSAgE-Checkliste geprüft.',
+      });
+    }
     if (category?.requiresPsageInspection === true &&
         !req.user.roles?.includes('Sachkundiger PSAgE') &&
         !req.user.roles?.includes('Admin')) {
@@ -3079,6 +3147,13 @@ function createApp(options = {}) {
         errors.push({ id, error: 'defective' });
       } else if (action === 'ausgegeben' && item.status === 'Ausgegeben') {
         errors.push({ id, error: 'already_issued' });
+      } else if (action === 'ausgegeben' && psageManagement.safetyFor(item)?.blocked) {
+        errors.push({
+          id,
+          error: 'psage_blocked',
+          inventoryNumber: item.inventoryNumber,
+          reasons: psageManagement.safetyFor(item).reasons,
+        });
       } else if (action === 'zurückgegeben' && item.status !== 'Ausgegeben' &&
           !(item.status === 'Defekt' && item.assignedPerson)) {
         errors.push({ id, error: 'not_issued' });
@@ -3087,7 +3162,14 @@ function createApp(options = {}) {
     }, []);
 
     if (invalidItems.length > 0) {
-      return res.status(409).json({ error: 'Some items could not be processed', details: invalidItems });
+      const blocked = invalidItems.filter((entry) => entry.error === 'psage_blocked');
+      return res.status(409).json({
+        error: blocked.length
+          ? `Ausgabe gesperrt (PSAgE): ${blocked.map((entry) =>
+            `${entry.inventoryNumber || entry.id}: ${entry.reasons.join(' ')}`).join(' | ')}`
+          : 'Some items could not be processed',
+        details: invalidItems,
+      });
     }
 
     const transactions = clothingIds.map((id) => {

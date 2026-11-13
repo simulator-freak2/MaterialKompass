@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../constants.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
+import 'psage_inspection_dialog.dart' show psageVestTypeLabels;
 
 class CategoriesPage extends StatefulWidget {
   final String token;
@@ -24,6 +25,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   String? _parentId;
   bool _useInWardrobe = false;
   bool _requiresPsageInspection = false;
+  String? _psageVestType;
   bool _loading = true;
 
   @override
@@ -93,6 +95,33 @@ class _CategoriesPageState extends State<CategoriesPage> {
     }
   }
 
+  Widget _psageVestTypeField(String? value, ValueChanged<String?> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: DropdownButtonFormField<String?>(
+        initialValue: psageVestTypeLabels.containsKey(value) ? value : null,
+        decoration: const InputDecoration(
+          labelText: 'PSAgE-Westentyp (Prüfcheckliste)',
+          helperText:
+              'Legt die Checkliste fest und sperrt die Ausgabe ohne gültige Prüfung.',
+        ),
+        items: [
+          const DropdownMenuItem<String?>(
+            value: null,
+            child: Text('Keine Weste / keine Checkliste'),
+          ),
+          ...psageVestTypeLabels.entries.map(
+            (entry) => DropdownMenuItem<String?>(
+              value: entry.key,
+              child: Text(entry.value),
+            ),
+          ),
+        ],
+        onChanged: onChanged,
+      ),
+    );
+  }
+
   Future<http.Response> _saveCategory({
     required String id,
     required String name,
@@ -101,6 +130,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     List<String> sizes = const [],
     int? inspectionIntervalMonths,
     bool requiresPsageInspection = false,
+    String? psageVestType,
     bool editing = false,
   }) {
     final headers = {
@@ -119,6 +149,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
           'sizes': sizes,
           'inspectionIntervalMonths': inspectionIntervalMonths,
           'requiresPsageInspection': requiresPsageInspection,
+          'psageVestType': psageVestType,
         }),
       );
     }
@@ -132,6 +163,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         'sizes': sizes,
         'inspectionIntervalMonths': inspectionIntervalMonths,
         'requiresPsageInspection': requiresPsageInspection,
+        'psageVestType': psageVestType,
       }),
     );
   }
@@ -154,6 +186,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         _inspectionIntervalController.text.trim(),
       ),
       requiresPsageInspection: _parentId != null && _requiresPsageInspection,
+      psageVestType: _parentId == null ? null : _psageVestType,
     );
     if (!mounted) return;
     if (response.statusCode == 201) {
@@ -165,6 +198,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         _parentId = null;
         _useInWardrobe = false;
         _requiresPsageInspection = false;
+        _psageVestType = null;
       });
       await _loadCategories();
       _showMessage('Kategorie wurde angelegt.');
@@ -183,6 +217,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     String? parentId = category['parentId']?.toString();
     var useInWardrobe = category['useInWardrobe'] == true;
     var requiresPsageInspection = category['requiresPsageInspection'] == true;
+    String? psageVestType = category['psageVestType']?.toString();
     final sizesController = TextEditingController(
       text: (category['sizes'] as List? ?? const []).join(', '),
     );
@@ -237,7 +272,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           if (value != null) useInWardrobe = false;
                           if (!_isWardrobeCategory(parentId, useInWardrobe)) {
                             requiresPsageInspection = false;
+                            psageVestType = null;
                           }
+                          if (value == null) psageVestType = null;
                         }),
                 ),
                 if (parentId == null)
@@ -271,10 +308,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Prüfung nur durch Sachkundige PSAgE'),
-                      value: requiresPsageInspection,
-                      onChanged: (value) => setDialogState(
-                        () => requiresPsageInspection = value ?? false,
-                      ),
+                      value: requiresPsageInspection || psageVestType != null,
+                      onChanged: psageVestType != null
+                          ? null
+                          : (value) => setDialogState(
+                              () => requiresPsageInspection = value ?? false,
+                            ),
+                    ),
+                  if (parentId != null)
+                    _psageVestTypeField(
+                      psageVestType,
+                      (value) => setDialogState(() => psageVestType = value),
                     ),
                 ],
               ],
@@ -295,6 +339,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   inspectionIntervalController.text.trim(),
                 ),
                 'requiresPsageInspection': requiresPsageInspection,
+                'psageVestType': psageVestType,
               }),
               child: const Text('Speichern'),
             ),
@@ -318,6 +363,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
           .toList(),
       inspectionIntervalMonths: result?['inspectionIntervalMonths'] as int?,
       requiresPsageInspection: result?['requiresPsageInspection'] == true,
+      psageVestType: result?['psageVestType']?.toString(),
       editing: true,
     );
     if (!mounted) return;
@@ -459,6 +505,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                         if (value != null) _useInWardrobe = false;
                         if (!_isWardrobeCategory(_parentId, _useInWardrobe)) {
                           _requiresPsageInspection = false;
+                          _psageVestType = null;
                         }
                       }),
                     ),
@@ -504,10 +551,20 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           subtitle: const Text(
                             'Prüfungen dieser Unterkategorie werden serverseitig auf die PSAgE-Rolle beschränkt.',
                           ),
-                          value: _requiresPsageInspection,
-                          onChanged: (value) => setState(
-                            () => _requiresPsageInspection = value ?? false,
-                          ),
+                          value:
+                              _requiresPsageInspection ||
+                              _psageVestType != null,
+                          onChanged: _psageVestType != null
+                              ? null
+                              : (value) => setState(
+                                  () =>
+                                      _requiresPsageInspection = value ?? false,
+                                ),
+                        ),
+                      if (_parentId != null)
+                        _psageVestTypeField(
+                          _psageVestType,
+                          (value) => setState(() => _psageVestType = value),
                         ),
                     ],
                     const SizedBox(height: 12),
@@ -603,6 +660,18 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                   const Chip(
                                     avatar: Icon(Icons.verified_user, size: 18),
                                     label: Text('PSAgE-Sachkundige'),
+                                  ),
+                                if (psageVestTypeLabels.containsKey(
+                                  child['psageVestType'],
+                                ))
+                                  Chip(
+                                    avatar: const Icon(
+                                      Icons.checklist,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      'Checkliste: ${psageVestTypeLabels[child['psageVestType']]}',
+                                    ),
                                   ),
                                 if ((child['sizes'] as List? ?? const [])
                                     .isNotEmpty)
