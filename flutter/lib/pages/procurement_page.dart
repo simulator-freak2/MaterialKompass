@@ -315,7 +315,11 @@ class _ProcurementPageState extends State<ProcurementPage>
       body: payload,
     );
     if (saved != null) {
-      _message('Beschaffungsentwurf wurde aktualisiert.');
+      _message(
+        request['status'] == 'Beantragt'
+            ? 'Beschaffungsantrag wurde geändert.'
+            : 'Beschaffungsentwurf wurde aktualisiert.',
+      );
       if (mounted) Navigator.of(context, rootNavigator: true).maybePop();
       await _load();
     }
@@ -1529,8 +1533,11 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
       costCenter = TextEditingController(),
       requestedBudget = TextEditingController(),
       desiredDate = TextEditingController(),
-      notes = TextEditingController();
+      notes = TextEditingController(),
+      changeReason = TextEditingController();
   final items = <_RequestItemControllers>[];
+
+  bool get _isSubmitted => widget.request?['status'] == 'Beantragt';
   String priority = 'Normal';
   String? departmentId;
   String? supplier;
@@ -1598,6 +1605,7 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
       requestedBudget,
       desiredDate,
       notes,
+      changeReason,
     ]) {
       c.dispose();
     }
@@ -1612,6 +1620,8 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
     title: Text(
       widget.request == null
           ? 'Beschaffungsantrag anlegen'
+          : _isSubmitted
+          ? 'Beschaffungsantrag vor Genehmigung ändern'
           : 'Beschaffungsentwurf bearbeiten',
     ),
     content: SizedBox(
@@ -1657,7 +1667,7 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                   child: DropdownButtonFormField<String>(
                     initialValue: priority,
                     decoration: const InputDecoration(labelText: 'Priorität'),
-                    items: ['Niedrig', 'Normal', 'Hoch', 'Dringend']
+                    items: ['Niedrig', 'Normal', 'Hoch', 'Kritisch']
                         .map((v) => DropdownMenuItem(value: v, child: Text(v)))
                         .toList(),
                     onChanged: (v) => setState(() => priority = v!),
@@ -1684,6 +1694,20 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                 field(notes, 'Notizen', 640, lines: 2),
               ],
             ),
+            if (_isSubmitted) ...[
+              const SizedBox(height: 12),
+              field(
+                changeReason,
+                'Änderungsgrund (z. B. Vorstandsbeschluss)',
+                640,
+                lines: 2,
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Der Antrag bleibt beantragt. Die Änderung wird im Verlauf '
+                'protokolliert.',
+              ),
+            ],
             const SizedBox(height: 18),
             Row(
               children: [
@@ -1859,9 +1883,12 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
       'priority': priority,
       'notes': notes.text.trim(),
       'preferredSupplierId': supplier,
+      if (_isSubmitted && changeReason.text.trim().isNotEmpty)
+        'changeReason': changeReason.text.trim(),
       'items': items
           .map(
             (i) => {
+              if (i.id != null) 'id': i.id,
               'name': i.name.text.trim(),
               'categoryId': i.categoryId,
               'subcategoryId': i.subcategoryId,
@@ -1881,12 +1908,13 @@ class _RequestItemControllers {
       quantity = TextEditingController(text: '1'),
       unit = TextEditingController(text: 'Stück'),
       size = TextEditingController();
-  String? categoryId, subcategoryId;
+  String? id, categoryId, subcategoryId;
   int taxRate = 19;
 
   _RequestItemControllers();
 
   _RequestItemControllers.from(Map<String, dynamic> item) {
+    id = item['id']?.toString();
     name.text = item['name']?.toString() ?? '';
     quantity.text = item['quantity']?.toString() ?? '1';
     unit.text = item['unit']?.toString() ?? 'Stück';
@@ -3533,11 +3561,17 @@ class ProcurementDetail extends StatelessWidget {
                         icon: const Icon(Icons.send),
                         label: const Text('Beantragen'),
                       ),
-                    if (request['status'] == 'Entwurf' && canWrite)
+                    if ((request['status'] == 'Entwurf' && canWrite) ||
+                        (request['status'] == 'Beantragt' &&
+                            (canWrite || canApprove)))
                       OutlinedButton.icon(
                         onPressed: onEdit,
                         icon: const Icon(Icons.edit_outlined),
-                        label: const Text('Bearbeiten'),
+                        label: Text(
+                          request['status'] == 'Beantragt'
+                              ? 'Antrag ändern'
+                              : 'Bearbeiten',
+                        ),
                       ),
                     if (request['status'] == 'Entwurf' && canWrite)
                       TextButton.icon(
@@ -3763,9 +3797,7 @@ class ProcurementDetail extends StatelessWidget {
                           dense: true,
                           leading: const Icon(Icons.history, size: 20),
                           title: Text(h['action']),
-                          subtitle: Text(
-                            '${h['actor']} · ${date(h['createdAt'])}',
-                          ),
+                          subtitle: Text(historySubtitle(h)),
                         ),
                       )
                       .toList(),
@@ -3776,6 +3808,30 @@ class ProcurementDetail extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String historySubtitle(Map h) {
+    final details = h['details'] is Map ? h['details'] as Map : const {};
+    final lines = <String>[
+      [
+        h['actor'],
+        if (details['editedAs'] != null) 'als ${details['editedAs']}',
+        date(h['createdAt']),
+      ].join(' · '),
+    ];
+    final changed = (details['changedFields'] as List? ?? const []);
+    if (changed.isNotEmpty) lines.add('Geändert: ${changed.join(', ')}');
+    if (details['previousBudgetGross'] != null &&
+        details['requestedBudgetGross'] != null) {
+      lines.add(
+        'Budget: ${money(details['previousBudgetGross'])} → '
+        '${money(details['requestedBudgetGross'])}',
+      );
+    }
+    if (details['changeReason']?.toString().isNotEmpty == true) {
+      lines.add('Grund: ${details['changeReason']}');
+    }
+    return lines.join('\n');
   }
 
   Widget section(BuildContext context, String title, List<Widget> children) =>

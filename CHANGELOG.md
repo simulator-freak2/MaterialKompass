@@ -6,6 +6,14 @@
 
 ## Unveroeffentlicht
 
+- Beschaffung: Beantragte Vorgänge bleiben bis zur Genehmigung änderbar – durch den
+  Antragsteller sowie Vorsitz/Schatzmeister (z. B. bei geändertem Vorstandsbeschluss),
+  ohne neuen Vorgang. Änderungen werden mit geänderten Feldern, altem Budget, Rolle und
+  optionalem Änderungsgrund im Verlauf protokolliert. Positions-IDs bleiben stabil;
+  solange Angebote vorliegen, können Positionen angepasst, aber nicht hinzugefügt oder
+  entfernt werden.
+- Beschaffung: Prioritätsauswahl „Dringend“ durch den vom Server erwarteten Wert
+  „Kritisch“ ersetzt.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

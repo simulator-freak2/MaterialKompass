@@ -186,6 +186,92 @@ test('procurement persists requested budget and needs one approval', async () =>
   } finally { server.close(); }
 });
 
+test('submitted requests stay editable by requester and approvers until approval', async () => {
+  const { server, baseUrl, login, admin } = await start();
+  try {
+    const { chair, treasurer } = await createApprovers(baseUrl, admin, login);
+    const material = await login('materialwart@materialkompass.local', 'Material123!');
+    const created = await jsonRequest(`${baseUrl}/api/procurement`, material, 'POST', {
+      title: 'Atemschutz', reason: 'Ersatz', requestedBudgetGross: 300,
+      items: [
+        { name: 'Maske', categoryId: '02', quantity: 2, unit: 'Stück' },
+        { name: 'Filter', categoryId: '02', quantity: 4, unit: 'Stück' },
+      ],
+    });
+    assert.equal(created.response.status, 201);
+    assert.deepEqual(created.data.items.map((item) => item.id), ['item-1', 'item-2']);
+
+    const draftByChair = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, chair, 'PUT', {
+      ...created.data, title: 'Fremdbearbeitung',
+    });
+    assert.equal(draftByChair.response.status, 403);
+
+    await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/submit`, material, 'POST', {});
+
+    const byOwner = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, material, 'PUT', {
+      ...created.data, notes: 'Nachtrag Antragsteller',
+    });
+    assert.equal(byOwner.response.status, 200);
+    assert.equal(byOwner.data.status, 'Beantragt');
+    assert.equal(byOwner.data.history.at(-1).action, 'Antrag vor Genehmigung geändert');
+    assert.deepEqual(byOwner.data.history.at(-1).details.changedFields, ['Notiz']);
+
+    const offer = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/offers`, material, 'POST', {
+      supplierId: 'supplier-1', ...offerInput(byOwner.data, [100, 40]),
+    });
+    assert.equal(offer.response.status, 201);
+
+    const removeWithOffer = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, chair, 'PUT', {
+      ...byOwner.data, items: [byOwner.data.items[0]],
+    });
+    assert.equal(removeWithOffer.response.status, 409);
+
+    const byChair = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, chair, 'PUT', {
+      ...byOwner.data,
+      requestedBudgetGross: 250,
+      items: [byOwner.data.items[0], { ...byOwner.data.items[1], quantity: 2 }],
+      changeReason: 'Vorstandsbeschluss: nur 2 Filter',
+    });
+    assert.equal(byChair.response.status, 200);
+    assert.equal(byChair.data.requestedBudgetGross, 250);
+    assert.equal(byChair.data.items[1].quantity, 2);
+    assert.deepEqual(byChair.data.items.map((item) => item.id), ['item-1', 'item-2']);
+    const changed = byChair.data.history.at(-1);
+    assert.equal(changed.details.editedAs, 'Vorsitz');
+    assert.equal(changed.details.changeReason, 'Vorstandsbeschluss: nur 2 Filter');
+    assert.equal(changed.details.previousBudgetGross, 300);
+    assert.deepEqual(changed.details.changedFields, ['Beantragtes Budget', 'Positionen']);
+
+    const approved = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}/approval`, treasurer, 'POST', { decision: 'approve' });
+    assert.equal(approved.data.status, 'Genehmigt');
+    assert.equal(approved.data.approvedBudgetGross, 250);
+
+    const afterApproval = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, chair, 'PUT', {
+      ...approved.data, title: 'Zu spät',
+    });
+    assert.equal(afterApproval.response.status, 409);
+  } finally { server.close(); }
+});
+
+test('new request items get fresh ids instead of reusing removed ones', async () => {
+  const { server, baseUrl, login } = await start();
+  try {
+    const material = await login('materialwart@materialkompass.local', 'Material123!');
+    const created = await jsonRequest(`${baseUrl}/api/procurement`, material, 'POST', {
+      title: 'IDs', reason: 'Test', requestedBudgetGross: 10,
+      items: [
+        { name: 'A', categoryId: '02', quantity: 1 },
+        { name: 'B', categoryId: '02', quantity: 1 },
+      ],
+    });
+    const updated = await jsonRequest(`${baseUrl}/api/procurement/${created.data.id}`, material, 'PUT', {
+      ...created.data, items: [created.data.items[1], { name: 'C', categoryId: '02', quantity: 1 }],
+    });
+    assert.equal(updated.response.status, 200);
+    assert.deepEqual(updated.data.items.map((item) => [item.id, item.name]), [['item-2', 'B'], ['item-3', 'C']]);
+  } finally { server.close(); }
+});
+
 test('department heads can only request and see their assigned departments', async () => {
   const { server, baseUrl, login, admin } = await start();
   try {

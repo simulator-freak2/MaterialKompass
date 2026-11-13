@@ -75,8 +75,29 @@ function registerProcurementRoutes({
     logEvent(action, 'ProcurementRequest', { id: request.id, ...details }, actor);
   };
   const categoryExists = (id) => categories.some((entry) => entry.id === id);
-  const normalizeItems = (input = []) => (Array.isArray(input) ? input : []).slice(0, MAX_REQUEST_ITEMS + 1).map((item, index) => ({
-    id: item.id || `item-${index + 1}`,
+  // Vergibt Positions-IDs: bekannte IDs bleiben erhalten (Angebote verweisen
+  // darauf), neue oder unbekannte Positionen erhalten eine noch freie ID.
+  const assignItemIds = (input, existingItems = []) => {
+    const known = new Set(existingItems.map((item) => String(item.id)));
+    const used = new Set();
+    let next = existingItems.reduce((max, item) => {
+      const match = /^item-(\d+)$/.exec(String(item.id));
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    return input.map((item) => {
+      const candidate = typeof item?.id === 'string' ? item.id : '';
+      if (candidate && known.has(candidate) && !used.has(candidate)) {
+        used.add(candidate);
+        return { ...item, id: candidate };
+      }
+      let id;
+      do { next += 1; id = `item-${next}`; } while (known.has(id) || used.has(id));
+      used.add(id);
+      return { ...item, id };
+    });
+  };
+  const normalizeItems = (input = [], existingItems = []) => assignItemIds((Array.isArray(input) ? input : []).slice(0, MAX_REQUEST_ITEMS + 1).filter((item) => item && typeof item === 'object'), existingItems).map((item) => ({
+    id: item.id,
     name: String(item.name || '').trim(),
     categoryId: String(item.categoryId || '').trim(),
     subcategoryId: String(item.subcategoryId || '').trim() || null,
@@ -227,20 +248,56 @@ function registerProcurementRoutes({
     res.status(201).json(detail(request));
   });
 
-  app.put('/api/procurement/:id', authMiddleware, requirePermission('procurement.request'), (req, res) => {
+  const EDITABLE_STATUSES = ['Entwurf', 'Beantragt'];
+  const canApproveRequests = (user) => isAdmin(user)
+    || ((user?.permissions || []).includes('procurement.approve') && hasRole(user, APPROVAL_ROLES));
+  const canRequest = (user) => isAdmin(user) || (user?.permissions || []).includes('procurement.request');
+  const requireRequestOrApprove = (req, res, next) => {
+    if (canRequest(req.user) || canApproveRequests(req.user)) return next();
+    return res.status(403).json({ error: 'Forbidden' });
+  };
+  const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const REQUEST_FIELD_LABELS = {
+    title: 'Titel', reason: 'Begründung', departmentId: 'Fachbereich', costCenter: 'Kostenstelle',
+    desiredDeliveryDate: 'Wunschlieferdatum', priority: 'Priorität', notes: 'Notiz',
+    preferredSupplierId: 'Bevorzugter Lieferant', requestedBudgetGross: 'Beantragtes Budget', items: 'Positionen',
+  };
+
+  // Bearbeiten ist bis zur Genehmigung möglich: Entwürfe durch den Antragsteller,
+  // beantragte Vorgänge zusätzlich durch Vorsitz/Schatzmeister (z. B. wenn der
+  // Vorstand eine geänderte Beschaffung beschließt). So muss kein neuer Vorgang
+  // eröffnet werden. Jede Änderung wird mit den geänderten Feldern protokolliert.
+  app.put('/api/procurement/:id', authMiddleware, requireRequestOrApprove, (req, res) => {
     const request = findVisible(req, res); if (!request) return;
-    if (request.status !== 'Entwurf') return res.status(409).json({ error: 'Nur Entwürfe können bearbeitet werden.' });
-    if (!isOwner(req.user, request)) return res.status(403).json({ error: 'Nur der Antragsteller darf den Entwurf bearbeiten.' });
-    const items = normalizeItems(req.body.items ?? request.items);
+    if (!EDITABLE_STATUSES.includes(request.status)) {
+      return res.status(409).json({ error: 'Nur Entwürfe und beantragte Vorgänge vor der Genehmigung können bearbeitet werden.' });
+    }
+    const owner = isOwner(req.user, request) && canRequest(req.user);
+    const approverEdit = request.status === 'Beantragt' && canApproveRequests(req.user);
+    if (!owner && !approverEdit) {
+      return res.status(403).json({ error: request.status === 'Entwurf'
+        ? 'Nur der Antragsteller darf den Entwurf bearbeiten.'
+        : 'Nur der Antragsteller oder eine freigabeberechtigte Person darf den Antrag bearbeiten.' });
+    }
+    const changeReason = String(req.body.changeReason || '').trim();
+    if (changeReason.length > 1000) return res.status(400).json({ error: 'Die Änderungsbegründung ist zu lang.' });
+    const items = normalizeItems(req.body.items ?? request.items, request.items);
     if (items.length > MAX_REQUEST_ITEMS) {
       return res.status(413).json({ error: `Maximal ${MAX_REQUEST_ITEMS} Positionen sind erlaubt.` });
     }
     const itemError = validateItems(items); if (itemError) return res.status(400).json({ error: itemError });
+    const hasOffers = offers.some((entry) => entry.requestId === request.id);
+    const previousItemIds = request.items.map((item) => String(item.id)).sort();
+    const nextItemIds = items.map((item) => item.id).sort();
+    if (hasOffers && !sameValue(previousItemIds, nextItemIds)) {
+      return res.status(409).json({ error: 'Solange Angebote erfasst sind, können Positionen nicht hinzugefügt oder entfernt werden. Bitte die bestehenden Positionen anpassen.' });
+    }
     let nextDepartmentId = request.departmentId;
     let nextDepartmentName = request.department;
     if (Object.hasOwn(req.body, 'department') || Object.hasOwn(req.body, 'departmentId')) {
       const department = departmentFor(req.body.departmentId || req.body.department);
-      if (roles(req.user).has('Fachbereichsleiter')
+      const restrictedToOwnDepartments = roles(req.user).has('Fachbereichsleiter') && !canApproveRequests(req.user);
+      if (restrictedToOwnDepartments
         && (!department || department.active === false || !assignedDepartments(req.user).has(department.id))) {
         return res.status(403).json({ error: 'Fachbereichsleiter dürfen nur einen zugewiesenen aktiven Fachbereich verwenden.' });
       }
@@ -263,12 +320,25 @@ function registerProcurementRoutes({
       || String(candidate.preferredSupplierId || '').length > 64) {
       return res.status(400).json({ error: 'Mindestens ein Textfeld überschreitet die zulässige Länge.' });
     }
+    const next = {
+      ...candidate, departmentId: nextDepartmentId, department: nextDepartmentName, items, requestedBudgetGross,
+    };
+    const changedFields = Object.keys(REQUEST_FIELD_LABELS).filter((field) => !sameValue(request[field], next[field]));
+    const previousBudgetGross = request.requestedBudgetGross;
     Object.assign(request, updates, {
       departmentId: nextDepartmentId,
       department: nextDepartmentName,
     });
     request.items = items; request.requestedBudgetGross = requestedBudgetGross;
-    event(request, 'Entwurf bearbeitet', req.user.username, { requestedBudgetGross }); res.json(detail(request));
+    const details = {
+      requestedBudgetGross,
+      changedFields: changedFields.map((field) => REQUEST_FIELD_LABELS[field]),
+    };
+    if (previousBudgetGross !== requestedBudgetGross) details.previousBudgetGross = previousBudgetGross;
+    if (changeReason) details.changeReason = changeReason;
+    if (!owner) details.editedAs = isAdmin(req.user) ? 'Admin' : [...roles(req.user)].find((role) => APPROVAL_ROLES.includes(role));
+    event(request, request.status === 'Entwurf' ? 'Entwurf bearbeitet' : 'Antrag vor Genehmigung geändert', req.user.username, details);
+    res.json(detail(request));
   });
 
   app.delete('/api/procurement/:id', authMiddleware, requirePermission('procurement.request'), (req, res) => {
