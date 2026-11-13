@@ -17,6 +17,7 @@ import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/label_print_dialogs.dart';
 import 'login_page.dart';
+import 'psage_inspection_dialog.dart';
 
 class WardrobePage extends StatefulWidget {
   final String token;
@@ -55,6 +56,13 @@ class _WardrobePageState extends State<WardrobePage> {
   final TextEditingController manufacturingYearController =
       TextEditingController();
   final TextEditingController purchaseDateController = TextEditingController();
+  final TextEditingController manufactureDateController =
+      TextEditingController();
+  final TextEditingController serialNumberController = TextEditingController();
+  String? _psageReleaseType;
+  int? _psageBuoyancyNewton;
+  bool _psageSwiftwaterRescue = false;
+  Map<String, dynamic>? _psageSettings;
   final TextEditingController _scanAndSearchController =
       TextEditingController();
   String _filterMode = 'alle';
@@ -79,6 +87,124 @@ class _WardrobePageState extends State<WardrobePage> {
     _fetchCategories();
     _fetchStorageLocations();
     _fetchPrintRoles();
+    _loadPsageSettings();
+  }
+
+  Future<void> _loadPsageSettings() async {
+    final settings = await fetchPsageSettings(widget.token);
+    if (mounted) setState(() => _psageSettings = settings);
+  }
+
+  Future<void> _openPsageSettings() async {
+    final settings = _psageSettings ?? await fetchPsageSettings(widget.token);
+    if (!mounted || settings == null) return;
+    final saved = await showPsageSettingsDialog(
+      context: context,
+      token: widget.token,
+      settings: settings,
+    );
+    if (saved == null || !mounted) return;
+    await _loadPsageSettings();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('PSAgE-Einstellungen gespeichert.')),
+    );
+  }
+
+  String? _vestTypeForCategory(String? categoryId) {
+    if (categoryId == null) return null;
+    for (final category in _categories) {
+      if (category['id']?.toString() == categoryId) {
+        final type = category['psageVestType']?.toString();
+        return psageVestTypeLabels.containsKey(type) ? type : null;
+      }
+    }
+    return null;
+  }
+
+  List<Widget> _buildVestFields(VoidCallback refreshDialog) {
+    final vestType = _vestTypeForCategory(_selectedCategoryId);
+    if (vestType == null) return const [];
+    return [
+      const SizedBox(height: 12),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'PSAgE · ${psageVestTypeLabels[vestType]}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      const SizedBox(height: 8),
+      DateInputField(
+        controller: manufactureDateController,
+        label: 'Herstellungsdatum',
+        lastDate: DateTime.now(),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 4),
+        child: Text(
+          'Ohne Herstellungsdatum ist die Ausgabe gesperrt. Ist nur der Monat bekannt, den Monatsersten eintragen.',
+          style: TextStyle(fontSize: 12),
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: serialNumberController,
+        decoration: const InputDecoration(
+          labelText: 'Seriennummer / Identifikationsnummer',
+        ),
+      ),
+      const SizedBox(height: 12),
+      DropdownButtonFormField<int?>(
+        key: ValueKey('buoyancy-$_psageBuoyancyNewton'),
+        initialValue: _psageBuoyancyNewton,
+        decoration: const InputDecoration(labelText: 'Auftrieb'),
+        items: [
+          const DropdownMenuItem<int?>(
+            value: null,
+            child: Text('Nicht angegeben'),
+          ),
+          ...psageBuoyancyValues.map(
+            (value) =>
+                DropdownMenuItem<int?>(value: value, child: Text('$value N')),
+          ),
+        ],
+        onChanged: (value) {
+          _psageBuoyancyNewton = value;
+          refreshDialog();
+        },
+      ),
+      if (vestType == 'lifejacket') ...[
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          key: ValueKey('release-$_psageReleaseType'),
+          initialValue: _psageReleaseType ?? 'automatic',
+          decoration: const InputDecoration(labelText: 'Auslösung'),
+          items: psageReleaseTypeLabels.entries
+              .map(
+                (entry) => DropdownMenuItem<String>(
+                  value: entry.key,
+                  child: Text(entry.value),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            _psageReleaseType = value;
+            refreshDialog();
+          },
+        ),
+      ],
+      if (vestType == 'buoyancy-aid')
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Strömungsretterweste (mit Notauslösung)'),
+          value: _psageSwiftwaterRescue,
+          onChanged: (value) {
+            _psageSwiftwaterRescue = value ?? false;
+            refreshDialog();
+          },
+        ),
+    ];
   }
 
   @override
@@ -94,6 +220,8 @@ class _WardrobePageState extends State<WardrobePage> {
     manufacturerController.dispose();
     manufacturingYearController.dispose();
     purchaseDateController.dispose();
+    manufactureDateController.dispose();
+    serialNumberController.dispose();
     _scanAndSearchController.dispose();
     super.dispose();
   }
@@ -504,6 +632,11 @@ class _WardrobePageState extends State<WardrobePage> {
     manufacturerController.clear();
     manufacturingYearController.clear();
     purchaseDateController.clear();
+    manufactureDateController.clear();
+    serialNumberController.clear();
+    _psageReleaseType = null;
+    _psageBuoyancyNewton = null;
+    _psageSwiftwaterRescue = false;
     locationController.text = 'loc-2';
     stockController.clear();
     statusController.text = 'Lagernd';
@@ -553,7 +686,19 @@ class _WardrobePageState extends State<WardrobePage> {
       'manufacturer': manufacturerController.text.trim(),
       'manufacturingYear': manufacturingYearController.text.trim(),
       'purchaseDate': dateInputToIso(purchaseDateController.text),
+      'manufactureDate': dateInputToIso(manufactureDateController.text),
+      'serialNumber': serialNumberController.text.trim(),
+      'psageReleaseType': _psageReleaseType,
+      'psageBuoyancyNewton': _psageBuoyancyNewton,
+      'psageSwiftwaterRescue': _psageSwiftwaterRescue,
     };
+    if (manufactureDateController.text.trim().isNotEmpty &&
+        payload['manufactureDate'] == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Das Herstellungsdatum ist ungültig.')),
+      );
+      return;
+    }
 
     final isEditing = _editingClothingId != null;
     final response = !isEditing
@@ -856,6 +1001,7 @@ class _WardrobePageState extends State<WardrobePage> {
                   ),
                   const SizedBox(height: 12),
                   _buildSizeField(),
+                  ..._buildVestFields(() => setDialogState(() {})),
                   const SizedBox(height: 12),
                   ..._buildStorageFields(() => setDialogState(() {})),
                   const SizedBox(height: 12),
@@ -901,6 +1047,15 @@ class _WardrobePageState extends State<WardrobePage> {
     purchaseDateController.text = item['purchaseDate'] == null
         ? ''
         : _formatDate(item['purchaseDate']);
+    manufactureDateController.text = formatDateForInput(
+      item['manufactureDate'],
+    );
+    serialNumberController.text = item['serialNumber']?.toString() ?? '';
+    _psageReleaseType = item['psageReleaseType']?.toString();
+    _psageBuoyancyNewton = int.tryParse(
+      item['psageBuoyancyNewton']?.toString() ?? '',
+    );
+    _psageSwiftwaterRescue = item['psageSwiftwaterRescue'] == true;
     locationController.text = item['locationId']?.toString() ?? 'loc-2';
     stockController.text = item['stockStructureId']?.toString() ?? '';
     statusController.text = item['status']?.toString() ?? 'Lagernd';
@@ -947,6 +1102,7 @@ class _WardrobePageState extends State<WardrobePage> {
                   ),
                   const SizedBox(height: 12),
                   _buildSizeField(),
+                  ..._buildVestFields(() => setDialogState(() {})),
                   const SizedBox(height: 12),
                   ..._buildStorageFields(() => setDialogState(() {})),
                   const SizedBox(height: 12),
@@ -996,6 +1152,28 @@ class _WardrobePageState extends State<WardrobePage> {
   }
 
   Future<void> _openInspectionDialog(Map<String, dynamic> item) async {
+    if (item['psageSafety'] is Map) {
+      final settings = _psageSettings ?? await fetchPsageSettings(widget.token);
+      if (!mounted) return;
+      if (settings == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PSAgE-Prüfdaten konnten nicht geladen werden.'),
+          ),
+        );
+        return;
+      }
+      final saved = await showPsageOverviewDialog(
+        context: context,
+        token: widget.token,
+        item: item,
+        settings: settings,
+      );
+      if (saved && mounted) {
+        setState(() => _clothingFuture = _fetchClothing());
+      }
+      return;
+    }
     final dateController = TextEditingController(
       text: formatDateForInput(DateTime.now()),
     );
@@ -1200,17 +1378,25 @@ class _WardrobePageState extends State<WardrobePage> {
       );
       return true;
     } else if (response.statusCode == 409) {
+      var serverMessage = '';
+      try {
+        serverMessage =
+            (jsonDecode(response.body) as Map)['error']?.toString() ?? '';
+      } catch (_) {}
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 8),
           content: Text(
-            switch (action) {
-              'ausgegeben' =>
-                'Mindestens ein Kleidungsstück ist bereits ausgegeben.',
-              'umgebucht' =>
-                'Mindestens ein Kleidungsstück ist nicht ausgegeben oder '
-                    'bereits dieser Person zugeordnet.',
-              _ => 'Mindestens ein Kleidungsstück ist nicht ausgegeben.',
-            },
+            serverMessage.contains('PSAgE')
+                ? serverMessage
+                : switch (action) {
+                    'ausgegeben' =>
+                      'Mindestens ein Kleidungsstück ist bereits ausgegeben oder defekt.',
+                    'umgebucht' =>
+                      'Mindestens ein Kleidungsstück ist nicht ausgegeben oder '
+                          'bereits dieser Person zugeordnet.',
+                    _ => 'Mindestens ein Kleidungsstück ist nicht ausgegeben.',
+                  },
           ),
         ),
       );
@@ -2201,6 +2387,12 @@ class _WardrobePageState extends State<WardrobePage> {
                   icon: const Icon(Icons.print, size: 18),
                   label: const Text('Etiketten drucken'),
                 ),
+              if (_psageSettings?['canManage'] == true)
+                IconButton(
+                  onPressed: _openPsageSettings,
+                  tooltip: 'PSAgE-Prüfungen einstellen',
+                  icon: const Icon(Icons.health_and_safety_outlined),
+                ),
               if (_canPrintLabels)
                 IconButton(
                   onPressed: () => showPrinterSettingsDialog(context),
@@ -2457,6 +2649,23 @@ class _WardrobePageState extends State<WardrobePage> {
                                           const Text(
                                             'Prüfung: nur Sachkundige PSAgE',
                                             style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        if (item['psageSafety'] is Map)
+                                          Text(
+                                            (item['psageSafety']
+                                                        as Map)['blocked'] ==
+                                                    true
+                                                ? 'PSAgE: nicht einsatzbereit – ${((item['psageSafety'] as Map)['reasons'] as List? ?? const []).join(' ')}'
+                                                : 'PSAgE: einsatzbereit',
+                                            style: TextStyle(
+                                              color:
+                                                  (item['psageSafety']
+                                                          as Map)['blocked'] ==
+                                                      true
+                                                  ? Colors.red.shade700
+                                                  : Colors.green.shade800,
                                               fontWeight: FontWeight.w600,
                                             ),
                                           ),

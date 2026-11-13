@@ -22,6 +22,13 @@
 
 ## Unveroeffentlicht
 
+- PSAgE-Prüfdokumentation für Westen in der Kleiderkammer: fest hinterlegte
+  Checklisten nach der Westenkunde des DLRG LV Hessen (Stand 2023-1) für
+  Schwimm-/Auftriebshilfen bzw. Prallschutzwesten und Rettungswesten mit
+  N/A-, OK- und KO-Bewertung, Patronen-Soll/Ist-Abgleich, Prüfplakette und
+  Altersgrenzen; automatische Ausgabesperre und Mängelanlage; je Organisation
+  einstellbare Sichtprüfung durch Nutzer sowie PDF-Prüfnachweis mit optionaler
+  Ablagepflicht.
 - Native Apps koennen vollstaendig authentifizierte Sitzungen mit Geraete-PIN,
   Biometrie oder Windows Hello entsperren; Web-Sitzungen ueberstehen Reloads und
   bleiben bis zum Schliessen des letzten Tabs aktiv.
