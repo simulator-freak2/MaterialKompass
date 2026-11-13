@@ -1367,13 +1367,11 @@ class _WardrobePageState extends State<WardrobePage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            switch (action) {
-              'ausgegeben' => 'Ausgabe gebucht',
-              'umgebucht' => 'Umbuchung gebucht',
-              _ => 'Rückgabe gebucht',
-            },
-          ),
+          content: Text(switch (action) {
+            'ausgegeben' => 'Ausgabe gebucht',
+            'umgebucht' => 'Umbuchung gebucht',
+            _ => 'Rückgabe gebucht',
+          }),
         ),
       );
       return true;
@@ -2753,9 +2751,7 @@ class _WardrobePageState extends State<WardrobePage> {
                                                       item['assignedPerson']
                                                           ?.toString(),
                                                 ),
-                                            icon: const Icon(
-                                              Icons.swap_horiz,
-                                            ),
+                                            icon: const Icon(Icons.swap_horiz),
                                             label: const Text('Umbuchen'),
                                           ),
                                         FilledButton.icon(

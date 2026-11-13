@@ -65,8 +65,7 @@ class _ProcurementPageState extends State<ProcurementPage>
   AuthenticatedApiClient get _api => AuthenticatedApiClient(widget.token);
 
   bool _can(String permission) => _permissions.contains(permission);
-  bool get _canPrintLabels =>
-      userMayPrintLabels(_roles);
+  bool get _canPrintLabels => userMayPrintLabels(_roles);
   int get _pendingEmailCount => _emailInbox
       .where(
         (entry) =>

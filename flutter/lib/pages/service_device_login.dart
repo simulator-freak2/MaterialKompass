@@ -490,10 +490,11 @@ class _AdminCredentialDialogState extends State<_AdminCredentialDialog> {
         child: const Text('Abbrechen'),
       ),
       FilledButton(
-        onPressed: () => Navigator.pop(
-          context,
-          [user.text, password.text, mfaCode.text.trim()],
-        ),
+        onPressed: () => Navigator.pop(context, [
+          user.text,
+          password.text,
+          mfaCode.text.trim(),
+        ]),
         child: const Text('Aktivierung entfernen'),
       ),
     ],
