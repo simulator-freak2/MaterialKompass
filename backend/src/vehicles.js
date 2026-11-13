@@ -89,6 +89,7 @@ function registerVehicleRoutes({
   materials,
   materialMovements,
   locations,
+  stockStructures = [],
   organizations,
   organizationUnits,
   defectReports,
@@ -385,13 +386,22 @@ function registerVehicleRoutes({
     return all(vehicleLoadLists).find((entry) => entry.vehicleId === vehicleId && entry.status === 'Aktiv');
   }
 
-  function materialLoadedQuantity(materialId, ignoredAssignmentId = null) {
+  // Material IDs are only unique within one organization unit, so every lookup
+  // from a load assignment or load list must also match its owner.
+  function ownedMaterial(materialId, owner) {
+    return all(materials).find((candidate) => candidate.id === materialId
+      && candidate.organizationId === owner.organizationId && candidate.unitId === owner.unitId);
+  }
+
+  function materialLoadedQuantity(material, ignoredAssignmentId = null) {
     return all(vehicleLoadAssignments).reduce((sum, entry) =>
-      entry.materialId === materialId && entry.id !== ignoredAssignmentId ? sum + Number(entry.quantity || 0) : sum, 0);
+      entry.materialId === material.id && entry.organizationId === material.organizationId
+        && entry.unitId === material.unitId && entry.id !== ignoredAssignmentId
+        ? sum + Number(entry.quantity || 0) : sum, 0);
   }
 
   function publicAssignment(entry) {
-    const material = all(materials).find((candidate) => candidate.id === entry.materialId);
+    const material = ownedMaterial(entry.materialId, entry);
     return {
       ...entry,
       inventoryNumber: material?.inventoryNumber || entry.inventoryNumberSnapshot || null,
@@ -667,6 +677,9 @@ function registerVehicleRoutes({
       const entry = all(vehicleReservations).find((candidate) => candidate.id === req.params.id
         && candidate.organizationId === req.tenant.organizationId);
       if (!entry || !entry.operationalApprovalRequired) return res.status(404).json({ error: 'TLE-Freigabe nicht erforderlich oder Reservierung nicht gefunden.' });
+      if (RESERVATION_TERMINAL.has(entry.status) || entry.status === 'Ausgegeben') {
+        return res.status(409).json({ error: 'Die Reservierung ist bereits abgeschlossen.' });
+      }
       if (req.body.approved !== true) {
         const reason = text(req.body.reason, 1000);
         if (!reason) return res.status(400).json({ error: 'Eine Ablehnung benötigt eine Begründung.' });
@@ -806,9 +819,9 @@ function registerVehicleRoutes({
         .slice(0, 100).map((item) => ({
           id: item.id, inventoryNumber: item.inventoryNumber, name: item.name,
           itemType: item.itemType, quantity: Number(item.quantity || 1), unit: item.unit,
-          loadedQuantity: materialLoadedQuantity(item.id),
+          loadedQuantity: materialLoadedQuantity(item),
           availableQuantity: Math.max(0, Number(item.quantity || 1)
-            - Number(item.issuedQuantity || 0) - materialLoadedQuantity(item.id)),
+            - Number(item.issuedQuantity || 0) - materialLoadedQuantity(item)),
         }));
       return res.json(result);
     });
@@ -825,7 +838,7 @@ function registerVehicleRoutes({
         return res.status(400).json({ error: 'Material und positive ganze Menge sind erforderlich.' });
       }
       const available = Number(material.quantity || 1) - Number(material.issuedQuantity || 0)
-        - materialLoadedQuantity(material.id);
+        - materialLoadedQuantity(material);
       if (quantity > available || (material.itemType === 'individual' && quantity !== 1)) {
         return res.status(409).json({ error: 'Die gewünschte Menge ist nicht verfügbar.' });
       }
@@ -871,12 +884,16 @@ function registerVehicleRoutes({
         && entry.vehicleId === vehicle?.id);
       if (index < 0) return res.status(404).json({ error: 'Beladungsbuchung nicht gefunden.' });
       const assignment = assignments[index];
-      const material = all(materials).find((entry) => entry.id === assignment.materialId);
+      const material = ownedMaterial(assignment.materialId, assignment);
       const destinationLocationId = text(req.body.locationId || assignment.previousLocationId, 64);
       const destinationStockStructureId = text(req.body.stockStructureId || assignment.previousStockStructureId, 64) || null;
       const destination = all(locations).find((entry) => entry.id === destinationLocationId
-        && entry.organizationId === vehicle.organizationId && !entry.vehicleId);
-      if (!material || !destination) return res.status(400).json({ error: 'Ein gültiger Ziel-Lagerort ist erforderlich.' });
+        && entry.organizationId === vehicle.organizationId && entry.unitId === vehicle.unitId
+        && !entry.vehicleId);
+      const destinationStructureValid = !destinationStockStructureId
+        || all(stockStructures).some((entry) => entry.id === destinationStockStructureId
+          && entry.organizationId === vehicle.organizationId && entry.locationId === destination?.id);
+      if (!material || !destination || !destinationStructureValid) return res.status(400).json({ error: 'Ein gültiger Ziel-Lagerort ist erforderlich.' });
       if (material.itemType === 'individual') {
         material.locationId = destination.id; material.stockStructureId = destinationStockStructureId;
       }
@@ -960,7 +977,7 @@ function registerVehicleRoutes({
       y -= 8;
       line('Inventarnummer | Bezeichnung | Position | Soll | Ist | Abweichung', { bold: true, gap: 18 });
       for (const item of list.items) {
-        const material = all(materials).find((entry) => entry.id === item.materialId);
+        const material = ownedMaterial(item.materialId, vehicle);
         const actualQuantity = actual.filter((entry) => entry.materialId === item.materialId)
           .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
         const deviation = actualQuantity - Number(item.targetQuantity || 0);

@@ -314,14 +314,18 @@ function registerOfflineSync({
     });
   });
 
-  app.get('/api/offline/clients', authMiddleware, requirePermission('users.write'), (_req, res) => {
-    const organizationId = currentTenant()?.organizationId;
-    res.json(clients.filter((entry) => entry.organizationId === organizationId));
+  // users.write is granted per unit; offline clients of other units of the
+  // same organization are outside that grant.
+  const manageableClient = (req, entry) => entry?.organizationId === req.tenant.organizationId
+    && req.tenant.allowedUnitIds?.has(entry.unitId) === true;
+
+  app.get('/api/offline/clients', authMiddleware, requirePermission('users.write'), (req, res) => {
+    res.json(clients.filter((entry) => manageableClient(req, entry)));
   });
 
   app.post('/api/offline/clients/:id/revoke', authMiddleware, requirePermission('users.write'), (req, res) => {
     const client = clientsById.get(req.params.id);
-    if (!client || client.organizationId !== req.tenant.organizationId) {
+    if (!manageableClient(req, client)) {
       return res.status(404).json({ error: 'Offlinegerät nicht gefunden.' });
     }
     client.active = false;

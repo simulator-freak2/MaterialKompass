@@ -2542,7 +2542,7 @@ function createApp(options = {}) {
     app, authMiddleware, requirePermission, hasPermission,
     vehicles, vehicleReservations, vehicleMaintenanceEvents,
     vehicleLoadAssignments, vehicleLoadLists, materials, materialMovements,
-    locations, organizations, organizationUnits, defectReports, logEvent, nextId,
+    locations, stockStructures, organizations, organizationUnits, defectReports, logEvent, nextId,
   });
   app.locals.applyVehicleRetentionPolicy = vehicleManagement.applyVehicleRetentionPolicy;
 

@@ -48,8 +48,10 @@ function registerInventoryRoutes({
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
-  const loadedQuantity = (materialId) => vehicleLoadAssignments.reduce((sum, entry) =>
-    entry.materialId === materialId ? sum + number(entry.quantity) : sum, 0);
+  // Material IDs repeat across units; match the owning unit as well.
+  const loadedQuantity = (material) => (material ? vehicleLoadAssignments.reduce((sum, entry) =>
+    entry.materialId === material.id && entry.organizationId === material.organizationId
+      && entry.unitId === material.unitId ? sum + number(entry.quantity) : sum, 0) : 0);
 
   function categoryPair(categoryCode, subcategoryCode) {
     const main = categories.find((entry) => entry.id === categoryCode && !entry.parentId);
@@ -91,7 +93,7 @@ function registerInventoryRoutes({
     if (stockStructureId && !stockStructures.some((entry) => entry.id === stockStructureId && entry.locationId === locationId)) return { error: 'Der Lagerplatz gehört nicht zum gewählten Standort.' };
     if (!MATERIAL_STATUSES.includes(status)) return { error: 'Der gewählte Status ist ungültig.' };
     if (!['individual', 'bulk'].includes(itemType) || quantity <= 0) return { error: 'Art und Anzahl des Artikels sind ungültig.' };
-    if (existing && quantity < number(existing.issuedQuantity) + loadedQuantity(existing.id)) {
+    if (existing && quantity < number(existing.issuedQuantity) + loadedQuantity(existing)) {
       return { error: 'Die Anzahl darf nicht unter die ausgegebene oder auf Fahrzeuge gebuchte Menge fallen.' };
     }
     return { name, categoryCode, subcategoryCode: pair.child?.id || '', locationId, stockStructureId: stockStructureId || null, status, itemType, quantity };
@@ -125,8 +127,8 @@ function registerInventoryRoutes({
         entry.id === item.stockStructureId)?.name || item.historicalStoragePath || null,
       reservationAllowedUnitIds: [...(item.reservationAllowedUnitIds || [])],
       safetyStatus: assessMaterialSafety(item),
-      vehicleLoadedQuantity: loadedQuantity(item.id),
-      availableQuantity: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item.id),
+      vehicleLoadedQuantity: loadedQuantity(item),
+      availableQuantity: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item),
       movements: materialMovements.filter((entry) => entry.materialId === item.id).slice().reverse(),
       inspections: materialInspections.filter((entry) => entry.materialId === item.id).slice().reverse(),
       documents: materialDocuments.filter((entry) => entry.materialId === item.id).map(({ fileBase64, ...entry }) => entry),
@@ -246,7 +248,7 @@ function registerInventoryRoutes({
   app.post('/api/material/:id/archive', authMiddleware, requirePermission('inventory.archive'), (req, res) => {
     const item = materials.find((entry) => entry.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Material nicht gefunden.' });
-    if (number(item.issuedQuantity) > 0 || loadedQuantity(item.id) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht archiviert werden.' });
+    if (number(item.issuedQuantity) > 0 || loadedQuantity(item) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht archiviert werden.' });
     item.archived = true; item.archivedAt = new Date().toISOString(); item.archivedBy = req.user.username;
     logEvent('archive', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
@@ -279,7 +281,7 @@ function registerInventoryRoutes({
     if (index === -1) return res.status(404).json({ error: 'Material nicht gefunden.' });
     const item = materials[index];
     if (!item.archived) return res.status(409).json({ error: 'Material muss vor dem Löschen archiviert werden.' });
-    if (number(item.issuedQuantity) > 0 || loadedQuantity(item.id) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht gelöscht werden.' });
+    if (number(item.issuedQuantity) > 0 || loadedQuantity(item) > 0) return res.status(409).json({ error: 'Ausgegebenes oder auf Fahrzeuge gebuchtes Material kann nicht gelöscht werden.' });
 
     const removedItem = materials.splice(index, 1)[0];
     deletedMaterials.push({
@@ -310,7 +312,7 @@ function registerInventoryRoutes({
       else if (safety?.blocked) error = 'safety_blocked';
       else if (action === 'issue' && ['Defekt', 'In Reparatur', 'Ausgesondert', 'Verloren'].includes(item.status)) error = 'invalid_status';
       else if (action === 'issue' && quantity > number(item.quantity) - number(item.issuedQuantity)
-        - loadedQuantity(item.id)) error = 'insufficient_stock';
+        - loadedQuantity(item)) error = 'insufficient_stock';
       else if (action === 'return' && quantity > number(item.issuedQuantity)) error = 'too_much_returned';
       return { item, quantity, error, safetyReasons: safety?.reasons || [] };
     });
@@ -341,7 +343,7 @@ function registerInventoryRoutes({
     const items = ids.map((id) => materials.find((entry) => entry.id === id));
     if (!ids.length || ids.length > MAX_BULK_ITEMS || !targetLocation || (stockStructureId && !targetStock)) return res.status(400).json({ error: 'Material, Standort oder Lagerplatz ist ungültig.' });
     if (items.some((item) => !item || item.archived || number(item.issuedQuantity) > 0
-      || loadedQuantity(item?.id) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes, auf Fahrzeuge gebuchtes oder archiviertes Material ist nicht zulässig.' });
+      || loadedQuantity(item) > 0)) return res.status(409).json({ error: 'Die Sammelumbuchung wurde nicht durchgeführt. Ausgegebenes, auf Fahrzeuge gebuchtes oder archiviertes Material ist nicht zulässig.' });
     const created = items.map((item) => {
       const movement = { id: nextId('movement', materialMovements), materialId: item.id, action: 'relocate', quantity: item.quantity, fromLocationId: item.locationId, fromStockStructureId: item.stockStructureId, toLocationId: locationId, toStockStructureId: stockStructureId || null, notes: String(req.body.notes || '').trim(), actor: req.user.username, createdAt: new Date().toISOString() };
       item.locationId = locationId; item.stockStructureId = stockStructureId || null; materialMovements.push(movement); return movement;
@@ -477,7 +479,7 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => withReadAccess(req, () => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item.id), 'Auf Fahrzeugen': loadedQuantity(item.id), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - loadedQuantity(item), 'Auf Fahrzeugen': loadedQuantity(item), Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
       .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');
