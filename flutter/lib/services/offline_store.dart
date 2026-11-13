@@ -486,7 +486,8 @@ class OfflineStore {
           .toSet();
       for (final item in clothing.cast<Map>()) {
         if (!ids.contains(item['id'].toString())) continue;
-        final issued = body['action'] == 'ausgegeben';
+        final issued =
+            body['action'] == 'ausgegeben' || body['action'] == 'umgebucht';
         item['status'] = issued ? 'Ausgegeben' : 'Lagernd';
         item['assignedPerson'] = issued ? body['personName'] : null;
         item['_offlinePending'] = true;
