@@ -30,6 +30,9 @@ Push-Location -LiteralPath $flutterProject
 try {
     $flutterArguments = @(
         'build', 'web', '--release',
+        # CanvasKit vom eigenen Server statt von gstatic.com: kein zusaetzlicher
+        # DNS-/TLS-Aufbau beim ersten Aufruf der Loginseite.
+        '--no-web-resources-cdn',
         "--build-name=$Version",
         "--build-number=$BuildNumber",
         "--dart-define=API_BASE_URL=$ApiBaseUrl"
@@ -47,4 +50,25 @@ $indexFile = Join-Path $flutterProject 'build/web/index.html'
 if (-not (Test-Path -LiteralPath $indexFile -PathType Leaf)) {
     throw "Flutter meldete Erfolg, aber die Web-Ausgabe fehlt: $indexFile"
 }
+
+# Vorkomprimierte Kopien fuer nginx gzip_static. Damit entfaellt die
+# Komprimierung von main.dart.js und CanvasKit bei jeder Anfrage.
+$webOutput = Join-Path $flutterProject 'build/web'
+$compressible = Get-ChildItem -LiteralPath $webOutput -Recurse -File |
+    Where-Object { $_.Extension -in '.js', '.wasm', '.json', '.html', '.otf', '.ttf' -and $_.Length -gt 1024 }
+foreach ($file in $compressible) {
+    $target = "$($file.FullName).gz"
+    $source = [System.IO.File]::OpenRead($file.FullName)
+    try {
+        $destination = [System.IO.File]::Create($target)
+        try {
+            $gzip = [System.IO.Compression.GZipStream]::new(
+                $destination, [System.IO.Compression.CompressionLevel]::Optimal)
+            try { $source.CopyTo($gzip) } finally { $gzip.Dispose() }
+        }
+        finally { $destination.Dispose() }
+    }
+    finally { $source.Dispose() }
+}
+Write-Output "Vorkomprimiert: $($compressible.Count) Dateien"
 Write-Output "Web-Build erfolgreich: $indexFile"

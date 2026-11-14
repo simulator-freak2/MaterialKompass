@@ -52,7 +52,7 @@ jobs:
       - run: flutter analyze
       - run: flutter test --coverage
       - run: node ../tool/check_lcov.js coverage/lcov.info 26.5
-      - run: flutter build web --release
+      - run: flutter build web --release --no-web-resources-cdn
       - uses: actions/upload-artifact@v4
         with:
           name: flutter-coverage
@@ -66,7 +66,7 @@ jobs:
         with:
           node-version: 22
       - run: node tool/secret_scan.js
-      - run: node --test tool/nginx_cache_policy.test.js
+      - run: node --test tool/nginx_cache_policy.test.js tool/web_startup.test.js
       - run: sh -n ops/backup-mariadb.sh
       - run: sh -n ops/restore-test.sh
       - run: sh -n ops/apply-migrations.sh

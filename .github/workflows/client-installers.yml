@@ -142,7 +142,12 @@ jobs:
         working-directory: flutter
         run: |
           flutter pub get
-          flutter build web --release --build-name='${{ inputs.version }}' --build-number='${{ github.run_number }}' --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+          flutter build web --release --no-web-resources-cdn --build-name='${{ inputs.version }}' --build-number='${{ github.run_number }}' --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+      - name: Startdateien vorkomprimieren
+        # nginx liefert die .gz-Dateien per gzip_static ohne CPU-Aufwand aus.
+        run: |
+          find flutter/build/web -type f \( -name '*.js' -o -name '*.wasm' -o -name '*.json' -o -name '*.html' -o -name '*.otf' -o -name '*.ttf' \) \
+            -size +1k -exec gzip -9 -k -n -f {} \;
       - name: Web-Artefakt verpacken
         run: |
           mkdir -p releases

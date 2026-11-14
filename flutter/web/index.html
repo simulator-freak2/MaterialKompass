@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="de">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -18,6 +18,7 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Interne Materialverwaltung mit MaterialKompass.">
   <meta name="theme-color" content="#D32F2F">
   <meta name="color-scheme" content="light dark">
@@ -33,9 +34,84 @@
 
   <title>MaterialKompass</title>
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    Startpfad der Loginseite: Das Dart-Bundle wird sofort parallel zum
+    Flutter-Loader angefordert, statt erst nachdem flutter_bootstrap.js
+    ausgefuehrt wurde. Das Logo der Loginseite liegt danach bereits im
+    Browser-Cache, wenn Flutter es anfordert.
+  -->
+  <link rel="preload" href="assets/assets/branding/materialkompass_logo_mit_schriftzug.png" as="image">
+  <link rel="preload" href="main.dart.js" as="script">
+
+  <style>
+    /*
+      Statischer Platzhalter der Loginseite. Er erscheint mit dem ersten
+      HTML-Byte und wird entfernt, sobald Flutter das erste Bild gezeichnet
+      hat. Farben und Masse entsprechen LoginPage, damit kein Sprung entsteht.
+    */
+    html, body { margin: 0; height: 100%; background: #FFF7E6; }
+    #mk-splash {
+      position: fixed; inset: 0; z-index: 1;
+      display: flex; flex-direction: column;
+      font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: #1D1B16; transition: opacity .15s ease-out;
+    }
+    #mk-splash.mk-hidden { opacity: 0; pointer-events: none; }
+    #mk-splash header {
+      height: 64px; flex: none; display: flex; align-items: center;
+      padding: 0 16px; background: #D32F2F; color: #fff; font-size: 22px;
+    }
+    #mk-splash main {
+      flex: 1; display: flex; align-items: flex-start; justify-content: center;
+      padding: 24px; box-sizing: border-box;
+    }
+    #mk-splash .mk-card {
+      width: 380px; max-width: 100%; box-sizing: border-box; padding: 24px;
+      background: #FDF2E5; border-radius: 12px; text-align: center;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+    }
+    #mk-splash img { height: 92px; max-width: 100%; object-fit: contain; }
+    #mk-splash h1 { margin: 12px 0 4px; font-size: 24px; }
+    #mk-splash p { margin: 0 0 20px; font-size: 20px; font-weight: bold; }
+    #mk-splash .mk-bar {
+      height: 4px; border-radius: 2px; overflow: hidden; background: #FCE8B2;
+    }
+    #mk-splash .mk-bar::after {
+      content: ""; display: block; height: 100%; width: 40%;
+      background: #F4B400; animation: mk-progress 1.1s ease-in-out infinite;
+    }
+    @keyframes mk-progress {
+      from { transform: translateX(-100%); }
+      to { transform: translateX(250%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #mk-splash .mk-bar::after { animation: none; width: 100%; }
+    }
+  </style>
 </head>
 <body>
+  <div id="mk-splash" role="status" aria-live="polite">
+    <header>MaterialKompass Login</header>
+    <main>
+      <div class="mk-card">
+        <img src="assets/assets/branding/materialkompass_logo_mit_schriftzug.png"
+             alt="MaterialKompass" width="276" height="92" decoding="async">
+        <h1>MaterialKompass</h1>
+        <p>Interne Materialverwaltung</p>
+        <div class="mk-bar" aria-label="Anmeldung wird geladen"></div>
+      </div>
+    </main>
+  </div>
   <script>
+    // Entfernt den statischen Platzhalter, sobald Flutter gezeichnet hat.
+    window.addEventListener('flutter-first-frame', () => {
+      const splash = document.getElementById('mk-splash');
+      if (!splash) return;
+      splash.classList.add('mk-hidden');
+      setTimeout(() => splash.remove(), 200);
+    }, { once: true });
+
     // Uebernimmt einen aktualisierten Service-Worker und den zugehoerigen
     // Flutter-Build sofort. Bei der ersten Installation wird nicht neu geladen.
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
@@ -55,7 +131,8 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
-  <script src="passkeys.js"></script>
+  <!-- Die Passkey-Bruecke wird erst bei einer Passkey-Aktion benoetigt. -->
+  <script src="passkeys.js" defer></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

@@ -6,6 +6,12 @@
 
 ## Unveroeffentlicht
 
+- Web-Start: Die Loginseite erscheint sofort als statischer Platzhalter und ist
+  bei wiederholtem Aufruf in rund 0,7 s, beim allerersten Aufruf (50 Mbit/s) in
+  rund 1,0 s bedienbar (vorher 1,3 beziehungsweise 2,3 s). CanvasKit und Schriften
+  kommen vom eigenen Server, der Flutter-Loader wartet nicht mehr auf den Service
+  Worker, dieser liefert Build-Dateien versionsgebunden aus dem Cache, und nginx
+  validiert Startdateien per ETag und liefert vorkomprimierte Dateien aus.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

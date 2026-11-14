@@ -31,6 +31,49 @@ Haupt-Bundle ausgeliefert. Damit sind Anwendungscode und Navigation bei einem De
 atomar und können nicht mehr durch alte, unter stabilen Dateinamen gecachte Dart-Chunks
 auseinanderlaufen. Die historischen Größenwerte oben bilden diese Änderung noch nicht ab.
 
+## Startzeit der Loginseite (Web)
+
+Ziel: Die Loginseite ist innerhalb von 1 Sekunde sichtbar. Gemessen am 14. November
+2026 mit Flutter 3.47.9 (Release-Build), Chromium und der produktiven
+`ops/nginx-web.conf` hinter einem drosselnden Proxy; Mittelwerte aus je drei Läufen.
+"Kalt" ist der allererste Aufruf mit leerem Browser-Cache, "warm" jeder weitere.
+
+| Netz | Messgröße | Vorher | Nachher |
+| --- | --- | ---: | ---: |
+| 50 Mbit/s, 20 ms RTT | Loginseite sichtbar (Platzhalter) | 2.250 ms | 75 ms |
+| 50 Mbit/s, 20 ms RTT | Flutter-Login bedienbar, kalt | 2.250 ms | 1.050 ms |
+| 50 Mbit/s, 20 ms RTT | Flutter-Login bedienbar, warm | 1.300 ms | 660 ms |
+| 20 Mbit/s, 40 ms RTT | Loginseite sichtbar (Platzhalter) | 3.100 ms | 115 ms |
+| 20 Mbit/s, 40 ms RTT | Flutter-Login bedienbar, kalt | 3.100 ms | 1.870 ms |
+| 20 Mbit/s, 40 ms RTT | Flutter-Login bedienbar, warm | 1.750 ms | 710 ms |
+
+Maßnahmen:
+
+- `index.html` zeichnet mit dem ersten HTML-Byte einen statischen Platzhalter in Farben
+  und Maßen der Loginseite und entfernt ihn beim Ereignis `flutter-first-frame`.
+  `main.dart.js` und das Login-Logo werden per `preload` sofort angefordert,
+  `passkeys.js` blockiert den Start nicht mehr (`defer`).
+- `flutter_bootstrap.js` übergibt den Service Worker nicht mehr an den Flutter-Loader.
+  Der Loader wartete sonst vor dem Laden von CanvasKit auf dessen Installation, die
+  beim ersten Aufruf die komplette App-Shell erneut herunterlud. Registriert wird
+  nach dem ersten Frame; danach übernimmt der Worker die bereits geladenen
+  Startdateien (CanvasKit, Schriften, Manifeste) in seinen Cache.
+- Der Service Worker liefert innerhalb seiner Build-Version alle Dateien außer
+  Navigation, `flutter_bootstrap.js` und `version.json` direkt aus dem Cache. Ein
+  neuer Build bringt eine neue Worker-Version mit eigenem Cache mit; die Seite lädt
+  dann wie bisher einmal neu.
+- Builds verwenden `--no-web-resources-cdn`: CanvasKit und die Roboto-Schrift kommen
+  vom eigenen Server statt von `www.gstatic.com` und `fonts.gstatic.com`.
+- nginx liefert `index.html`, `flutter_bootstrap.js`, `main.dart.js` und `canvaskit/`
+  mit `no-cache` statt `no-store` aus (Revalidierung per ETag, `304` statt mehrerer
+  MB) und nutzt per `gzip_static` die beim Build erzeugten `.gz`-Dateien.
+
+Grenze: Beim allerersten Aufruf müssen rund 3,1 MB (komprimiert: `main.dart.js`
+1,07 MB, `canvaskit.wasm` 2,06 MB) übertragen werden. Unterhalb von etwa 40 Mbit/s
+ist der bedienbare Flutter-Login deshalb erst nach mehr als 1 Sekunde verfügbar; der
+Platzhalter erscheint trotzdem sofort. `tool/web_startup.test.js` sichert die
+Maßnahmen gegen Regressionen.
+
 ## Umgesetzte Maßnahmen
 
 - OCR, PDF-Rendering, Bildverarbeitung, Mailparser und XLSX werden serverseitig erst
