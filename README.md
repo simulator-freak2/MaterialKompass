@@ -25,7 +25,8 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 - Eindeutige EDV-Nummern für Organisationen und Untergliederungen
 - Selbstverwaltung von E-Mail, Passwort und Account-Löschung
 - Kurzlebige Zugriffstoken mit rotierenden, serverseitig widerrufbaren
-  Refresh-Sitzungen; Abmeldung beendet alle Sitzungen des Kontos sofort
+  Refresh-Sitzungen; Abmeldung beendet alle Sitzungen des Kontos sofort;
+  nach 60 Minuten ohne Nutzeraktivität ist eine erneute Anmeldung nötig
 - DSGVO-Lebenszyklus: Deaktivierung nach 24, Löschung nach 36 Monaten ohne Login
 - Vollständige, transaktionale MariaDB-Persistenz für alle Anwendungsdaten
 - Flutter-Web-Startseite mit Login und Dashboard
@@ -213,6 +214,23 @@ informiert alle offenen Tabs und widerruft bei erreichbarem Server sämtliche Zu
 und Refresh-Sitzungen des Kontos. Ohne Netz endet die lokale Sitzung sofort; die
 serverseitige Sitzung kann technisch erst bei erneutem Serverkontakt oder durch Ablauf
 entwertet werden.
+
+### Abmeldung nach Inaktivität
+
+Eine Anmeldung endet nach **60 Minuten ohne Nutzeraktivität**. Jedes Zugriffstoken
+trägt die ID seiner Refresh-Sitzung (`sid`). Der Server prüft bei jeder
+authentifizierten Anfrage und bei jedem Refresh die letzte Aktivität der Sitzung und
+verwirft sie nach Ablauf der Frist; Zugriffs- und Refresh-Token sind danach wertlos
+(`401` mit `sessionExpired: true`). Als Aktivität zählen Anfragen, die auf eine
+Eingabe zurückgehen. Automatische Abfragen (Dashboard- und Listenaktualisierung,
+Offline-Synchronisierung) senden `X-MaterialKompass-Activity: background` und halten
+die Sitzung nicht offen; ein Token-Refresh verlängert sie ebenfalls nicht. Die App
+erfasst Zeiger- und Tastatureingaben, entfernt nach 60 Minuten ohne Eingabe die
+lokale Anmeldung und zeigt wieder die Loginseite. Andere Geräte und Tabs mit eigener
+Aktivität bleiben angemeldet. Die Aktivität wird höchstens einmal pro Minute
+fortgeschrieben und spätestens alle fünf Minuten persistiert, sodass die Frist auch
+einen Neustart des Backends übersteht. Gerätesitzungen des Systemzugangs an
+Dienstgeräten behalten ihre eigene, kürzere Abmeldelogik.
 
 Passwort-/2-FA-Änderungen, Kontosperren sowie Faktor- und Passkey-Widerrufe sind Teil
 der Sicherheitsversion des Kontos und entwerten vorhandene Tokens. Sensible

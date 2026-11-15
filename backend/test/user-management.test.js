@@ -103,9 +103,19 @@ test('authenticated users can download a secret-free personal data copy', async 
 
 test('email verification can only be resent after 24 hours for new and changed addresses', async () => {
   let currentTime = Date.parse('2026-07-01T08:00:00.000Z');
-  const { server, request, tokens, adminToken } = await setup({
+  const { server, request, tokens, adminToken: initialAdminToken } = await setup({
     now: () => currentTime,
   });
+  // Nach jedem 24-Stunden-Zeitsprung ist die vorherige Anmeldung wegen
+  // Inaktivitaet beendet; der Administrator meldet sich daher neu an.
+  let adminToken = initialAdminToken;
+  const loginAdmin = async () => {
+    const login = await request('/api/auth/login', {
+      method: 'POST', body: { identifier: 'admin', password: 'MaterialKompass2026!' },
+    });
+    assert.equal(login.response.status, 200);
+    adminToken = login.data.token;
+  };
   try {
     const created = await createOrganizationAccount(request, {
       method: 'POST',
@@ -140,6 +150,7 @@ test('email verification can only be resent after 24 hours for new and changed a
     assert.equal(earlyAdminResend.data.availableAt, '2026-07-02T08:00:00.000Z');
 
     currentTime += 24 * 60 * 60 * 1000;
+    await loginAdmin();
     const resentForNewUser = await request('/api/auth/verification/resend', {
       method: 'POST',
       body: { email: 'wartend@example.org' },
@@ -177,6 +188,7 @@ test('email verification can only be resent after 24 hours for new and changed a
     );
 
     currentTime += 24 * 60 * 60 * 1000;
+    await loginAdmin();
     assert.equal(
       (await centralRequest(request, `/api/users/${created.data.id}/verification/resend`, {
         method: 'POST',

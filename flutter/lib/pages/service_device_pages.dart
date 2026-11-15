@@ -15,6 +15,7 @@ import '../services/offline_store.dart';
 import '../services/offline_session_service.dart';
 import '../services/service_device_storage.dart';
 import '../services/temporary_device_file.dart';
+import '../services/web_startup_bridge.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/mfa_dialogs.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';

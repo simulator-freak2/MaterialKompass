@@ -6,6 +6,14 @@
 
 ## Unveroeffentlicht
 
+- Web-Loginseite als reines HTML: in rund 0,1–0,2 s bedienbar, unabhängig vom Laden
+  der App. Passwort- und Zwei-Faktor-Anmeldung (Code, Push) laufen direkt; Passkey,
+  QR-Code, Pflicht-Einrichtung, Passwort vergessen und rechtliche Hinweise werden an
+  die App übergeben. Die App lädt unsichtbar im Hintergrund und zeigt nach der
+  Anmeldung den Arbeitsbereich.
+- Abmeldung nach 60 Minuten Inaktivität: Server verwirft Zugriffs- und Refresh-Token
+  einer Sitzung ohne Nutzeraktivität; automatische Abfragen und Token-Refresh zählen
+  nicht als Aktivität. Die App meldet sich nach 60 Minuten ohne Eingabe lokal ab.
 - Web-Start: Die Loginseite erscheint sofort als statischer Platzhalter und ist
   bei wiederholtem Aufruf in rund 0,7 s, beim allerersten Aufruf (50 Mbit/s) in
   rund 1,0 s bedienbar (vorher 1,3 beziehungsweise 2,3 s). CanvasKit und Schriften

@@ -1,5 +1,6 @@
 const { activeItems, planImport } = require('./table-import');
 const { PLATFORM_ORGANIZATION_ID, administrationRouteAllowed } = require('./platform-administration');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -635,7 +636,15 @@ function createApp(options = {}) {
     });
   }
 
+  // Haelt die Anmeldesitzung der laufenden Anfrage. Neu ausgestellte Tokens
+  // (z. B. nach 2-FA-Einrichtung oder Standortwechsel) bleiben so an dieselbe
+  // Sitzung und damit an deren Inaktivitaetsgrenze gebunden.
+  const authRequestStorage = new AsyncLocalStorage();
+
   function createToken(user, context = {}) {
+    const requestSession = authRequestStorage.getStore();
+    const sessionId = context.sessionId
+      || (requestSession?.userId === user.id ? requestSession.sessionId : null);
     const activeTenant = currentTenant()
       || (context.organizationId ? {
         organizationId: context.organizationId,
@@ -648,6 +657,7 @@ function createApp(options = {}) {
       ouid: activeTenant?.unitId,
     };
     if (context.mfaSetupRequired) payload.ms = true;
+    if (sessionId && !context.mfaSetupRequired) payload.sid = sessionId;
     if (context.deviceId) {
       const device = serviceDevices.find((entry) => entry.id === context.deviceId);
       Object.assign(payload, {
@@ -679,6 +689,26 @@ function createApp(options = {}) {
       const payload = jwt.verify(token, jwtSecret, {
         algorithms: ['HS256'], audience: JWT_AUDIENCE, issuer: JWT_ISSUER,
       });
+      if (payload.sid) {
+        const activity = authSessions.touch(payload.sid, {
+          userId: payload.sub,
+          background: req.get('X-MaterialKompass-Activity') === 'background',
+        });
+        if (!activity.active) {
+          return res.status(401).json({
+            error: 'Die Sitzung wurde nach 60 Minuten Inaktivität beendet. Bitte melden Sie sich erneut an.',
+            sessionExpired: true,
+          });
+        }
+        if (activity.persist) {
+          Promise.resolve(app.locals.persistData?.()).catch((error) => {
+            console.error('Sitzungsaktivität konnte nicht gespeichert werden:', error);
+          });
+        }
+      }
+      const runAuthenticated = (callback) => (payload.sid
+        ? authRequestStorage.run({ sessionId: payload.sid, userId: payload.sub }, callback)
+        : callback());
       req.sessionType = payload.st || 'normal';
       req.mfaSetupRequired = payload.ms === true;
       req.device = payload.did
@@ -713,7 +743,7 @@ function createApp(options = {}) {
           active: true,
           emailVerifiedAt: req.device.activatedAt,
         };
-        return runWithTenant(deviceTenant, next);
+        return runAuthenticated(() => runWithTenant(deviceTenant, next));
       }
       const identity = users.find((u) => u.id === payload.sub) || null;
       if (!identity) {
@@ -773,7 +803,7 @@ function createApp(options = {}) {
           mfaSetupRequired: true,
         });
       }
-      return runWithTenant(tenant, next);
+      return runAuthenticated(() => runWithTenant(tenant, next));
     } catch (error) {
       return res.status(401).json({ error: 'Invalid token' });
     }

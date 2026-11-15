@@ -21,7 +21,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Interne Materialverwaltung mit MaterialKompass.">
   <meta name="theme-color" content="#D32F2F">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="light">
+  <!--
+    Origin der API fuer die HTML-Loginseite. Der Web-Build ersetzt den
+    Platzhalter durch denselben Wert wie --dart-define=API_BASE_URL
+    (ops/build-web.ps1, .github/workflows/client-installers.yml).
+  -->
+  <meta name="materialkompass-api" content="__MATERIALKOMPASS_API_BASE_URL__">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -36,48 +42,83 @@
   <link rel="manifest" href="manifest.json">
 
   <!--
-    Startpfad der Loginseite: Das Dart-Bundle wird sofort parallel zum
-    Flutter-Loader angefordert, statt erst nachdem flutter_bootstrap.js
-    ausgefuehrt wurde. Das Logo der Loginseite liegt danach bereits im
-    Browser-Cache, wenn Flutter es anfordert.
+    Die Loginseite ist reines HTML und sofort bedienbar. Flutter wird parallel
+    geladen und erst nach der Anmeldung gestartet; main.dart.js wird deshalb
+    schon mit dem HTML angefordert.
   -->
   <link rel="preload" href="assets/assets/branding/materialkompass_logo_mit_schriftzug.png" as="image">
   <link rel="preload" href="main.dart.js" as="script">
 
   <style>
-    /*
-      Statischer Platzhalter der Loginseite. Er erscheint mit dem ersten
-      HTML-Byte und wird entfernt, sobald Flutter das erste Bild gezeichnet
-      hat. Farben und Masse entsprechen LoginPage, damit kein Sprung entsteht.
-    */
     html, body { margin: 0; height: 100%; background: #FFF7E6; }
-    #mk-splash {
-      position: fixed; inset: 0; z-index: 1;
-      display: flex; flex-direction: column;
+    /*
+      Flutter setzt beim Start der Engine user-select und touch-action auf
+      body. Die Loginseite ist deshalb ein eigener Scroll-Container und setzt
+      beide Werte selbst, damit Eingabefelder in allen Browsern bedienbar
+      bleiben.
+    */
+    #mk-login {
+      position: fixed; inset: 0; z-index: 10; overflow-y: auto;
+      display: flex; flex-direction: column; background: #FFF7E6;
       font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
-      color: #1D1B16; transition: opacity .15s ease-out;
+      color: #1D1B16; color-scheme: light;
+      -webkit-user-select: text; user-select: text; touch-action: manipulation;
+      transition: opacity .15s ease-out;
     }
-    #mk-splash.mk-hidden { opacity: 0; pointer-events: none; }
-    #mk-splash header {
+    #mk-login.mk-hidden { opacity: 0; pointer-events: none; }
+    #mk-login [hidden] { display: none !important; }
+    #mk-login header {
       height: 64px; flex: none; display: flex; align-items: center;
       padding: 0 16px; background: #D32F2F; color: #fff; font-size: 22px;
     }
-    #mk-splash main {
+    #mk-login main {
       flex: 1; display: flex; align-items: flex-start; justify-content: center;
       padding: 24px; box-sizing: border-box;
     }
-    #mk-splash .mk-card {
+    .mk-card {
       width: 380px; max-width: 100%; box-sizing: border-box; padding: 24px;
       background: #FDF2E5; border-radius: 12px; text-align: center;
       box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
     }
-    #mk-splash img { height: 92px; max-width: 100%; object-fit: contain; }
-    #mk-splash h1 { margin: 12px 0 4px; font-size: 24px; }
-    #mk-splash p { margin: 0 0 20px; font-size: 20px; font-weight: bold; }
-    #mk-splash .mk-bar {
-      height: 4px; border-radius: 2px; overflow: hidden; background: #FCE8B2;
+    .mk-logo { height: 92px; max-width: 100%; object-fit: contain; }
+    .mk-card h1 { margin: 12px 0 4px; font-size: 24px; }
+    .mk-subtitle { margin: 0 0 16px; font-size: 20px; font-weight: bold; }
+    .mk-notice {
+      margin: 0 0 12px; padding: 12px; border-radius: 12px; text-align: left;
+      background: #FFF0C2; border: 1px solid #F4B400; white-space: pre-line;
     }
-    #mk-splash .mk-bar::after {
+    .mk-notice strong { display: block; margin-bottom: 4px; }
+    .mk-field { display: block; text-align: left; margin: 0 0 12px; }
+    .mk-field span { display: block; font-size: 13px; margin: 0 0 4px 2px; color: #4D4639; }
+    .mk-field input {
+      width: 100%; box-sizing: border-box; height: 52px; padding: 0 14px;
+      font: inherit; font-size: 16px; color: inherit; background: #fff;
+      border: 1px solid #7F7667; border-radius: 4px;
+    }
+    .mk-field input:focus { outline: 2px solid #005FCC; outline-offset: 0; border-color: #005FCC; }
+    .mk-button {
+      min-height: 48px; padding: 12px 16px; border: 0; border-radius: 12px;
+      font: inherit; font-size: 15px; font-weight: 500; cursor: pointer;
+      background: #F4B400; color: #2B2100;
+    }
+    .mk-button.mk-wide { width: 100%; }
+    .mk-button.mk-outlined {
+      background: transparent; color: #B71C1C; border: 1.4px solid #F4B400;
+    }
+    .mk-link {
+      min-height: 48px; padding: 0 12px; border: 0; background: none;
+      font: inherit; font-size: 15px; color: #1D1B16; cursor: pointer;
+    }
+    .mk-button:focus-visible, .mk-link:focus-visible { outline: 2px solid #005FCC; outline-offset: 2px; }
+    .mk-button:disabled, .mk-link:disabled { opacity: .55; cursor: default; }
+    .mk-error { margin: 0 0 12px; color: #B3261E; font-weight: 500; text-align: left; }
+    .mk-status { margin: 12px 0 0; text-align: left; }
+    .mk-text { margin: 0 0 16px; text-align: left; }
+    .mk-actions { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 12px; }
+    .mk-divider { border: 0; border-top: 1px solid #D6CFC2; margin: 16px 0 8px; }
+    .mk-legal { display: flex; justify-content: center; flex-wrap: wrap; }
+    .mk-bar { height: 4px; border-radius: 2px; overflow: hidden; background: #FCE8B2; margin-top: 16px; }
+    .mk-bar::after {
       content: ""; display: block; height: 100%; width: 40%;
       background: #F4B400; animation: mk-progress 1.1s ease-in-out infinite;
     }
@@ -86,51 +127,479 @@
       to { transform: translateX(250%); }
     }
     @media (prefers-reduced-motion: reduce) {
-      #mk-splash .mk-bar::after { animation: none; width: 100%; }
+      .mk-bar::after { animation: none; width: 100%; }
+      #mk-login { transition: none; }
     }
   </style>
 </head>
 <body>
-  <div id="mk-splash" role="status" aria-live="polite">
+  <div id="mk-login">
     <header>MaterialKompass Login</header>
     <main>
       <div class="mk-card">
-        <img src="assets/assets/branding/materialkompass_logo_mit_schriftzug.png"
+        <div id="mk-notices"></div>
+        <img class="mk-logo" src="assets/assets/branding/materialkompass_logo_mit_schriftzug.png"
              alt="MaterialKompass" width="276" height="92" decoding="async">
         <h1>MaterialKompass</h1>
-        <p>Interne Materialverwaltung</p>
-        <div class="mk-bar" aria-label="Anmeldung wird geladen"></div>
+        <p class="mk-subtitle">Interne Materialverwaltung</p>
+
+        <form id="mk-password" novalidate hidden>
+          <label class="mk-field">
+            <span>Nutzername oder E-Mail</span>
+            <input id="mk-identifier" name="username" type="text" autocomplete="username"
+                   autocapitalize="none" spellcheck="false" maxlength="255" required>
+          </label>
+          <label class="mk-field">
+            <span>Passwort</span>
+            <input id="mk-secret" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="mk-password-error" class="mk-error" role="alert" hidden></p>
+          <button class="mk-button" type="submit">Anmelden</button>
+          <div class="mk-actions">
+            <button class="mk-link" type="button" data-handoff="password-reset">Passwort vergessen?</button>
+            <button class="mk-button mk-outlined" type="button" data-handoff="show">
+              Passkey, QR-Code und weitere Optionen
+            </button>
+          </div>
+        </form>
+
+        <form id="mk-mfa" novalidate hidden>
+          <p id="mk-mfa-text" class="mk-text"></p>
+          <div id="mk-push" hidden>
+            <button id="mk-push-start" class="mk-button mk-wide" type="button">Push-Benachrichtigung senden</button>
+            <p id="mk-push-status" class="mk-status" role="status" aria-live="polite" hidden></p>
+          </div>
+          <div id="mk-passkey" class="mk-actions" hidden>
+            <button class="mk-button mk-outlined mk-wide" type="button" data-handoff="password">Mit Passkey bestätigen</button>
+          </div>
+          <div id="mk-code" hidden>
+            <hr class="mk-divider">
+            <label class="mk-field">
+              <span>Code aus der Authenticator-App oder Wiederherstellungscode</span>
+              <input id="mk-code-input" name="one-time-code" type="text" inputmode="text"
+                     autocomplete="one-time-code" autocapitalize="none" spellcheck="false" maxlength="64">
+            </label>
+            <button class="mk-button mk-wide" type="submit">Bestätigen</button>
+          </div>
+          <p id="mk-mfa-error" class="mk-error" role="alert" hidden></p>
+          <div class="mk-actions">
+            <button id="mk-mfa-cancel" class="mk-link" type="button">Abbrechen</button>
+          </div>
+        </form>
+
+        <div id="mk-loading" role="status" aria-live="polite">
+          <p id="mk-loading-text" class="mk-text">Wird geladen …</p>
+          <div class="mk-bar"></div>
+        </div>
+
+        <hr class="mk-divider">
+        <nav class="mk-legal" aria-label="Rechtliches">
+          <button class="mk-link" type="button" data-handoff="legal">Anbieterangaben</button>
+          <button class="mk-link" type="button" data-handoff="privacy">Datenschutz</button>
+        </nav>
       </div>
     </main>
   </div>
-  <script>
-    // Entfernt den statischen Platzhalter, sobald Flutter gezeichnet hat.
-    window.addEventListener('flutter-first-frame', () => {
-      const splash = document.getElementById('mk-splash');
-      if (!splash) return;
-      splash.classList.add('mk-hidden');
-      setTimeout(() => splash.remove(), 200);
-    }, { once: true });
 
-    // Uebernimmt einen aktualisierten Service-Worker und den zugehoerigen
-    // Flutter-Build sofort. Bei der ersten Installation wird nicht neu geladen.
+  <script>
+  // HTML-Loginseite: sofort bedienbar, ohne auf Flutter zu warten.
+  //
+  // Passwort-Anmeldung sowie Zwei-Faktor per Code und Push laufen hier direkt
+  // gegen die API. Die Tokens werden genau wie von der App gespeichert
+  // (SessionValueStore im Web). Danach startet Flutter, stellt die Sitzung
+  // wieder her und zeigt den Arbeitsbereich. Seltene Wege (Passkey, QR-Code,
+  // Pflicht-Einrichtung der 2-FA, Passwort vergessen, Downloads) uebergibt die
+  // Seite an die Flutter-Loginseite (lib/services/web_startup_bridge.dart).
+  (() => {
+    const accessKey = 'materialkompass_access_token_v1';
+    const refreshKey = 'materialkompass_refresh_token_v1';
+    const $ = (id) => document.getElementById(id);
+    const root = $('mk-login');
+    const passwordForm = $('mk-password');
+    const mfaForm = $('mk-mfa');
+    const identifierInput = $('mk-identifier');
+    const secretInput = $('mk-secret');
+
+    const configuredApi = document.querySelector('meta[name="materialkompass-api"]').content;
+    const api = /^https?:\/\/[^/\s]+$/.test(configuredApi)
+      ? configuredApi
+      : (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+        ? 'http://localhost:3001'
+        : location.origin);
+
+    let appRunner = null;
+    let startRequested = false;
+    let started = false;
+    let busy = false;
+    let mfaRun = 0;
+    let updatePending = false;
+
+    // Ein neuer Build bringt einen neuen Service Worker mit. Damit nicht das
+    // im alten Cache liegende main.dart.js startet, wird einmal neu geladen,
+    // aber nie mitten in einer Eingabe: Dann erst beim Start der App, wofuer
+    // die Sitzung bereits im sessionStorage liegt.
+    function userIsTyping() {
+      return busy || !!identifierInput.value || !!secretInput.value || !mfaForm.hidden;
+    }
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      let reloadingForUpdate = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (reloadingForUpdate) return;
-        reloadingForUpdate = true;
-        window.location.reload();
+        if (updatePending) return;
+        updatePending = true;
+        if (!startRequested && !userIsTyping()) window.location.reload();
       });
     }
-  </script>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+    function storage(action) {
+      try { return action(window.sessionStorage); } catch (_) { return null; }
+    }
+
+    function show(view) {
+      passwordForm.hidden = view !== 'password';
+      mfaForm.hidden = view !== 'mfa';
+      $('mk-loading').hidden = view !== 'loading';
+    }
+
+    function setError(id, message) {
+      const element = $(id);
+      element.textContent = message || '';
+      element.hidden = !message;
+    }
+
+    function setBusy(value) {
+      busy = value;
+      root.querySelectorAll('button, input').forEach((element) => {
+        element.disabled = value;
+      });
+    }
+
+    // ---- Flutter-Start ---------------------------------------------------
+
+    // Flutter startet bereits unsichtbar hinter der Loginseite, sobald die
+    // Engine geladen ist, und wartet dort (ServiceDeviceBootstrap,
+    // waitForHtmlLogin), bis die Anmeldung hier abgeschlossen oder an die App
+    // uebergeben ist. Nach dem Klick auf "Anmelden" faellt so nur noch die
+    // Sitzungspruefung und das Laden des Arbeitsbereichs an.
+    let fallbackTimer = null;
+    const loginFinishedCallbacks = [];
+    const startup = {
+      htmlLoginOpen: false,
+      engineReady(runner) {
+        appRunner = runner;
+        if (startRequested) {
+          releaseApp(startReason);
+          return;
+        }
+        startup.htmlLoginOpen = true;
+        runApp();
+      },
+      finishedReason: null,
+      onLoginFinished(callback) {
+        if (startup.htmlLoginOpen) loginFinishedCallbacks.push(callback);
+        else callback(startup.finishedReason || 'restore');
+      },
+    };
+    window.materialKompassStartup = startup;
+
+    function runApp() {
+      if (started || !appRunner) return;
+      started = true;
+      appRunner.runApp();
+    }
+
+    // reason: 'session' (hier frisch angemeldet), 'restore' (vorhandene
+    // Sitzung) oder 'handoff' (Anmeldeweg der App).
+    function releaseApp(reason) {
+      startup.htmlLoginOpen = false;
+      startup.finishedReason = reason;
+      for (const callback of loginFinishedCallbacks.splice(0)) {
+        try { callback(reason); } catch (error) { console.error(error); }
+      }
+      runApp();
+      // Rueckfallebene, falls die App keine Bereitschaft meldet.
+      if (started && !fallbackTimer) fallbackTimer = setTimeout(appReady, 20000);
+    }
+
+    let startReason = 'restore';
+    function startApp(message, { reloadForUpdate = true, reason = 'restore' } = {}) {
+      $('mk-loading-text').textContent = message;
+      show('loading');
+      startRequested = true;
+      startReason = reason;
+      if (updatePending && reloadForUpdate) {
+        window.location.reload();
+        return;
+      }
+      releaseApp(reason);
+    }
+
+    function appReady() {
+      if (!startRequested || !root.isConnected) return;
+      root.classList.add('mk-hidden');
+      setTimeout(() => root.remove(), 200);
+    }
+
+    window.materialKompassAppReady = appReady;
+
+    function handoff(action) {
+      window.materialKompassPendingLogin = {
+        identifier: identifierInput.value.trim(),
+        password: action === 'password' ? secretInput.value : '',
+        action,
+      };
+      mfaRun += 1;
+      // Die Uebergabe lebt nur in diesem Fenster und darf nicht durch ein
+      // Neuladen verloren gehen.
+      startApp('Anmeldung wird fortgesetzt …', { reloadForUpdate: false, reason: 'handoff' });
+    }
+
+    root.querySelectorAll('[data-handoff]').forEach((button) => {
+      button.addEventListener('click', () => handoff(button.dataset.handoff));
+    });
+
+    // ---- API -------------------------------------------------------------
+
+    async function post(path, body) {
+      const response = await fetch(api + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      let data = {};
+      try { data = await response.json(); } catch (_) { data = {}; }
+      return { status: response.status, data: data || {} };
+    }
+
+    function errorMessage(status, data, fallback) {
+      if (status === 401 && (!data.error || data.error === 'Invalid credentials')) {
+        return 'Nutzername oder Passwort ist nicht korrekt.';
+      }
+      return data.error || fallback;
+    }
+
+    function saveSession(data) {
+      storage((store) => {
+        store.setItem(accessKey, String(data.token || ''));
+        store.setItem(refreshKey, String(data.refreshToken || ''));
+      });
+      try {
+        const channel = new BroadcastChannel('materialkompass_auth_v1');
+        channel.postMessage(JSON.stringify({
+          type: 'session-update',
+          accessToken: String(data.token || ''),
+          refreshToken: String(data.refreshToken || ''),
+        }));
+        channel.close();
+      } catch (_) {
+        // Andere Tabs uebernehmen die Anmeldung dann beim naechsten Laden.
+      }
+    }
+
+    function finishLogin(status, data, errorId) {
+      if (status === 403 && data.passkeyRequired === true) {
+        handoff('password');
+        return;
+      }
+      if (status === 202 && data.mfaRequired === true) {
+        showMfa(data);
+        return;
+      }
+      if ((status === 200 || data.token) && data.token) {
+        const mfa = data.user && data.user.mfa;
+        if (data.mfaSetupRequired === true
+            || (mfa && mfa.required === true && mfa.strongAuthenticationConfigured !== true)) {
+          // Die Einrichtung der starken Anmeldung gibt es nur in der App.
+          handoff('password');
+          return;
+        }
+        saveSession(data);
+        startApp('Anmeldung erfolgreich. Arbeitsbereich wird geladen …', { reason: 'session' });
+        return;
+      }
+      setError(errorId, errorMessage(status, data, 'Die Anmeldung ist fehlgeschlagen.'));
+    }
+
+    // ---- Passwort --------------------------------------------------------
+
+    passwordForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const identifier = identifierInput.value.trim();
+      const password = secretInput.value;
+      if (!identifier || !password) {
+        setError('mk-password-error', 'Bitte Nutzername oder E-Mail und Passwort eingeben.');
+        return;
+      }
+      setError('mk-password-error', '');
+      setBusy(true);
+      try {
+        const { status, data } = await post('/api/auth/login', { identifier, password });
+        finishLogin(status, data, 'mk-password-error');
+      } catch (_) {
+        setError('mk-password-error', 'Der Server ist nicht erreichbar. Bitte prüfen Sie die Verbindung.');
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    // ---- Zwei-Faktor -----------------------------------------------------
+
+    let challenge = null;
+
+    function showMfa(data) {
+      challenge = data;
+      mfaRun += 1;
+      const methods = new Set(Array.isArray(data.methods) ? data.methods : []);
+      const push = methods.has('push');
+      const passkey = methods.has('passkey') && !!window.PublicKeyCredential;
+      const code = methods.has('totp') || methods.has('recovery_code');
+      $('mk-mfa-text').textContent = !push && !passkey
+        ? 'Geben Sie den sechsstelligen Code Ihrer Authenticator-App oder einen Wiederherstellungscode ein.'
+        : 'Wählen Sie eine verfügbare Methode, um die Anmeldung zu bestätigen.';
+      $('mk-push').hidden = !push;
+      $('mk-push-status').hidden = true;
+      $('mk-push-start').textContent = 'Push-Benachrichtigung senden';
+      $('mk-passkey').hidden = !passkey;
+      $('mk-code').hidden = !code;
+      $('mk-code-input').value = '';
+      setError('mk-mfa-error', '');
+      show('mfa');
+      if (code) $('mk-code-input').focus();
+      else if (push) $('mk-push-start').focus();
+    }
+
+    $('mk-mfa-cancel').addEventListener('click', () => {
+      mfaRun += 1;
+      challenge = null;
+      secretInput.value = '';
+      show('password');
+      secretInput.focus();
+    });
+
+    mfaForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (busy || !challenge) return;
+      const code = $('mk-code-input').value.trim();
+      if (!code) {
+        setError('mk-mfa-error', 'Bitte den Code eingeben.');
+        return;
+      }
+      setError('mk-mfa-error', '');
+      setBusy(true);
+      try {
+        const { status, data } = await post('/api/auth/mfa/verify', {
+          challenge: challenge.challenge, code,
+        });
+        if (status === 200 && data.token) finishLogin(status, data, 'mk-mfa-error');
+        else setError('mk-mfa-error', data.error || 'Der 2-FA-Code ist ungültig.');
+      } catch (_) {
+        setError('mk-mfa-error', 'Der Server ist nicht erreichbar. Bitte prüfen Sie die Verbindung.');
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    $('mk-push-start').addEventListener('click', async () => {
+      if (!challenge) return;
+      const run = ++mfaRun;
+      const status = $('mk-push-status');
+      const button = $('mk-push-start');
+      button.disabled = true;
+      button.textContent = 'Push-Benachrichtigung gesendet';
+      status.hidden = false;
+      status.textContent = 'Push-Benachrichtigung wird gesendet …';
+      setError('mk-mfa-error', '');
+      try {
+        const started = await post('/api/auth/mfa/push/start', { challenge: challenge.challenge });
+        if (started.status !== 200) {
+          throw new Error(started.data.error || 'Die Push-Benachrichtigung konnte nicht gesendet werden.');
+        }
+        status.textContent = 'Öffne MaterialKompass Authenticator und vergleiche den '
+          + 'zweistelligen Bestätigungscode: ' + (started.data.matchingCode || '');
+        const expiresAt = Date.parse(started.data.expiresAt || '');
+        while (run === mfaRun) {
+          if (Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
+            throw new Error('Die Push-Anfrage ist abgelaufen.');
+          }
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (run !== mfaRun) return;
+          const result = await post('/api/auth/mfa/push/status', {
+            challenge: challenge.challenge, approvalId: started.data.approvalId,
+          });
+          if (run !== mfaRun) return;
+          if (result.status === 202) continue;
+          if (result.status === 200 && result.data.token) {
+            finishLogin(200, result.data, 'mk-mfa-error');
+            return;
+          }
+          throw new Error(result.data.error || 'Die Push-Anfrage konnte nicht bestätigt werden.');
+        }
+      } catch (error) {
+        if (run !== mfaRun) return;
+        setError('mk-mfa-error', error instanceof TypeError
+          ? 'Der Server ist nicht erreichbar. Bitte prüfen Sie die Verbindung.'
+          : error.message);
+        status.hidden = true;
+        button.disabled = false;
+        button.textContent = 'Push-Benachrichtigung senden';
+      }
+    });
+
+    // ---- Wartungshinweise ----------------------------------------------
+
+    fetch(api + '/api/system/messages')
+      .then((response) => (response.ok ? response.json() : { messages: [] }))
+      .then((data) => {
+        const container = $('mk-notices');
+        for (const message of (data && Array.isArray(data.messages) ? data.messages : [])) {
+          const notice = document.createElement('div');
+          notice.className = 'mk-notice';
+          notice.setAttribute('role', 'note');
+          const title = document.createElement('strong');
+          title.textContent = String(message.title || 'Hinweis');
+          notice.append(title, document.createTextNode(String(message.message || '')));
+          container.append(notice);
+        }
+      })
+      .catch(() => {
+        // Hinweise duerfen die Anmeldung nicht blockieren.
+      });
+
+    // ---- Start -----------------------------------------------------------
+
+    const route = location.hash.replace(/^#\/?/, '').split('?')[0];
+    const hasSession = storage((store) => !!(store.getItem(accessKey) || store.getItem(refreshKey)));
+
+    if (['verify-email', 'password-reset', 'membership-invitation'].includes(route)) {
+      startApp('Wird geladen …');
+    } else if (hasSession) {
+      startApp('Anmeldung wird wiederhergestellt …');
+    } else {
+      show('password');
+      identifierInput.focus();
+      // Ein anderer Tab kann bereits angemeldet sein (gleiches Protokoll wie
+      // SessionValueStore der App). Die Anfrage gilt nur, solange hier noch
+      // nichts eingegeben wurde.
+      try {
+        const channel = new BroadcastChannel('materialkompass_auth_v1');
+        const id = Date.now() + '-html';
+        channel.onmessage = (event) => {
+          let message = null;
+          try { message = JSON.parse(String(event.data)); } catch (_) { return; }
+          if (!message || message.type !== 'response' || message.id !== id) return;
+          channel.close();
+          if (busy || startRequested || identifierInput.value || secretInput.value) return;
+          if (!message.accessToken && !message.refreshToken) return;
+          saveSession({ token: message.accessToken, refreshToken: message.refreshToken });
+          startApp('Anmeldung wird wiederhergestellt …');
+        };
+        channel.postMessage(JSON.stringify({ type: 'request', id }));
+        setTimeout(() => channel.close(), 1000);
+      } catch (_) {
+        // Ohne BroadcastChannel bleibt die Anmeldung pro Tab.
+      }
+    }
+  })();
+  </script>
   <!-- Die Passkey-Bruecke wird erst bei einer Passkey-Aktion benoetigt. -->
   <script src="passkeys.js" defer></script>
   <script src="flutter_bootstrap.js" async></script>

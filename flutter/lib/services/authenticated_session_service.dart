@@ -40,9 +40,22 @@ class AuthenticatedSessionService {
     );
   }
 
-  static Future<String?> restore({Duration? requestTimeout}) async {
+  /// Das gespeicherte Zugriffstoken ohne Serverpruefung, z. B. direkt nach
+  /// einer Anmeldung auf der HTML-Loginseite.
+  static Future<String?> storedAccessToken() async {
+    final token = (await _store.read())?.accessToken ?? '';
+    return token.isEmpty ? null : token;
+  }
+
+  /// [onStoredSession] laeuft, sobald eine gespeicherte Sitzung gefunden ist,
+  /// also vor deren Pruefung beim Server.
+  static Future<String?> restore({
+    Duration? requestTimeout,
+    void Function()? onStoredSession,
+  }) async {
     final stored = await _store.read();
     if (stored == null) return null;
+    onStoredSession?.call();
     if (!kIsWeb && !await unlockDevice()) return null;
     final valid = await _accessTokenIsValid(
       stored.accessToken,
@@ -137,6 +150,12 @@ class AuthenticatedSessionService {
       await _store.clear();
     }
   }
+
+  /// Entfernt nur die lokal gespeicherte Anmeldung dieses Geraets bzw. Tabs,
+  /// ohne andere Geraete abzumelden. Verwendet nach Ablauf der
+  /// Inaktivitaetsfrist, die der Server ohnehin durchsetzt.
+  static Future<void> discardLocalSession() =>
+      _store.clear(notifyOtherTabs: false);
 
   static Future<bool> unlockDevice() async {
     try {

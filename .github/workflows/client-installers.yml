@@ -143,6 +143,17 @@ jobs:
         run: |
           flutter pub get
           flutter build web --release --no-web-resources-cdn --build-name='${{ inputs.version }}' --build-number='${{ github.run_number }}' --dart-define='API_BASE_URL=${{ inputs.api_base_url }}'
+      - name: API-Origin fuer die HTML-Loginseite eintragen
+        env:
+          API_BASE_URL: ${{ inputs.api_base_url }}
+        run: |
+          origin="${API_BASE_URL%/}"
+          if ! printf '%s' "$origin" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$'; then
+            echo "api_base_url muss ein HTTPS-Origin ohne Pfad sein." >&2
+            exit 1
+          fi
+          sed -i "s|__MATERIALKOMPASS_API_BASE_URL__|$origin|" flutter/build/web/index.html
+          grep -q "content=\"$origin\"" flutter/build/web/index.html
       - name: Startdateien vorkomprimieren
         # nginx liefert die .gz-Dateien per gzip_static ohne CPU-Aufwand aus.
         run: |

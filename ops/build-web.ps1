@@ -51,6 +51,21 @@ if (-not (Test-Path -LiteralPath $indexFile -PathType Leaf)) {
     throw "Flutter meldete Erfolg, aber die Web-Ausgabe fehlt: $indexFile"
 }
 
+# Die HTML-Loginseite meldet sich direkt bei der API an und braucht deshalb
+# denselben Origin wie --dart-define=API_BASE_URL.
+$apiOrigin = $ApiBaseUrl.TrimEnd('/')
+if ($apiOrigin -notmatch '^https://[A-Za-z0-9.-]+(:\d+)?$') {
+    throw "ApiBaseUrl muss ein HTTPS-Origin ohne Pfad sein: $ApiBaseUrl"
+}
+$indexContent = [System.IO.File]::ReadAllText($indexFile)
+if (-not $indexContent.Contains('__MATERIALKOMPASS_API_BASE_URL__')) {
+    throw "Platzhalter fuer den API-Origin fehlt in $indexFile"
+}
+[System.IO.File]::WriteAllText(
+    $indexFile,
+    $indexContent.Replace('__MATERIALKOMPASS_API_BASE_URL__', $apiOrigin),
+    [System.Text.UTF8Encoding]::new($false))
+
 # Vorkomprimierte Kopien fuer nginx gzip_static. Damit entfaellt die
 # Komprimierung von main.dart.js und CanvasKit bei jeder Anfrage.
 $webOutput = Join-Path $flutterProject 'build/web'

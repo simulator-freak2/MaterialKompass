@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/web_startup_bridge.dart';
 import 'login_page.dart';
 
 class AuthLinkPage extends StatefulWidget {
@@ -21,6 +22,7 @@ class _AuthLinkPageState extends State<AuthLinkPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => notifyWebAppReady());
     if (widget.action == 'verify-email') verify();
     if (widget.action == 'membership-invitation') loadInvitation();
   }

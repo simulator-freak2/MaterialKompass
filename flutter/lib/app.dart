@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pages/auth_link_page.dart';
 import 'pages/service_device_pages.dart';
+import 'services/user_activity.dart';
 
 class MaterialKompassApp extends StatefulWidget {
   const MaterialKompassApp({super.key});
@@ -13,6 +15,23 @@ class MaterialKompassApp extends StatefulWidget {
 
 class _MaterialKompassAppState extends State<MaterialKompassApp> {
   final navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_recordKeyboardActivity);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_recordKeyboardActivity);
+    super.dispose();
+  }
+
+  bool _recordKeyboardActivity(KeyEvent event) {
+    UserActivity.instance.recordInteraction();
+    return false;
+  }
 
   ThemeData _theme(ColorScheme colorScheme, {bool highContrast = false}) {
     return ThemeData(
@@ -128,6 +147,14 @@ class _MaterialKompassAppState extends State<MaterialKompassApp> {
       ],
       theme: _theme(colorScheme),
       highContrastTheme: _theme(highContrastScheme, highContrast: true),
+      // Jede Zeiger- und Tastatureingabe zaehlt als Nutzeraktivitaet fuer die
+      // 60-Minuten-Inaktivitaetsgrenze der Anmeldung.
+      builder: (context, child) => Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => UserActivity.instance.recordInteraction(),
+        onPointerSignal: (_) => UserActivity.instance.recordInteraction(),
+        child: child,
+      ),
       home: _initialPage(),
     );
   }

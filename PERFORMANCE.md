@@ -33,46 +33,60 @@ auseinanderlaufen. Die historischen Größenwerte oben bilden diese Änderung no
 
 ## Startzeit der Loginseite (Web)
 
-Ziel: Die Loginseite ist innerhalb von 1 Sekunde sichtbar. Gemessen am 14. November
-2026 mit Flutter 3.47.9 (Release-Build), Chromium und der produktiven
-`ops/nginx-web.conf` hinter einem drosselnden Proxy; Mittelwerte aus je drei Läufen.
+Ziel: Die Loginseite ist innerhalb von 1 Sekunde bedienbar. Seit dem 15. November
+2026 ist sie reines HTML in `flutter/web/index.html` und wartet nicht mehr auf
+Flutter. Gemessen mit Flutter 3.47.9 (Release-Build), Chromium, HTTPS und der
+produktiven `ops/nginx-web.conf` hinter einem drosselnden Proxy; je drei Läufe.
 "Kalt" ist der allererste Aufruf mit leerem Browser-Cache, "warm" jeder weitere.
 
-| Netz | Messgröße | Vorher | Nachher |
+| Netz | Messgröße | Ursprünglich | HTML-Login |
 | --- | --- | ---: | ---: |
-| 50 Mbit/s, 20 ms RTT | Loginseite sichtbar (Platzhalter) | 2.250 ms | 75 ms |
-| 50 Mbit/s, 20 ms RTT | Flutter-Login bedienbar, kalt | 2.250 ms | 1.050 ms |
-| 50 Mbit/s, 20 ms RTT | Flutter-Login bedienbar, warm | 1.300 ms | 660 ms |
-| 20 Mbit/s, 40 ms RTT | Loginseite sichtbar (Platzhalter) | 3.100 ms | 115 ms |
-| 20 Mbit/s, 40 ms RTT | Flutter-Login bedienbar, kalt | 3.100 ms | 1.870 ms |
-| 20 Mbit/s, 40 ms RTT | Flutter-Login bedienbar, warm | 1.750 ms | 710 ms |
+| 50 Mbit/s, 20 ms RTT | Loginformular bedienbar, kalt | 2.250 ms | 160 ms |
+| 50 Mbit/s, 20 ms RTT | Loginformular bedienbar, warm | 1.300 ms | 100 ms |
+| 20 Mbit/s, 40 ms RTT | Loginformular bedienbar, kalt | 3.100 ms | 220 ms |
+| 20 Mbit/s, 40 ms RTT | Loginformular bedienbar, warm | 1.750 ms | 115 ms |
 
-Maßnahmen:
+Nach "Anmelden" (3 s Eingabezeit) bis zum sichtbaren Arbeitsbereich: 50 Mbit/s kalt
+rund 1.050 ms, warm rund 880 ms; 20 Mbit/s kalt rund 1.500 ms, warm rund 900 ms.
+Davon entfallen rund 450 ms auf die Passwortprüfung (bcrypt) des Servers. Wird
+sofort nach dem Laden abgeschickt, wartet der allererste Aufruf zusätzlich auf den
+Download der App (20 Mbit/s: rund 3 s).
 
-- `index.html` zeichnet mit dem ersten HTML-Byte einen statischen Platzhalter in Farben
-  und Maßen der Loginseite und entfernt ihn beim Ereignis `flutter-first-frame`.
-  `main.dart.js` und das Login-Logo werden per `preload` sofort angefordert,
-  `passkeys.js` blockiert den Start nicht mehr (`defer`).
-- `flutter_bootstrap.js` übergibt den Service Worker nicht mehr an den Flutter-Loader.
-  Der Loader wartete sonst vor dem Laden von CanvasKit auf dessen Installation, die
-  beim ersten Aufruf die komplette App-Shell erneut herunterlud. Registriert wird
-  nach dem ersten Frame; danach übernimmt der Worker die bereits geladenen
+Ablauf:
+
+- Die HTML-Seite meldet Passwort sowie Zwei-Faktor per Code und Push selbst bei der
+  API an und speichert die Tokens wie die App (`sessionStorage`, gleiche Schlüssel).
+  Seltene Wege (Passkey, QR-Code, Pflicht-Einrichtung der starken Anmeldung, Passwort
+  vergessen, Downloads, rechtliche Hinweise) übergibt sie über
+  `lib/services/web_startup_bridge*.dart` an die Flutter-Loginseite; Eingaben werden
+  übernommen, ein Passwort-Login wird dort automatisch fortgesetzt.
+- Parallel lädt `flutter_bootstrap.js` Engine und App. Die App startet unsichtbar hinter
+  der Loginseite, lädt den Arbeitsbereich (Dart-Teilpaket) vor und wartet auf das
+  Signal der Loginseite. Nach einer frischen Anmeldung entfällt die erneute
+  Tokenprüfung. Die Loginseite verschwindet, sobald die App die Zielseite gezeichnet
+  hat (`materialKompassAppReady`).
+- Eine vorhandene Sitzung oder ein Link (`#/verify-email`, `#/password-reset`,
+  `#/membership-invitation`) startet die App sofort.
+- Der API-Origin steht im Meta-Tag `materialkompass-api`; `ops/build-web.ps1` und der
+  Release-Workflow setzen ihn auf den Wert von `API_BASE_URL`.
+- Ein neuer Build lädt die Seite einmal neu, aber nie während einer Eingabe.
+
+Bereits zuvor umgesetzt und weiterhin gültig:
+
+- `main.dart.js` und das Login-Logo werden per `preload` sofort angefordert,
+  `passkeys.js` blockiert den Start nicht (`defer`).
+- Der Service Worker wird nicht an den Flutter-Loader übergeben, sondern nach dem
+  Initialisieren der Engine registriert, und übernimmt dann die bereits geladenen
   Startdateien (CanvasKit, Schriften, Manifeste) in seinen Cache.
 - Der Service Worker liefert innerhalb seiner Build-Version alle Dateien außer
-  Navigation, `flutter_bootstrap.js` und `version.json` direkt aus dem Cache. Ein
-  neuer Build bringt eine neue Worker-Version mit eigenem Cache mit; die Seite lädt
-  dann wie bisher einmal neu.
+  Navigation, `flutter_bootstrap.js` und `version.json` direkt aus dem Cache.
 - Builds verwenden `--no-web-resources-cdn`: CanvasKit und die Roboto-Schrift kommen
   vom eigenen Server statt von `www.gstatic.com` und `fonts.gstatic.com`.
 - nginx liefert `index.html`, `flutter_bootstrap.js`, `main.dart.js` und `canvaskit/`
-  mit `no-cache` statt `no-store` aus (Revalidierung per ETag, `304` statt mehrerer
-  MB) und nutzt per `gzip_static` die beim Build erzeugten `.gz`-Dateien.
+  mit `no-cache` statt `no-store` aus (Revalidierung per ETag) und nutzt per
+  `gzip_static` die beim Build erzeugten `.gz`-Dateien.
 
-Grenze: Beim allerersten Aufruf müssen rund 3,1 MB (komprimiert: `main.dart.js`
-1,07 MB, `canvaskit.wasm` 2,06 MB) übertragen werden. Unterhalb von etwa 40 Mbit/s
-ist der bedienbare Flutter-Login deshalb erst nach mehr als 1 Sekunde verfügbar; der
-Platzhalter erscheint trotzdem sofort. `tool/web_startup.test.js` sichert die
-Maßnahmen gegen Regressionen.
+`tool/web_startup.test.js` sichert die Maßnahmen gegen Regressionen.
 
 ## Umgesetzte Maßnahmen
 

@@ -57,7 +57,7 @@ function createCorsOptions({
       return callback(error);
     },
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'X-Request-Id'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-Request-Id', 'X-MaterialKompass-Activity'],
     exposedHeaders: ['X-API-Version', 'X-Request-Id'],
     maxAge: 86400,
   };

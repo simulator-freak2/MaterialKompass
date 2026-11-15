@@ -18,17 +18,41 @@ function locationBody(header) {
   return nginxConfig.slice(start, nginxConfig.indexOf('\n    }', start));
 }
 
-test('index.html shows a static login placeholder until Flutter has drawn', () => {
-  assert.match(indexHtml, /<div id="mk-splash"/);
-  assert.match(indexHtml, /addEventListener\('flutter-first-frame'/);
+test('index.html is a usable HTML login page that does not wait for Flutter', () => {
+  assert.match(indexHtml, /<form id="mk-password"/);
+  assert.match(indexHtml, /autocomplete="username"/);
+  assert.match(indexHtml, /autocomplete="current-password"/);
+  assert.match(indexHtml, /post\('\/api\/auth\/login'/);
+  assert.match(indexHtml, /post\('\/api\/auth\/mfa\/verify'/);
+  assert.match(indexHtml, /post\('\/api\/auth\/mfa\/push\/start'/);
+  // Gleiche Speicherorte wie SessionValueStore der App (session_value_store_web.dart).
+  assert.match(indexHtml, /'materialkompass_access_token_v1'/);
+  assert.match(indexHtml, /'materialkompass_refresh_token_v1'/);
+  assert.match(indexHtml, /window\.materialKompassAppReady = appReady;/);
+  assert.match(indexHtml, /window\.materialKompassPendingLogin = \{/);
+  assert.match(indexHtml, /<meta name="materialkompass-api" content="__MATERIALKOMPASS_API_BASE_URL__">/);
   assert.match(indexHtml, /<link rel="preload" href="main\.dart\.js" as="script">/);
   assert.match(indexHtml, /<script src="passkeys\.js" defer><\/script>/);
+  // Ein neuer Build wird nie mitten in einer Eingabe neu geladen.
+  assert.match(indexHtml, /if \(!startRequested && !userIsTyping\(\)\) window\.location\.reload\(\);/);
 });
 
-test('the Flutter loader does not wait for the service worker', () => {
+test('the HTML login and the app agree on the startup bridge', () => {
+  const bridge = read('flutter', 'lib', 'services', 'web_startup_bridge_web.dart');
+  assert.match(bridge, /const _readyCallback = 'materialKompassAppReady';/);
+  assert.match(bridge, /const _pendingLogin = 'materialKompassPendingLogin';/);
+  const types = read('flutter', 'lib', 'services', 'web_startup_bridge_types.dart');
+  for (const match of indexHtml.matchAll(/data-handoff="([^"]+)"/g)) {
+    if (match[1] === 'show') continue;
+    assert.match(types, new RegExp(`= '${match[1]}';`), `Aktion ${match[1]} fehlt in der App`);
+  }
+});
+
+test('the Flutter loader starts the app only on request', () => {
   assert.doesNotMatch(bootstrap, /serviceWorkerSettings\s*:/);
-  assert.match(bootstrap, /_flutter\.loader\.load\(\);/);
-  assert.match(bootstrap, /'flutter-first-frame',\s*registerMaterialKompassServiceWorker/);
+  assert.match(bootstrap, /engineInitializer\.initializeEngine\(\)/);
+  assert.match(bootstrap, /window\.materialKompassStartup\.engineReady\(appRunner\)/);
+  assert.match(bootstrap, /registerMaterialKompassServiceWorker\(\);/);
 });
 
 test('the versioned service worker serves build files cache-first', () => {
@@ -63,10 +87,11 @@ test('start files are revalidated instead of re-downloaded', () => {
   assert.match(nginxConfig, /\n {4}gzip_static on;/);
 });
 
-test('web builds serve CanvasKit from the own origin', () => {
-  assert.match(read('ops', 'build-web.ps1'), /'--no-web-resources-cdn'/);
-  assert.match(
-    read('.github', 'workflows', 'client-installers.yml'),
-    /flutter build web --release --no-web-resources-cdn/,
-  );
+test('web builds serve CanvasKit from the own origin and set the API origin', () => {
+  const buildScript = read('ops', 'build-web.ps1');
+  const workflow = read('.github', 'workflows', 'client-installers.yml');
+  assert.match(buildScript, /'--no-web-resources-cdn'/);
+  assert.match(workflow, /flutter build web --release --no-web-resources-cdn/);
+  assert.match(buildScript, /Replace\('__MATERIALKOMPASS_API_BASE_URL__', \$apiOrigin\)/);
+  assert.match(workflow, /s\|__MATERIALKOMPASS_API_BASE_URL__\|\$origin\|/);
 });

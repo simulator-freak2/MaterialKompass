@@ -12,6 +12,7 @@ import '../services/offline_http.dart' as offline_transport;
 import '../services/offline_session_service.dart';
 import '../services/offline_store.dart';
 import '../services/system_message_service.dart';
+import '../services/user_activity.dart';
 import '../widgets/download_folder_dialog.dart';
 import '../widgets/mail_count_badge.dart';
 import '../widgets/stat_card.dart';
@@ -71,6 +72,7 @@ class _DashboardPageState extends State<DashboardPage>
   bool _systemMessageCheckInProgress = false;
   bool _localUnlockRequired = false;
   bool _localUnlockInProgress = false;
+  bool _inactivityLogoutStarted = false;
   int _systemMessageFailures = 0;
   final Set<String> _shownSystemMessageIds = {};
   final _systemMessages = SystemMessageService();
@@ -80,12 +82,14 @@ class _DashboardPageState extends State<DashboardPage>
     super.initState();
     _token = widget.token;
     WidgetsBinding.instance.addObserver(this);
+    UserActivity.instance.startSession();
+    UserActivity.instance.addListener(_onUserActivityExpired);
     unawaited(OfflineStore.instance.restoreStatus());
     _dashboardFuture = _loadDashboard();
-    _syncTimer = Timer.periodic(
-      const Duration(minutes: 1),
-      (_) => unawaited(_refreshInBackground()),
-    );
+    _syncTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (_logoutIfInactive()) return;
+      unawaited(_refreshInBackground());
+    });
     _sessionRefreshTimer = Timer.periodic(
       const Duration(minutes: 45),
       (_) => unawaited(_refreshSession()),
@@ -198,6 +202,7 @@ class _DashboardPageState extends State<DashboardPage>
       return;
     }
     if (state == AppLifecycleState.resumed) {
+      if (_logoutIfInactive()) return;
       if (_localUnlockRequired) {
         unawaited(_unlockAfterResume());
         return;
@@ -219,8 +224,44 @@ class _DashboardPageState extends State<DashboardPage>
     unawaited(OfflineSessionService.prepare(_token));
   }
 
+  void _onUserActivityExpired() => _logoutIfInactive();
+
+  /// Beendet die Anmeldung nach 60 Minuten ohne Eingabe. Der Server verwirft
+  /// die Sitzung zur selben Zeit; hier wird nur noch die lokale Kopie entfernt.
+  bool _logoutIfInactive() {
+    if (!UserActivity.instance.expired) return false;
+    if (_inactivityLogoutStarted || !mounted) return true;
+    _inactivityLogoutStarted = true;
+    unawaited(_logoutAfterInactivity());
+    return true;
+  }
+
+  Future<void> _logoutAfterInactivity() async {
+    _syncTimer?.cancel();
+    _sessionRefreshTimer?.cancel();
+    _systemMessageTimer?.cancel();
+    await AuthenticatedSessionService.discardLocalSession();
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: widget.logoutPageBuilder ?? (_) => const LoginPage(),
+      ),
+      (route) => false,
+    );
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Sie wurden nach 60 Minuten Inaktivität abgemeldet. '
+          'Bitte melden Sie sich erneut an.',
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    UserActivity.instance.removeListener(_onUserActivityExpired);
     _syncTimer?.cancel();
     _sessionRefreshTimer?.cancel();
     _systemMessageTimer?.cancel();
@@ -252,11 +293,11 @@ class _DashboardPageState extends State<DashboardPage>
     _backgroundRefreshInProgress = true;
     try {
       try {
-        await _sync();
+        await UserActivity.runInBackground(_sync);
       } catch (_) {
         // A failed offline sync must not suppress the dashboard refresh.
       }
-      final data = await _loadDashboard();
+      final data = await UserActivity.runInBackground(_loadDashboard);
       if (mounted) {
         setState(() => _dashboardFuture = Future.value(data));
       }

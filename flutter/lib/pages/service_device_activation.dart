@@ -20,10 +20,31 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
   }
 
   Future<void> _load() async {
+    if (kIsWeb && htmlLoginOpen()) {
+      // Die App laeuft unsichtbar hinter der HTML-Loginseite. Der
+      // Arbeitsbereich wird schon geladen, waehrend dort getippt wird.
+      unawaited(DeferredDashboardPage.preload().catchError((Object _) {}));
+      if (await waitForHtmlLogin() == htmlLoginSession) {
+        // Der Server hat das Token gerade eben ausgestellt; eine erneute
+        // Pruefung wuerde nur den Start verzoegern.
+        restoredToken = await AuthenticatedSessionService.storedAccessToken();
+        if (restoredToken != null) {
+          if (mounted) setState(() => ready = true);
+          return;
+        }
+      }
+    }
     // Web-Sitzungspruefungen duerfen die Loginseite nicht lange blockieren.
     // Native Entsperrdialoge behalten Zeit fuer die Nutzereingabe.
     restoredToken = await AuthenticatedSessionService.restore(
       requestTimeout: kIsWeb ? const Duration(milliseconds: 1500) : null,
+      // Mit gespeicherter Web-Sitzung (z. B. direkt nach der HTML-Anmeldung)
+      // wird der Arbeitsbereich parallel zur Sitzungspruefung geladen.
+      onStoredSession: kIsWeb
+          ? () => unawaited(
+              DeferredDashboardPage.preload().catchError((Object _) {}),
+            )
+          : null,
     );
     if (restoredToken != null) {
       if (mounted) setState(() => ready = true);
@@ -65,6 +86,12 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
 
   @override
   Widget build(BuildContext context) {
+    if (!ready && kIsWeb) {
+      // Im Web liegt waehrend der Sitzungspruefung die HTML-Loginseite
+      // (web/index.html) ueber der App. Eine zweite LoginPage wuerde deren
+      // Uebergabe (takePendingWebLogin) vorzeitig verbrauchen.
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     if (!ready) {
       return const Stack(
         children: [
@@ -83,6 +110,9 @@ class _ServiceDeviceBootstrapState extends State<ServiceDeviceBootstrap> {
         token: restoredToken!,
         logoutPageBuilder: (_) => const ServiceDeviceBootstrap(),
       );
+    }
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => notifyWebAppReady());
     }
     if (kIsWeb || credential == null) return const LoginPage();
     return ServiceDeviceLoginPage(

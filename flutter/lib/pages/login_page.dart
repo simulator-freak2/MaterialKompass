@@ -11,6 +11,7 @@ import '../services/browser_download.dart';
 import '../services/offline_session_service.dart';
 import '../services/passkey_service.dart';
 import '../services/system_message_service.dart';
+import '../services/web_startup_bridge.dart';
 import '../widgets/system_message_card.dart';
 import '../widgets/password_login_form.dart';
 import '../widgets/qr_login_dialog.dart';
@@ -56,6 +57,37 @@ class _LoginPageState extends State<LoginPage> {
     if (kIsWeb) loadDownloads();
     loadSystemMessages();
     if (!kIsWeb) loadDeviceUnlockAvailability();
+    _continueWebLogin(takePendingWebLogin());
+  }
+
+  /// Setzt einen auf der HTML-Loginseite begonnenen Anmeldeweg fort, der nur in
+  /// Flutter verfuegbar ist.
+  void _continueWebLogin(PendingWebLogin? pending) {
+    if (pending == null) return;
+    emailController.text = pending.identifier;
+    passwordController.text = pending.password;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      switch (pending.action) {
+        case PendingWebLogin.submitPassword:
+          if (pending.identifier.isNotEmpty && pending.password.isNotEmpty) {
+            unawaited(login());
+          }
+        case PendingWebLogin.requestPasswordReset:
+          unawaited(requestPasswordReset());
+        case PendingWebLogin.showLegal:
+        case PendingWebLogin.showPrivacy:
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => LegalPage(
+                initialTab: pending.action == PendingWebLogin.showPrivacy
+                    ? 1
+                    : 0,
+              ),
+            ),
+          );
+      }
+    });
   }
 
   Future<void> loadDeviceUnlockAvailability() async {

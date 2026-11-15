@@ -10,6 +10,7 @@ import '../camera_scan_support.dart';
 import '../constants.dart';
 import '../services/document_output_service.dart';
 import '../services/download_service.dart';
+import '../services/user_activity.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/mail_count_badge.dart';
 
@@ -34,10 +35,10 @@ class _StocktakesPageState extends State<StocktakesPage>
   bool _backgroundRefreshInProgress = false;
   Timer? _refreshTimer;
 
-  Map<String, String> get headers => {
+  Map<String, String> get headers => UserActivity.headersFor({
     'Authorization': 'Bearer ${widget.token}',
     'Content-Type': 'application/json',
-  };
+  });
 
   bool can(String permission) => permissions.contains(permission);
   List<Map<String, dynamic>> get _pendingEmails => _emailImports
@@ -161,7 +162,9 @@ class _StocktakesPageState extends State<StocktakesPage>
     if (_backgroundRefreshInProgress) return;
     _backgroundRefreshInProgress = true;
     try {
-      await _load(showLoading: false, quiet: true);
+      await UserActivity.runInBackground(
+        () => _load(showLoading: false, quiet: true),
+      );
     } finally {
       _backgroundRefreshInProgress = false;
     }

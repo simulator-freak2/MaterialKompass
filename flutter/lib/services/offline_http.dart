@@ -6,12 +6,33 @@ import 'package:http/http.dart' as base;
 
 import 'offline_store.dart';
 import 'network_probe.dart';
+import 'user_activity.dart';
 
 typedef Response = base.Response;
 
 const _timeout = Duration(seconds: 12);
 const _transientStatusCodes = {502, 503, 504};
-final base.Client _client = base.Client();
+final base.Client _client = _ActivityAwareClient(base.Client());
+
+/// Kennzeichnet automatische Abfragen, damit der Server sie nicht als
+/// Nutzeraktivitaet wertet (siehe [UserActivity.runInBackground]).
+class _ActivityAwareClient extends base.BaseClient {
+  _ActivityAwareClient(this._inner);
+
+  final base.Client _inner;
+
+  @override
+  Future<base.StreamedResponse> send(base.BaseRequest request) {
+    if (UserActivity.inBackground) {
+      request.headers[UserActivity.headerName] = UserActivity.backgroundValue;
+    }
+    return _inner.send(request);
+  }
+
+  @override
+  void close() => _inner.close();
+}
+
 bool _flushing = false;
 
 bool _cacheableRead(Uri uri) {

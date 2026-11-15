@@ -12,6 +12,7 @@ import '../services/debouncer.dart';
 import '../services/document_output_service.dart';
 import '../services/download_service.dart';
 import '../services/label_print_service.dart';
+import '../services/user_activity.dart';
 import '../widgets/address_input.dart';
 import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
@@ -202,7 +203,9 @@ class _ProcurementPageState extends State<ProcurementPage>
     if (_backgroundRefreshInProgress) return;
     _backgroundRefreshInProgress = true;
     try {
-      await _load(showLoading: false, quiet: true);
+      await UserActivity.runInBackground(
+        () => _load(showLoading: false, quiet: true),
+      );
     } finally {
       _backgroundRefreshInProgress = false;
     }

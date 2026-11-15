@@ -5,7 +5,7 @@
 // Loader uebergeben: Der Loader wuerde sonst vor dem Laden von CanvasKit und
 // main.dart.js auf die Installation warten, die beim ersten Aufruf die
 // komplette App-Shell herunterlaedt. Die Registrierung erfolgt stattdessen,
-// sobald die Loginseite gezeichnet ist.
+// sobald die Engine geladen ist.
 const materialKompassServiceWorkerVersion = {{flutter_service_worker_version}};
 
 // Dateien, die der Browser fuer den ersten Start bereits geladen hat
@@ -40,10 +40,18 @@ function registerMaterialKompassServiceWorker() {
     });
 }
 
-window.addEventListener(
-  'flutter-first-frame',
-  registerMaterialKompassServiceWorker,
-  { once: true },
-);
-
-_flutter.loader.load();
+// Die Engine wird sofort geladen und initialisiert, die App aber erst
+// gestartet, wenn die HTML-Loginseite in index.html das anfordert (nach der
+// Anmeldung, bei vorhandener Sitzung oder fuer Anmeldewege, die nur die App
+// kennt).
+_flutter.loader.load({
+  onEntrypointLoaded: async (engineInitializer) => {
+    const appRunner = await engineInitializer.initializeEngine();
+    registerMaterialKompassServiceWorker();
+    if (window.materialKompassStartup) {
+      window.materialKompassStartup.engineReady(appRunner);
+    } else {
+      await appRunner.runApp();
+    }
+  },
+});
