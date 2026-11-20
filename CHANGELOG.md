@@ -1,5 +1,32 @@
 # Aenderungsprotokoll
 
+## [1.7.9] - 2026-11-20
+
+-Update
+
+## Unveroeffentlicht
+
+- Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
+  Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
+  bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte
+  Packlisten mit PDF, Vollständigkeitsprüfung mit optionalem Mangel, Ablaufdaten,
+  Scan-Suche, Inventurbestätigung als Einheit und offline erfassbare Prüfungen.
+- Reservierungsänderungen werden wie Neuanlagen gegen Wartungen, Sperren und
+  vergangene Zeiträume geprüft; Übersteuerungen nur durch die besitzende Gliederung.
+- Ausgabe mit protokollierter Übersteuerung bei nicht kritischen Sperren, Schutz vor
+  Doppelausgabe und Plausibilitätsprüfung des Kilometerstands.
+- TLE-Entscheidungen können abgeschlossene Reservierungen nicht mehr überschreiben.
+- Außerdienststellung storniert offene Reservierungen und ist bei ausgegebenem
+  Fahrzeug gesperrt.
+- Wartungsänderungen werden vor dem Speichern vollständig validiert; Abschluss mit
+  Ergebnis legt den Folgetermin automatisch an; Planung ohne Werkstattzeitraum möglich.
+- Beladungslisten: Entwürfe aktivierbar, Druck je Version, zusammengeführte
+  Doppelpositionen, robuste PDF-Ausgabe bei Sonderzeichen.
+- Inventar des Fahrzeugbesitzers ist für freigegebene Gliederungen nicht mehr über die
+  Beladungsauswahl einsehbar; Kalender folgt der ausdrücklichen Fahrzeugfreigabe.
+- Oberfläche: keine "null"-Anzeigen mehr, Stornieren nur wenn erlaubt, TLE-Ablehnung,
+  Rückgabe mit Schaden führt direkt zur Mängelmeldung.
+
 ## [1.7.8] - 2026-11-13
 
 -Update
