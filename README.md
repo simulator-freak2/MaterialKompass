@@ -298,9 +298,9 @@ weiteren Verlängerung wieder eine interaktive 2-FA-Anmeldung erforderlich.
 
 ## Jugendorganisationen
 
-Administratoren können unter **Organisationen & Einheiten** für eine aktive
-Stammgliederung genau eine Jugendorganisation anlegen oder eine geeignete bestehende
-Untereinheit entsprechend kennzeichnen. Eine Jugendorganisation ist fest mit ihrer
+Plattformadministratoren können in **MaterialKompass – Zentrale Verwaltung** unter
+**Organisationsverwaltung** für eine aktive Stammgliederung genau eine Jugendorganisation
+anlegen oder eine geeignete bestehende Untereinheit entsprechend kennzeichnen. Eine Jugendorganisation ist fest mit ihrer
 direkten Stammgliederung verbunden, darf keine Untereinheiten besitzen und kann nicht
 selbst Stammgliederung einer weiteren Jugendorganisation werden.
 
@@ -683,8 +683,8 @@ aktiven Administrator, bevor er den Datenbestand transaktional ersetzt. JSON-
 Sicherungen mit `schemaVersion: 2` bleiben importierbar. Schema 1 wird wegen der damals
 noch ungeschützten Identitätswerte abgelehnt.
 
-Unter **Organisationen & Einheiten** können berechtigte Administratoren fachliche
-Daten gezielt zurücksetzen:
+Unter **Einheitendaten** können berechtigte Organisationsadministratoren fachliche
+Daten in eine andere Einheit übertragen oder gezielt zurücksetzen:
 
 - **Alle Organisationsdaten löschen** entfernt die fachlichen Daten der aktiven
   Organisation einschließlich aller Unterorganisationen.
@@ -794,7 +794,8 @@ der Server-Aufbewahrung und müssen nach der ersten geprüften v2- oder v3-Siche
 manuell aus allen Ablagen entfernt werden; der Import akzeptiert nur Schema 2 und 3.
 Bestehende Organisationsdaten erhalten beim Start automatisch eindeutige EDV-Nummern;
 für die erste Organisation wird dabei `GLIEDERUNGSNUMMER` verwendet. Die fachlichen
-Werte können anschließend unter **Organisationen & Einheiten** angepasst werden. Da
+Werte können anschließend in der zentralen Verwaltung unter **Organisationsverwaltung**
+angepasst werden. Da
 Organisationen, Einheiten und ihre Nutzerfreigaben in den transaktionalen
 Fachsammlungen liegen, ist dafür keine zusätzliche SQL-Migration erforderlich.
 Auch die Jugend-/Stammverknüpfung wird rückwärtskompatibel in diesen Sammlungen

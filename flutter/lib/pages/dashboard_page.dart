@@ -1078,11 +1078,26 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () =>
                         _loadAndOpen(() => users_page.UsersPage(token: _token)),
                   ),
-                if (roles.contains('Admin') && can('organizations.write'))
+                // Organizations and their unit hierarchy are maintained only in
+                // the central administration. Ordinary organizations keep the
+                // data operations (transfer, reset) of their own levels.
+                if (activeOrganization['systemKind'] ==
+                        'platform_administration' &&
+                    can('organizations.write'))
                   _DashboardAction(
                     icon: Icons.account_tree_outlined,
-                    label: 'Organisationen',
-                    description: 'Organisationen und Einheiten verwalten',
+                    label: 'Organisationsverwaltung',
+                    description:
+                        'Organisationen, Einheiten und Jugendorganisationen verwalten',
+                    onTap: () => _loadAndOpen(
+                      () => organizations_page.OrganizationsPage(token: _token),
+                    ),
+                  )
+                else if (roles.contains('Admin') && can('organizations.write'))
+                  _DashboardAction(
+                    icon: Icons.account_tree_outlined,
+                    label: 'Einheitendaten',
+                    description: 'Daten der Ebenen übertragen oder löschen',
                     onTap: () => _loadAndOpen(
                       () => organizations_page.OrganizationsPage(token: _token),
                     ),

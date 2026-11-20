@@ -25,34 +25,38 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
   }
 
   Future<Map<String, dynamic>> _load() async {
-    final results = await Future.wait([
-      _api.request('/api/organizations'),
-      _api.request('/api/organization-units'),
-      _api.request('/api/auth/me'),
-    ]);
-    final me = Map<String, dynamic>.from(results[2] as Map);
+    final me = Map<String, dynamic>.from(
+      await _api.request('/api/auth/me') as Map,
+    );
     final activeOrganization = Map<String, dynamic>.from(
       (me['context'] as Map?)?['organization'] as Map? ?? const {},
     );
     final platformAdmin = (me['user'] as Map?)?['platformAdmin'] == true;
-    // Only MaterialKompass admins inside the central administration manage
-    // organizations. The server enforces this independently of the UI.
-    final managedOrganizations =
+    // Organizations and their complete unit hierarchy are maintained only by
+    // MaterialKompass admins inside the central administration. Ordinary
+    // organizations keep data operations only. The server enforces this
+    // independently of the UI.
+    final central =
         platformAdmin &&
-            activeOrganization['systemKind'] == 'platform_administration'
-        ? (await _api.request('/api/platform/organizations') as List)
-              .map((entry) => Map<String, dynamic>.from(entry as Map))
-              .toList()
-        : <Map<String, dynamic>>[];
+        activeOrganization['systemKind'] == 'platform_administration';
+    final results = await Future.wait([
+      _api.request(
+        central ? '/api/platform/organizations' : '/api/organizations',
+      ),
+      _api.request(
+        central
+            ? '/api/platform/organization-units'
+            : '/api/organization-units',
+      ),
+    ]);
+    List<Map<String, dynamic>> maps(Object? values) => (values as List)
+        .map((entry) => Map<String, dynamic>.from(entry as Map))
+        .toList();
     return {
-      'organizations': (results[0] as List)
-          .map((entry) => Map<String, dynamic>.from(entry as Map))
-          .toList(),
-      'units': (results[1] as List)
-          .map((entry) => Map<String, dynamic>.from(entry as Map))
-          .toList(),
+      'central': central,
+      'organizations': maps(results[0]),
+      'units': maps(results[1]),
       'me': me,
-      'managedOrganizations': managedOrganizations,
     };
   }
 
@@ -433,6 +437,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
   }
 
   Future<void> _createUnit(
+    String organizationId,
     List<Map<String, dynamic>> units, {
     String? initialParentId,
     bool youth = false,
@@ -550,9 +555,10 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       );
       if (confirmed != true) return;
       await _api.request(
-        '/api/organization-units',
+        '/api/platform/organization-units',
         method: 'POST',
         body: {
+          'organizationId': organizationId,
           'name': name.text,
           'type': type.text,
           'edvNumber': edvNumber.text,
@@ -679,7 +685,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     if (confirmed != true) return;
     try {
       await _api.request(
-        '/api/organization-units/${unit['id']}/inventory-visibility',
+        '/api/platform/organization-units/${unit['id']}/inventory-visibility',
         method: 'PUT',
         body: {'visibleToUnitIds': selected.toList()},
       );
@@ -689,60 +695,123 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     }
   }
 
-  Future<void> _editUnit(Map<String, dynamic> unit) async {
+  Future<void> _editUnit(
+    Map<String, dynamic> unit,
+    List<Map<String, dynamic>> units,
+  ) async {
     final name = TextEditingController(text: unit['name']?.toString());
     final type = TextEditingController(text: unit['type']?.toString());
     final edvNumber = TextEditingController(
       text: unit['edvNumber']?.toString(),
     );
+    final youth = unit['unitKind'] == 'youth';
+    final excluded = {
+      unit['id'].toString(),
+      ..._descendantIds(unit['id'].toString(), units),
+    };
+    final youthBases = units
+        .where(
+          (entry) =>
+              entry['unitKind'] == 'youth' &&
+              entry['status'] == 'active' &&
+              entry['id'] != unit['id'],
+        )
+        .map((entry) => entry['baseUnitId']?.toString())
+        .whereType<String>()
+        .toSet();
+    final possibleParents = units
+        .where(
+          (entry) =>
+              entry['status'] == 'active' &&
+              entry['unitKind'] != 'youth' &&
+              !excluded.contains(entry['id'].toString()) &&
+              (!youth || !youthBases.contains(entry['id'].toString())),
+        )
+        .toList();
+    String? parentId = unit['parentId']?.toString();
+    if (!possibleParents.any((entry) => entry['id'].toString() == parentId)) {
+      parentId = null;
+    }
     try {
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Organisationseinheit bearbeiten'),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: type,
-                  decoration: const InputDecoration(labelText: 'Typ'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: edvNumber,
-                  decoration: const InputDecoration(labelText: 'EDV-Nummer *'),
-                  textCapitalization: TextCapitalization.characters,
-                ),
-              ],
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text(
+              youth
+                  ? 'Jugendorganisation bearbeiten'
+                  : 'Organisationseinheit bearbeiten',
             ),
+            content: SizedBox(
+              width: 480,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                  ),
+                  if (!youth) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: type,
+                      decoration: const InputDecoration(labelText: 'Typ'),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: edvNumber,
+                    decoration: const InputDecoration(
+                      labelText: 'EDV-Nummer *',
+                    ),
+                    textCapitalization: TextCapitalization.characters,
+                  ),
+                  const SizedBox(height: 12),
+                  KeyboardDropdownButtonFormField<String>(
+                    initialValue: parentId,
+                    decoration: InputDecoration(
+                      labelText: youth
+                          ? 'Stammgliederung'
+                          : 'Übergeordnete Einheit',
+                    ),
+                    items: possibleParents
+                        .map(
+                          (entry) => DropdownMenuItem(
+                            value: entry['id'].toString(),
+                            child: Text(entry['name']?.toString() ?? ''),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) =>
+                        setDialogState(() => parentId = value),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: parentId == null
+                    ? null
+                    : () => Navigator.pop(dialogContext, true),
+                child: const Text('Speichern'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Abbrechen'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Speichern'),
-            ),
-          ],
         ),
       );
-      if (confirmed != true) return;
+      if (confirmed != true || parentId == null) return;
       await _api.request(
-        '/api/organization-units/${unit['id']}',
+        '/api/platform/organization-units/${unit['id']}',
         method: 'PUT',
         body: {
           'name': name.text,
           'type': type.text,
           'edvNumber': edvNumber.text,
+          'parentId': parentId,
         },
       );
       await _refresh();
@@ -753,6 +822,22 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       type.dispose();
       edvNumber.dispose();
     }
+  }
+
+  Set<String> _descendantIds(String unitId, List<Map<String, dynamic>> units) {
+    final result = <String>{};
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final entry in units) {
+        final parentId = entry['parentId']?.toString();
+        if ((parentId == unitId || result.contains(parentId)) &&
+            result.add(entry['id'].toString())) {
+          changed = true;
+        }
+      }
+    }
+    return result;
   }
 
   Future<void> _convertToYouth(Map<String, dynamic> unit) async {
@@ -783,7 +868,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     if (confirmed != true) return;
     try {
       await _api.request(
-        '/api/organization-units/${unit['id']}',
+        '/api/platform/organization-units/${unit['id']}',
         method: 'PUT',
         body: {
           'name': unit['name'],
@@ -799,7 +884,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     }
   }
 
-  Future<void> _transferAndArchive(
+  Future<void> _transferData(
     Map<String, dynamic> unit,
     List<Map<String, dynamic>> units,
   ) async {
@@ -817,15 +902,17 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Einheit übertragen und archivieren'),
+          title: Text('Daten von ${unit['name']} übertragen'),
           content: SizedBox(
             width: 520,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Alle Daten werden zuerst in die ausgewählte aktive Einheit '
-                  'übertragen. Die archivierte Einheit wird nach zwei Jahren gelöscht.',
+                  'Alle Daten dieser Einheit werden in die ausgewählte aktive '
+                  'Einheit übertragen. Danach kann die MaterialKompass-'
+                  'Administration die leere Einheit in der zentralen '
+                  'Verwaltung archivieren.',
                 ),
                 const SizedBox(height: 16),
                 if (targets.isNotEmpty)
@@ -857,7 +944,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
               onPressed: targetId == null
                   ? null
                   : () => Navigator.pop(dialogContext, true),
-              child: const Text('Übertragen und archivieren'),
+              child: const Text('Daten übertragen'),
             ),
           ],
         ),
@@ -865,13 +952,54 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     );
     if (confirmed != true || targetId == null) return;
     try {
-      await _api.request(
-        '/api/organization-units/${unit['id']}/transfer',
-        method: 'POST',
-        body: {'targetUnitId': targetId},
+      final result = Map<String, dynamic>.from(
+        await _api.request(
+              '/api/organization-units/${unit['id']}/transfer',
+              method: 'POST',
+              body: {'targetUnitId': targetId},
+            )
+            as Map,
       );
+      await _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result['transferred'] ?? 0} Datensätze wurden übertragen.',
+          ),
+        ),
+      );
+    } catch (error) {
+      _error(error);
+    }
+  }
+
+  Future<void> _archiveUnit(Map<String, dynamic> unit) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('${unit['name']} archivieren?'),
+        content: const Text(
+          'Die Einheit wird gesperrt und nach zwei Jahren endgültig gelöscht. '
+          'Untereinheiten müssen vorher archiviert und alle Daten durch die '
+          'Organisationsadministration in eine aktive Einheit übertragen sein.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Archivieren'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
       await _api.request(
-        '/api/organization-units/${unit['id']}/archive',
+        '/api/platform/organization-units/${unit['id']}/archive',
         method: 'POST',
         body: const {},
       );
@@ -923,301 +1051,367 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     return !hasChildren && !parentAlreadyLinked;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Organisationen & Einheiten')),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(
-              child: FilledButton.icon(
-                onPressed: _refresh,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Erneut laden'),
+  Widget _unitTile(
+    Map<String, dynamic> unit, {
+    required int depth,
+    Widget? trailing,
+  }) {
+    final visibleTo = (unit['inventoryVisibleToUnitIds'] as List?) ?? const [];
+    return Padding(
+      padding: EdgeInsets.only(left: depth * 24.0),
+      child: Card(
+        child: ListTile(
+          leading: Icon(
+            unit['unitKind'] == 'youth'
+                ? Icons.diversity_3_outlined
+                : unit['parentId'] == null
+                ? Icons.corporate_fare_outlined
+                : Icons.account_tree_outlined,
+          ),
+          title: Text(unit['name']?.toString() ?? ''),
+          subtitle: Text(
+            '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · '
+            '${unit['unitKind'] == 'youth' ? 'mit Stammgliederung verknüpft · ' : ''}'
+            '${visibleTo.isEmpty ? 'Inventar nicht freigegeben' : 'Inventar für ${visibleTo.length} Ebene(n) freigegeben'} · '
+            '${unit['status'] == 'archived' ? 'archiviert' : 'aktiv'}',
+          ),
+          trailing: trailing,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _centralContent(
+    List<Map<String, dynamic>> organizations,
+    List<Map<String, dynamic>> allUnits,
+  ) {
+    return [
+      Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          FilledButton.icon(
+            onPressed: _createOrganization,
+            icon: const Icon(Icons.add_business_outlined),
+            label: const Text('Organisation anlegen'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      const Text(
+        'Organisationen, Einheiten und Jugendorganisationen werden '
+        'ausschließlich hier gepflegt. Fachdaten bleiben in der jeweiligen '
+        'Organisation; Datenübertragung und Datenlöschung führt die '
+        'Organisationsadministration dort unter „Einheitendaten“ durch.',
+      ),
+      const SizedBox(height: 20),
+      if (organizations.isEmpty)
+        const Text('Es sind noch keine Organisationen angelegt.'),
+      for (final organization in organizations) ...[
+        _centralOrganization(
+          organization,
+          allUnits
+              .where(
+                (entry) =>
+                    entry['organizationId']?.toString() ==
+                    organization['id']?.toString(),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 16),
+      ],
+    ];
+  }
+
+  Widget _centralOrganization(
+    Map<String, dynamic> organization,
+    List<Map<String, dynamic>> units,
+  ) {
+    final organizationId = organization['id'].toString();
+    final active = organization['status'] == 'active';
+    final ordered = _orderedUnits(units);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Card(
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          child: ListTile(
+            leading: const Icon(Icons.corporate_fare_outlined),
+            title: Text(
+              organization['name']?.toString() ?? '',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            subtitle: Text(
+              '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}'
+              '${organization['status'] == 'archived' ? ' · gelöscht, endgültige Löschung nach ${organization['purgeAfter'] ?? '–'}' : ''}',
+            ),
+            trailing: active
+                ? PopupMenuButton<String>(
+                    tooltip: 'Aktionen für diese Organisation',
+                    onSelected: (action) {
+                      if (action == 'create-unit') {
+                        _createUnit(organizationId, units);
+                      }
+                      if (action == 'create-youth') {
+                        _createUnit(organizationId, units, youth: true);
+                      }
+                      if (action == 'edit') _editOrganization(organization);
+                      if (action == 'delete') {
+                        _deleteOrganization(organization);
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'create-unit',
+                        child: Text('Einheit anlegen'),
+                      ),
+                      PopupMenuItem(
+                        value: 'create-youth',
+                        child: Text('Jugendorganisation anlegen'),
+                      ),
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Organisation bearbeiten'),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Organisation löschen'),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        ),
+        for (final unit in ordered)
+          // The root unit is the organization itself and is edited above.
+          if (unit['parentId'] != null)
+            _unitTile(
+              unit,
+              depth: (unit['_depth'] as int?) ?? 0,
+              trailing:
+                  active &&
+                      unit['canManageStructure'] == true &&
+                      unit['status'] == 'active'
+                  ? PopupMenuButton<String>(
+                      tooltip: 'Aktionen für diese Einheit',
+                      onSelected: (action) {
+                        if (action == 'create-child') {
+                          _createUnit(
+                            organizationId,
+                            units,
+                            initialParentId: unit['id'].toString(),
+                          );
+                        }
+                        if (action == 'inventory-visibility') {
+                          _editInventoryVisibility(unit, units);
+                        }
+                        if (action == 'convert-youth') _convertToYouth(unit);
+                        if (action == 'edit') _editUnit(unit, units);
+                        if (action == 'archive') _archiveUnit(unit);
+                      },
+                      itemBuilder: (_) => [
+                        if (unit['unitKind'] != 'youth')
+                          const PopupMenuItem(
+                            value: 'create-child',
+                            child: Text('Unterebene anlegen'),
+                          ),
+                        const PopupMenuItem(
+                          value: 'inventory-visibility',
+                          child: Text('Inventar freigeben'),
+                        ),
+                        if (_canConvertToYouth(unit, units))
+                          const PopupMenuItem(
+                            value: 'convert-youth',
+                            child: Text('Als Jugendorganisation kennzeichnen'),
+                          ),
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Bearbeiten'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'archive',
+                          child: Text('Archivieren'),
+                        ),
+                      ],
+                    )
+                  : null,
+            )
+          else if (unit['canManageStructure'] == true &&
+              unit['status'] == 'active' &&
+              unit['inventoryVisibleToUnitIds'] != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => _editInventoryVisibility(unit, units),
+                icon: const Icon(Icons.visibility_outlined),
+                label: Text(
+                  'Inventar von ${unit['name'] ?? 'Organisation'} freigeben',
+                ),
               ),
-            );
-          }
-          final data = snapshot.data!;
-          final organizations = (data['organizations'] as List)
-              .cast<Map<String, dynamic>>();
-          final units = (data['units'] as List).cast<Map<String, dynamic>>();
-          final me = Map<String, dynamic>.from(data['me'] as Map);
-          final user = Map<String, dynamic>.from(
-            me['user'] as Map? ?? const {},
-          );
-          final permissions = (user['permissions'] as List? ?? const [])
-              .map((entry) => entry.toString())
-              .toSet();
-          final roles = (user['roles'] as List? ?? const [])
-              .map((entry) => entry.toString())
-              .toSet();
-          final platformAdmin = user['platformAdmin'] == true;
-          final activeContext = Map<String, dynamic>.from(
-            me['context'] as Map? ?? const {},
-          );
-          final activeOrganization = Map<String, dynamic>.from(
-            activeContext['organization'] as Map? ?? const {},
-          );
-          final centralAdministration =
-              activeOrganization['systemKind'] == 'platform_administration';
-          final canManageOrganizations = platformAdmin && centralAdministration;
-          final managedOrganizations =
-              (data['managedOrganizations'] as List? ?? const [])
-                  .cast<Map<String, dynamic>>();
-          final canCreateOrganizationStructure =
-              !centralAdministration &&
-              roles.contains('Admin') &&
-              permissions.contains('organizations.write');
-          final ordered = _orderedUnits(units);
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: [
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    if (canManageOrganizations)
-                      FilledButton.icon(
-                        onPressed: _createOrganization,
-                        icon: const Icon(Icons.add_business_outlined),
-                        label: const Text('Organisation anlegen'),
+            ),
+      ],
+    );
+  }
+
+  List<Widget> _localContent(
+    List<Map<String, dynamic>> organizations,
+    List<Map<String, dynamic>> units,
+    Map<String, dynamic> activeOrganization,
+  ) {
+    final ordered = _orderedUnits(units);
+    final root = units.where((entry) => entry['parentId'] == null).firstOrNull;
+    final canResetOrganization = root?['canResetData'] == true;
+    return [
+      const Text(
+        'Organisationen, Einheiten und Jugendorganisationen werden zentral '
+        'durch die MaterialKompass-Administration angelegt, bearbeitet und '
+        'archiviert. Hier überträgst oder löschst du die Daten deiner Ebenen.',
+      ),
+      const SizedBox(height: 20),
+      Text(
+        'Meine Organisationen',
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 8),
+      for (final organization in organizations)
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.corporate_fare_outlined),
+            title: Text(organization['name']?.toString() ?? ''),
+            subtitle: Text(
+              '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}',
+            ),
+            trailing:
+                canResetOrganization &&
+                    organization['id'] == activeOrganization['id']
+                ? PopupMenuButton<String>(
+                    enabled: !_dataResetRunning,
+                    tooltip: 'Aktionen für diese Organisation',
+                    onSelected: (action) {
+                      if (action == 'reset-data') {
+                        _resetData(
+                          endpoint:
+                              '/api/organizations/${organization['id']}/data-reset',
+                          title: 'Organisationsdaten zurücksetzen',
+                          targetName:
+                              organization['name']?.toString() ??
+                              'Organisation',
+                          edvNumber:
+                              organization['edvNumber']?.toString() ?? '',
+                          scopeDescription:
+                              'Alle fachlichen Daten dieser Organisation und aller Unterorganisationen werden gelöscht.',
+                        );
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'reset-data',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.delete_sweep_outlined),
+                          title: Text('Alle Organisationsdaten löschen'),
+                        ),
                       ),
-                    if (canCreateOrganizationStructure && units.isNotEmpty)
-                      FilledButton.icon(
-                        onPressed: () => _createUnit(units),
-                        icon: const Icon(Icons.account_tree_outlined),
-                        label: const Text('Einheit anlegen'),
+                    ],
+                  )
+                : null,
+          ),
+        ),
+      const SizedBox(height: 24),
+      Text('Hierarchie', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 8),
+      for (final unit in ordered)
+        _unitTile(
+          unit,
+          depth: (unit['_depth'] as int?) ?? 0,
+          trailing:
+              unit['parentId'] != null &&
+                  unit['status'] == 'active' &&
+                  (unit['canManageUnit'] == true ||
+                      unit['canResetData'] == true)
+              ? PopupMenuButton<String>(
+                  enabled: !_dataResetRunning,
+                  tooltip: 'Datenaktionen für diese Einheit',
+                  onSelected: (action) {
+                    if (action == 'transfer') _transferData(unit, units);
+                    if (action == 'reset-data') {
+                      _resetData(
+                        endpoint:
+                            '/api/organization-units/${unit['id']}/data-reset',
+                        title: 'Daten der Unterorganisation zurücksetzen',
+                        targetName:
+                            unit['name']?.toString() ?? 'Organisationseinheit',
+                        edvNumber: unit['edvNumber']?.toString() ?? '',
+                        scopeDescription:
+                            'Alle fachlichen Daten dieser Organisationseinheit und ihrer Untereinheiten werden gelöscht.',
+                      );
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    if (unit['canManageUnit'] == true)
+                      const PopupMenuItem(
+                        value: 'transfer',
+                        child: Text('Daten in andere Einheit übertragen'),
                       ),
-                    if (canCreateOrganizationStructure && units.isNotEmpty)
-                      FilledButton.icon(
-                        onPressed: () => _createUnit(units, youth: true),
-                        icon: const Icon(Icons.diversity_3_outlined),
-                        label: const Text('Jugendorganisation anlegen'),
+                    if (unit['canResetData'] == true)
+                      const PopupMenuItem(
+                        value: 'reset-data',
+                        child: Text('Alle Daten löschen'),
                       ),
                   ],
-                ),
-                if (canManageOrganizations) ...[
-                  const SizedBox(height: 20),
-                  Text(
-                    'Alle Organisationen',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  if (managedOrganizations.isEmpty)
-                    const Text('Es sind noch keine Organisationen angelegt.'),
-                  for (final organization in managedOrganizations)
-                    Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.corporate_fare_outlined),
-                        title: Text(organization['name']?.toString() ?? ''),
-                        subtitle: Text(
-                          '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}'
-                          '${organization['status'] == 'archived' ? ' · gelöscht, endgültige Löschung nach ${organization['purgeAfter'] ?? '–'}' : ''}',
-                        ),
-                        trailing: organization['status'] == 'active'
-                            ? PopupMenuButton<String>(
-                                tooltip: 'Aktionen für diese Organisation',
-                                onSelected: (action) {
-                                  if (action == 'edit') {
-                                    _editOrganization(organization);
-                                  }
-                                  if (action == 'delete') {
-                                    _deleteOrganization(organization);
-                                  }
-                                },
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Bearbeiten'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text('Löschen'),
-                                  ),
-                                ],
-                              )
-                            : null,
-                      ),
-                    ),
-                ],
-                const SizedBox(height: 20),
-                Text(
-                  'Meine Organisationen',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                for (final organization in organizations)
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.corporate_fare_outlined),
-                      title: Text(organization['name']?.toString() ?? ''),
-                      subtitle: Text(
-                        '${organization['shortName'] ?? ''} · EDV ${organization['edvNumber'] ?? '–'}',
-                      ),
-                      trailing:
-                          canCreateOrganizationStructure &&
-                              organization['id'] == activeOrganization['id']
-                          ? PopupMenuButton<String>(
-                              enabled: !_dataResetRunning,
-                              tooltip: 'Aktionen für diese Organisation',
-                              onSelected: (action) {
-                                if (action == 'reset-data') {
-                                  _resetData(
-                                    endpoint:
-                                        '/api/organizations/${organization['id']}/data-reset',
-                                    title: 'Organisationsdaten zurücksetzen',
-                                    targetName:
-                                        organization['name']?.toString() ??
-                                        'Organisation',
-                                    edvNumber:
-                                        organization['edvNumber']?.toString() ??
-                                        '',
-                                    scopeDescription:
-                                        'Alle fachlichen Daten dieser Organisation und aller Unterorganisationen werden gelöscht.',
-                                  );
-                                }
-                              },
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(
-                                  value: 'reset-data',
-                                  child: ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    leading: Icon(Icons.delete_sweep_outlined),
-                                    title: Text(
-                                      'Alle Organisationsdaten löschen',
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : null,
-                    ),
-                  ),
-                const SizedBox(height: 24),
-                Text(
-                  'Hierarchie',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                for (final unit in ordered)
-                  Padding(
-                    padding: EdgeInsets.only(
-                      left: ((unit['_depth'] as int?) ?? 0) * 24.0,
-                    ),
-                    child: Card(
-                      child: ListTile(
-                        leading: Icon(
-                          unit['unitKind'] == 'youth'
-                              ? Icons.diversity_3_outlined
-                              : unit['parentId'] == null
-                              ? Icons.corporate_fare_outlined
-                              : Icons.account_tree_outlined,
-                        ),
-                        title: Text(unit['name']?.toString() ?? ''),
-                        subtitle: Text(
-                          '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · '
-                          '${unit['unitKind'] == 'youth' ? 'mit Stammgliederung verknüpft · ' : ''}'
-                          '${((unit['inventoryVisibleToUnitIds'] as List?) ?? const []).isEmpty ? 'Inventar nicht freigegeben' : 'Inventar für ${(unit['inventoryVisibleToUnitIds'] as List).length} Ebene(n) freigegeben'} · '
-                          '${unit['status'] ?? 'active'}',
-                        ),
-                        trailing:
-                            ((unit['canManageUnit'] == true &&
-                                        unit['parentId'] != null) ||
-                                    unit['canManageStructure'] == true) &&
-                                unit['status'] == 'active'
-                            ? PopupMenuButton<String>(
-                                tooltip: 'Aktionen für diese Einheit',
-                                onSelected: (action) {
-                                  if (action == 'create-child') {
-                                    _createUnit(
-                                      units,
-                                      initialParentId: unit['id'].toString(),
-                                    );
-                                  }
-                                  if (action == 'convert-youth') {
-                                    _convertToYouth(unit);
-                                  }
-                                  if (action == 'inventory-visibility') {
-                                    _editInventoryVisibility(unit, units);
-                                  }
-                                  if (action == 'edit') _editUnit(unit);
-                                  if (action == 'archive') {
-                                    _transferAndArchive(unit, units);
-                                  }
-                                  if (action == 'reset-data') {
-                                    _resetData(
-                                      endpoint:
-                                          '/api/organization-units/${unit['id']}/data-reset',
-                                      title:
-                                          'Daten der Unterorganisation zurücksetzen',
-                                      targetName:
-                                          unit['name']?.toString() ??
-                                          'Organisationseinheit',
-                                      edvNumber:
-                                          unit['edvNumber']?.toString() ?? '',
-                                      scopeDescription:
-                                          'Alle fachlichen Daten dieser Organisationseinheit und ihrer Untereinheiten werden gelöscht.',
-                                    );
-                                  }
-                                },
-                                itemBuilder: (_) => [
-                                  if (unit['canManageStructure'] == true &&
-                                      unit['unitKind'] != 'youth')
-                                    const PopupMenuItem(
-                                      value: 'create-child',
-                                      child: Text('Unterebene anlegen'),
-                                    ),
-                                  if (unit['canManageStructure'] == true)
-                                    const PopupMenuItem(
-                                      value: 'inventory-visibility',
-                                      child: Text('Inventar freigeben'),
-                                    ),
-                                  if (unit['canManageStructure'] == true &&
-                                      _canConvertToYouth(unit, units))
-                                    const PopupMenuItem(
-                                      value: 'convert-youth',
-                                      child: Text(
-                                        'Als Jugendorganisation kennzeichnen',
-                                      ),
-                                    ),
-                                  // The root unit is the organization itself;
-                                  // only the central administration edits it.
-                                  if (unit['canManageUnit'] == true &&
-                                      unit['parentId'] != null)
-                                    const PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text('Bearbeiten'),
-                                    ),
-                                  if (unit['canManageUnit'] == true &&
-                                      unit['parentId'] != null)
-                                    const PopupMenuItem(
-                                      value: 'archive',
-                                      child: Text('Übertragen und archivieren'),
-                                    ),
-                                  if (unit['canManageStructure'] == true &&
-                                      unit['parentId'] != null)
-                                    const PopupMenuItem(
-                                      value: 'reset-data',
-                                      child: Text('Alle Daten löschen'),
-                                    ),
-                                ],
-                              )
-                            : null,
-                      ),
-                    ),
-                  ),
-              ],
+                )
+              : null,
+        ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final central = snapshot.data?['central'] == true;
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(
+              snapshot.hasData
+                  ? (central ? 'Organisationsverwaltung' : 'Einheitendaten')
+                  : 'Organisationen & Einheiten',
             ),
-          );
-        },
-      ),
+          ),
+          body: () {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(
+                child: FilledButton.icon(
+                  onPressed: _refresh,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Erneut laden'),
+                ),
+              );
+            }
+            final data = snapshot.data!;
+            final organizations = (data['organizations'] as List)
+                .cast<Map<String, dynamic>>();
+            final units = (data['units'] as List).cast<Map<String, dynamic>>();
+            final me = Map<String, dynamic>.from(data['me'] as Map);
+            final activeOrganization = Map<String, dynamic>.from(
+              (me['context'] as Map?)?['organization'] as Map? ?? const {},
+            );
+            return RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                padding: const EdgeInsets.all(24),
+                children: central
+                    ? _centralContent(organizations, units)
+                    : _localContent(organizations, units, activeOrganization),
+              ),
+            );
+          }(),
+        );
+      },
     );
   }
 }

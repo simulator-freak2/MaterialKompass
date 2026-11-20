@@ -147,7 +147,8 @@ void main() {
     );
     expect(find.text('Schnellzugriff'), findsOneWidget);
     expect(find.text('Berechtigungen dieser Ebene'), findsOneWidget);
-    expect(find.text('Organisationen'), findsOneWidget);
+    expect(find.text('Einheitendaten'), findsOneWidget);
+    expect(find.text('Organisationsverwaltung'), findsNothing);
     expect(find.text('Mängel'), findsOneWidget);
     expect(find.text('Kalender'), findsOneWidget);
     expect(find.byIcon(Icons.checkroom), findsWidgets);
@@ -278,7 +279,8 @@ void main() {
     expect(find.text('Beschaffung'), findsNothing);
     expect(find.text('Kalender'), findsNothing);
     expect(find.text('Nutzerverwaltung'), findsNothing);
-    expect(find.text('Organisationen'), findsNothing);
+    expect(find.text('Einheitendaten'), findsNothing);
+    expect(find.text('Organisationsverwaltung'), findsNothing);
     expect(find.text('Kleidung'), findsNothing);
     expect(find.text('Freigaben offen'), findsNothing);
     expect(find.text('Material defekt'), findsOneWidget);

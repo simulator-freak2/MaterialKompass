@@ -1801,9 +1801,9 @@ const _articles = [
     readingMinutes: 5,
     audience: 'Für Administration, Jugend und Stammgliederung',
     prerequisite:
-        'Zum Anlegen brauchst du Organisationsverwaltungsrechte. Eine Stammgliederung darf noch keine Jugendorganisation besitzen.',
+        'Jugendorganisationen legt ausschließlich die MaterialKompass-Administration in der zentralen Verwaltung an. Eine Stammgliederung darf noch keine Jugendorganisation besitzen.',
     steps: [
-      'Öffne „Organisationen & Einheiten“ und wähle „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung.',
+      'Wechsle nach „MaterialKompass – Zentrale Verwaltung“, öffne „Organisationsverwaltung“ und wähle an der Organisation „Jugendorganisation anlegen“. Erfasse Name und EDV-Nummer und wähle genau eine Stammgliederung. Die Admins der Stammgliederung erhalten automatisch Adminrechte in der neuen Jugendorganisation.',
       'Ordne normale Jugendmitglieder mit der Rolle „Jugendmitglied“ zu. Vergib an die vorsitzende Person in der Jugendorganisation die Rolle „Vorsitz“.',
       'Die Rolle „Jugendvorsitzender“ wird in der Jugendorganisation nicht vergeben: Der dortige Vorsitz erhält sie beim Wechsel in die Stammgliederung automatisch.',
       'Jugend- und Stammgliederung können gegenseitig Lagerorte durchsuchen, Inventar und Fahrzeuge reservieren sowie Mängel melden. Fremde Stammdaten bleiben schreibgeschützt.',
@@ -2320,7 +2320,7 @@ const _articles = [
         'Du brauchst Organisationsverwaltungsrechte, dein aktuelles Passwort, gegebenenfalls einen 2-FA-Code und eine geprüfte Sicherung.',
     steps: [
       'Erstelle zuerst unter „Nutzerverwaltung → Datensicherung“ eine aktuelle Sicherung und prüfe, dass die Datei lesbar und vollständig ist.',
-      'Öffne „Organisationen & Einheiten“. Am Eintrag der aktiven Organisation löscht „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
+      'Öffne in deiner Organisation „Einheitendaten“. Am Eintrag der aktiven Organisation löscht „Alle Organisationsdaten löschen“ die fachlichen Daten aller zugehörigen Ebenen.',
       'Am Menü einer Unterorganisation löscht „Alle Daten löschen“ nur deren fachliche Daten und die Daten ihrer Untereinheiten. Geschwister- und übergeordnete Einheiten bleiben erhalten.',
       'Prüfe Zielname, EDV-Nummer und den im Dialog beschriebenen Umfang. Gib Passwort, gegebenenfalls 2-FA und exakt „DATEN <EDV-NUMMER> LÖSCHEN“ ein.',
       'Kontrolliere die gemeldete Datensatzanzahl. Organisationsstruktur, Konten, Rollen, Passkeys und Nutzerfreigaben bleiben erhalten.',

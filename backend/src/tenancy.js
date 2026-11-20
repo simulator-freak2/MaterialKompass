@@ -596,6 +596,9 @@ function canManageOrganizations(req) {
 
 const ORGANIZATION_MANAGEMENT_FORBIDDEN = 'Organisationen werden ausschließlich durch die '
   + 'MaterialKompass-Administration in der zentralen Verwaltung angelegt, bearbeitet und gelöscht.';
+const ORGANIZATION_STRUCTURE_FORBIDDEN = 'Organisationseinheiten und Jugendorganisationen werden '
+  + 'ausschließlich durch die MaterialKompass-Administration in der zentralen Verwaltung angelegt, '
+  + 'bearbeitet, freigegeben und archiviert.';
 
 function registerTenancyRoutes({
   app, organizations, units, memberships, users, roles, authMiddleware,
@@ -883,24 +886,31 @@ function registerTenancyRoutes({
       ...entry,
       inventoryVisibleToUnitIds: manageable.has(entry.id)
         ? [...(entry.inventoryVisibleToUnitIds || [])] : undefined,
-      canManageStructure: entry.organizationId !== PLATFORM_ORGANIZATION_ID && manageable.has(entry.id),
+      // Structure is maintained centrally; locally only data operations remain.
+      canManageStructure: false,
+      canResetData: entry.organizationId !== PLATFORM_ORGANIZATION_ID && manageable.has(entry.id),
       canManageUnit: entry.organizationId !== PLATFORM_ORGANIZATION_ID && userManageable.has(entry.id),
     })));
   });
 
-  app.post('/api/organization-units', authMiddleware, async (req, res) => {
-    if (!canCreateOrganizationStructure(req)) {
-      return res.status(403).json({
-        error: 'Nur Organisationsadministratoren mit der Berechtigung organizations.write dürfen Unterorganisationen anlegen.',
-      });
-    }
+  // The unit hierarchy of every organization is part of the organization
+  // management and therefore maintained exclusively in the protected central
+  // administration. Organization admins keep only data operations (transfer,
+  // reset) inside their own organization; the center never gains data rights.
+  const platformUnit = (id) => units.find((entry) => entry.id === id
+    && entry.organizationId !== PLATFORM_ORGANIZATION_ID
+    && entry.status === 'active' && managedOrganization(entry.organizationId));
+  const forbidLocalStructure = (_req, res) =>
+    res.status(403).json({ error: ORGANIZATION_STRUCTURE_FORBIDDEN });
+
+  async function createUnit(req, res, organizationId) {
     const name = text(req.body.name);
     const requestedKind = req.body.unitKind === UNIT_KIND_YOUTH
       ? UNIT_KIND_YOUTH : UNIT_KIND_STANDARD;
     const type = requestedKind === UNIT_KIND_YOUTH
       ? 'Jugendorganisation' : text(req.body.type, 80);
     const unitEdvNumber = edvNumber(req.body.edvNumber);
-    const parentId = text(req.body.parentId, 64) || req.tenant.unitId;
+    const parentId = text(req.body.parentId, 64) || rootUnitOf(organizationId)?.id || null;
     if (!name || !type || !unitEdvNumber) {
       return res.status(400).json({ error: 'Name, Einheitstyp und EDV-Nummer sind erforderlich.' });
     }
@@ -910,24 +920,21 @@ function registerTenancyRoutes({
     if (edvNumberInUse(unitEdvNumber)) {
       return res.status(409).json({ error: 'Die EDV-Nummer wird bereits verwendet.' });
     }
-    if (!validateUnitTree(units, req.tenant.organizationId, parentId)) {
+    const parent = units.find((entry) => entry.id === parentId
+      && entry.organizationId === organizationId && entry.status === 'active');
+    if (!parent || !validateUnitTree(units, organizationId, parentId)) {
       return res.status(400).json({ error: 'Die übergeordnete Einheit ist ungültig.' });
     }
-    const parent = units.find((entry) => entry.id === parentId
-      && entry.organizationId === req.tenant.organizationId && entry.status === 'active');
-    if (parent?.unitKind === UNIT_KIND_YOUTH) {
+    if (parent.unitKind === UNIT_KIND_YOUTH) {
       return res.status(409).json({ error: 'Jugendorganisationen dürfen keine Untereinheiten besitzen.' });
     }
     if (requestedKind === UNIT_KIND_YOUTH && units.some((entry) =>
-      entry.organizationId === req.tenant.organizationId && entry.status === 'active'
+      entry.organizationId === organizationId && entry.status === 'active'
       && entry.unitKind === UNIT_KIND_YOUTH && entry.baseUnitId === parentId)) {
       return res.status(409).json({ error: 'Diese Stammgliederung besitzt bereits eine Jugendorganisation.' });
     }
-    if (!unitIdsForPermission(req, 'organizations.write').has(parentId)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
     const unit = {
-      id: randomUUID(), organizationId: req.tenant.organizationId, parentId,
+      id: randomUUID(), organizationId, parentId,
       name, type, edvNumber: unitEdvNumber, status: 'active', createdAt: nowIso(),
       archivedAt: null, purgeAfter: null, dataIsolation: 'strict',
       unitKind: requestedKind,
@@ -936,35 +943,24 @@ function registerTenancyRoutes({
       calendarRetentionMonths: null,
     };
     units.push(unit);
-    const creatorMembership = membershipFor(req.user.id, req.tenant.organizationId);
-    if (creatorMembership && !(creatorMembership.scopes || []).some((scope) =>
-      scope.unitId === unit.id)) {
-      creatorMembership.scopes.push({
-        unitId: unit.id,
-        includeDescendants: false,
-        roles: ['Admin'],
-        departmentIds: [],
-      });
-      await persistMembership(creatorMembership);
-    }
     await persistUnit(unit);
-    logEvent('create', 'OrganizationUnit', { id: unit.id, parentId }, req.user.username);
+    // Scopes are explicit per unit. The admins of the parent unit (who could
+    // create sub-units before the structure moved into the central
+    // administration) receive an explicit Admin scope, so the new unit can be
+    // staffed locally. The central administration itself gains no membership.
+    for (const membership of memberships) {
+      if (membership.organizationId !== organizationId || membership.status !== 'active') continue;
+      const administersParent = (membership.scopes || []).some((scope) =>
+        scope.unitId === parentId && (scope.roles || []).includes('Admin'));
+      if (!administersParent) continue;
+      membership.scopes.push({ unitId: unit.id, includeDescendants: false, roles: ['Admin'], departmentIds: [] });
+      await persistMembership(membership);
+    }
+    logEvent('create', 'OrganizationUnit', { id: unit.id, organizationId, parentId }, req.user.username);
     return res.status(201).json(unit);
-  });
+  }
 
-  app.put('/api/organization-units/:id/inventory-visibility', authMiddleware, async (req, res) => {
-    if (!canCreateOrganizationStructure(req)) {
-      return res.status(403).json({
-        error: 'Nur Administratoren dürfen Inventarfreigaben verwalten.',
-      });
-    }
-    const manageable = unitIdsForPermission(req, 'organizations.write');
-    const unit = units.find((entry) => entry.id === req.params.id
-      && entry.organizationId === req.tenant.organizationId
-      && entry.status === 'active' && manageable.has(entry.id));
-    if (!unit) {
-      return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
-    }
+  async function updateInventoryVisibility(req, res, unit) {
     if (!Array.isArray(req.body.visibleToUnitIds) || req.body.visibleToUnitIds.length > 500) {
       return res.status(400).json({ error: 'visibleToUnitIds muss eine Liste mit höchstens 500 Einträgen sein.' });
     }
@@ -983,39 +979,24 @@ function registerTenancyRoutes({
     unit.inventoryVisibleToUnitIds = visibleToUnitIds;
     await persistUnit(unit);
     logEvent('update', 'InventoryVisibility', {
-      unitId: unit.id, visibleToUnitIds,
+      organizationId: unit.organizationId, unitId: unit.id, visibleToUnitIds,
     }, req.user.username);
     return res.json({
       unitId: unit.id,
       visibleToUnitIds: [...unit.inventoryVisibleToUnitIds],
     });
-  });
+  }
 
-  app.put('/api/organization-units/:id', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const manageableUnitIds = unitIdsForPermission(req, 'users.write');
-    const unit = units.find((entry) => entry.id === req.params.id
-      && entry.organizationId === req.tenant.organizationId
-      && manageableUnitIds.has(entry.id));
-    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+  async function updateUnit(req, res, unit) {
+    // The root unit is the organization itself and is edited together with it.
     if (unit.parentId === null) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
     const parentId = req.body.parentId === undefined ? unit.parentId : text(req.body.parentId, 64) || null;
+    if (parentId === null) {
+      return res.status(400).json({ error: 'Eine Untereinheit benötigt eine übergeordnete Einheit.' });
+    }
     const requestedKind = req.body.unitKind === undefined
       ? unit.unitKind || UNIT_KIND_STANDARD
       : req.body.unitKind === UNIT_KIND_YOUTH ? UNIT_KIND_YOUTH : UNIT_KIND_STANDARD;
-    if (unit.parentId === null && parentId !== null) {
-      return res.status(409).json({ error: 'Die Wurzeleinheit kann nicht verschoben werden.' });
-    }
-    // Moving a unit or turning it into a youth organization attaches it to
-    // another unit and grants access to that unit's data. This needs the same
-    // authority over the new parent as creating a sub-unit there.
-    const structureChanged = parentId !== unit.parentId
-      || requestedKind !== (unit.unitKind || UNIT_KIND_STANDARD);
-    if (structureChanged && (!canCreateOrganizationStructure(req)
-      || !unitIdsForPermission(req, 'organizations.write').has(parentId))) {
-      return res.status(403).json({
-        error: 'Nur Organisationsadministratoren mit organizations.write für die übergeordnete Einheit dürfen die Struktur ändern.',
-      });
-    }
     if (!validateUnitTree(units, unit.organizationId, parentId, unit.id)) {
       return res.status(400).json({ error: 'Die Hierarchie würde ungültig oder zyklisch.' });
     }
@@ -1023,8 +1004,12 @@ function registerTenancyRoutes({
       && entry.parentId === unit.id && entry.status === 'active');
     const parent = units.find((entry) => entry.id === parentId
       && entry.organizationId === unit.organizationId && entry.status === 'active');
+    if (!parent) return res.status(400).json({ error: 'Die übergeordnete Einheit ist ungültig.' });
+    if (requestedKind === UNIT_KIND_STANDARD && parent.unitKind === UNIT_KIND_YOUTH) {
+      return res.status(409).json({ error: 'Jugendorganisationen dürfen keine Untereinheiten besitzen.' });
+    }
     if (requestedKind === UNIT_KIND_YOUTH) {
-      if (!parent || parent.unitKind === UNIT_KIND_YOUTH || children.length > 0) {
+      if (parent.unitKind === UNIT_KIND_YOUTH || children.length > 0) {
         return res.status(409).json({ error: 'Eine Jugendorganisation benötigt eine Stammgliederung und darf keine Untereinheiten besitzen.' });
       }
       if (units.some((entry) => entry.id !== unit.id
@@ -1042,16 +1027,18 @@ function registerTenancyRoutes({
     if (!EDV_NUMBER_PATTERN.test(nextEdvNumber)) {
       return res.status(400).json({ error: 'Die EDV-Nummer ist ungültig.' });
     }
-    if (edvNumberInUse(nextEdvNumber, {
-      ignoreOrganizationId: unit.parentId === null ? unit.organizationId : null,
-      ignoreUnitId: unit.id,
-    })) {
+    if (edvNumberInUse(nextEdvNumber, { ignoreUnitId: unit.id })) {
       return res.status(409).json({ error: 'Die EDV-Nummer wird bereits verwendet.' });
     }
+    const nextName = text(req.body.name ?? unit.name);
+    const nextType = requestedKind === UNIT_KIND_YOUTH
+      ? 'Jugendorganisation' : text(req.body.type ?? unit.type, 80);
+    if (!nextName || !nextType) {
+      return res.status(400).json({ error: 'Name und Einheitstyp sind erforderlich.' });
+    }
     Object.assign(unit, {
-      name: text(req.body.name ?? unit.name),
-      type: requestedKind === UNIT_KIND_YOUTH
-        ? 'Jugendorganisation' : text(req.body.type ?? unit.type, 80),
+      name: nextName,
+      type: nextType,
       edvNumber: nextEdvNumber,
       parentId,
       unitKind: requestedKind,
@@ -1064,26 +1051,15 @@ function registerTenancyRoutes({
         if (!scope?.roles?.includes('Jugendvorsitzender')) continue;
         scope.roles = [...new Set(scope.roles.map((role) =>
           role === 'Jugendvorsitzender' ? 'Vorsitz' : role))];
-      }
-    }
-    if (unit.parentId === null) {
-      const organization = organizations.find((entry) => entry.id === unit.organizationId);
-      if (organization) {
-        organization.edvNumber = nextEdvNumber;
-        await persistOrganization(organization);
+        await persistMembership(membership);
       }
     }
     await persistUnit(unit);
-    logEvent('update', 'OrganizationUnit', { id: unit.id }, req.user.username);
+    logEvent('update', 'OrganizationUnit', { id: unit.id, organizationId: unit.organizationId }, req.user.username);
     return res.json(unit);
-  });
+  }
 
-  app.post('/api/organization-units/:id/archive', authMiddleware, requirePermission('users.write'), async (req, res) => {
-    const manageableUnitIds = unitIdsForPermission(req, 'users.write');
-    const unit = units.find((entry) => entry.id === req.params.id
-      && entry.organizationId === req.tenant.organizationId
-      && manageableUnitIds.has(entry.id));
-    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+  async function archiveUnit(req, res, unit) {
     if (unit.parentId === null) return res.status(409).json({ error: 'Die Wurzeleinheit kann nicht archiviert werden.' });
     const descendants = descendantsOf(units, unit.organizationId, unit.id);
     const activeChildren = units.some((entry) =>
@@ -1096,14 +1072,64 @@ function registerTenancyRoutes({
         && descendants.has(entry.unitId));
     });
     if (hasOwnedData) {
-      return res.status(409).json({ error: 'Alle Daten müssen vor der Archivierung in eine aktive Einheit übertragen werden.' });
+      return res.status(409).json({ error: 'Alle Daten müssen vor der Archivierung durch die Organisationsadministration in eine aktive Einheit übertragen werden.' });
     }
     unit.status = 'archived';
     unit.archivedAt = nowIso();
     unit.purgeAfter = new Date(Date.now() + ORGANIZATION_RETENTION_DAYS * 86_400_000).toISOString();
     await persistUnit(unit);
-    logEvent('archive', 'OrganizationUnit', { id: unit.id, purgeAfter: unit.purgeAfter }, req.user.username);
+    logEvent('archive', 'OrganizationUnit', {
+      id: unit.id, organizationId: unit.organizationId, purgeAfter: unit.purgeAfter,
+    }, req.user.username);
     return res.json(unit);
+  }
+
+  app.post('/api/organization-units', authMiddleware, forbidLocalStructure);
+  app.put('/api/organization-units/:id/inventory-visibility', authMiddleware, forbidLocalStructure);
+  app.put('/api/organization-units/:id', authMiddleware, forbidLocalStructure);
+  app.post('/api/organization-units/:id/archive', authMiddleware, forbidLocalStructure);
+
+  app.get('/api/platform/organization-units', authMiddleware, (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const visibleOrganizations = new Set(organizations
+      .filter((entry) => entry.id !== PLATFORM_ORGANIZATION_ID && entry.status !== 'purged')
+      .map((entry) => entry.id));
+    return res.json(units
+      .filter((entry) => visibleOrganizations.has(entry.organizationId) && entry.status !== 'purged')
+      .map((entry) => ({
+        ...entry,
+        inventoryVisibleToUnitIds: [...(entry.inventoryVisibleToUnitIds || [])],
+        canManageStructure: entry.status === 'active'
+          && Boolean(managedOrganization(entry.organizationId)),
+      })));
+  });
+
+  app.post('/api/platform/organization-units', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const organization = managedOrganization(text(req.body.organizationId, 64));
+    if (!organization) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+    return createUnit(req, res, organization.id);
+  });
+
+  app.put('/api/platform/organization-units/:id/inventory-visibility', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const unit = platformUnit(req.params.id);
+    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    return updateInventoryVisibility(req, res, unit);
+  });
+
+  app.put('/api/platform/organization-units/:id', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const unit = platformUnit(req.params.id);
+    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    return updateUnit(req, res, unit);
+  });
+
+  app.post('/api/platform/organization-units/:id/archive', authMiddleware, async (req, res) => {
+    if (!canManageOrganizations(req)) return res.status(403).json({ error: ORGANIZATION_MANAGEMENT_FORBIDDEN });
+    const unit = platformUnit(req.params.id);
+    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    return archiveUnit(req, res, unit);
   });
 
   app.post('/api/organization-units/:id/data-reset', authMiddleware, async (req, res) => {

@@ -6,6 +6,11 @@
 
 ## Unveroeffentlicht
 
+- Organisationsverwaltung in die zentrale Verwaltung verlegt: Plattformadministratoren
+  pflegen dort unter „Organisationsverwaltung“ Organisationen sowie die komplette
+  Einheiten- und Jugendstruktur aller Organisationen (anlegen, bearbeiten, verschieben,
+  Inventarfreigaben, archivieren). In normalen Organisationen bleibt unter
+  „Einheitendaten“ nur das Übertragen und Löschen von Fachdaten.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

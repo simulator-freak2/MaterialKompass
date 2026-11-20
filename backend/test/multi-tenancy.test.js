@@ -183,6 +183,14 @@ async function login(baseUrl, identifier, password) {
   return result.data.token;
 }
 
+async function centralToken(baseUrl, token) {
+  const central = await request(baseUrl, '/api/auth/context', {
+    token, method: 'POST', body: { organizationId: PLATFORM_ORGANIZATION_ID },
+  });
+  assert.equal(central.response.status, 200);
+  return central.data.token;
+}
+
 test('organization context prevents cross-tenant reads and guessed foreign IDs', async () => {
   const { server, baseUrl } = await start();
   try {
@@ -317,7 +325,7 @@ test('only admins with organization permission create organizations and suborgan
     assert.equal(organization.response.status, 201);
     assert.equal(organization.data.edvNumber, '10000003');
 
-    const unit = await request(authorized.baseUrl, '/api/organization-units', {
+    const local = await request(authorized.baseUrl, '/api/organization-units', {
       token,
       method: 'POST',
       body: {
@@ -325,11 +333,34 @@ test('only admins with organization permission create organizations and suborgan
         parentId: 'unit-a', edvNumber: '10000103',
       },
     });
+    assert.equal(local.response.status, 403);
+    assert.match(local.data.error, /zentralen Verwaltung/);
+
+    const foreignParent = await request(authorized.baseUrl, '/api/platform/organization-units', {
+      token: central.data.token,
+      method: 'POST',
+      body: {
+        organizationId: 'org-b', name: 'Falsche Ebene', type: 'Ortsgruppe',
+        parentId: 'unit-a', edvNumber: '10000199',
+      },
+    });
+    assert.equal(foreignParent.response.status, 400);
+
+    const unit = await request(authorized.baseUrl, '/api/platform/organization-units', {
+      token: central.data.token,
+      method: 'POST',
+      body: {
+        organizationId: 'org-a', name: 'A-Unterorganisation', type: 'Ortsgruppe',
+        parentId: 'unit-a', edvNumber: '10000103',
+      },
+    });
     assert.equal(unit.response.status, 201);
+    assert.equal(unit.data.organizationId, 'org-a');
     assert.equal(unit.data.parentId, 'unit-a');
     assert.equal(unit.data.edvNumber, '10000103');
     assert.equal(unit.data.dataIsolation, 'strict');
 
+    // The organization admin of the parent can enter the centrally created unit.
     const creatorCanEnter = await request(authorized.baseUrl, '/api/auth/context', {
       token,
       method: 'POST',
@@ -337,11 +368,11 @@ test('only admins with organization permission create organizations and suborgan
     });
     assert.equal(creatorCanEnter.response.status, 200);
 
-    const nestedUnit = await request(authorized.baseUrl, '/api/organization-units', {
-      token: creatorCanEnter.data.token,
+    const nestedUnit = await request(authorized.baseUrl, '/api/platform/organization-units', {
+      token: central.data.token,
       method: 'POST',
       body: {
-        name: 'A-Unterebene', type: 'Gruppe',
+        organizationId: 'org-a', name: 'A-Unterebene', type: 'Gruppe',
         parentId: unit.data.id, edvNumber: '10000104',
       },
     });
@@ -358,11 +389,11 @@ test('only admins with organization permission create organizations and suborgan
     });
     assert.equal(otherUnitIsBlocked.response.status, 403);
 
-    const duplicateEdvNumber = await request(authorized.baseUrl, '/api/organization-units', {
-      token,
+    const duplicateEdvNumber = await request(authorized.baseUrl, '/api/platform/organization-units', {
+      token: central.data.token,
       method: 'POST',
       body: {
-        name: 'Doppelte EDV', type: 'Ortsgruppe',
+        organizationId: 'org-a', name: 'Doppelte EDV', type: 'Ortsgruppe',
         parentId: 'unit-a', edvNumber: '10000103',
       },
     });
@@ -444,7 +475,21 @@ test('only MaterialKompass admins in the central administration edit and delete 
     const childEdit = await request(baseUrl, '/api/organization-units/unit-a-child', {
       token: localToken, method: 'PUT', body: { name: 'A-Ortsgruppe neu', type: 'Ortsgruppe', edvNumber: '10000101' },
     });
-    assert.equal(childEdit.response.status, 200);
+    assert.equal(childEdit.response.status, 403);
+    assert.equal((await request(baseUrl, '/api/platform/organization-units', { token: localToken })).response.status, 403);
+    const centralRootEdit = await request(baseUrl, '/api/platform/organization-units/unit-a', {
+      token: centralToken, method: 'PUT', body: { name: 'Root umbenannt' },
+    });
+    assert.equal(centralRootEdit.response.status, 403);
+    const centralChildEdit = await request(baseUrl, '/api/platform/organization-units/unit-a-child', {
+      token: centralToken, method: 'PUT', body: { name: 'A-Ortsgruppe neu', type: 'Ortsgruppe', edvNumber: '10000101' },
+    });
+    assert.equal(centralChildEdit.response.status, 200);
+    assert.equal(app.locals.appData.organizationUnits.find((entry) => entry.id === 'unit-a-child').name, 'A-Ortsgruppe neu');
+    const centralUnits = await request(baseUrl, '/api/platform/organization-units', { token: centralToken });
+    assert.equal(centralUnits.response.status, 200);
+    assert.deepEqual(new Set(centralUnits.data.map((entry) => entry.organizationId)), new Set(['org-a', 'org-b']));
+    assert.ok(centralUnits.data.every((entry) => entry.organizationId !== PLATFORM_ORGANIZATION_ID));
 
     const listed = await request(baseUrl, '/api/platform/organizations', { token: centralToken });
     assert.equal(listed.response.status, 200);
@@ -650,10 +695,10 @@ test('updater authorization matches the permission to create organizations', asy
 test('youth organizations are one-to-one linked units without child units', async () => {
   const { server, baseUrl } = await start();
   try {
-    const token = await login(baseUrl, 'admin', 'MaterialKompass2026!');
-    const youth = await request(baseUrl, '/api/organization-units', {
+    const token = await centralToken(baseUrl, await login(baseUrl, 'admin', 'MaterialKompass2026!'));
+    const youth = await request(baseUrl, '/api/platform/organization-units', {
       token, method: 'POST', body: {
-        name: 'Jugend A', type: 'Wird ignoriert', unitKind: 'youth',
+        organizationId: 'org-a', name: 'Jugend A', type: 'Wird ignoriert', unitKind: 'youth',
         parentId: 'unit-a', edvNumber: '10000120',
       },
     });
@@ -662,17 +707,17 @@ test('youth organizations are one-to-one linked units without child units', asyn
     assert.equal(youth.data.baseUnitId, 'unit-a');
     assert.equal(youth.data.type, 'Jugendorganisation');
 
-    const duplicate = await request(baseUrl, '/api/organization-units', {
+    const duplicate = await request(baseUrl, '/api/platform/organization-units', {
       token, method: 'POST', body: {
-        name: 'Zweite Jugend', unitKind: 'youth',
+        organizationId: 'org-a', name: 'Zweite Jugend', unitKind: 'youth',
         parentId: 'unit-a', edvNumber: '10000121',
       },
     });
     assert.equal(duplicate.response.status, 409);
 
-    const child = await request(baseUrl, '/api/organization-units', {
+    const child = await request(baseUrl, '/api/platform/organization-units', {
       token, method: 'POST', body: {
-        name: 'Unzulässige Untergruppe', type: 'Gruppe',
+        organizationId: 'org-a', name: 'Unzulässige Untergruppe', type: 'Gruppe',
         parentId: youth.data.id, edvNumber: '10000122',
       },
     });
@@ -827,15 +872,22 @@ test('youth and base units share only search, reservation and defect reporting c
   }
 });
 
-test('admins selectively share inventory with parent and child units as read-only', async () => {
+test('central administration selectively shares inventory with parent and child units as read-only', async () => {
   const { server, baseUrl } = await start();
   try {
     const rootToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
-    const sharedUp = await request(
+    const managerToken = await centralToken(baseUrl, rootToken);
+    const localShare = await request(
       baseUrl,
       '/api/organization-units/unit-a-child/inventory-visibility',
+      { token: rootToken, method: 'PUT', body: { visibleToUnitIds: ['unit-a'] } },
+    );
+    assert.equal(localShare.response.status, 403);
+    const sharedUp = await request(
+      baseUrl,
+      '/api/platform/organization-units/unit-a-child/inventory-visibility',
       {
-        token: rootToken,
+        token: managerToken,
         method: 'PUT',
         body: { visibleToUnitIds: ['unit-a'] },
       },
@@ -859,9 +911,9 @@ test('admins selectively share inventory with parent and child units as read-onl
 
     const siblingShare = await request(
       baseUrl,
-      '/api/organization-units/unit-a-child/inventory-visibility',
+      '/api/platform/organization-units/unit-a-child/inventory-visibility',
       {
-        token: rootToken,
+        token: managerToken,
         method: 'PUT',
         body: { visibleToUnitIds: ['unit-a-sibling'] },
       },
@@ -870,9 +922,9 @@ test('admins selectively share inventory with parent and child units as read-onl
 
     const sharedDown = await request(
       baseUrl,
-      '/api/organization-units/unit-a/inventory-visibility',
+      '/api/platform/organization-units/unit-a/inventory-visibility',
       {
-        token: rootToken,
+        token: managerToken,
         method: 'PUT',
         body: { visibleToUnitIds: ['unit-a-child'] },
       },
@@ -914,8 +966,8 @@ test('cross-level reservations require an explicit item grant and conflict organ
     const rootToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
     const visibility = await request(
       baseUrl,
-      '/api/organization-units/unit-a-child/inventory-visibility',
-      { token: rootToken, method: 'PUT', body: { visibleToUnitIds: ['unit-a'] } },
+      '/api/platform/organization-units/unit-a-child/inventory-visibility',
+      { token: await centralToken(baseUrl, rootToken), method: 'PUT', body: { visibleToUnitIds: ['unit-a'] } },
     );
     assert.equal(visibility.response.status, 200);
 
@@ -984,10 +1036,19 @@ test('units require transfer before archive and receive a two-year purge deadlin
   const { server, baseUrl } = await start();
   try {
     const token = await login(baseUrl, 'admin', 'MaterialKompass2026!');
-    const blocked = await request(baseUrl, '/api/organization-units/unit-a-child/archive', {
+    const managerToken = await centralToken(baseUrl, token);
+    const local = await request(baseUrl, '/api/organization-units/unit-a-child/archive', {
       token, method: 'POST', body: {},
     });
+    assert.equal(local.response.status, 403);
+    const blocked = await request(baseUrl, '/api/platform/organization-units/unit-a-child/archive', {
+      token: managerToken, method: 'POST', body: {},
+    });
     assert.equal(blocked.response.status, 409);
+    const centralTransfer = await request(baseUrl, '/api/organization-units/unit-a-child/transfer', {
+      token: managerToken, method: 'POST', body: { targetUnitId: 'unit-a' },
+    });
+    assert.equal(centralTransfer.response.status, 403);
 
     const transfer = await request(baseUrl, '/api/organization-units/unit-a-child/transfer', {
       token, method: 'POST', body: { targetUnitId: 'unit-a' },
@@ -995,8 +1056,8 @@ test('units require transfer before archive and receive a two-year purge deadlin
     assert.equal(transfer.response.status, 200);
     assert.ok(transfer.data.transferred > 0);
 
-    const archived = await request(baseUrl, '/api/organization-units/unit-a-child/archive', {
-      token, method: 'POST', body: {},
+    const archived = await request(baseUrl, '/api/platform/organization-units/unit-a-child/archive', {
+      token: managerToken, method: 'POST', body: {},
     });
     assert.equal(archived.response.status, 200);
     const retentionDays = (Date.parse(archived.data.purgeAfter) - Date.now()) / 86_400_000;
@@ -1148,7 +1209,7 @@ test('youth can build own storage under its direct base and book own material th
   } finally { server.close(); }
 });
 
-test('unit administrators cannot attach their unit to a unit they do not manage', async () => {
+test('unit administrators cannot change the structure; only the central administration moves units', async () => {
   const data = tenantData();
   data.memberships.find((entry) => entry.id === 'membership-warden-a').scopes = [
     { unitId: 'unit-a-child', includeDescendants: false, roles: ['Admin'], departmentIds: [] },
@@ -1159,6 +1220,7 @@ test('unit administrators cannot attach their unit to a unit they do not manage'
     for (const body of [
       { unitKind: 'youth', parentId: 'unit-a-sibling' },
       { parentId: 'unit-a-sibling' },
+      { name: 'A-Ortsgruppe Neu' },
     ]) {
       const result = await request(baseUrl, '/api/organization-units/unit-a-child', {
         token: unitAdminToken, method: 'PUT', body,
@@ -1169,16 +1231,27 @@ test('unit administrators cannot attach their unit to a unit they do not manage'
     assert.equal(unit.parentId, 'unit-a');
     assert.notEqual(unit.unitKind, 'youth');
 
-    const renamed = await request(baseUrl, '/api/organization-units/unit-a-child', {
-      token: unitAdminToken, method: 'PUT', body: { name: 'A-Ortsgruppe Neu' },
-    });
-    assert.equal(renamed.response.status, 200);
+    assert.equal(unit.name, 'A-Ortsgruppe');
 
     const adminToken = await login(baseUrl, 'admin', 'MaterialKompass2026!');
-    const moved = await request(baseUrl, '/api/organization-units/unit-a-child', {
+    const localMove = await request(baseUrl, '/api/organization-units/unit-a-child', {
       token: adminToken, method: 'PUT', body: { parentId: 'unit-a-sibling' },
     });
+    assert.equal(localMove.response.status, 403);
+    const managerToken = await centralToken(baseUrl, adminToken);
+    const cyclic = await request(baseUrl, '/api/platform/organization-units/unit-a', {
+      token: managerToken, method: 'PUT', body: { parentId: 'unit-a-child' },
+    });
+    assert.equal(cyclic.response.status, 403);
+    const foreignParent = await request(baseUrl, '/api/platform/organization-units/unit-a-child', {
+      token: managerToken, method: 'PUT', body: { parentId: 'unit-b' },
+    });
+    assert.equal(foreignParent.response.status, 400);
+    const moved = await request(baseUrl, '/api/platform/organization-units/unit-a-child', {
+      token: managerToken, method: 'PUT', body: { parentId: 'unit-a-sibling' },
+    });
     assert.equal(moved.response.status, 200);
+    assert.equal(unit.parentId, 'unit-a-sibling');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
