@@ -17,6 +17,7 @@ import '../widgets/date_input_field.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/label_print_dialogs.dart';
 import '../widgets/mail_count_badge.dart';
+import '../widgets/supplier_articles.dart';
 
 double offerTotalValue(Map offer) {
   final calculated = num.tryParse(
@@ -909,6 +910,19 @@ class _ProcurementPageState extends State<ProcurementPage>
     }
   }
 
+  Future<void> _supplierArticles(Map<String, dynamic> supplier) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => SupplierArticlesDialog(
+        supplier: supplier,
+        categories: _categories,
+        canWrite: _can('suppliers.write'),
+        request: _request,
+      ),
+    );
+    await _load(showLoading: false);
+  }
+
   Future<void> _showDetails(Map<String, dynamic> initial) async {
     final fresh = await _request('/api/procurement/${initial['id']}');
     if (fresh == null || !mounted) return;
@@ -1485,18 +1499,29 @@ class _ProcurementPageState extends State<ProcurementPage>
                               supplier['email'],
                               supplier['phone'],
                               supplier['paymentTerms'],
+                              '${(supplier['articles'] as List? ?? const []).length} Artikel',
                             ]
                             .where(
                               (value) => value?.toString().isNotEmpty == true,
                             )
                             .join(' · '),
                       ),
-                      trailing: _can('suppliers.write')
-                          ? IconButton(
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Artikelstamm',
+                            onPressed: () => _supplierArticles(supplier),
+                            icon: const Icon(Icons.inventory_2_outlined),
+                          ),
+                          if (_can('suppliers.write'))
+                            IconButton(
+                              tooltip: 'Lieferant bearbeiten',
                               onPressed: () => _supplierDialog(supplier),
                               icon: const Icon(Icons.edit_outlined),
-                            )
-                          : null,
+                            ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -1543,6 +1568,7 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
       _category(item.categoryId)?['useInWardrobe'] == true;
 
   List<String> _sizesForItem(_RequestItemControllers item) {
+    if (item.articleSizes.isNotEmpty) return item.articleSizes;
     final selected = _category(item.subcategoryId ?? item.categoryId);
     final own = (selected?['sizes'] as List? ?? const [])
         .map((value) => value.toString())
@@ -1666,6 +1692,7 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                 SizedBox(
                   width: 280,
                   child: DropdownButtonFormField<String>(
+                    key: ValueKey('preferred-supplier-$supplier'),
                     initialValue: supplier,
                     decoration: const InputDecoration(
                       labelText: 'Bevorzugter Lieferant',
@@ -1720,6 +1747,27 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
       ),
     ],
   );
+  bool get _hasSupplierArticles => widget.suppliers.any(
+    (entry) => (entry['articles'] as List? ?? const []).isNotEmpty,
+  );
+
+  Future<void> _pickSupplierArticle(_RequestItemControllers item) async {
+    final picked = await showDialog<PickedSupplierArticle>(
+      context: context,
+      builder: (_) => SupplierArticlePickerDialog(
+        suppliers: widget.suppliers,
+        categories: widget.categories,
+        preferredSupplierId: supplier,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final article = picked.article;
+    setState(() {
+      item.applyArticle(article);
+      supplier ??= picked.supplierId;
+    });
+  }
+
   Widget _itemRow(int index, _RequestItemControllers item) {
     final mains = widget.categories
         .where((entry) => entry['parentId'] == null)
@@ -1736,10 +1784,17 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
           runSpacing: 10,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
+            if (_hasSupplierArticles)
+              IconButton(
+                tooltip: 'Artikel aus Lieferanten-Artikelstamm übernehmen',
+                onPressed: () => _pickSupplierArticle(item),
+                icon: const Icon(Icons.playlist_add_check),
+              ),
             field(item.name, 'Bezeichnung *', 250),
             SizedBox(
               width: 190,
               child: DropdownButtonFormField<String>(
+                key: ValueKey('request-main-${item.key}-${item.categoryId}'),
                 initialValue: item.categoryId,
                 decoration: const InputDecoration(
                   labelText: 'Hauptkategorie *',
@@ -1756,12 +1811,16 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                   item.categoryId = v;
                   item.subcategoryId = null;
                   item.size.clear();
+                  item.clearArticle();
                 }),
               ),
             ),
             SizedBox(
               width: 190,
               child: DropdownButtonFormField<String>(
+                key: ValueKey(
+                  'request-sub-${item.key}-${item.categoryId}-${item.subcategoryId}',
+                ),
                 initialValue: item.subcategoryId,
                 decoration: const InputDecoration(labelText: 'Unterkategorie'),
                 items: subs
@@ -1775,6 +1834,7 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                 onChanged: (v) => setState(() {
                   item.subcategoryId = v;
                   item.size.clear();
+                  item.clearArticle();
                 }),
               ),
             ),
@@ -1821,6 +1881,20 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
                   items.removeAt(index);
                 }),
                 icon: const Icon(Icons.delete_outline),
+              ),
+            if (item.manufacturerArticleNumber.isNotEmpty ||
+                item.articleUrl.isNotEmpty)
+              SizedBox(
+                width: double.infinity,
+                child: Text(
+                  [
+                    if (item.manufacturerArticleNumber.isNotEmpty)
+                      'Herstellerartikelnr. ${item.manufacturerArticleNumber}',
+                    if (item.articleUrl.isNotEmpty) item.articleUrl,
+                  ].join(' · '),
+                  style: Theme.of(context).textTheme.bodySmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
           ],
         ),
@@ -1869,6 +1943,9 @@ class _ProcurementRequestDialogState extends State<ProcurementRequestDialog> {
               'quantity': double.tryParse(i.quantity.text.replaceAll(',', '.')),
               'unit': i.unit.text.trim(),
               'taxRate': i.taxRate,
+              'supplierArticleId': i.supplierArticleId,
+              'manufacturerArticleNumber': i.manufacturerArticleNumber,
+              'articleUrl': i.articleUrl,
             },
           )
           .toList(),
@@ -1881,10 +1958,37 @@ class _RequestItemControllers {
       quantity = TextEditingController(text: '1'),
       unit = TextEditingController(text: 'Stück'),
       size = TextEditingController();
-  String? categoryId, subcategoryId;
+  final key = UniqueKey();
+  String? categoryId, subcategoryId, supplierArticleId;
+  String manufacturerArticleNumber = '', articleUrl = '';
+  List<String> articleSizes = const [];
   int taxRate = 19;
 
   _RequestItemControllers();
+
+  void applyArticle(Map<String, dynamic> article) {
+    name.text = article['name']?.toString() ?? '';
+    categoryId = article['categoryId']?.toString();
+    subcategoryId = article['subcategoryId']?.toString();
+    final articleUnit = article['unit']?.toString() ?? '';
+    if (articleUnit.isNotEmpty) unit.text = articleUnit;
+    supplierArticleId = article['id']?.toString();
+    manufacturerArticleNumber =
+        article['manufacturerArticleNumber']?.toString() ?? '';
+    articleUrl = article['url']?.toString() ?? '';
+    articleSizes = (article['sizes'] as List? ?? const [])
+        .map((value) => value.toString())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    size.text = articleSizes.length == 1 ? articleSizes.first : '';
+  }
+
+  void clearArticle() {
+    supplierArticleId = null;
+    manufacturerArticleNumber = '';
+    articleUrl = '';
+    articleSizes = const [];
+  }
 
   _RequestItemControllers.from(Map<String, dynamic> item) {
     name.text = item['name']?.toString() ?? '';
@@ -1894,6 +1998,10 @@ class _RequestItemControllers {
     categoryId = item['categoryId']?.toString();
     subcategoryId = item['subcategoryId']?.toString();
     taxRate = int.tryParse(item['taxRate']?.toString() ?? '') ?? 19;
+    supplierArticleId = item['supplierArticleId']?.toString();
+    manufacturerArticleNumber =
+        item['manufacturerArticleNumber']?.toString() ?? '';
+    articleUrl = item['articleUrl']?.toString() ?? '';
   }
 
   void dispose() {
@@ -3599,7 +3707,19 @@ class ProcurementDetail extends StatelessWidget {
                     return ListTile(
                       title: Text(item['name']),
                       subtitle: Text(
-                        '${categoryName(item['categoryId'])}${item['subcategoryId'] == null ? '' : ' / ${categoryName(item['subcategoryId'])}'} · MwSt. ${item['taxRate']} %',
+                        [
+                          '${categoryName(item['categoryId'])}${item['subcategoryId'] == null ? '' : ' / ${categoryName(item['subcategoryId'])}'}',
+                          if (item['size']?.toString().isNotEmpty == true)
+                            'Größe ${item['size']}',
+                          if (item['manufacturerArticleNumber']
+                                  ?.toString()
+                                  .isNotEmpty ==
+                              true)
+                            'Herstellerartikelnr. ${item['manufacturerArticleNumber']}',
+                          if (item['articleUrl']?.toString().isNotEmpty == true)
+                            item['articleUrl'].toString(),
+                          'MwSt. ${item['taxRate']} %',
+                        ].join(' · '),
                       ),
                       trailing: Text('${item['quantity']} ${item['unit']}'),
                     );

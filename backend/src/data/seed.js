@@ -208,6 +208,7 @@ const suppliers = [{
   website: '',
   paymentTerms: '14 Tage netto',
   active: true,
+  articles: [],
 }];
 const documents = [];
 const auditLogs = [{ id: 'audit-1', timestamp: new Date().toISOString(), actor: 'system', action: 'seed', entity: 'System', details: 'Initial seed complete' }];
