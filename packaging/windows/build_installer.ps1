@@ -53,8 +53,14 @@ function Sign-Artifact([string]$Path) {
 Push-Location $flutterRoot
 try {
     flutter pub get
+    if ($LASTEXITCODE -ne 0) { throw "flutter pub get ist fehlgeschlagen (Exit-Code $LASTEXITCODE)." }
+    # Never package a stale executable from an earlier build.
+    $releaseExe = Join-Path $flutterRoot "build\windows\x64\runner\Release\materialkompass.exe"
+    if (Test-Path -LiteralPath $releaseExe) { Remove-Item -LiteralPath $releaseExe -Force }
     flutter build windows --release --build-name="$Version" --build-number="$BuildNumber" `
         --dart-define="API_BASE_URL=$ApiBaseUrl"
+    if ($LASTEXITCODE -ne 0) { throw "Der Windows-Build ist fehlgeschlagen (Exit-Code $LASTEXITCODE). Es wird kein Installer erstellt." }
+    if (-not (Test-Path -LiteralPath $releaseExe)) { throw "Der Windows-Build hat keine materialkompass.exe erzeugt." }
 } finally {
     Pop-Location
 }
