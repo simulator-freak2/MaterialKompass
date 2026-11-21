@@ -3,7 +3,7 @@ const { descendantsOf } = require('./tenancy');
 const { validBase64 } = require('./security-utils');
 
 const FORMATS = Object.freeze({ Zebra: ['nlbl', 'lbl'], DYMO: ['dymo', 'label'], Epson: ['leb'], Brother: ['lbx', 'lbl'] });
-const FIELDS = Object.freeze({ serialNumber: 'Seriennummer', inventoryNumber: 'Inventarnummer', name: 'Bezeichnung', manufacturingYear: 'Baujahr', size: 'Größe' });
+const FIELDS = Object.freeze({ serialNumber: 'Seriennummer', inventoryNumber: 'Inventarnummer', name: 'Bezeichnung', manufacturingYear: 'Baujahr', size: 'Größe', containerNumber: 'Kistennummer' });
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_TEMPLATES = 100;
 const MAX_STORAGE_BYTES = 32 * 1024 * 1024;

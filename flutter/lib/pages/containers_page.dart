@@ -30,6 +30,12 @@ String _text(Object? value, [String fallback = '-']) {
   return result.isEmpty ? fallback : result;
 }
 
+/// Anzeige einer Kiste: Kistennummer, ersatzweise die Inventarnummer.
+String containerNumberLabel(Map<String, dynamic> container) {
+  final number = _text(container['containerNumber'], '');
+  return number.isEmpty ? _text(container['inventoryNumber']) : number;
+}
+
 String _germanDate(Object? value) {
   final raw = value?.toString() ?? '';
   final parsed = DateTime.tryParse(raw);
@@ -266,6 +272,7 @@ class _ContainersPageState extends State<ContainersPage> {
     return containers
         .where(
           (entry) => [
+            entry['containerNumber'],
             entry['inventoryNumber'],
             entry['name'],
             entry['containerType'],
@@ -300,7 +307,9 @@ class _ContainersPageState extends State<ContainersPage> {
     final container = _map(data['container']);
     if (container['id'] != null) {
       if (data['match'] == 'content') {
-        _message('Der Artikel liegt in Kiste ${container['inventoryNumber']}.');
+        _message(
+          'Der Artikel liegt in Kiste ${containerNumberLabel(container)}.',
+        );
       }
       await _open(container['id'].toString());
     } else {
@@ -322,9 +331,17 @@ class _ContainersPageState extends State<ContainersPage> {
               entry['readOnly'] != true,
         )
         .toList();
+    final suggestion = _map(
+      await _request('/api/containers/number-suggestion'),
+    );
+    if (!mounted) return;
     final values = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => ContainerSettingsDialog(candidates: candidates),
+      builder: (_) => ContainerSettingsDialog(
+        candidates: candidates,
+        suggestedNumber: suggestion['containerNumber']?.toString(),
+        prefixInfo: suggestion,
+      ),
     );
     if (values == null) return;
     final created = await _request(
@@ -416,11 +433,14 @@ class _ContainersPageState extends State<ContainersPage> {
                             child: Icon(Icons.inventory_2_outlined),
                           ),
                           title: Text(
-                            '${entry['inventoryNumber']} · ${entry['name']}',
+                            '${containerNumberLabel(entry)} · ${entry['name']}',
                           ),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Text(
+                                'Inventarnr. ${_text(entry['inventoryNumber'])}',
+                              ),
                               Text(
                                 '${_text(entry['containerType'], 'Kiste')} · '
                                 '${entry['contentCount']} Position(en) · '
@@ -465,7 +485,7 @@ class _ContainersPageState extends State<ContainersPage> {
                             '${_text(entry['inventoryNumber'])} · ${entry['name']}',
                           ),
                           subtitle: Text(
-                            'Kiste ${entry['containerInventoryNumber']} · '
+                            'Kiste ${_text(entry['containerNumber'], _text(entry['containerInventoryNumber']))} · '
                             '${entry['containerName']}\n'
                             '${entry['quantity']} ${entry['unit']} · '
                             '${entry['expiryState']}: ${_germanDate(entry['expiresAt'])}',
@@ -822,7 +842,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
             ? Colors.orange.shade800
             : null,
       ),
-      title: Text('${_text(entry['inventoryNumber'])} · ${entry['name']}'),
+      title: Text('${containerNumberLabel(entry)} · ${entry['name']}'),
       subtitle: details.isEmpty ? null : Text(details.join(' · ')),
       onTap: entry['isContainer'] == true ? () => _openNested(entry) : null,
       trailing: editable
@@ -916,7 +936,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
           children: [
-            _section('${current['inventoryNumber']}', [
+            _section(containerNumberLabel(current), [
+              Text('Inventarnummer: ${_text(current['inventoryNumber'])}'),
               Text(
                 '${_text(current['containerType'], 'Kiste')} · '
                 '${_text(current['locationName'])}'
@@ -1100,10 +1121,22 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
 }
 
 class ContainerSettingsDialog extends StatefulWidget {
-  const ContainerSettingsDialog({this.container, this.candidates, super.key});
+  const ContainerSettingsDialog({
+    this.container,
+    this.candidates,
+    this.suggestedNumber,
+    this.prefixInfo,
+    super.key,
+  });
 
   final Map<String, dynamic>? container;
   final List<Map<String, dynamic>>? candidates;
+
+  /// Vorschlag des Servers für eine neue Kistennummer.
+  final String? suggestedNumber;
+
+  /// Angaben zum wirksamen Präfix (Antwort von number-suggestion).
+  final Map<String, dynamic>? prefixInfo;
 
   @override
   State<ContainerSettingsDialog> createState() =>
@@ -1111,6 +1144,7 @@ class ContainerSettingsDialog extends StatefulWidget {
 }
 
 class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
+  late final TextEditingController containerNumber;
   late final TextEditingController type;
   late final TextEditingController compartments;
   late final TextEditingController warningDays;
@@ -1123,6 +1157,12 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
   void initState() {
     super.initState();
     final current = widget.container ?? const {};
+    containerNumber = TextEditingController(
+      text:
+          current['containerNumber']?.toString() ??
+          widget.suggestedNumber ??
+          '',
+    );
     type = TextEditingController(text: current['containerType']?.toString());
     compartments = TextEditingController(
       text: (current['compartments'] as List? ?? const []).join(', '),
@@ -1135,7 +1175,14 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
 
   @override
   void dispose() {
-    for (final controller in [type, compartments, warningDays, notes, search]) {
+    for (final controller in [
+      containerNumber,
+      type,
+      compartments,
+      warningDays,
+      notes,
+      search,
+    ]) {
       controller.dispose();
     }
     super.dispose();
@@ -1148,12 +1195,27 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
       setState(() => error = 'Bitte einen Artikel wählen.');
       return;
     }
+    final number = containerNumber.text.trim();
+    if (number.isEmpty) {
+      setState(() => error = 'Bitte eine Kistennummer angeben.');
+      return;
+    }
+    if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._/-]*$').hasMatch(number) ||
+        number.length > 64) {
+      setState(
+        () => error =
+            'Die Kistennummer darf nur Buchstaben, Ziffern, Punkt, '
+            'Schrägstrich, Unterstrich und Bindestrich enthalten.',
+      );
+      return;
+    }
     if (days == null || days < 0 || days > 365) {
       setState(() => error = 'Die Vorwarnzeit muss 0 bis 365 Tage betragen.');
       return;
     }
     Navigator.pop(context, {
       'materialId': ?materialId,
+      'containerNumber': number,
       'containerType': type.text.trim(),
       'compartments': compartments.text
           .split(',')
@@ -1163,6 +1225,21 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
       'expiryWarningDays': days,
       'notes': notes.text.trim(),
     });
+  }
+
+  String _numberHelper(bool creating) {
+    if (!creating) {
+      return 'Eindeutig innerhalb der Gliederung. Inventarnummer: '
+          '${_text(widget.container?['inventoryNumber'])}';
+    }
+    final info = widget.prefixInfo ?? const <String, dynamic>{};
+    final prefix = _text(info['prefix'], '');
+    if (prefix.isEmpty) return 'Eindeutig innerhalb der Gliederung.';
+    final source = info['prefixIsDefault'] == true
+        ? 'Standard'
+        : 'festgelegt in ${_text(info['prefixSourceUnitName'])}';
+    return 'Vorschlag mit Präfix „$prefix“ ($source). Die Nummer kann '
+        'geändert werden und muss in der Gliederung eindeutig sein.';
   }
 
   @override
@@ -1232,6 +1309,14 @@ class _ContainerSettingsDialogState extends State<ContainerSettingsDialog> {
                 ),
                 const SizedBox(height: 8),
               ],
+              TextField(
+                controller: containerNumber,
+                decoration: InputDecoration(
+                  labelText: 'Kistennummer',
+                  helperText: _numberHelper(creating),
+                  helperMaxLines: 3,
+                ),
+              ),
               TextField(
                 controller: type,
                 decoration: const InputDecoration(
@@ -1448,7 +1533,7 @@ class _PackItemDialogState extends State<PackItemDialog> {
                                   : Icons.category_outlined,
                             ),
                             title: Text(
-                              '${entry['inventoryNumber']} · ${entry['name']}',
+                              '${containerNumberLabel(entry)} · ${entry['name']}',
                             ),
                             subtitle: Text(
                               entry['itemType'] == 'bulk'

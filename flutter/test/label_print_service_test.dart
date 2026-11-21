@@ -56,4 +56,33 @@ void main() {
     expect(zpl, contains('^FDBJ:2026^FS'));
     expect(zpl, contains('^FDGR:134/146^FS'));
   });
+
+  test('container label prints the container number as an extra line', () {
+    final label = LabelData.fromItem({
+      'inventoryNumber': '10050035-02-02-0007',
+      'name': 'Sanitätskiste',
+      'manufacturingYear': '2025',
+      'isContainer': true,
+      'containerNumber': '10050035-K-0003',
+    }, LabelType.inventory);
+
+    final zpl = LabelPrintService.instance.buildZpl(label, printer, 1);
+
+    expect(label.containerNumber, '10050035-K-0003');
+    expect(zpl, contains('^BCN,43,N,N,N^FD10050035-02-02-0007^FS'));
+    expect(zpl, contains('^FDKiste 10050035-K-0003^FS'));
+  });
+
+  test('non-container labels ignore a stale container number', () {
+    final label = LabelData.fromItem({
+      'inventoryNumber': '10050035-02-02-0008',
+      'name': 'Trage',
+      'isContainer': false,
+      'containerNumber': 'K-1',
+    }, LabelType.inventory);
+
+    final zpl = LabelPrintService.instance.buildZpl(label, printer, 1);
+
+    expect(zpl, isNot(contains('Kiste ')));
+  });
 }

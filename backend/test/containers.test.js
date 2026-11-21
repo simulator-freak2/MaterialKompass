@@ -105,7 +105,7 @@ test('containers are packed with individual, bulk, clothing and nested items', a
     const detail = (await call(`/api/containers/${container.id}`)).data;
     assert.equal(detail.contents.length, 4);
     assert.equal(detail.contents.find((entry) => entry.entityId === nested.id).isContainer, true);
-    assert.equal((await call(`/api/containers/${nested.id}`)).data.parentContainerName.includes(container.inventoryNumber), true);
+    assert.equal((await call(`/api/containers/${nested.id}`)).data.parentContainerName.includes(container.containerNumber), true);
 
     const candidates = (await call(`/api/containers/${nested.id}/candidates`)).data;
     assert.equal(candidates.some((entry) => entry.entityId === container.id), false);

@@ -1724,7 +1724,7 @@ class _StocktakeDetailPageState extends State<StocktakeDetailPage> {
                   ),
                   title: Text('${entry['inventoryNumber']} · ${entry['name']}'),
                   subtitle: Text(
-                    '${entry['containerInventoryNumber'] != null ? 'In Kiste ${entry['containerInventoryNumber']} · ' : ''}${entry['isContainer'] == true ? 'Kiste · ' : ''}${entry['expectedLocationName'] ?? '-'} / ${entry['expectedStockStructureName'] ?? '-'}\n${counted
+                    '${entry['containerInventoryNumber'] != null ? 'In Kiste ${entry['containerNumber'] ?? entry['containerInventoryNumber']} · ' : ''}${entry['isContainer'] == true ? (entry['ownContainerNumber'] != null ? 'Kiste ${entry['ownContainerNumber']} · ' : 'Kiste · ') : ''}${entry['expectedLocationName'] ?? '-'} / ${entry['expectedStockStructureName'] ?? '-'}\n${counted
                         ? entry['itemType'] == 'bulk'
                               ? 'Ist: ${entry['actualQuantity']} ${entry['unit']}'
                               : 'Ergebnis: ${entry['result']}'

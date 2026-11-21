@@ -12,6 +12,7 @@ const labelFieldNames = {
   'name': 'Bezeichnung',
   'manufacturingYear': 'Baujahr',
   'size': 'Größe',
+  'containerNumber': 'Kistennummer',
 };
 const labelScopeNames = {
   'private': 'Nicht freigegeben',
