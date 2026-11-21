@@ -212,7 +212,7 @@ function sectionData(input, requiredNames) {
   return Object.fromEntries(requiredNames.map((name) => [name, sections.get(name) || []]));
 }
 
-async function validatedBackup(input, collectionNames, identityProtection) {
+async function validatedBackup(input, collectionNames, identityProtection, { dryRun = false } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw Object.assign(new Error('Die Sicherungsdatei ist kein JSON-Objekt.'), { status: 400 });
   }
@@ -239,7 +239,7 @@ async function validatedBackup(input, collectionNames, identityProtection) {
   }
   let data;
   try {
-    data = identityProtection.unprotectBackupData(protectedData).data;
+    data = identityProtection.unprotectBackupData(protectedData, { register: !dryRun }).data;
   } catch (_) {
     throw Object.assign(new Error('Die Identitäten der Sicherung sind beschädigt oder nicht geschützt.'), { status: 400 });
   }
@@ -321,6 +321,35 @@ async function validatedBackup(input, collectionNames, identityProtection) {
   return structuredClone(Object.fromEntries(
     requiredNames.map((name) => [name, data[name]]),
   ));
+}
+
+// Replaces the complete platform state with a validated backup. Storage is
+// written first; live arrays are only swapped after the database succeeded.
+// Every refresh session is revoked because restored accounts, passwords and
+// security versions may differ from the state the sessions were issued for.
+// retainIdentityKeyUserIds keeps the identity keys of accounts that are absent
+// from the restored state but still present in a retained server backup (e.g.
+// the automatic pre-restore backup). Otherwise undoing a restore would turn
+// every account created after the restored backup into an erased tombstone.
+async function applyFullRestore({ appData, collectionNames, dataStore, identityProtection, persistData, data,
+  retainIdentityKeyUserIds = [] }) {
+  if (dataStore && typeof dataStore.replaceBackupData !== 'function') {
+    throw Object.assign(new Error('Der konfigurierte Datenspeicher unterstützt keine vollständige Wiederherstellung.'), { status: 503 });
+  }
+  const collections = Object.fromEntries(collectionNames.map((name) => [name, data[name]]));
+  if (dataStore) {
+    await dataStore.replaceBackupData({
+      users: data.users, roles: data.roles, passkeys: data.passkeys, collections,
+    });
+  }
+  replaceCollection(appData.users, data.users);
+  replaceCollection(appData.roles, data.roles);
+  replaceCollection(appData.passkeys, data.passkeys);
+  collectionNames.forEach((name) => replaceCollection(appData[name], data[name]));
+  if (appData.authSessions) replaceCollection(appData.authSessions, []);
+  const keptKeys = [...new Set([...data.users.map((user) => user.id), ...retainIdentityKeyUserIds])];
+  await (dataStore?.pruneIdentityKeys?.(keptKeys) || identityProtection.pruneUsers(keptKeys));
+  await persistData();
 }
 
 function replaceCollection(target, values) {
@@ -514,31 +543,12 @@ function registerDataBackupRoutes({
       }
       const data = restored;
       data.auditLogs.push(importAuditEntry(data, req.user.username));
-      const collections = Object.fromEntries(
-        collectionNames.map((name) => [name, data[name]]),
-      );
-
       if (dataStore && typeof dataStore.replaceBackupData !== 'function') {
         return res.status(503).json({
           error: 'Der konfigurierte Datenspeicher unterstützt keine vollständige Wiederherstellung.',
         });
       }
-      if (dataStore?.replaceBackupData) {
-        await dataStore.replaceBackupData({
-          users: data.users,
-          roles: data.roles,
-          passkeys: data.passkeys,
-          collections,
-        });
-      }
-
-      replaceCollection(appData.users, data.users);
-      replaceCollection(appData.roles, data.roles);
-      replaceCollection(appData.passkeys, data.passkeys);
-      collectionNames.forEach((name) => replaceCollection(appData[name], data[name]));
-      await (dataStore?.pruneIdentityKeys?.(data.users.map((user) => user.id))
-        || identityProtection.pruneUsers(data.users.map((user) => user.id)));
-      if (!dataStore?.replaceBackupData) await persistData();
+      await applyFullRestore({ appData, collectionNames, dataStore, identityProtection, persistData, data });
 
       return res.json({
         imported: Object.values(data).reduce((sum, values) => sum + values.length, 0),
@@ -555,6 +565,7 @@ module.exports = {
   LEGACY_BACKUP_SCHEMA_VERSION,
   backupDocument,
   registerDataBackupRoutes,
+  applyFullRestore,
   validatedBackup,
   backupScope,
   scopedBackupData,

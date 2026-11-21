@@ -11,9 +11,9 @@ WORKDIR /app
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json server.js ./
 COPY --chown=node:node src ./src
-RUN mkdir -p /var/lib/materialkompass-identity \
-    && chown node:node /var/lib/materialkompass-identity \
-    && chmod 0700 /var/lib/materialkompass-identity
+RUN mkdir -p /var/lib/materialkompass-identity /var/lib/materialkompass-platform-backups \
+    && chown node:node /var/lib/materialkompass-identity /var/lib/materialkompass-platform-backups \
+    && chmod 0700 /var/lib/materialkompass-identity /var/lib/materialkompass-platform-backups
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

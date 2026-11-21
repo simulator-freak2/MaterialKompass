@@ -93,6 +93,12 @@ async function start() {
         .catch((error) => console.error('Aufbewahrungsregel fehlgeschlagen:', error));
     }, 24 * 60 * 60 * 1000);
     retentionTimer.unref();
+    if (!process.env.PLATFORM_BACKUP_DIR) {
+      console.warn('PLATFORM_BACKUP_DIR ist nicht gesetzt: serverseitige Plattformsicherungen und die Wochenprüfung sind deaktiviert.');
+    }
+    app.locals.platformBackups.startScheduler({
+      runInSystem: (callback) => app.locals.runAsSystem(callback),
+    });
 
     const server = app.listen(config.port, config.host, () => {
       console.log(`MaterialKompass backend listening on http://${config.host}:${config.port}`);
@@ -134,6 +140,7 @@ async function start() {
         process.exit(1);
       }, config.shutdownTimeoutMs);
       forceExitTimer.unref();
+      app.locals.platformBackups.stopScheduler();
       server.close(async (error) => {
         clearTimeout(forceExitTimer);
         if (error) {

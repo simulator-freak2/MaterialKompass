@@ -6,6 +6,19 @@
 
 ## Unveroeffentlicht
 
+- Plattformsicherungen in der Zentralen Verwaltung: Plattformadministratoren erstellen
+  verschlüsselte, serverseitige Gesamtsicherungen und spielen sie mit Passwort, 2-FA,
+  exakter Bestätigung und automatischer Vorab-Sicherung zurück. Nach einem Restore
+  werden alle Refresh-Sitzungen beendet.
+- Wöchentliche Backup-Prüfung (Montag 03:30 UTC, manuell auslösbar): Wochensicherung,
+  Integrität aller Plattformsicherungen, Probewiederherstellung der neuesten Sicherung
+  sowie Alter, SHA-256 und Vollständigkeit des neuesten MariaDB-Dumps. Ergebnis als
+  Statuskarte und quittierbare Wochenmeldung im Dashboard der Zentralen Verwaltung.
+- Sicherheit: Restore erhält Identitätsschlüssel von Konten aus aufbewahrten
+  Sicherungen, damit ein Rückgängigmachen keine Konten tombstonisiert; Passwortprüfungen
+  der Sicherungsaktionen teilen das Login-Rate-Limit; auch der JSON-Vollimport beendet
+  nun alle Refresh-Sitzungen.
+
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

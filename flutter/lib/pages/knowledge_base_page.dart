@@ -2230,6 +2230,7 @@ const _articles = [
       'Die zuständigen Organisationsadmins nehmen das vorhandene Konto anschließend in ihrer aktiven Ebene direkt oder per Einladung auf und vergeben nur die dort benötigten Rollen.',
       'In „Berechtigungen dieser Ebene“ werden ausschließlich die Freigaben der ausgewählten Ebene gezeigt. Andere Organisationen und Ebenen bleiben ausgeblendet; ihre Freigaben bleiben bei Änderungen erhalten.',
       'Globale Kontodaten, Sicherheitsrichtlinien und vollständige Datensicherungen werden in der Zentrale verwaltet. In normalen Organisationen stehen nur deren lokale Verwaltungsfunktionen zur Verfügung.',
+      'Das Dashboard der Zentralen Verwaltung zeigt im Abschnitt „Datensicherung“ das Ergebnis der wöchentlichen Backup-Prüfung. Über „Plattformsicherungen“ prüfst du Sicherungen, erstellst neue und spielst bei Bedarf eine Sicherung zurück.',
     ],
     tip:
         'Mitglieder der zentralen Organisation werden aus den Plattformadministrationsrechten abgeleitet. Sie können nicht über normale Freigaben oder Einladungen hinzugefügt werden.',
@@ -2280,14 +2281,14 @@ const _articles = [
     category: 'Konten & Sicherheit',
     title: 'Bearbeitbare Datensicherung exportieren und einspielen',
     summary:
-        'Eine sektionierte JSON-Sicherung prüfen, gezielt bereinigen und sicher wiederherstellen.',
+        'Eine sektionierte JSON-Sicherung herunterladen, gezielt bereinigen und sicher wiederherstellen.',
     icon: Icons.settings_backup_restore,
     readingMinutes: 6,
     audience: 'Für Organisations- und Plattformadministratoren',
     prerequisite:
         'Du brauchst die Rolle Admin in der aktiven Einheit, dein aktuelles Passwort und gegebenenfalls einen 2-FA-Code. Nur Plattformadministratoren dürfen den gesamten Plattformbestand sichern.',
     steps: [
-      'Öffne „MaterialKompass – Zentrale Verwaltung → Zentrale Kontenverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf.',
+      'Öffne „MaterialKompass – Zentrale Verwaltung → Zentrale Kontenverwaltung → Datensicherung“ und exportiere eine aktuelle Gesamtdatensicherung. Bewahre das unveränderte Original geschützt auf. Für eine Sicherung, die auf dem Server verbleibt und regelmäßig geprüft wird, verwende stattdessen „Plattformsicherungen“.',
       'Prüfe vorher die aktive Einheit: Jugend Ingelheim sichert nur sich selbst. Die Ortsgruppe Ingelheim sichert sich und ihre direkt zugehörige Jugend. Der Bezirk sichert sich und die Bezirksjugend, keine Ortsgruppen oder deren Jugend. Weitere Untereinheiten, Bestandsfreigaben und zusätzliche Mitgliedschaften erweitern diesen Bereich nicht.',
       'Eine Bereichssicherung enthält die zugeordneten Fachdaten einschließlich Dokumenten und einheitenbezogenen Kategorien und Protokollen. Zentrale Konten, Rollen, Passkeys, Mitgliedschaften, Organisationsstruktur, Gerätezugänge und gemeinsame Einstellungen bleiben der Plattformsicherung vorbehalten und werden beim Bereichsimport nicht verändert.',
       'Arbeite nur an einer Kopie der UTF-8-JSON-Datei. Jede benannte Sektion besitzt eine Liste „records“; entferne dort ausschließlich den nachweislich fehlerhaften vollständigen Datensatz.',
@@ -2306,6 +2307,71 @@ const _articles = [
       'sektion',
       'import',
       'wiederherstellung',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: 'Backup-Status der Zentralen Verwaltung lesen',
+    summary:
+        'Die wöchentliche Prüfung aller Sicherungen verstehen und auf Warnungen richtig reagieren.',
+    icon: Icons.verified_outlined,
+    readingMinutes: 4,
+    audience: 'Für Plattformadministratoren',
+    prerequisite:
+        'Du bist Plattformadministrator und hast „MaterialKompass – Zentrale Verwaltung“ als aktive Organisation gewählt.',
+    steps: [
+      'Jeden Montag um 03:30 Uhr UTC prüft der Server automatisch alle Sicherungen. Vorher erstellt er eine neue Wochensicherung des gesamten Plattformbestands. War der Server zu diesem Zeitpunkt nicht erreichbar, wird die Prüfung nach dem nächsten Start nachgeholt.',
+      'Geprüft werden: Alter der neuesten Plattformsicherung (höchstens 8 Tage), Prüfsumme und Verschlüsselung aller gespeicherten Plattformsicherungen sowie eine vollständige Probewiederherstellung der neuesten Sicherung im Arbeitsspeicher – ohne dass Daten verändert werden.',
+      'Zusätzlich wird die neueste tägliche MariaDB-Datenbanksicherung geprüft: Sie darf höchstens 26 Stunden alt sein, ihre SHA-256-Prüfsumme muss stimmen, sie muss sich vollständig entpacken lassen und die Kerntabellen sowie die Abschlussmarke enthalten.',
+      'Das Ergebnis erscheint auf dem Dashboard im Abschnitt „Datensicherung“: Grün „In Ordnung“, Orange „Hinweise“ oder Rot „Fehler“. Darunter stehen Zeitpunkt der letzten und der nächsten Prüfung, die neueste Sicherung und die Anzahl gespeicherter Sicherungen.',
+      'Die wöchentliche Statusmeldung listet jeden Prüfpunkt einzeln auf. Bestätige sie mit „Zur Kenntnis genommen“. Die Bestätigung gilt nur für dein Konto; die Statuskarte mit dem letzten Ergebnis bleibt sichtbar.',
+      'Bei Orange oder Rot öffne „Sicherungen verwalten“, lies die betroffenen Prüfpunkte und starte nach der Behebung mit „Jetzt prüfen“ eine neue Prüfung. Eine manuelle Prüfung ist höchstens alle 5 Minuten möglich.',
+      'Typische Ursachen: Der Backup-Container läuft nicht (veraltete MariaDB-Sicherung), der Datenträger ist voll, eine Datei wurde beschädigt oder verändert, oder der Identity-Keyring bzw. sein Master-Schlüssel wurde ausgetauscht. Informiere in diesen Fällen den Serverbetrieb.',
+    ],
+    tip:
+        'Eine rote Meldung ist ernst zu nehmen: Ohne funktionierende Sicherung kann ein Datenverlust nicht rückgängig gemacht werden. Erstelle nach der Fehlerbehebung sofort eine neue Sicherung und prüfe erneut.',
+    keywords: [
+      'backup',
+      'backup-prüfung',
+      'datensicherung',
+      'status',
+      'wochenprüfung',
+      'statusmeldung',
+      'mariadb',
+      'dump',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Konten & Sicherheit',
+    title: 'Plattformsicherung erstellen und zurückspielen',
+    summary:
+        'Serverseitige Gesamtsicherungen anlegen und den Plattformbestand sicher auf einen früheren Stand zurücksetzen.',
+    icon: Icons.settings_backup_restore,
+    readingMinutes: 6,
+    audience: 'Für Plattformadministratoren',
+    prerequisite:
+        'Du bist Plattformadministrator in „MaterialKompass – Zentrale Verwaltung“ und kennst dein aktuelles Passwort sowie gegebenenfalls deinen 2-FA-Code.',
+    steps: [
+      'Öffne im Dashboard der Zentralen Verwaltung „Plattformsicherungen“ oder in der Karte „Datensicherung“ die Schaltfläche „Sicherungen verwalten“.',
+      'Wähle „Neue Sicherung erstellen“ und bestätige mit Passwort und gegebenenfalls 2-FA-Code. Der Server sichert den vollständigen Plattformbestand – Konten, Rollen, Passkeys, Organisationen, Mitgliedschaften und alle Fachdaten – verschlüsselt in seinem Sicherungsverzeichnis. Die Sicherung wird nicht heruntergeladen.',
+      'Zwischen zwei manuellen Sicherungen müssen mindestens 10 Minuten liegen. Sicherungen werden nach 30 Tagen automatisch entfernt; die drei neuesten bleiben immer erhalten. Es werden höchstens 50 Sicherungen gleichzeitig gespeichert.',
+      'Die Liste zeigt jede Sicherung mit Zeitpunkt, Anlass (Manuell, Wochensicherung oder Vor Wiederherstellung), Kennung, Datensatzanzahl, Größe, Programmversion und Ersteller.',
+      'Zum Zurückspielen wähle bei der gewünschten Sicherung „Zurückspielen“. Prüfe Datum und Kennung genau: Der gesamte aktuelle Plattformbestand aller Organisationen wird ersetzt, Änderungen seit dem Sicherungszeitpunkt gehen verloren.',
+      'Gib Passwort, gegebenenfalls 2-FA-Code und exakt die angezeigte Bestätigung „SICHERUNG <Kennung> ZURÜCKSPIELEN“ ein. Der Server prüft die Sicherung zuerst vollständig. Ist sie beschädigt oder ungültig, wird nichts verändert.',
+      'Vor dem Ersetzen legt der Server automatisch eine Sicherung „Vor Wiederherstellung“ mit dem aktuellen Stand an. Damit lässt sich ein versehentliches Zurückspielen rückgängig machen.',
+      'Nach dem Zurückspielen werden alle Anmeldesitzungen beendet. Melde dich neu an und prüfe Anmeldung, Organisationen, Stichproben der Fachdaten und den Auditlog. Informiere die Nutzer, dass sie sich neu anmelden müssen und Änderungen seit dem Sicherungszeitpunkt fehlen.',
+      'Konten, die nach dem Sicherungszeitpunkt endgültig gelöscht wurden, bleiben gelöscht: Ihre Identitätsdaten sind kryptografisch vernichtet und werden als gesperrte Platzhalter wiederhergestellt. Push-Geräte für die 2-FA müssen nach einer Wiederherstellung neu registriert werden.',
+    ],
+    tip:
+        'Spiele eine Sicherung nur nach Absprache und zu einer ruhigen Zeit zurück. Für einzelne Organisationen ist eine Bereichssicherung (JSON-Export) meist die mildere Lösung, weil sie andere Organisationen unverändert lässt.',
+    keywords: [
+      'backup',
+      'plattformsicherung',
+      'sicherung erstellen',
+      'zurückspielen',
+      'wiederherstellung',
+      'restore',
+      'datensicherung',
     ],
   ),
   _GuideArticle(

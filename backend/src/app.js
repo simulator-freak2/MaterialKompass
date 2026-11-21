@@ -1,5 +1,5 @@
 const { activeItems, planImport } = require('./table-import');
-const { PLATFORM_ORGANIZATION_ID, administrationRouteAllowed } = require('./platform-administration');
+const { PLATFORM_ORGANIZATION_ID, administrationRouteAllowed, isPlatformAdministration } = require('./platform-administration');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -59,6 +59,11 @@ const { inspectZipArchive, neutralizeSpreadsheetCell } = require('./security-uti
 const { configurePersistence } = require('./persistence-coordinator');
 const { createRateLimiter } = require('./request-rate-limiter');
 const { registerDataBackupRoutes } = require('./data-backup');
+const {
+  createPlatformBackupService,
+  platformBackupOptionsFromEnvironment,
+  registerPlatformBackupRoutes,
+} = require('./platform-backups');
 const { createMemoryIdentityProtection } = require('./identity-protection');
 const { registerSystemMessageRoutes } = require('./system-messages');
 const { registerLabelTemplateRoutes } = require('./label-templates');
@@ -1654,6 +1659,31 @@ function createApp(options = {}) {
     persistData: () => app.locals.persistData(),
     identityProtection,
     verifyReauthentication: verifyAdministrativeReauthentication,
+  });
+  const platformBackups = createPlatformBackupService({
+    directory: options.platformBackupDirectory !== undefined
+      ? options.platformBackupDirectory : (process.env.PLATFORM_BACKUP_DIR || null),
+    dumpDirectory: options.databaseDumpDirectory !== undefined
+      ? options.databaseDumpDirectory : (process.env.DATABASE_DUMP_DIR || null),
+    identityProtection,
+    appData,
+    collectionNames: BACKUP_COLLECTIONS,
+    applicationVersion: version,
+    dataStore: options.dataStore,
+    persistData: () => app.locals.persistData(),
+    now: options.platformBackupNow,
+    options: { ...platformBackupOptionsFromEnvironment(), ...(options.platformBackupOptions || {}) },
+  });
+  app.locals.platformBackups = platformBackups;
+  registerPlatformBackupRoutes({
+    app,
+    authMiddleware,
+    service: platformBackups,
+    verifyReauthentication: verifyAdministrativeReauthentication,
+    users,
+    auditLogs: appData.auditLogs,
+    // Password and 2-FA checks share the strict login budget.
+    reauthenticationRateLimit: authRateLimit,
   });
 
   app.get('/health', (req, res) => res.json({
@@ -3355,7 +3385,7 @@ function createApp(options = {}) {
     });
   });
 
-  app.get('/api/dashboard', authMiddleware, requirePermission('dashboard.read'), (req, res) => {
+  app.get('/api/dashboard', authMiddleware, requirePermission('dashboard.read'), async (req, res) => {
     const activeMaterials = materials.filter((item) => !item.archived);
     const inspectionWarning = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     const summary = {};
@@ -3465,8 +3495,18 @@ function createApp(options = {}) {
       summary.openProcurementReceipts = appData.procurementReceipts.filter((receipt) => !receipt.inventoryTransferred).length;
     }
 
+    let backupStatus;
+    if (isPlatformAdministration(req)) {
+      try {
+        backupStatus = await platformBackups.status(req.user.id);
+      } catch (error) {
+        console.error('Backup-Status konnte nicht gelesen werden:', error);
+        backupStatus = { configured: false, error: 'Der Backup-Status ist nicht lesbar.' };
+      }
+    }
     res.json({
       summary,
+      ...(backupStatus ? { backupStatus } : {}),
       recentActivity: auditLogs
         .filter((entry) => {
           const area = activityAreas[entry.entity];

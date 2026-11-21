@@ -74,6 +74,10 @@ function administrationRouteAllowed(req) {
   if (req.path === '/api/users/me' || req.path.startsWith('/api/users/me/')) return true;
   if (['/api/auth/me', '/api/auth/logout', '/api/auth/context', '/api/dashboard', '/api/updater/authorization'].includes(req.path)) return true;
   if (req.path.startsWith('/api/system/backup')) return true;
+  if (req.path === '/api/platform/backups') return ['GET', 'POST'].includes(req.method);
+  if (req.path === '/api/platform/backups/checks') return req.method === 'POST';
+  if (/^\/api\/platform\/backups\/checks\/[^/]+\/acknowledge$/.test(req.path)) return req.method === 'POST';
+  if (/^\/api\/platform\/backups\/[^/]+\/restore$/.test(req.path)) return req.method === 'POST';
   if (req.path === '/api/organizations') return ['GET', 'POST'].includes(req.method);
   if (req.path === '/api/platform/organizations') return req.method === 'GET';
   if (/^\/api\/organizations\/[^/]+$/.test(req.path)) return ['PUT', 'DELETE'].includes(req.method);

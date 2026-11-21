@@ -91,6 +91,9 @@ services:
       context: ./backend
     restart: unless-stopped
     init: true
+    # Read access to the daily dumps for the weekly backup check.
+    group_add:
+      - "${BACKUP_GID:-1000}"
     mem_limit: 2g
     cpus: 2.0
     pids_limit: 256
@@ -205,12 +208,19 @@ services:
       CLIENT_ANDROID_MIN_VERSION: ${CLIENT_ANDROID_MIN_VERSION:-1.0.0}
       CLIENT_UPDATE_NOTES: ${CLIENT_UPDATE_NOTES:-}
       SYSTEM_MESSAGES_PATH: /app/runtime/public-messages.json
+      PLATFORM_BACKUP_DIR: /var/lib/materialkompass-platform-backups
+      PLATFORM_BACKUP_RETENTION_DAYS: ${PLATFORM_BACKUP_RETENTION_DAYS:-30}
+      PLATFORM_BACKUP_MAX_COUNT: ${PLATFORM_BACKUP_MAX_COUNT:-50}
+      DATABASE_DUMP_DIR: /var/lib/materialkompass-dumps
       MAILBOX_PROVISIONER_SOCKET: /run/materialkompass/mailbox-provisioner.sock
     volumes:
       - ./releases:/app/downloads:ro
       - ./.deployments/public-runtime:/app/runtime:ro
       - materialkompass_mailbox_socket:/run/materialkompass
       - materialkompass_identity_keyring:/var/lib/materialkompass-identity
+      - materialkompass_platform_backups:/var/lib/materialkompass-platform-backups
+      # Read-only: the backend verifies the daily dumps but can never alter them.
+      - ${BACKUP_DIR:-./backups}:/var/lib/materialkompass-dumps:ro
       - ./secrets:/run/secrets:ro
     depends_on:
       db:
@@ -256,3 +266,5 @@ volumes:
   materialkompass_mailbox_socket:
   materialkompass_identity_keyring:
     name: ${IDENTITY_KEYRING_VOLUME_NAME:-materialkompass_identity_keyring}
+  materialkompass_platform_backups:
+    name: ${PLATFORM_BACKUP_VOLUME_NAME:-materialkompass_platform_backups}

@@ -21,6 +21,39 @@ Stand: 17. Oktober 2026
    `materialkompass-<Zeitstempel>`-Legacy-Dumps mehr vorhanden sind.
 5. 5xx-/Rate-Limit-/Anmeldeanomalien und freien Speicher sichten.
 
+## Wöchentliche Backup-Prüfung
+
+Das Backend prüft jeden Montag um 03:30 UTC automatisch alle Sicherungen und meldet
+das Ergebnis im Dashboard von „MaterialKompass – Zentrale Verwaltung“. Eine verpasste
+Prüfung wird nach dem nächsten Start nachgeholt; Plattformadministratoren können unter
+**Plattformsicherungen → Jetzt prüfen** jederzeit (höchstens alle 5 Minuten) prüfen.
+
+| Prüfpunkt | Erwartung | Bei Fehler |
+| --- | --- | --- |
+| Automatische Wochensicherung | wird vor der Prüfung erstellt | Speicherplatz, Volume `materialkompass_platform_backups`, Logs |
+| Aktualität der Plattformsicherung | neueste höchstens 8 Tage alt (sonst Hinweis) | Sicherung manuell erstellen |
+| Integrität aller Plattformsicherungen | SHA-256 und AES-GCM-Authentifizierung gültig | beschädigte Kennung notieren, Datenträger prüfen |
+| Probewiederherstellung | neueste Sicherung vollständig validiert, ohne zu schreiben | Keyring und `IDENTITY_KEYRING_MASTER_KEY` prüfen |
+| MariaDB-Tagessicherung | höchstens 26 Stunden alt | `docker compose logs backup` |
+| Prüfsumme des Dumps | stimmt mit `.sha256` überein | Dump verwerfen, neuen Lauf erzwingen |
+| Inhalt des Dumps | vollständig entpackbar, Kerntabellen und `-- Dump completed` | Dump verwerfen, neuen Lauf erzwingen |
+
+Jede rote Meldung wird wie ein Incident behandelt: Ursache beheben, eine neue Sicherung
+erstellen (`docker compose run --rm -e BACKUP_ONCE=true backup` bzw. **Neue Sicherung
+erstellen**) und erneut prüfen. Die Probewiederherstellung ersetzt nicht den
+vierteljährlichen vollständigen Wiederherstellungstest unten.
+
+## Wiederherstellung aus einer Plattformsicherung
+
+Für logische Fehler (versehentlich gelöschte oder verfälschte Daten) bei intaktem Server
+spielen Plattformadministratoren unter **Plattformsicherungen → Zurückspielen** eine
+serverseitige Sicherung zurück. Der gesamte Plattformbestand aller Organisationen wird
+ersetzt; vorher entsteht automatisch eine Sicherung „Vor Wiederherstellung“, mit der sich
+der Schritt rückgängig machen lässt. Alle Refresh-Sitzungen werden beendet;
+bereits ausgegebene Zugriffstoken laufen spätestens nach einer Stunde ab. Push-2-FA-Geräte
+sind nicht enthalten und müssen ggf. neu registriert werden. Bei Datenträger-, Server-
+oder Datenbankverlust gilt weiterhin die dumpbasierte Wiederherstellung unten.
+
 ## Wiederherstellungstest
 
 Der Test erfolgt nie über der Produktionsdatenbank.

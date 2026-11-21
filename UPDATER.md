@@ -217,6 +217,9 @@ vertrauenswürdig beziehungsweise auf normalen Geräten nicht installierbar.
 Vor Codeänderungen und Datenimporten wird ein MariaDB-Dump mit SHA-256-Prüfsumme
 erzeugt. Der bisherige Anwendungscode wird unter `.deployments/archive` gesichert;
 Webdateien und Downloads besitzen eigene Rückfallpfade.
+Die verschlüsselten Plattformsicherungen im Volume `materialkompass_platform_backups`
+bleiben bei Updates erhalten. Eine Plattformsicherung einer älteren Programmversion kann
+nur zurückgespielt werden, solange ihr Datenformat (Schema 2 oder 3) unterstützt wird.
 SQL-Migrationen werden absichtlich nicht automatisch rückwärts ausgeführt; bei einer
 nicht kompatiblen Migration wird der vorherige Dump nach `OPERATIONS.md` in eine
 kontrollierte Wiederherstellung einbezogen.

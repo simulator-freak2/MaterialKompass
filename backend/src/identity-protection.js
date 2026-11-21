@@ -627,7 +627,9 @@ function createIdentityProtection({
     return copy;
   }
 
-  function unprotectBackupData(data) {
+  // register=false performs a side-effect-free dry run, e.g. for verifying a
+  // stored backup without replacing cached identities of live accounts.
+  function unprotectBackupData(data, { register = true } = {}) {
     const copy = structuredClone(data);
     const erasedUserIds = new Set();
     copy.users = (copy.users || []).map((user) => {
@@ -650,7 +652,7 @@ function createIdentityProtection({
         return tombstoneUser(user);
       }
       const restored = { ...user, ...identity, identityErased: false };
-      registerIdentity(restored);
+      if (register) registerIdentity(restored);
       return restored;
     });
     for (const [name, entries] of Object.entries(copy)) {
@@ -666,7 +668,17 @@ function createIdentityProtection({
     return { data: copy, erasedUserIds };
   }
 
+  // Purpose-bound subkeys keep other encrypted artefacts independent from the
+  // keyring key while still requiring the same, separately stored master key.
+  function deriveApplicationKey(purpose) {
+    const label = String(purpose || '');
+    if (!/^[a-z0-9:.-]{8,128}$/.test(label)) throw new Error('Ungültiger Schlüsselzweck.');
+    return Buffer.from(crypto.hkdfSync('sha256', master,
+      Buffer.from('MaterialKompass application key', 'utf8'), Buffer.from(label, 'utf8'), 32));
+  }
+
   return {
+    deriveApplicationKey,
     destroyUser,
     ensureUser,
     ensureUsers,

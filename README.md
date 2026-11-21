@@ -42,6 +42,8 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
   mit mitwanderndem Inhalt, versionierten Packlisten, Vollständigkeitsprüfung,
   Ablaufdaten, Scan und Inventurbestätigung (siehe [CONTAINER_MANAGEMENT.md](CONTAINER_MANAGEMENT.md))
 - Prüfungen, vollständiges Mängelmanagement, Dokumente sowie XLSX-/ODS-Import und -Export
+- Verschlüsselte serverseitige Plattformsicherungen mit Wiederherstellung und
+  wöchentlicher automatischer Backup-Prüfung im Dashboard der Zentralen Verwaltung
 - PSAgE-Prüfdokumentation für Westen (siehe [PSAgE-Prüfungen](#psage-prüfungen-westen))
 - Barcode-/QR-Code-Anzeige, Handscanner- und Webkamera-Unterstützung
 - ZPL-Etikettendruck über LAN für Zebra-Drucker unter Windows und Android
@@ -637,6 +639,44 @@ Die Sicherungen liegen auf demselben Server und schützen damit vor Datenbankfeh
 nicht vor dem Ausfall oder Verlust des gesamten Servers. Für vollständige
 Ausfallsicherheit muss `BACKUP_DIR` zusätzlich verschlüsselt auf ein getrenntes System
 repliziert werden.
+
+### Plattformsicherungen und wöchentliche Backup-Prüfung
+
+Plattformadministratoren verwalten in **MaterialKompass – Zentrale Verwaltung →
+Plattformsicherungen** serverseitige Gesamtsicherungen des vollständigen
+Plattformbestands (Konten, Rollen, Passkeys, Organisationen, Mitgliedschaften und
+Fachdaten im JSON-Schema 3). Sie verlassen den Server nicht und liegen im Volume
+`materialkompass_platform_backups` (`PLATFORM_BACKUP_DIR`). Jede Datei ist gzip-
+komprimiert und mit AES-256-GCM verschlüsselt; der Schlüssel wird per HKDF aus
+`IDENTITY_KEYRING_MASTER_KEY` abgeleitet, die Metadaten sind als AAD gebunden und eine
+SHA-256-Prüfsumme liegt in der Begleitdatei. Ohne den unveränderten Master-Key und den
+aktuellen Keyring ist eine Sicherung nicht wiederherstellbar.
+
+- **Neue Sicherung erstellen** verlangt Passwort und ggf. 2-FA, höchstens alle
+  10 Minuten. Sicherungen laufen nach `PLATFORM_BACKUP_RETENTION_DAYS` (Standard 30)
+  ab; die drei neuesten bleiben immer erhalten. Bei `PLATFORM_BACKUP_MAX_COUNT`
+  (Standard 50) Sicherungen werden neue abgelehnt, statt ältere zu verdrängen.
+- **Zurückspielen** verlangt Passwort, ggf. 2-FA und exakt
+  `SICHERUNG <Kennung> ZURÜCKSPIELEN`. Die Sicherung wird vorher vollständig
+  geprüft, eine Sicherung „Vor Wiederherstellung“ angelegt, der Bestand transaktional
+  ersetzt, alle Refresh-Sitzungen beendet und der Vorgang auditiert. Identitätsschlüssel
+  von Konten, die nur noch in aufbewahrten Sicherungen existieren, bleiben erhalten,
+  damit sich der Schritt verlustfrei rückgängig machen lässt.
+- **Wöchentliche Prüfung** jeden Montag 03:30 UTC (nach dem Tagesdump, verpasste
+  Termine werden nachgeholt; manuell über **Jetzt prüfen**): Sie erstellt eine
+  Wochensicherung, prüft Prüfsumme und Authentifizierung aller Plattformsicherungen,
+  validiert die neueste in einer schreibfreien Probewiederherstellung und prüft den
+  neuesten MariaDB-Dump auf Alter (≤ 26 h), SHA-256, vollständiges Entpacken, Kerntabellen
+  und Abschlussmarke. Das Ergebnis erscheint als Statuskarte und als quittierbare
+  Wochenmeldung im Dashboard der Zentralen Verwaltung; das Protokoll liegt in
+  `backup-checks.json` im selben Volume.
+
+Das Backend bindet `BACKUP_DIR` schreibgeschützt unter `/var/lib/materialkompass-dumps`
+(`DATABASE_DUMP_DIR`) ein und tritt der Gruppe `BACKUP_GID` bei. Der Backupdienst legt
+fertige Dumps und Prüfsummen deshalb mit `0640` und das Verzeichnis mit `0750` an.
+Bestehende Dumps vor diesem Update bleiben `0600`; der nächste Tagesdump ist lesbar.
+Auch die Plattformsicherungen liegen auf demselben Server und müssen für echte
+Ausfallsicherheit zusätzlich auf ein getrenntes System repliziert werden.
 
 ### Editierbare JSON-Gesamtsicherung und gezieltes Zurücksetzen
 

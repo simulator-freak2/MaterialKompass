@@ -134,6 +134,11 @@ Anwendung zu dokumentieren.
   Schlüsseln geschützt, die bei Löschung oder Identitätsänderung vernichtet werden.
   Historische Keyring-Versionen sind unzulässig; Zugriff auf Produktionsbackups und
   den aktuellen Keyring ist zu protokollieren.
+- Serverseitige Plattformsicherungen sind vollständig verschlüsselt, werden nach
+  `PLATFORM_BACKUP_RETENTION_DAYS` (Standard 30 Tage) gelöscht und unterliegen damit
+  derselben Frist wie die Datenbank-Dumps; die drei neuesten bleiben bis zum Ersatz
+  erhalten. Gelöschte Konten bleiben auch nach einem Restore kryptografisch gelöscht.
+  Erstellen, Prüfen und Zurückspielen werden im Auditlog protokolliert.
 - Adminrechte regelmäßig rezertifizieren und ausgeschiedene Personen sofort
   deaktivieren.
 - Datenschutzverletzungen intern unverzüglich eskalieren. Die 72-Stunden-

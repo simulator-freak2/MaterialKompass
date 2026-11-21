@@ -45,6 +45,9 @@ fi
 
 umask 077
 mkdir -p "$BACKUP_DIR"
+# The backend joins BACKUP_GID read-only to verify the dumps weekly. Only the
+# published dump and checksum become group-readable; temporary files stay 0600.
+chmod 0750 "$BACKUP_DIR" 2>/dev/null || echo "Warning: could not set backup directory permissions" >&2
 
 run_backup() {
   backup_date=$(date -u '+%Y-%m-%d')
@@ -117,6 +120,10 @@ run_backup() {
     sha256sum "$(basename "$final_file")" > "$(basename "$final_file").sha256"
   ); then
     echo "Creating the backup checksum failed" >&2
+    return 1
+  fi
+  if ! chmod 0640 "$final_file" "$final_file.sha256"; then
+    echo "Setting backup file permissions failed" >&2
     return 1
   fi
   # A pre-v2 dump contains plaintext account identities. It is removed only

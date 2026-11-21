@@ -35,7 +35,10 @@ Schutz der CI-Signierschlüssel liegen in der Verantwortung des Betreibers.
 | Sitzungsfortsetzung nach Verlust/Logout | Sicherheitsversion, sofortiger Logout aller Kontositzungen, Faktoränderungen und Kontosperren widerrufen Zugriffs- und Refresh-Sitzungen | offline kompromittierte Geräte bis zum nächsten Serverkontakt |
 | Manipuliertes Update | HTTPS, Größenlimit, SHA-256, Plattformsignatur und OS-Bestätigung | kompromittierter Release-/Signierprozess |
 | Docker-Socket-Missbrauch | Provisioner ohne Netzwerk, enges Protokoll, Token, allowlisted Befehle | Dienst besitzt weiterhin Host-nahe Rechte |
-| Verlust/Korruption | Transaktionen, tägliche Dumps, Prüfsumme, Restore-Test, externe Replikation | RPO-Fenster und Betreiberfehler |
+| Verlust/Korruption | Transaktionen, tägliche Dumps, Prüfsumme, Restore-Test, externe Replikation, wöchentliche automatische Backup-Prüfung mit Probewiederherstellung | RPO-Fenster und Betreiberfehler |
+| Missbrauch der Plattform-Wiederherstellung | nur Plattformadmins in der Zentralen Verwaltung, keine Dienstgeräte, Passwort/2-FA mit Login-Rate-Limit, exakte Bestätigung je Sicherung, Validierung vor dem Schreiben, automatische Vorab-Sicherung, Auditlog, Widerruf aller Refresh-Sitzungen | gestohlene Plattformadmin-Zugangsdaten samt 2-FA |
+| Manipulierte oder untergeschobene Plattformsicherung | AES-256-GCM mit eigenem, aus dem Identity-Master-Key abgeleiteten Schlüssel; Metadaten als AAD gebunden; feste ID-Syntax gegen Pfadmanipulation, `O_NOFOLLOW`, atomare 0600-Dateien | Host-Root mit Zugriff auf Master-Key |
+| Verdrängen guter Sicherungen | Ablauf nur nach Alter, die drei neuesten bleiben, Obergrenze statt Löschen bei vielen Sicherungen, 10-Minuten-Abstand manueller Sicherungen | gezielte Löschung mit Hostzugriff |
 | Unsichere Materialausgabe | serverseitiges Safety-Gate, Prüf-/Wartungsnachweis, sichtbare Warnung, Audit | falsche Klassifizierung oder Prüfdaten |
 
 ## Sicherheitsprüfung

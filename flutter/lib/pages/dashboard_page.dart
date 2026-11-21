@@ -12,6 +12,7 @@ import '../services/offline_http.dart' as offline_transport;
 import '../services/offline_session_service.dart';
 import '../services/offline_store.dart';
 import '../services/system_message_service.dart';
+import '../widgets/backup_status_card.dart';
 import '../widgets/download_folder_dialog.dart';
 import '../widgets/mail_count_badge.dart';
 import '../widgets/stat_card.dart';
@@ -26,6 +27,7 @@ import 'knowledge_base_page.dart' as knowledge_base_page;
 import 'label_templates_page.dart' as label_templates_page;
 import 'locations_page.dart' as locations_page;
 import 'organizations_page.dart' as organizations_page;
+import 'platform_backups_page.dart' as platform_backups_page;
 import 'procurement_page.dart' as procurement_page;
 import 'profile_page.dart' as profile_page;
 import 'stocktakes_page.dart' as stocktakes_page;
@@ -366,6 +368,31 @@ class _DashboardPageState extends State<DashboardPage>
     if (shouldExit != true) return;
 
     await (widget.appExit?.call() ?? SystemNavigator.pop());
+  }
+
+  Future<void> _acknowledgeBackupCheck(String checkId) async {
+    try {
+      final response = await AppHttpClient.post(
+        Uri.parse(
+          '$apiBaseUrl/api/platform/backups/checks/${Uri.encodeComponent(checkId)}/acknowledge',
+        ),
+        headers: {
+          'Authorization': 'Bearer $_token',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      );
+      if (response.statusCode != 204) throw Exception();
+      await _refreshInBackground();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Die Backup-Meldung konnte nicht bestätigt werden.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _refresh() async {
@@ -897,6 +924,9 @@ class _DashboardPageState extends State<DashboardPage>
               .map((role) => role.toString())
               .toList();
           bool can(String permission) => permissions.contains(permission);
+          final backupStatus = data['backupStatus'] is Map
+              ? Map<String, dynamic>.from(data['backupStatus'] as Map)
+              : null;
           bool hasMetric(String key) => summary.containsKey(key);
           int metricValue(String key) =>
               int.tryParse(summary[key]?.toString() ?? '') ?? 0;
@@ -1077,6 +1107,17 @@ class _DashboardPageState extends State<DashboardPage>
                         : 'Nur Freigaben und Rollen der aktiven Ebene',
                     onTap: () =>
                         _loadAndOpen(() => users_page.UsersPage(token: _token)),
+                  ),
+                if (backupStatus != null)
+                  _DashboardAction(
+                    icon: Icons.settings_backup_restore,
+                    label: 'Plattformsicherungen',
+                    description: 'Sicherungen prüfen, erstellen, zurückspielen',
+                    onTap: () => _loadAndOpen(
+                      () => platform_backups_page.PlatformBackupsPage(
+                        token: _token,
+                      ),
+                    ),
                   ),
                 if (roles.contains('Admin') && can('organizations.write'))
                   _DashboardAction(
@@ -1292,6 +1333,25 @@ class _DashboardPageState extends State<DashboardPage>
                                   name: currentUser['name']?.toString(),
                                   roles: roles,
                                 ),
+                                if (backupStatus != null) ...[
+                                  const SizedBox(height: 28),
+                                  const _SectionHeading(
+                                    title: 'Datensicherung',
+                                    subtitle:
+                                        'Ergebnis der wöchentlichen Backup-Prüfung',
+                                  ),
+                                  const SizedBox(height: 12),
+                                  BackupStatusCard(
+                                    status: backupStatus,
+                                    onAcknowledge: _acknowledgeBackupCheck,
+                                    onManage: () => _loadAndOpen(
+                                      () =>
+                                          platform_backups_page.PlatformBackupsPage(
+                                            token: _token,
+                                          ),
+                                    ),
+                                  ),
+                                ],
                                 if (actions.isNotEmpty) ...[
                                   const SizedBox(height: 28),
                                   const _SectionHeading(
