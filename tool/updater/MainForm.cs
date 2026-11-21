@@ -138,19 +138,20 @@ internal sealed class MainForm : Form
         AddRow(panel, "Codesignatur", _allowUnsigned);
         AddRow(panel, "Gesamtsicherung", WithBrowse(_backupFile, "MaterialKompass-Gesamtsicherung auswählen", false, "JSON (*.json)|*.json"));
 
+        var pull = ActionButton("0. Git-Stand abrufen", PullFromGitAsync);
         var prepare = ActionButton("1. Release vorbereiten", PrepareReleaseAsync);
         var push = ActionButton("2. Git committen & pushen", CommitAndPushGitAsync);
         var build = ActionButton("3. Apps bauen", BuildAppsAsync);
         var preview = ActionButton("4. Sicherheitsvorschau", () => DeployAsync(dryRun: true));
         var deploy = ActionButton("5. Deployment starten", () => DeployAsync(dryRun: false));
-        AddRow(panel, string.Empty, Buttons(prepare, push, build, preview, deploy));
+        AddRow(panel, string.Empty, Buttons(pull, prepare, push, build, preview, deploy));
 
         var warning = new Label
         {
             AutoSize = true,
             MaximumSize = new Size(820, 0),
             ForeColor = Color.DarkRed,
-            Text = "Der Git-Push ist optional und unabhängig vom direkten SSH-Deployment. Vor dem Commit werden Zielbranch und alle Dateien zur Bestätigung angezeigt; Force-Push wird nicht verwendet. Ohne Codesignatur bleiben native Produktionsinstaller gesperrt.",
+            Text = "„Git-Stand abrufen“ überträgt den aktuellen Stand von origin in den lokalen Projektordner – ausschließlich per Fast-Forward, ohne Überschreiben lokaler Commits. Der Git-Push ist optional und unabhängig vom direkten SSH-Deployment. Vor dem Commit werden Zielbranch und alle Dateien zur Bestätigung angezeigt; Force-Push wird nicht verwendet. Ohne Codesignatur bleiben native Produktionsinstaller gesperrt.",
         };
         AddRow(panel, string.Empty, warning);
         page.Controls.Add(panel);
@@ -524,16 +525,189 @@ internal sealed class MainForm : Form
         finally { try { File.Delete(temp); } catch { } }
     }
 
-    private async Task CommitAndPushGitAsync()
+    private string ValidatedBranch()
     {
         var branch = _branch.Text.Trim();
         if (!Regex.IsMatch(branch, @"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
             || branch.Contains("..", StringComparison.Ordinal)
             || branch.Contains("//", StringComparison.Ordinal)
-            || branch.EndsWith('/'))
+            || branch.EndsWith('/')
+            || branch.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Der Git-Branchname ist nicht sicher.");
         }
+        return branch;
+    }
+
+    private async Task<string> GitOutputAsync(string failureMessage, params string[] arguments)
+    {
+        var result = await RunGitAsync(arguments);
+        if (!result.Success) throw new InvalidOperationException(CommandFailure(failureMessage, result));
+        return result.Output.Trim();
+    }
+
+    private async Task PullFromGitAsync()
+    {
+        var branch = ValidatedBranch();
+        var remoteRef = $"refs/remotes/origin/{branch}";
+
+        Log($"Rufe origin/{branch} ab …");
+        await GitOutputAsync(
+            $"Der Branch {branch} konnte nicht von origin abgerufen werden. Netzwerk, Anmeldung und Branchnamen prüfen.",
+            "fetch", "--prune", "--no-tags", "origin", $"+refs/heads/{branch}:{remoteRef}");
+
+        var statusResult = await RunGitAsync("status", "--porcelain=v1", "--untracked-files=no");
+        if (!statusResult.Success)
+            throw new InvalidOperationException(CommandFailure("Der Git-Status konnte nicht gelesen werden.", statusResult));
+        var trackedChanges = statusResult.Output
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+
+        var currentBranch = await GitOutputAsync("Der aktuelle Git-Branch konnte nicht gelesen werden.", "branch", "--show-current");
+        if (!string.Equals(currentBranch, branch, StringComparison.Ordinal))
+        {
+            if (trackedChanges.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Der lokale Projektordner steht auf „{(currentBranch.Length == 0 ? "losgelöstem HEAD" : currentBranch)}“, eingestellt ist „{branch}“.\n\n"
+                    + "Wegen lokaler Änderungen wird der Branch nicht automatisch gewechselt. Bitte die Änderungen zuerst committen oder sichern.");
+            }
+            var switchQuestion = $"Der lokale Projektordner steht auf „{(currentBranch.Length == 0 ? "losgelöstem HEAD" : currentBranch)}“.\n\n"
+                + $"Zum eingestellten Branch „{branch}“ wechseln und dessen aktuellen Stand übernehmen?";
+            if (MessageBox.Show(this, switchQuestion, "Git-Branch wechseln", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            {
+                Log("Git-Abruf wurde ohne Branchwechsel beendet.");
+                return;
+            }
+            var localExists = (await RunGitAsync("show-ref", "--verify", "--quiet", $"refs/heads/{branch}")).Success;
+            if (localExists)
+                await GitOutputAsync($"Wechsel zu {branch} fehlgeschlagen.", "switch", branch);
+            else
+                await GitOutputAsync($"Lokaler Branch {branch} konnte nicht angelegt werden.", "switch", "--create", branch, "--track", $"origin/{branch}");
+        }
+
+        var counts = (await GitOutputAsync(
+                "Lokaler und entfernter Stand konnten nicht verglichen werden.",
+                "rev-list", "--left-right", "--count", $"HEAD...{remoteRef}"))
+            .Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        var ahead = int.Parse(counts[0]);
+        var behind = int.Parse(counts[1]);
+
+        if (behind == 0)
+        {
+            var upToDate = ahead == 0
+                ? $"Der lokale Projektordner entspricht bereits origin/{branch}."
+                : $"Der lokale Projektordner ist aktuell und enthält zusätzlich {ahead} noch nicht gepushte Commit(s).";
+            LoadCurrentVersion();
+            Log(upToDate);
+            MessageBox.Show(this, upToDate, "Git-Stand abrufen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (ahead > 0)
+        {
+            throw new InvalidOperationException(
+                $"Lokaler Stand und origin/{branch} sind auseinandergelaufen ({ahead} lokale, {behind} entfernte Commits).\n\n"
+                + "Der Updater führt nur Fast-Forward-Aktualisierungen aus und überschreibt keine lokalen Commits. "
+                + "Bitte manuell zusammenführen (z. B. git pull --rebase) und Konflikte prüfen.");
+        }
+
+        var incoming = (await GitOutputAsync(
+                "Die neuen Commits konnten nicht gelesen werden.",
+                "log", "--no-decorate", "--format=%h %an: %s", "-n", "25", $"HEAD..{remoteRef}"))
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var changedFiles = (await GitOutputAsync(
+                "Die geänderten Dateien konnten nicht gelesen werden.",
+                "diff", "--name-only", $"HEAD..{remoteRef}"))
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var touchesTrackedChanges = trackedChanges
+            .Select(GitStatusPath)
+            .Intersect(changedFiles, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var confirmation = new StringBuilder()
+            .AppendLine($"Quelle: origin/{branch}")
+            .AppendLine($"Neue Commits: {behind}")
+            .AppendLine($"Geänderte Dateien: {changedFiles.Length}")
+            .AppendLine()
+            .AppendLine(string.Join(Environment.NewLine, incoming))
+            .AppendLine(behind > incoming.Length ? $"… und {behind - incoming.Length} weitere" : string.Empty);
+        if (trackedChanges.Length > 0)
+        {
+            confirmation.AppendLine($"Lokale, nicht committete Änderungen: {trackedChanges.Length} Datei(en). "
+                + "Sie werden vorübergehend per git stash gesichert und danach wiederhergestellt.");
+        }
+        confirmation.AppendLine().Append("Den aktuellen Git-Stand jetzt in den lokalen Projektordner übernehmen?");
+        if (MessageBox.Show(this, confirmation.ToString(), "Git-Stand abrufen bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            Log("Git-Abruf wurde nicht übernommen.");
+            return;
+        }
+        if (touchesTrackedChanges.Length > 0)
+        {
+            var conflictWarning = "Folgende lokal geänderte Dateien werden auch im Git-Stand geändert. Beim Wiederherstellen können Konflikte entstehen:\n\n"
+                + string.Join(Environment.NewLine, touchesTrackedChanges.Take(20))
+                + "\n\nTrotzdem fortfahren?";
+            if (MessageBox.Show(this, conflictWarning, "Mögliche Konflikte", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                Log("Git-Abruf wegen möglicher Konflikte abgebrochen.");
+                return;
+            }
+        }
+
+        var previousHead = await GitOutputAsync("Der aktuelle Commit konnte nicht gelesen werden.", "rev-parse", "HEAD");
+        var stashed = false;
+        if (trackedChanges.Length > 0)
+        {
+            await GitOutputAsync(
+                "Die lokalen Änderungen konnten nicht gesichert werden. Es wurde nichts verändert.",
+                "stash", "push", "-m", $"MaterialKompass-Updater vor Git-Abruf {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            stashed = true;
+            Log("Lokale Änderungen wurden per git stash gesichert.");
+        }
+
+        var mergeResult = await RunGitAsync("merge", "--ff-only", remoteRef);
+        if (!mergeResult.Success)
+        {
+            var restoreHint = string.Empty;
+            if (stashed)
+            {
+                var restore = await RunGitAsync("stash", "pop");
+                restoreHint = restore.Success
+                    ? "\n\nDie lokalen Änderungen wurden wiederhergestellt."
+                    : "\n\nDie lokalen Änderungen liegen weiterhin sicher in git stash (git stash list).";
+            }
+            throw new InvalidOperationException(CommandFailure(
+                "Der Git-Stand konnte nicht per Fast-Forward übernommen werden. Möglicherweise würden unversionierte Dateien überschrieben." + restoreHint,
+                mergeResult));
+        }
+
+        var restoreMessage = string.Empty;
+        if (stashed)
+        {
+            var popResult = await RunGitAsync("stash", "pop");
+            restoreMessage = popResult.Success
+                ? "\n\nDie lokalen Änderungen wurden wiederhergestellt."
+                : "\n\nACHTUNG: Beim Wiederherstellen der lokalen Änderungen sind Konflikte aufgetreten. "
+                  + "Bitte die betroffenen Dateien prüfen; die Sicherung bleibt in git stash erhalten.";
+            Log(popResult.Success ? "Lokale Änderungen wurden wiederhergestellt." : "Konflikte beim Wiederherstellen der lokalen Änderungen.");
+        }
+
+        var newHead = await GitOutputAsync("Der neue Commit konnte nicht gelesen werden.", "rev-parse", "--short", "HEAD");
+        var updaterChanged = changedFiles.Any(path => path.StartsWith("tool/updater/", StringComparison.OrdinalIgnoreCase));
+        LoadCurrentVersion();
+        Log($"Lokaler Projektordner wurde von {previousHead[..Math.Min(7, previousHead.Length)]} auf {newHead} (origin/{branch}) aktualisiert.");
+
+        var summary = $"Der lokale Projektordner entspricht jetzt origin/{branch} ({newHead}).\nVersion laut Projekt: {_version.Text}+{_buildNumber.Value}"
+            + restoreMessage
+            + (updaterChanged
+                ? "\n\nDer Updater selbst wurde geändert. Bitte den Updater schließen, mit tool\\updater\\build-updater.ps1 neu bauen und neu starten."
+                : string.Empty);
+        MessageBox.Show(this, summary, "Git-Stand übernommen", MessageBoxButtons.OK,
+            updaterChanged || restoreMessage.Contains("ACHTUNG", StringComparison.Ordinal) ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+    }
+
+    private async Task CommitAndPushGitAsync()
+    {
+        var branch = ValidatedBranch();
 
         var commitMessage = _gitCommitMessage.Text.Trim();
         if (commitMessage.Length is < 3 or > 120 || commitMessage.Contains('\n') || commitMessage.Contains('\r'))

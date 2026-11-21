@@ -17,6 +17,8 @@ Verbindung wird der fest gespeicherte SSH-Hostschlüssel geprüft.
 - optionaler vollständiger Datenimport mit frischem Serverbackup, Adminpasswort,
   2-FA und zusätzlichem Bestätigungssatz
 - lokale Prüf-Builds oder Start des GitHub-Actions-Workflows
+- Abruf des aktuellen Git-Stands von `origin` in den lokalen Projektordner
+  (ausschließlich Fast-Forward, mit Vorschau der neuen Commits)
 - optionales Committen und direktes Pushen lokaler Änderungen aus dem Updater
 - direkter, SHA-256-geprüfter Serverupload ohne Git-Push oder Git-Abruf
 - vom SSH-Kanal unabhängige Paketinstallation mit erneuter Statusabfrage nach
@@ -167,6 +169,8 @@ einem Provider-Proxy gelten dieselben beiden lokalen Ziele.
 
 ## Sicherer Releaseablauf
 
+0. Optional **Git-Stand abrufen** ausführen, um den lokalen Projektordner auf den
+   aktuellen Stand von `origin/<Git-Branch>` zu bringen (siehe unten).
 1. Im Updater Version, Buildnummer und Changelog eintragen.
 2. **Release vorbereiten** ausführen.
 3. Die Änderungen prüfen; das Tool führt Backend-, Mailbox- und Fluttertests aus.
@@ -183,6 +187,26 @@ einem Provider-Proxy gelten dieselben beiden lokalen Ziele.
    vorhandenen 2-FA bzw. eines Recovery-Codes an und lässt die Berechtigung durch
    `POST /api/updater/authorization` serverseitig prüfen.
 8. Status, Changeloganzeige, Web-App und Downloads kontrollieren.
+
+### Git-Stand abrufen
+
+**0. Git-Stand abrufen** holt den im Reiter *Server & Sicherheit* eingestellten
+Git-Branch von `origin` und überträgt ihn in den lokalen Projektordner:
+
+- Vor der Übernahme werden Anzahl und Liste der neuen Commits sowie die Zahl der
+  geänderten Dateien zur Bestätigung angezeigt.
+- Es wird ausschließlich per Fast-Forward (`git merge --ff-only`) aktualisiert.
+  Lokale, noch nicht gepushte Commits werden nie überschrieben; sind lokaler und
+  entfernter Stand auseinandergelaufen, bricht der Updater mit einem Hinweis ab.
+- Nicht committete Änderungen an versionierten Dateien werden vorübergehend per
+  `git stash` gesichert und danach wiederhergestellt. Überschneiden sie sich mit
+  eingehenden Änderungen, warnt der Updater vorab. Bei Konflikten bleibt die
+  Sicherung in `git stash list` erhalten.
+- Steht der Projektordner auf einem anderen Branch, bietet der Updater bei sauberem
+  Arbeitsverzeichnis den Wechsel zum eingestellten Branch an.
+- Danach werden Version, Buildnummer und Changelog neu aus dem Projekt geladen.
+  Wurde der Updater selbst (`tool/updater`) geändert, weist er darauf hin, ihn mit
+  `build-updater.ps1` neu zu bauen und neu zu starten.
 
 Der Updater erstellt aus dem lokalen Projekt eine feste, allowlist-basierte
 Serverdatei und überträgt sie direkt per SSH. Der optionale Git-Push ist vom Deployment
