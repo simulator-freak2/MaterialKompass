@@ -249,8 +249,91 @@ function bulkInput(body) {
   };
 }
 
+const STORAGE_ID_REFERENCES = [
+  {
+    collection: 'locations',
+    prefix: 'loc',
+    keys: ['locationId', 'parkingLocationId', 'actualLocationId', 'expectedLocationId',
+      'previousLocationId', 'toLocationId', 'fromLocationId', 'destinationLocationId'],
+    listKeys: ['locationIds', 'allowedLocationIds'],
+  },
+  { collection: 'shelves', prefix: 'shelf', keys: ['shelfId'], listKeys: [] },
+  { collection: 'storageLevels', prefix: 'level', keys: ['levelId'], listKeys: [] },
+  {
+    collection: 'stockStructures',
+    prefix: 'stock',
+    keys: ['stockStructureId', 'storagePositionId', 'actualStockStructureId',
+      'expectedStockStructureId', 'destinationStockStructureId',
+      'previousStockStructureId', 'toStockStructureId', 'fromStockStructureId'],
+    listKeys: ['stockStructureIds'],
+  },
+];
+
+function replaceStorageReferences(value, keys, listKeys, oldId, newId, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 8) return;
+  if (Array.isArray(value)) {
+    for (const entry of value) replaceStorageReferences(entry, keys, listKeys, oldId, newId, depth + 1);
+    return;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (keys.includes(key) && entry === oldId) {
+      value[key] = newId;
+    } else if (listKeys.includes(key) && Array.isArray(entry)) {
+      value[key] = entry.map((id) => (id === oldId ? newId : id));
+    } else if (entry && typeof entry === 'object') {
+      replaceStorageReferences(entry, keys, listKeys, oldId, newId, depth + 1);
+    }
+  }
+}
+
+/**
+ * Releases before 1.7.6 derived new storage IDs from the tenant-filtered
+ * view, so a youth unit and its base unit could both own e.g. `loc-2`.
+ * Since both storage structures are shared, ID lookups hit the wrong
+ * entry (for example "Nur eigene Lagerorte dürfen gelöscht werden.").
+ * Later duplicates within one organization receive a fresh ID; references
+ * held by records of the same organization unit follow the new ID.
+ */
+function ensureUniqueStorageIds(data) {
+  const renamed = [];
+  for (const { collection, prefix, keys, listKeys } of STORAGE_ID_REFERENCES) {
+    const entries = data[collection] || [];
+    const seen = new Set();
+    let highest = entries.reduce((max, entry) => {
+      const match = String(entry?.id || '').match(new RegExp(`^${prefix}-(\\d+)$`));
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object' || !entry.id) continue;
+      const key = `${entry.organizationId || ''}\u0000${entry.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        continue;
+      }
+      const oldId = entry.id;
+      highest += 1;
+      const newId = `${prefix}-${highest}`;
+      entry.id = newId;
+      seen.add(`${entry.organizationId || ''}\u0000${newId}`);
+      renamed.push({ collection, oldId, newId, organizationId: entry.organizationId, unitId: entry.unitId });
+      for (const [name, records] of Object.entries(data)) {
+        if (!Array.isArray(records)) continue;
+        for (const record of records) {
+          if (!record || typeof record !== 'object' || record === entry) continue;
+          if (record.organizationId !== entry.organizationId || record.unitId !== entry.unitId) continue;
+          if (name === collection && record.id === oldId) continue;
+          replaceStorageReferences(record, keys, listKeys, oldId, newId);
+        }
+      }
+    }
+  }
+  if (renamed.length > 0) refreshStoragePaths(data);
+  return renamed;
+}
+
 module.exports = {
   StorageValidationError,
+  ensureUniqueStorageIds,
   buildingInput,
   hierarchyNodeInput,
   duplicateInScope,

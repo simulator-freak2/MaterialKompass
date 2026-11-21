@@ -1261,3 +1261,35 @@ test('unit administrators only manage offline clients of their own unit', async 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('legacy duplicate storage IDs of youth and base unit are separated so youth can delete its own building', async () => {
+  const data = youthTenantData();
+  const base = (id) => ({ organizationId: 'org-a', unitId: 'unit-a-youth', street: 'Rheinstraße', houseNumber: '249', postalCode: '55218', city: 'Ingelheim', country: 'Deutschland', id });
+  data.locations.push({ ...base('loc-2'), name: 'Jugend-Kleiderkammer', code: 'JKK', type: 'Kleidung' });
+  data.locations.push({ ...base('loc-1'), name: 'Jugendkeller', code: 'JKE', type: 'Lager' });
+  data.materials.push({
+    ...structuredClone(data.materials[0]), id: 'material-a-youth-dup',
+    inventoryNumber: 'A-YOUTH-002', name: 'Jugend-Kiste', locationId: 'loc-1',
+    stockStructureId: null, organizationId: 'org-a', unitId: 'unit-a-youth',
+    safetyCritical: false, nextInspectionDate: null, nextMaintenanceDate: null,
+  });
+  const { app, server, baseUrl } = await start(data);
+  try {
+    const raw = app.locals.appData.locations;
+    const all = require('../src/tenancy').rawCollection(raw).filter((entry) => entry.organizationId === 'org-a');
+    assert.equal(new Set(all.map((entry) => entry.id)).size, all.length);
+    const youthCellar = all.find((entry) => entry.code === 'JKE');
+    assert.notEqual(youthCellar.id, 'loc-1');
+    const materials = require('../src/tenancy').rawCollection(app.locals.appData.materials);
+    assert.equal(materials.find((entry) => entry.id === 'material-a-youth-dup').locationId, youthCellar.id);
+    assert.equal(materials.find((entry) => entry.id === 'material-a-base-shared').locationId, 'loc-1');
+
+    const token = await login(baseUrl, 'jugendvorsitz', 'Material123!');
+    const hierarchy = await request(baseUrl, '/api/storage-hierarchy', { token });
+    const ownWardrobe = hierarchy.data.locations.find((entry) => entry.code === 'JKK');
+    assert.equal(ownWardrobe.readOnly, false);
+    const deleted = await request(baseUrl, `/api/locations/${ownWardrobe.id}`, { token, method: 'DELETE' });
+    assert.equal(deleted.response.status, 204);
+    assert.ok(all.some((entry) => entry.id === 'loc-2' && entry.unitId === 'unit-a'));
+  } finally { server.close(); }
+});

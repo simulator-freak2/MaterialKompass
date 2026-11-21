@@ -85,6 +85,7 @@ const {
   hierarchyNodeInput,
   duplicateInScope,
   ensureStorageHierarchy,
+  ensureUniqueStorageIds,
   refreshStoragePaths,
   bulkInput,
 } = require('./storage-hierarchy');
@@ -317,6 +318,7 @@ function createApp(options = {}) {
   }
   const tenancyData = normalizeTenancyData(appData);
   ensureStorageHierarchy(appData);
+  ensureUniqueStorageIds(appData);
   wrapTenantCollections(appData);
   app.locals.appData = appData;
   const roles = appData.roles;
