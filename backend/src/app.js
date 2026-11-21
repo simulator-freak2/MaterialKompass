@@ -14,6 +14,7 @@ const {
 } = require('./psage-inspections');
 const { BUOYANCY_VALUES, RELEASE_TYPES, VEST_TYPES } = require('./psage-checklists');
 const { createContainerGuard, registerContainerRoutes } = require('./containers');
+const { createContainerNumbering } = require('./container-number');
 const { registerStocktakeRoutes } = require('./stocktakes');
 const {
   canAccessStocktakeEmail,
@@ -2600,11 +2601,18 @@ function createApp(options = {}) {
 
   const containerGuard = createContainerGuard({ containerContents, materials, clothingItems });
   app.locals.containerGuard = containerGuard;
+  const containerNumbers = createContainerNumbering({
+    units: organizationUnits, materials, clothingItems,
+  });
+  app.locals.containerNumbers = containerNumbers;
+  // Bestehende Kisten erhalten beim Start einmalig eine Kistennummer.
+  containerNumbers.backfill();
   registerContainerRoutes({
     app, authMiddleware, requirePermission, hasPermission,
     containerContents, containerPackLists, containerChecks,
     materials, materialMovements, clothingItems, locations, stockStructures,
     vehicleLoadAssignments, defectManagement, logEvent, nextId, guard: containerGuard,
+    containerNumbers,
   });
 
   registerInventoryRoutes({
@@ -2612,7 +2620,7 @@ function createApp(options = {}) {
     materialInspections, materialDocuments, defectReports, categories, locations,
     stockStructures, vehicleLoadAssignments, clothingItems, deletedClothingItems,
     logEvent, nextId, XLSX,
-    defectManagement, containerGuard,
+    defectManagement, containerGuard, containerNumbers,
     withReadAccess: (req, callback) => runWithTenant({
       ...req.tenant,
       allowedUnitIds: inventoryReadableUnitIds(

@@ -689,6 +689,94 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
     }
   }
 
+  Future<void> _editContainerNumberPrefix(
+    Map<String, dynamic> unit,
+    List<Map<String, dynamic>> units,
+  ) async {
+    final controller = TextEditingController(
+      text: unit['containerNumberPrefix']?.toString() ?? '',
+    );
+    final sourceId = unit['containerNumberPrefixSourceUnitId']?.toString();
+    final sourceName = units
+        .where((entry) => entry['id']?.toString() == sourceId)
+        .map((entry) => entry['name']?.toString() ?? '')
+        .firstOrNull;
+    final inherited =
+        unit['effectiveContainerNumberPrefix']?.toString() ?? '{EDV}-K-';
+    final edv = unit['edvNumber']?.toString() ?? '';
+    String preview(String template) =>
+        '${(template.trim().isEmpty ? inherited : template.trim()).replaceAll('{EDV}', edv)}0001';
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text('Kistennummern-Präfix · ${unit['name'] ?? ''}'),
+            content: SizedBox(
+              width: 480,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    unit['parentId'] == null
+                        ? 'Das Präfix gilt für die gesamte Organisation, '
+                              'sofern eine Ebene kein eigenes festlegt.'
+                        : 'Das Präfix gilt für diese Ebene und ihre '
+                              'Unterebenen ohne eigenes Präfix.',
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    maxLength: 32,
+                    decoration: InputDecoration(
+                      labelText: 'Präfix (leer = erben)',
+                      hintText: '{EDV}-K-',
+                      helperText:
+                          '{EDV} wird durch die EDV-Nummer der Gliederung '
+                          'ersetzt. Erlaubt: Buchstaben, Ziffern, . / _ -',
+                      helperMaxLines: 2,
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  if (controller.text.trim().isEmpty)
+                    Text(
+                      sourceId == null || sourceId == unit['id']?.toString()
+                          ? 'Ohne Festlegung gilt der Standard „{EDV}-K-“.'
+                          : 'Geerbt von ${sourceName ?? 'übergeordneter Ebene'}: „$inherited“.',
+                    ),
+                  Text('Beispiel: ${preview(controller.text)}'),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Speichern'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (confirmed != true) return;
+      await _api.request(
+        '/api/organization-units/${unit['id']}/container-number-prefix',
+        method: 'PUT',
+        body: {'prefix': controller.text.trim()},
+      );
+      await _refresh();
+    } catch (error) {
+      _error(error);
+    } finally {
+      controller.dispose();
+    }
+  }
+
   Future<void> _editUnit(Map<String, dynamic> unit) async {
     final name = TextEditingController(text: unit['name']?.toString());
     final type = TextEditingController(text: unit['type']?.toString());
@@ -1125,6 +1213,7 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                           '${unit['type'] ?? 'Einheit'} · EDV ${unit['edvNumber'] ?? '–'} · '
                           '${unit['unitKind'] == 'youth' ? 'mit Stammgliederung verknüpft · ' : ''}'
                           '${((unit['inventoryVisibleToUnitIds'] as List?) ?? const []).isEmpty ? 'Inventar nicht freigegeben' : 'Inventar für ${(unit['inventoryVisibleToUnitIds'] as List).length} Ebene(n) freigegeben'} · '
+                          '${unit['containerNumberPrefix'] != null ? 'Kistenpräfix ${unit['containerNumberPrefix']} · ' : ''}'
                           '${unit['status'] ?? 'active'}',
                         ),
                         trailing:
@@ -1146,6 +1235,9 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                   }
                                   if (action == 'inventory-visibility') {
                                     _editInventoryVisibility(unit, units);
+                                  }
+                                  if (action == 'container-number-prefix') {
+                                    _editContainerNumberPrefix(unit, units);
                                   }
                                   if (action == 'edit') _editUnit(unit);
                                   if (action == 'archive') {
@@ -1178,6 +1270,11 @@ class _OrganizationsPageState extends State<OrganizationsPage> {
                                     const PopupMenuItem(
                                       value: 'inventory-visibility',
                                       child: Text('Inventar freigeben'),
+                                    ),
+                                  if (unit['canManageStructure'] == true)
+                                    const PopupMenuItem(
+                                      value: 'container-number-prefix',
+                                      child: Text('Kistennummern-Präfix'),
                                     ),
                                   if (unit['canManageStructure'] == true &&
                                       _canConvertToYouth(unit, units))

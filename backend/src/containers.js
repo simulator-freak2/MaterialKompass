@@ -50,6 +50,11 @@ function addDays(dateOnly, days) {
   return date.toISOString().slice(0, 10);
 }
 
+// Anzeige einer Kiste: Kistennummer, ersatzweise die Inventarnummer.
+function containerLabel(container) {
+  return container?.containerNumber || container?.inventoryNumber || '';
+}
+
 function itemKey(entityType, entityId) {
   return `${entityType}:${entityId}`;
 }
@@ -93,7 +98,7 @@ function createContainerGuard({ containerContents, materials, clothingItems }) {
   function lockedMessage(entityType, entityId) {
     const container = containerOf(entityType, entityId);
     if (!container) return null;
-    return `Der Artikel liegt in der Kiste ${container.inventoryNumber} (${container.name}). `
+    return `Der Artikel liegt in der Kiste ${containerLabel(container)} (${container.name}). `
       + 'Bitte zuerst aus der Kiste entnehmen.';
   }
 
@@ -215,7 +220,7 @@ function createContainerGuard({ containerContents, materials, clothingItems }) {
             action: reason, quantity: 1,
             fromLocationId: from.locationId, fromStockStructureId: from.stockStructureId,
             toLocationId: target.locationId, toStockStructureId: target.stockStructureId,
-            containerId, notes: `Mit Kiste ${container.inventoryNumber} bewegt.`,
+            containerId, notes: `Mit Kiste ${containerLabel(container)} bewegt.`,
             actor, createdAt: new Date().toISOString(),
             organizationId: entity.organizationId, unitId: entity.unitId,
           });
@@ -260,7 +265,7 @@ function registerContainerRoutes({
   app, authMiddleware, requirePermission, hasPermission,
   containerContents, containerPackLists, containerChecks,
   materials, materialMovements, clothingItems, locations, stockStructures,
-  vehicleLoadAssignments, defectManagement, logEvent, nextId, guard,
+  vehicleLoadAssignments, defectManagement, logEvent, nextId, guard, containerNumbers,
 }) {
   const all = (collection) => rawCollection(collection);
   const nowIso = () => new Date().toISOString();
@@ -291,6 +296,7 @@ function registerContainerRoutes({
   function entityLabel(entityType, entity, entry = {}) {
     return {
       inventoryNumber: entity?.inventoryNumber || entry.inventoryNumberSnapshot || null,
+      containerNumber: entity?.isContainer ? entity.containerNumber || null : null,
       name: entity?.name || entry.nameSnapshot || 'Gelöschter Artikel',
     };
   }
@@ -368,6 +374,9 @@ function registerContainerRoutes({
   }
 
   function publicContainer(container, { detail = false } = {}) {
+    // Kisten aus Importen oder Wiederherstellungen erhalten bei Bedarf sofort
+    // eine Kistennummer; sie wird mit der nächsten Änderung gespeichert.
+    containerNumbers.ensure(container);
     const contents = guard.contentsOf(container.id);
     const parent = guard.containerOf('MaterialItem', container.id);
     const assignment = vehicleAssignment(container.id);
@@ -379,6 +388,7 @@ function registerContainerRoutes({
       !latest || entry.checkedAt > latest.checkedAt ? entry : latest, null);
     const result = {
       id: container.id,
+      containerNumber: container.containerNumber || null,
       inventoryNumber: container.inventoryNumber,
       name: container.name,
       containerType: container.containerType || '',
@@ -393,7 +403,7 @@ function registerContainerRoutes({
       stockStructureName: stockName(container.stockStructureId),
       vehicleId: assignment?.vehicleId || null,
       parentContainerId: parent?.id || null,
-      parentContainerName: parent ? `${parent.inventoryNumber} ${parent.name}` : null,
+      parentContainerName: parent ? `${containerLabel(parent)} ${parent.name}` : null,
       contentCount: contents.length,
       completenessStatus: COMPLETENESS_STATUSES.includes(container.completenessStatus)
         ? container.completenessStatus : 'Ungeprüft',
@@ -537,7 +547,7 @@ function registerContainerRoutes({
     const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
     const result = all(materials).filter((entry) => entry.isContainer === true && !entry.archived
       && ownedBy(req, entry)
-      && (!query || [entry.inventoryNumber, entry.name, entry.containerType]
+      && (!query || [entry.containerNumber, entry.inventoryNumber, entry.name, entry.containerType]
         .some((value) => String(value || '').toLowerCase().includes(query))))
       .slice(0, limit).map((entry) => publicContainer(entry));
     return res.json(result);
@@ -552,6 +562,7 @@ function registerContainerRoutes({
         const container = all(materials).find((candidate) => candidate.id === entry.containerId);
         return {
           ...publicContent(entry, container),
+          containerNumber: container?.containerNumber || null,
           containerInventoryNumber: container?.inventoryNumber || null,
           containerName: container?.name || null,
           expiryState: entry.expiresAt < todayIso() ? 'abgelaufen' : 'läuft bald ab',
@@ -565,7 +576,12 @@ function registerContainerRoutes({
   // der gescannte Artikel liegt.
   app.get('/api/containers/lookup', authMiddleware, requirePermission('containers.read'), (req, res) => {
     const code = text(req.query.code, 128).toLowerCase();
-    if (!code) return res.status(400).json({ error: 'Bitte eine Inventarnummer angeben.' });
+    if (!code) return res.status(400).json({ error: 'Bitte eine Inventar- oder Kistennummer angeben.' });
+    const byContainerNumber = all(materials).find((entry) => ownedBy(req, entry) && !entry.archived
+      && entry.isContainer === true && String(entry.containerNumber || '').toLowerCase() === code);
+    if (byContainerNumber) {
+      return res.json({ match: 'container', container: publicContainer(byContainerNumber, { detail: true }) });
+    }
     const material = all(materials).find((entry) => ownedBy(req, entry) && !entry.archived
       && String(entry.inventoryNumber || '').toLowerCase() === code);
     const clothing = material ? null : all(clothingItems).find((entry) => ownedBy(req, entry)
@@ -587,7 +603,20 @@ function registerContainerRoutes({
       return res.json({ match: 'item', entityType, entityId: entity.id,
         inventoryNumber: entity.inventoryNumber, name: entity.name });
     }
-    return res.status(404).json({ error: 'Zu dieser Inventarnummer wurde keine Kiste gefunden.' });
+    return res.status(404).json({ error: 'Zu dieser Inventar- oder Kistennummer wurde keine Kiste gefunden.' });
+  });
+
+  // Vorschlag für die nächste Kistennummer der aktuellen Gliederung.
+  app.get('/api/containers/number-suggestion', authMiddleware, requirePermission('containers.manage'), (req, res) => {
+    const scope = { organizationId: req.tenant.organizationId, unitId: req.tenant.unitId };
+    const setting = containerNumbers.effectivePrefix(req.tenant.unitId);
+    return res.json({
+      containerNumber: containerNumbers.suggest(scope),
+      prefix: setting.prefix,
+      prefixTemplate: setting.template,
+      prefixSourceUnitName: setting.sourceUnitName,
+      prefixIsDefault: setting.isDefault,
+    });
   });
 
   app.get('/api/containers/:id', authMiddleware, requirePermission('containers.read'), (req, res) => {
@@ -627,11 +656,21 @@ function registerContainerRoutes({
     }
     const settings = containerSettings(req.body);
     if (settings.error) return res.status(400).json({ error: settings.error });
+    const scope = { organizationId: material.organizationId, unitId: material.unitId, excludeId: material.id };
+    const requestedNumber = text(req.body.containerNumber, 128);
+    let containerNumber;
+    if (requestedNumber) {
+      const checked = containerNumbers.validate(requestedNumber, scope);
+      if (checked.error) return res.status(checked.status).json({ error: checked.error });
+      containerNumber = checked.value;
+    } else {
+      containerNumber = containerNumbers.suggest(scope);
+    }
     Object.assign(material, settings, {
-      isContainer: true, completenessStatus: 'Ungeprüft', updatedAt: nowIso(),
+      isContainer: true, containerNumber, completenessStatus: 'Ungeprüft', updatedAt: nowIso(),
     });
     logEvent('create', 'Container', {
-      id: material.id, inventoryNumber: material.inventoryNumber, itemName: material.name,
+      id: material.id, containerNumber, inventoryNumber: material.inventoryNumber, itemName: material.name,
     }, req.user.username);
     return res.status(201).json(publicContainer(material, { detail: true }));
   });
@@ -646,8 +685,21 @@ function registerContainerRoutes({
     if (guard.contentsOf(container.id).some((entry) => removed.includes(entry.position))) {
       return res.status(409).json({ error: 'Belegte Kistenfächer können nicht entfernt werden.' });
     }
-    Object.assign(container, settings, { updatedAt: nowIso() });
-    logEvent('update', 'Container', { id: container.id }, req.user.username);
+    let containerNumber = container.containerNumber;
+    if (req.body.containerNumber !== undefined) {
+      const checked = containerNumbers.validate(text(req.body.containerNumber, 128), {
+        organizationId: container.organizationId, unitId: container.unitId, excludeId: container.id,
+      });
+      if (checked.error) return res.status(checked.status).json({ error: checked.error });
+      containerNumber = checked.value;
+    }
+    const previousNumber = container.containerNumber || null;
+    Object.assign(container, settings, { containerNumber, updatedAt: nowIso() });
+    logEvent('update', 'Container', {
+      id: container.id,
+      ...(previousNumber !== containerNumber
+        ? { containerNumber, previousContainerNumber: previousNumber } : {}),
+    }, req.user.username);
     return res.json(publicContainer(container, { detail: true }));
   });
 
@@ -657,12 +709,14 @@ function registerContainerRoutes({
     if (guard.hasContents(container.id)) {
       return res.status(409).json({ error: 'Nur leere Kisten können aufgelöst werden.' });
     }
+    const releasedNumber = container.containerNumber || null;
     container.isContainer = false;
+    container.containerNumber = null;
     container.updatedAt = nowIso();
     for (const list of all(containerPackLists).filter((entry) => entry.containerId === container.id)) {
       if (list.status === 'Aktiv') list.status = 'Ersetzt';
     }
-    logEvent('delete', 'Container', { id: container.id }, req.user.username);
+    logEvent('delete', 'Container', { id: container.id, containerNumber: releasedNumber }, req.user.username);
     return res.json({ success: true, id: container.id });
   });
 
@@ -673,7 +727,7 @@ function registerContainerRoutes({
     if (!container) return res.status(404).json({ error: 'Kiste nicht gefunden.' });
     const query = text(req.query.query, 120).toLowerCase();
     const matches = (entry) => !query
-      || `${entry.inventoryNumber} ${entry.name}`.toLowerCase().includes(query);
+      || `${entry.inventoryNumber} ${entry.containerNumber || ''} ${entry.name}`.toLowerCase().includes(query);
     const ancestors = new Set(guard.ancestorsOf(container.id));
     const materialCandidates = all(materials).filter((entry) => ownedBy(req, entry)
       && !entry.archived && entry.id !== container.id && !ancestors.has(entry.id) && matches(entry)
@@ -688,6 +742,7 @@ function registerContainerRoutes({
         inventoryNumber: entry.inventoryNumber, name: entry.name,
         itemType: entry.isContainer ? 'individual' : entry.itemType, unit: entry.unit || 'Stück',
         isContainer: entry.isContainer === true,
+        containerNumber: entry.isContainer ? entry.containerNumber || null : null,
         availableQuantity: entry.itemType === 'individual' || entry.isContainer
           ? 1 : availableMaterialQuantity(entry),
         locationName: locationName(entry.locationId),
@@ -986,7 +1041,8 @@ function registerContainerRoutes({
         y -= options.gap || 15;
       };
       line('Kisten-Packliste', { size: 18, bold: true, gap: 25 });
-      line(`Kiste: ${container.inventoryNumber} | ${container.name}`, { bold: true });
+      line(`Kiste: ${containerLabel(container)} | ${container.name}`, { bold: true });
+      line(`Inventarnummer der Kiste: ${container.inventoryNumber || '-'}`);
       line(`Kistenart: ${container.containerType || '-'} | Standort: ${locationName(container.locationId) || '-'}${container.stockStructureId ? ` / ${stockName(container.stockStructureId) || ''}` : ''}`);
       line(`Liste: ${list ? `${list.name} | Version ${list.version}` : 'Keine aktive Packliste (Ist-Inhalt)'} | Stand: ${new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}`);
       y -= 8;
@@ -1002,7 +1058,7 @@ function registerContainerRoutes({
       const bytes = await pdf.save();
       logEvent('print', 'Container', { containerId: container.id, packListId: list?.id || null }, req.user.username);
       return res.json({
-        fileName: `packliste-${String(container.inventoryNumber).replace(/[^A-Za-z0-9_-]/g, '-')}${list ? `-v${list.version}` : ''}.pdf`,
+        fileName: `packliste-${String(containerLabel(container)).replace(/[^A-Za-z0-9_-]/g, '-')}${list ? `-v${list.version}` : ''}.pdf`,
         mimeType: 'application/pdf', fileBase64: Buffer.from(bytes).toString('base64'),
       });
     });
@@ -1067,7 +1123,7 @@ function registerContainerRoutes({
         .join('\n');
       const created = defectManagement.createFromContainerCheck({
         containerId: container.id,
-        title: text(req.body.createDefect.title, 160) || `Kiste ${container.inventoryNumber} unvollständig`,
+        title: text(req.body.createDefect.title, 160) || `Kiste ${containerLabel(container)} unvollständig`,
         description: `${description}${check.notes ? `\n\n${check.notes}` : ''}`.slice(0, 10_000),
         priority, user: req.user, request: req, checkId: check.id,
       });
@@ -1090,6 +1146,7 @@ function registerContainerRoutes({
 }
 
 module.exports = {
+  containerLabel,
   createContainerGuard,
   registerContainerRoutes,
   CHECK_RESULTS,

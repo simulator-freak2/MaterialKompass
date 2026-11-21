@@ -673,6 +673,23 @@ function registerTenancyRoutes({
     return { deleted, deletedByCollection };
   }
 
+  // Wirksames Kistennummern-Präfix: eigene Festlegung, sonst die nächste
+  // übergeordnete Ebene, sonst der Standard „{EDV}-K-“.
+  const containerNumberPrefixOf = (unit) => {
+    const { DEFAULT_CONTAINER_NUMBER_PREFIX } = require('./container-number');
+    const seen = new Set();
+    let current = unit;
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.containerNumberPrefix) {
+        return { template: current.containerNumberPrefix, sourceUnitId: current.id };
+      }
+      const parentId = current.parentId;
+      current = parentId ? units.find((entry) => entry.id === parentId) : null;
+    }
+    return { template: DEFAULT_CONTAINER_NUMBER_PREFIX, sourceUnitId: null };
+  };
+
   const relatedUnitIds = (unit) => new Set([
     ...ancestorsOf(units, unit.organizationId, unit.id),
     ...descendantsOf(units, unit.organizationId, unit.id),
@@ -885,7 +902,42 @@ function registerTenancyRoutes({
         ? [...(entry.inventoryVisibleToUnitIds || [])] : undefined,
       canManageStructure: entry.organizationId !== PLATFORM_ORGANIZATION_ID && manageable.has(entry.id),
       canManageUnit: entry.organizationId !== PLATFORM_ORGANIZATION_ID && userManageable.has(entry.id),
+      containerNumberPrefix: entry.containerNumberPrefix || null,
+      effectiveContainerNumberPrefix: containerNumberPrefixOf(entry).template,
+      containerNumberPrefixSourceUnitId: containerNumberPrefixOf(entry).sourceUnitId,
     })));
+  });
+
+  // Präfix für automatisch vorgeschlagene Kistennummern. Gilt für die Einheit
+  // und – sofern dort nichts eigenes festgelegt ist – für alle Untereinheiten.
+  // Auf der Wurzeleinheit wirkt es für die gesamte Organisation.
+  app.put('/api/organization-units/:id/container-number-prefix', authMiddleware, async (req, res) => {
+    if (!canCreateOrganizationStructure(req)) {
+      return res.status(403).json({
+        error: 'Nur Administratoren mit organizations.write dürfen das Kistennummern-Präfix festlegen.',
+      });
+    }
+    const manageable = unitIdsForPermission(req, 'organizations.write');
+    const unit = units.find((entry) => entry.id === req.params.id
+      && entry.organizationId === req.tenant.organizationId
+      && entry.status === 'active' && manageable.has(entry.id));
+    if (!unit) return res.status(404).json({ error: 'Organisationseinheit nicht gefunden.' });
+    const { validateContainerNumberPrefix } = require('./container-number');
+    const checked = validateContainerNumberPrefix(req.body.prefix);
+    if (checked.error) return res.status(400).json({ error: checked.error });
+    const previous = unit.containerNumberPrefix || null;
+    unit.containerNumberPrefix = checked.value;
+    await persistUnit(unit);
+    logEvent('update', 'ContainerNumberPrefix', {
+      unitId: unit.id, prefix: checked.value, previousPrefix: previous,
+    }, req.user.username);
+    const effective = containerNumberPrefixOf(unit);
+    return res.json({
+      unitId: unit.id,
+      containerNumberPrefix: unit.containerNumberPrefix,
+      effectiveContainerNumberPrefix: effective.template,
+      containerNumberPrefixSourceUnitId: effective.sourceUnitId,
+    });
   });
 
   app.post('/api/organization-units', authMiddleware, async (req, res) => {

@@ -444,7 +444,7 @@ class _InventoryFormDialogState extends State<InventoryFormDialog> {
                       secondary: const Icon(Icons.all_inbox_outlined),
                       title: const Text('Als Kiste verwenden'),
                       subtitle: const Text(
-                        'Andere Artikel können in diesen Artikel gepackt werden und wandern bei Umbuchung, Ausgabe und Beladung mit.',
+                        'Andere Artikel können in diesen Artikel gepackt werden und wandern bei Umbuchung, Ausgabe und Beladung mit. Die Kistennummer wird automatisch vergeben und ist unter „Kisten“ änderbar.',
                       ),
                       value: isContainer,
                       onChanged: (value) => setState(() => isContainer = value),
@@ -699,6 +699,7 @@ class _InventoryPageState extends State<InventoryPage> {
     return items.where((item) {
       final text = [
         item['inventoryNumber'],
+        item['containerNumber'],
         item['name'],
         item['manufacturer'],
         item['model'],
@@ -2045,6 +2046,8 @@ class _InventoryPageState extends State<InventoryPage> {
                 Text(
                   'Inventarnummer: ${item['inventoryNumber']?.toString() ?? '-'}',
                 ),
+                if (item['containerNumber'] != null)
+                  Text('Kistennummer: ${item['containerNumber']}'),
                 if (item['readOnly'] == true)
                   Text(
                     'Nur Ansicht · freigegeben von ${item['sourceUnitName'] ?? 'anderer Ebene'}',
@@ -2295,7 +2298,19 @@ class _InventoryTableSource extends DataTableSource {
           ),
         ),
         DataCell(
-          Text(item['inventoryNumber']?.toString() ?? '-'),
+          item['containerNumber'] == null
+              ? Text(item['inventoryNumber']?.toString() ?? '-')
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(item['inventoryNumber']?.toString() ?? '-'),
+                    Text(
+                      'Kiste ${item['containerNumber']}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
           onTap: () => onDetail(item),
         ),
         DataCell(
@@ -2548,6 +2563,8 @@ class InventoryDetailDialog extends StatelessWidget {
                           ),
                           if (item['isContainer'] == true)
                             _line('Kiste', 'Ja – Inhalt unter „Kisten“'),
+                          if (item['containerNumber'] != null)
+                            _line('Kistennummer', item['containerNumber']),
                           if (item['containerName'] != null)
                             _line('Liegt in Kiste', item['containerName']),
                           if ((num.tryParse(

@@ -93,8 +93,11 @@ function registerStocktakeRoutes({
     return {
       containerId: container?.id || null,
       containerInventoryNumber: container?.inventoryNumber || null,
+      containerNumber: container?.containerNumber || null,
       containerName: container?.name || null,
       isContainer: entityType === 'MaterialItem' && item.isContainer === true,
+      ownContainerNumber: entityType === 'MaterialItem' && item.isContainer === true
+        ? item.containerNumber || null : null,
       id: `stocktake-entry-${index + 1}`,
       entityType,
       entityId: item.id,
@@ -319,7 +322,7 @@ function registerStocktakeRoutes({
         const attempt = {
           id: nextId('count', entry.attempts), actualQuantity: 1, result: 'vorhanden',
           actualLocationId: entry.expectedLocationId, actualStockStructureId: entry.expectedStockStructureId || null,
-          notes: text(req.body?.notes, 2000) || `Mit Kiste ${container.inventoryNumber} bestätigt.`,
+          notes: text(req.body?.notes, 2000) || `Mit Kiste ${container.containerNumber || container.inventoryNumber} bestätigt.`,
           at, actor: req.user.username, actorName: req.user.name || req.user.username,
           viaContainerId: container.id,
         };
@@ -331,7 +334,8 @@ function registerStocktakeRoutes({
         });
       }
       addHistory(stocktake, req.user, 'kiste-bestätigt', {
-        containerId: container.id, inventoryNumber: container.inventoryNumber, entryCount: targets.length,
+        containerId: container.id, containerNumber: container.containerNumber || null,
+        inventoryNumber: container.inventoryNumber, entryCount: targets.length,
       });
       res.json(publicStocktake(stocktake, true));
     });

@@ -1184,17 +1184,25 @@ const _articles = [
         'Die Kiste ist als individuell geführtes Einzelstück im Inventar angelegt.',
     steps: [
       'Öffne „Kisten“ im Dashboard und wähle „Kiste anlegen“. Alternativ aktivierst du im Inventarformular „Als Kiste verwenden“.',
+      'Jede Kiste erhält zusätzlich zur Inventarnummer eine eigene Kistennummer. MaterialKompass schlägt die nächste freie Nummer vor, zum Beispiel „10050035-K-0001“. Du kannst sie übernehmen oder überschreiben. Beim Anlegen über das Inventarformular wird sie automatisch vergeben.',
+      'Die Kistennummer ist Pflicht und muss innerhalb der Gliederung eindeutig sein. Sie darf keiner Inventarnummer gleichen. Erlaubt sind Buchstaben, Ziffern, Punkt, Schrägstrich, Unterstrich und Bindestrich.',
       'Lege Kistenart, optionale Fächer wie „Deckel“ oder „Boden“ und die Vorwarnzeit für Ablaufdaten fest.',
       'Öffne die Kiste und wähle „Packen“. Suche oder scanne den Artikel. Einzelstücke, Kleidung und andere Kisten werden einzeln gepackt, von Mengenartikeln eine Teilmenge.',
       'Erfasse bei Verbrauchsmaterial das Ablaufdatum und bei Bedarf die Charge.',
       'Gepackte Einzelstücke sind gesperrt. Sie können nicht einzeln umgebucht, ausgegeben oder auf ein Fahrzeug geladen werden.',
       'Wird die Kiste umgebucht, ausgegeben oder auf ein Fahrzeug geladen, wandert der gesamte Inhalt einschließlich Unterkisten mit.',
       'Über „Entnehmen“ wird ein Artikel an seinen vorherigen Lagerort zurückgebucht, eine Teilmenge wieder dem freien Bestand zugerechnet.',
+      'Die Kistennummer änderst du mit dem Recht „Kisten verwalten“ über „Kiste bearbeiten“. Die Änderung wird protokolliert. Wird eine Kiste aufgelöst, ist ihre Kistennummer wieder frei.',
+      'Das Inventaretikett einer Kiste zeigt die Kistennummer als zusätzliche Zeile unten rechts. Der Barcode enthält weiterhin die Inventarnummer. Die Kistennummer erscheint auch im Kopf der Packliste, in der Inventarliste und im Tabellenexport.',
     ],
     tip:
-        'Scanne in der Kistenübersicht die Inventarnummer eines beliebigen Artikels. MaterialKompass öffnet dann die Kiste, in der er liegt.',
+        'Scanne oder suche in der Kistenübersicht die Kistennummer oder die Inventarnummer eines beliebigen Artikels. MaterialKompass öffnet dann die Kiste selbst oder die Kiste, in der der Artikel liegt.',
     keywords: [
       'kiste',
+      'kistennummer',
+      'kisten-nr',
+      'nummer ändern',
+      'etikett kiste',
       'behälter',
       'packen',
       'entnehmen',
@@ -1231,6 +1239,35 @@ const _articles = [
       'unvollständig',
       'kiste drucken',
       'inventur kiste',
+    ],
+  ),
+  _GuideArticle(
+    category: 'Struktur & Lagerorte',
+    title: 'Kistennummern-Präfix festlegen',
+    summary:
+        'Das Schema der automatisch vorgeschlagenen Kistennummern je Organisation oder Ebene bestimmen.',
+    icon: Icons.pin_outlined,
+    readingMinutes: 3,
+    audience: 'Für Administration',
+    prerequisite:
+        'Du brauchst die Administratorrolle mit „organizations.write“ für die betreffende Ebene.',
+    steps: [
+      'Öffne „Organisationen & Einheiten“ und wähle bei der gewünschten Ebene im Aktionsmenü „Kistennummern-Präfix“.',
+      'Auf der obersten Ebene gilt das Präfix für die gesamte Organisation. Auf einer Unterebene gilt es für diese Ebene und alle Unterebenen ohne eigenes Präfix.',
+      'Trage das Präfix ein, zum Beispiel „SAN-“ oder „{EDV}/KI-“. Der Platzhalter {EDV} wird durch die EDV-Nummer der jeweiligen Gliederung ersetzt. An das Präfix wird eine vierstellige laufende Nummer angehängt.',
+      'Lässt du das Feld leer, erbt die Ebene das Präfix der nächsten übergeordneten Ebene. Ist nirgends etwas festgelegt, gilt der Standard „{EDV}-K-“, also Gliederungsnummer plus K.',
+      'Der Dialog zeigt ein Beispiel der nächsten Nummer. Bereits vergebene Kistennummern bleiben bei einer Änderung unverändert. Nur neue Vorschläge verwenden das neue Präfix.',
+    ],
+    tip:
+        'Kistennummern müssen nur innerhalb einer Gliederung eindeutig sein. Ein gemeinsames Präfix wie „SAN-“ für mehrere Ebenen ist deshalb unproblematisch.',
+    keywords: [
+      'kistennummer',
+      'präfix',
+      'prefix',
+      'nummernkreis',
+      'kiste',
+      'edv-nummer',
+      'gliederung',
     ],
   ),
   _GuideArticle(

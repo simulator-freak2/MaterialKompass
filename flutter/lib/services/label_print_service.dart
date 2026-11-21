@@ -81,6 +81,9 @@ class LabelData {
   final String manufacturer;
   final String year;
   final String size;
+
+  /// Kistennummer, sofern der Artikel als Kiste geführt wird.
+  final String containerNumber;
   final int suggestedCopies;
 
   const LabelData({
@@ -93,6 +96,7 @@ class LabelData {
     this.manufacturer = '',
     this.year = '',
     this.size = '',
+    this.containerNumber = '',
     this.suggestedCopies = 1,
   });
 
@@ -122,6 +126,9 @@ class LabelData {
       manufacturer: item['manufacturer']?.toString().trim() ?? '',
       year: year,
       size: item['size']?.toString().trim() ?? '',
+      containerNumber: item['isContainer'] == true
+          ? item['containerNumber']?.toString().trim() ?? ''
+          : '',
       suggestedCopies: isBulk ? quantity.round().clamp(1, 9999) : 1,
     );
   }
@@ -302,6 +309,13 @@ class LabelPrintService extends ChangeNotifier {
     final bottomSize = label.type == LabelType.clothing && size.isNotEmpty
         ? '^FO280,174^A0N,25,25^FB116,1,0,R,0^FDGR:$size^FS'
         : '';
+    // Kisten tragen ihre Kistennummer als zusätzliche Textzeile; der Barcode
+    // bleibt die Inventarnummer. Beide Nummern sind scanbar.
+    final containerNumber = field(label.containerNumber);
+    final bottomContainer =
+        label.type == LabelType.inventory && containerNumber.isNotEmpty
+        ? '^FO130,176^A0N,22,20^FB266,1,0,R,0^FDKiste $containerNumber^FS'
+        : '';
 
     return '''
 ^XA
@@ -321,6 +335,7 @@ class LabelPrintService extends ChangeNotifier {
 ^FO18,137^A0N,22,20^FB370,1,0,C,0^FD$manufacturer^FS
 ^FO10,174^A0N,25,25^FDBJ:$year^FS
 $bottomSize
+$bottomContainer
 ^PQ${copies.clamp(1, 9999)}
 ^XZ
 ''';

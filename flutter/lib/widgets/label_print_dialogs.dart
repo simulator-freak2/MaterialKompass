@@ -169,6 +169,17 @@ class LabelPreview extends StatelessWidget {
                     if (label.type == LabelType.clothing &&
                         label.size.isNotEmpty)
                       Text('GR:${label.size}', style: style(25)),
+                    if (label.type == LabelType.inventory &&
+                        label.containerNumber.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          'Kiste ${label.containerNumber}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: style(22),
+                        ),
+                      ),
                   ],
                 ),
               ],

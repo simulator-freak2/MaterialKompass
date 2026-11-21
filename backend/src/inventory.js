@@ -4,6 +4,7 @@ const MATERIAL_STATUSES = [
   'In Reparatur', 'Ausgesondert', 'Verloren',
 ];
 const { inventoryNumberInUse, nextInventoryNumber } = require('./inventory-number');
+const { containerLabel } = require('./containers');
 const {
   fileMagic, inspectZipArchive, neutralizeSpreadsheetCell, validBase64,
 } = require('./security-utils');
@@ -44,6 +45,7 @@ function registerInventoryRoutes({
   withReadAccess = (_req, callback) => callback(), unitName = () => null,
   reservationShareCandidates = () => [],
   containerGuard = null,
+  containerNumbers = null,
 }) {
   const containers = containerGuard || {
     packedQuantity: () => 0, placementOf: () => null, lockedMessage: () => null,
@@ -154,9 +156,10 @@ function registerInventoryRoutes({
       containerId: containers.containerOf('MaterialItem', item.id)?.id || null,
       containerName: (() => {
         const container = containers.containerOf('MaterialItem', item.id);
-        return container ? `${container.inventoryNumber} ${container.name}` : null;
+        return container ? `${containerLabel(container)} ${container.name}` : null;
       })(),
       isContainer: item.isContainer === true,
+      containerNumber: item.isContainer === true ? item.containerNumber || null : null,
       availableQuantity: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item),
       movements: materialMovements.filter((entry) => entry.materialId === item.id).slice().reverse(),
       inspections: materialInspections.filter((entry) => entry.materialId === item.id).slice().reverse(),
@@ -202,6 +205,23 @@ function registerInventoryRoutes({
     const generated = inventoryNumber(values.categoryCode, values.subcategoryCode);
     const inv = requested || generated;
     if (inventoryNumberInUse(inventoryEntries(), inv)) return res.status(409).json({ error: 'Die Inventarnummer existiert bereits.' });
+    const tenant = currentTenant();
+    if (containerNumbers && tenant?.organizationId && containerNumbers.conflict(inv, {
+      organizationId: tenant.organizationId, unitId: tenant.unitId,
+    }) === 'Die Kistennummer ist in dieser Gliederung bereits vergeben.') {
+      return res.status(409).json({ error: 'Die Inventarnummer ist in dieser Gliederung bereits als Kistennummer vergeben.' });
+    }
+    const requestedContainerNumber = values.isContainer
+      ? String(req.body.containerNumber || '').trim() : '';
+    if (requestedContainerNumber && containerNumbers) {
+      if (requestedContainerNumber.toLowerCase() === inv.toLowerCase()) {
+        return res.status(409).json({ error: 'Die Kistennummer entspricht einer Inventarnummer dieser Gliederung.' });
+      }
+      const checked = containerNumbers.validate(requestedContainerNumber, {
+        organizationId: tenant?.organizationId, unitId: tenant?.unitId,
+      });
+      if (checked.error) return res.status(checked.status).json({ error: checked.error });
+    }
     const item = {
       ...values, id: nextId('material', [...materials, ...deletedMaterials]), inventoryNumber: inv,
       unit: String(req.body.unit || 'Stück').trim() || 'Stück', issuedQuantity: 0,
@@ -223,6 +243,10 @@ function registerInventoryRoutes({
     };
     if (item.isContainer) item.completenessStatus = 'Ungeprüft';
     materials.push(item);
+    if (item.isContainer) {
+      if (requestedContainerNumber) item.containerNumber = requestedContainerNumber;
+      else containerNumbers?.ensure(item);
+    }
     logEvent('create', 'MaterialItem', {
       id: item.id,
       itemName: item.name,
@@ -273,7 +297,10 @@ function registerInventoryRoutes({
     });
     if (item.isContainer) {
       item.completenessStatus ||= 'Ungeprüft';
+      containerNumbers?.ensure(item);
       containers.syncContents(item.id, syncOptions(req));
+    } else if (item.containerNumber) {
+      item.containerNumber = null;
     }
     logEvent('update', 'MaterialItem', { id: item.id }, req.user.username);
     res.json(responseItem(item));
@@ -525,7 +552,7 @@ function registerInventoryRoutes({
   app.get('/api/material/export/table', authMiddleware, requirePermission('inventory.export'), (req, res) => withReadAccess(req, () => {
     const format = String(req.query.format || 'xlsx').toLowerCase(); const archived = String(req.query.archived || 'false') === 'true';
     if (!['xlsx', 'ods'].includes(format)) return res.status(400).json({ error: 'Format muss xlsx oder ods sein.' });
-    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item), 'Auf Fahrzeugen': loadedQuantity(item), 'In Kisten': packedQuantity(item.id), Kiste: item.isContainer ? 'Ja' : 'Nein', Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
+    const rows = materials.filter((item) => item.archived === archived).map((item) => ({ Inventarnummer: item.inventoryNumber, Typ: item.itemType, Bezeichnung: item.name, Hauptkategorie: item.categoryCode, Unterkategorie: item.subcategoryCode || '', Standort: item.locationId, Lagerplatz: item.stockStructureId || '', Status: item.status, Sicherheitskritisch: item.safetyCritical === true ? 'Ja' : 'Nein', 'Sicherheitsfreigabe': item.safetyCritical !== true ? 'Nicht anwendbar' : assessMaterialSafety(item).blocked ? 'Gesperrt' : 'Freigegeben', Sicherheitshinweise: item.safetyInstructions || '', Anzahl: item.quantity, Verfügbar: number(item.quantity) - number(item.issuedQuantity) - boundQuantity(item), 'Auf Fahrzeugen': loadedQuantity(item), 'In Kisten': packedQuantity(item.id), Kiste: item.isContainer ? 'Ja' : 'Nein', Kistennummer: item.isContainer ? item.containerNumber || '' : '', Einheit: item.unit, Hersteller: item.manufacturer || '', Modell: item.model || '', Seriennummer: item.serialNumber || '', Baujahr: item.manufacturingYear || '', Anschaffungsdatum: item.purchaseDate || '', Kaufpreis: item.purchasePrice ?? '', Beschreibung: item.description || '', Notizen: item.notes || '', Fachbereich: item.department || '', 'Prüfintervall Monate': item.inspectionIntervalMonths || '', 'Nächster Prüftermin': item.nextInspectionDate || '' }));
     const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row)
       .map(([key, value]) => [key, typeof value === 'string' ? neutralizeSpreadsheetCell(value) : value])));
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), archived ? 'Archiv' : 'Inventar');
