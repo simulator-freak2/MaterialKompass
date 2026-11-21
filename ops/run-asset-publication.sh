@@ -22,6 +22,8 @@ case "$run_name" in *[!A-Za-z0-9-]*) exit 1 ;; esac
 run_dir="$project_dir/.deployments/runs/$run_name-assets"
 mkdir "$run_dir" || exit 1
 printf '%s\n' "$$" > "$run_dir/pid"
+# Report termination by signal so the local status poll ends immediately.
+trap 'printf "%s\n" 143 > "$run_dir/exit-code.tmp"; mv "$run_dir/exit-code.tmp" "$run_dir/exit-code"; exit 143' HUP INT TERM
 # publish-assets accepts only actual release files and removes the stage. Keep
 # this running wrapper and its status outside that directory before publication.
 exit_code=0

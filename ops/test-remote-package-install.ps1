@@ -21,12 +21,13 @@ if ($script:polls -ne 3 -or $script:commands[2] -notlike '*2,$p*') {
     throw 'Reconnect or incremental log replay failed.'
 }
 
-foreach ($scenario in @('failed', 'malformed', 'timeout')) {
+foreach ($scenario in @('failed', 'malformed', 'timeout', 'lost')) {
     $failed = $false
     $timeout = if ($scenario -eq 'timeout') { 0 } else { 10 }
     $failureRunner = {
         param($Options, $Destination, $Command)
         if ($scenario -eq 'failed') { return @{ ExitCode = 0; Output = @('MKDEPLOY:7', 'migration failed') } }
+        if ($scenario -eq 'lost') { return @{ ExitCode = 0; Output = @('MKDEPLOY:lost') } }
         return @{ ExitCode = 0; Output = @('unexpected response') }
     }
     try {
@@ -38,7 +39,8 @@ foreach ($scenario in @('failed', 'malformed', 'timeout')) {
         if ($scenario -eq 'failed' -and $_.Exception.Message -notmatch 'Exit-Code 7') { throw }
         if ($scenario -eq 'malformed' -and $_.Exception.Message -notmatch 'Ungueltige') { throw }
         if ($scenario -eq 'timeout' -and $_.Exception.Message -notmatch 'Zeitlimit') { throw }
+        if ($scenario -eq 'lost' -and $_.Exception.Message -notmatch 'ohne Exit-Code') { throw }
     }
     if (-not $failed) { throw "Scenario $scenario was incorrectly reported as successful." }
 }
-Write-Host 'PASS: reconnect, incremental logs, installer failure, invalid response and timeout.'
+Write-Host 'PASS: reconnect, incremental logs, installer failure, invalid response, lost process and timeout.'

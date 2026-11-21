@@ -53,8 +53,11 @@ function Sign-Artifact([string]$Path) {
 Push-Location $flutterRoot
 try {
     flutter pub get
+    if ($LASTEXITCODE -ne 0) { throw "flutter pub get fehlgeschlagen (Exit-Code $LASTEXITCODE)." }
     flutter build windows --release --build-name="$Version" --build-number="$BuildNumber" `
         --dart-define="API_BASE_URL=$ApiBaseUrl"
+    # Ohne diese Pruefung wuerde ein veralteter Release-Ordner verpackt.
+    if ($LASTEXITCODE -ne 0) { throw "Flutter-Windows-Build fehlgeschlagen (Exit-Code $LASTEXITCODE)." }
 } finally {
     Pop-Location
 }

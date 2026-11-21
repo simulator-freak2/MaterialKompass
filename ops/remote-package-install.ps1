@@ -21,10 +21,15 @@ function Wait-RemotePackageInstall {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $nextLine = 1
     $wasDisconnected = $false
+    $startedAt = [DateTime]::UtcNow
+    $lastActivity = $startedAt
     while ([DateTime]::UtcNow -lt $deadline) {
         # The first line is a machine-readable state. The rest is only new log
         # content; it is never evaluated as a command.
-        $command = "if [ -f '$RunPath/exit-code' ]; then printf 'MKDEPLOY:'; cat '$RunPath/exit-code'; elif [ -f '$RunPath/pid' ]; then printf 'MKDEPLOY:running\n'; else printf 'MKDEPLOY:starting\n'; fi; if [ -f '$RunPath/install.log' ]; then sed -n '${nextLine},`$p' '$RunPath/install.log'; fi"
+        # A pid without exit code whose process no longer exists was killed
+        # (e.g. SIGKILL, reboot); it is reported as 'lost' instead of waiting
+        # for the full timeout.
+        $command = "if [ -f '$RunPath/exit-code' ]; then printf 'MKDEPLOY:'; cat '$RunPath/exit-code'; elif [ -f '$RunPath/pid' ]; then if kill -0 `$(cat '$RunPath/pid') 2>/dev/null; then printf 'MKDEPLOY:running\n'; elif [ -f '$RunPath/exit-code' ]; then printf 'MKDEPLOY:'; cat '$RunPath/exit-code'; else printf 'MKDEPLOY:lost\n'; fi; else printf 'MKDEPLOY:starting\n'; fi; if [ -f '$RunPath/install.log' ]; then sed -n '${nextLine},`$p' '$RunPath/install.log'; fi"
         $result = & $CommandRunner $SshOptions $Target $command
         if ($result.ExitCode -ne 0) {
             Write-Host 'SSH-Verbindung unterbrochen. Die Serverinstallation laeuft unabhaengig weiter; Status wird erneut abgefragt.'
@@ -32,7 +37,7 @@ function Wait-RemotePackageInstall {
         }
         else {
             $lines = @($result.Output)
-            if ($lines.Count -lt 1 -or $lines[0] -notmatch '^MKDEPLOY:(starting|running|[0-9]+)$') {
+            if ($lines.Count -lt 1 -or $lines[0] -notmatch '^MKDEPLOY:(starting|running|lost|[0-9]+)$') {
                 throw "Ungueltige Installationsantwort. Serverprotokoll bleibt erhalten: $RunPath/install.log"
             }
             $state = $Matches[1]
@@ -40,6 +45,15 @@ function Wait-RemotePackageInstall {
             for ($lineIndex = 1; $lineIndex -lt $lines.Count; $lineIndex++) {
                 Write-Host $lines[$lineIndex]
                 $nextLine += 1
+            }
+            if ($lines.Count -gt 1) { $lastActivity = [DateTime]::UtcNow }
+            elseif (([DateTime]::UtcNow - $lastActivity).TotalSeconds -ge 60) {
+                $elapsed = [int]([DateTime]::UtcNow - $startedAt).TotalSeconds
+                Write-Host "Server arbeitet noch ($state, seit $elapsed s, keine neue Protokollzeile). Serverprotokoll: $RunPath/install.log"
+                $lastActivity = [DateTime]::UtcNow
+            }
+            if ($state -eq 'lost') {
+                throw "Der Serverprozess wurde ohne Exit-Code beendet (abgebrochen oder abgestuerzt). Keinen zweiten Lauf starten, bevor das Serverprotokoll geprueft wurde: $RunPath/install.log"
             }
             if ($state -eq 'starting' -and [DateTime]::UtcNow -gt $deadline.AddSeconds(-$TimeoutSeconds + 30)) {
                 throw "Serverstart konnte nicht bestaetigt werden. Upload bleibt erhalten; Serverprotokoll pruefen: $RunPath"
