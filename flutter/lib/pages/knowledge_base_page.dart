@@ -2227,6 +2227,7 @@ const _articles = [
       'Plattformadministratoren wählen über „Organisation oder Einheit wechseln“ die automatisch angelegte Organisation „MaterialKompass – Zentrale Verwaltung“. Normale Nutzer und Organisationsadmins können sie nicht auswählen.',
       'Öffne dort „Zentrale Kontenverwaltung“. Das Kontenverzeichnis enthält alle zentral verwalteten Accounts. Diese Auflistung macht normale Konten nicht zu Mitgliedern der Verwaltungsorganisation.',
       'Lege neue Konten ausschließlich zentral an und prüfe dort Identitätskonflikte. Ein neues normales Konto erhält dabei keine Organisationsfreigabe.',
+      'Organisationen werden ausschließlich dort über die Kachel „Organisationsverwaltung“ angelegt, bearbeitet und gelöscht. Organisationsadmins verwalten in ihrer Organisation über „Organisationsstruktur“ nur Untergliederungen und Einheiten.',
       'Die zuständigen Organisationsadmins nehmen das vorhandene Konto anschließend in ihrer aktiven Ebene direkt oder per Einladung auf und vergeben nur die dort benötigten Rollen.',
       'In „Berechtigungen dieser Ebene“ werden ausschließlich die Freigaben der ausgewählten Ebene gezeigt. Andere Organisationen und Ebenen bleiben ausgeblendet; ihre Freigaben bleiben bei Änderungen erhalten.',
       'Globale Kontodaten, Sicherheitsrichtlinien und vollständige Datensicherungen werden in der Zentrale verwaltet. In normalen Organisationen stehen nur deren lokale Verwaltungsfunktionen zur Verfügung.',

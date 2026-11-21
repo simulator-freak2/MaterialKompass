@@ -1078,11 +1078,25 @@ class _DashboardPageState extends State<DashboardPage>
                     onTap: () =>
                         _loadAndOpen(() => users_page.UsersPage(token: _token)),
                   ),
-                if (roles.contains('Admin') && can('organizations.write'))
+                // Organizations themselves are managed only in the central
+                // administration; regular organizations manage their units.
+                if (activeOrganization['systemKind'] ==
+                        'platform_administration' &&
+                    currentUser['platformAdmin'] == true)
+                  _DashboardAction(
+                    icon: Icons.corporate_fare_outlined,
+                    label: 'Organisationsverwaltung',
+                    description:
+                        'Organisationen anlegen, bearbeiten und löschen',
+                    onTap: () => _loadAndOpen(
+                      () => organizations_page.OrganizationsPage(token: _token),
+                    ),
+                  )
+                else if (roles.contains('Admin') && can('organizations.write'))
                   _DashboardAction(
                     icon: Icons.account_tree_outlined,
-                    label: 'Organisationen',
-                    description: 'Organisationen und Einheiten verwalten',
+                    label: 'Organisationsstruktur',
+                    description: 'Untergliederungen und Einheiten verwalten',
                     onTap: () => _loadAndOpen(
                       () => organizations_page.OrganizationsPage(token: _token),
                     ),
