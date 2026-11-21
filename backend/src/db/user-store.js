@@ -48,6 +48,11 @@ function createUserStore(database = mariadb, options = {}) {
     connectionLimit,
     ssl: process.env.DB_SSL === 'true',
     timezone: 'Z',
+    // Defense in depth against SQL injection: a single query may never carry
+    // several statements, so an injected "; DROP TABLE ..." cannot execute.
+    multipleStatements: false,
+    // Values are bound only through positional "?" placeholders.
+    namedPlaceholders: false,
   });
   let processLockConnection;
   let processLockName;
