@@ -39,6 +39,7 @@ Passworteingabe und können serverseitig widerrufen werden.
 | Konto-2-FA und Login-Challenges | `backend/src/user-mfa.js`, `backend/src/mfa-security.js`, `backend/src/totp.js` |
 | Passkey-Zeremonien und Credential-Index | `backend/src/passkeys.js`, `flutter/lib/services/passkey_service.dart` |
 | Dienstgeräte und Gerätesitzungen | `backend/src/service-devices.js`, `flutter/lib/pages/service_device_*.dart` |
+| Partnerschnittstelle `/api/v1` und API-Schlüssel (Übungsplaner) | `backend/src/integration-api.js`, `flutter/lib/widgets/integration_api_keys_panel.dart` |
 | Offline-Snapshot und Synchronisation | `backend/src/offline-sync.js`, `flutter/lib/services/offline_*.dart` |
 | Datenbanktabellen und Migrationen | `backend/src/db/schema.sql`, `backend/src/db/migrations/` |
 | Daten speichern | `backend/src/persistence-coordinator.js`, `backend/src/db/user-store.js` |

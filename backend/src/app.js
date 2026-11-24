@@ -42,6 +42,7 @@ const {
   DEVICE_SESSION, PERSONAL_DEVICE_SESSION,
 } = require('./service-devices');
 const { registerScannerEmailRoutes } = require('./scanner-email-addresses');
+const { registerIntegrationApi } = require('./integration-api');
 const { registerOfflineSync } = require('./offline-sync');
 const { createMailboxProvisioner } = require('./mailbox-provisioner-client');
 const { createMailboxCredentialVault } = require('./mailbox-credential-vault');
@@ -157,12 +158,14 @@ const PERSISTED_COLLECTIONS = Object.freeze([
   'procurementEmailImports',
   'auditLogs', 'exportLogs',
   'qrLoginCredentials', 'scannerEmailAddresses', 'mailTemplates',
-  'serviceDevices',
+  'serviceDevices', 'integrationApiKeys',
   'offlineClients', 'offlineCommandResults', 'offlineSyncState',
   'stocktakes', 'stocktakeEmailImports',
 ]);
+// Session and partner API credentials are never restored from a backup; keys
+// must be issued again after a restore.
 const BACKUP_COLLECTIONS = Object.freeze(
-  PERSISTED_COLLECTIONS.filter((name) => name !== 'authSessions'),
+  PERSISTED_COLLECTIONS.filter((name) => !['authSessions', 'integrationApiKeys'].includes(name)),
 );
 
 function createApp(options = {}) {
@@ -363,6 +366,7 @@ function createApp(options = {}) {
   const mfaPushDevices = (appData.mfaPushDevices ||= []);
   const authSessionRecords = (appData.authSessions ||= []);
   const serviceDevices = (appData.serviceDevices ||= []);
+  const integrationApiKeys = (appData.integrationApiKeys ||= []);
   const offlineClients = (appData.offlineClients ||= []);
   const offlineCommandResults = (appData.offlineCommandResults ||= []);
   const offlineSyncState = (appData.offlineSyncState ||= [{ revision: 0, updatedAt: null }]);
@@ -3314,6 +3318,27 @@ function createApp(options = {}) {
     loginAccessAllowed,
     tenantForUser: (user, organizationId, unitId) =>
       defaultTenantContext(user.__identity || user, organizationId, unitId),
+  });
+
+  registerIntegrationApi({
+    app,
+    apiKeys: integrationApiKeys,
+    organizations,
+    organizationUnits,
+    materials,
+    deletedMaterials,
+    categories,
+    locations,
+    stockStructures,
+    vehicles,
+    vehicleReservations,
+    vehicleMaintenanceEvents,
+    vehicleLoadAssignments,
+    defectReports,
+    authMiddleware,
+    requirePermission,
+    logEvent,
+    persistData: () => app.locals.persistData(),
   });
 
   registerProcurementRoutes({

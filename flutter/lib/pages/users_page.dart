@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../constants.dart';
 import '../services/download_service.dart';
+import '../widgets/integration_api_keys_panel.dart';
 import '../widgets/keyboard_dropdown_button_form_field.dart';
 import '../widgets/qr_login_dialog.dart';
 import '../widgets/service_devices_admin_panel.dart';
@@ -1537,7 +1538,7 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: isCentralAdministration ? 2 : (isAdmin ? 7 : 3),
+    length: isCentralAdministration ? 2 : (isAdmin ? 8 : 3),
     child: Scaffold(
       appBar: AppBar(
         title: Text(
@@ -1569,6 +1570,8 @@ class _UsersPageState extends State<UsersPage> {
               ),
             if (isAdmin)
               const Tab(text: 'Dienstgeräte', icon: Icon(Icons.devices_other)),
+            if (isAdmin)
+              const Tab(text: 'Schnittstellen', icon: Icon(Icons.hub_outlined)),
             if (isAdmin)
               const Tab(
                 text: 'Datensicherung',
@@ -1934,6 +1937,7 @@ class _UsersPageState extends State<UsersPage> {
                     departments: departments,
                     canManagePersonalCredentials: isPlatformAdmin,
                   ),
+                if (isAdmin) IntegrationApiKeysPanel(token: widget.token),
                 if (isAdmin) backupTab(),
               ],
             ),

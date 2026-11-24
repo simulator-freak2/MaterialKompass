@@ -32,10 +32,11 @@ const ORGANIZATION_SCOPED_COLLECTIONS = new Set([
   ...UNIT_SCOPED_COLLECTIONS,
   'categories', 'auditLogs', 'qrLoginCredentials', 'scannerEmailAddresses',
   'mailTemplates', 'serviceDevices', 'offlineClients', 'offlineCommandResults',
-  'offlineSyncState',
+  'offlineSyncState', 'integrationApiKeys',
 ]);
 const PUBLIC_LOOKUP_COLLECTIONS = new Set([
   'qrLoginCredentials', 'serviceDevices', 'offlineClients', 'offlineCommandResults',
+  'integrationApiKeys',
 ]);
 
 function nowIso() {

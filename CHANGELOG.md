@@ -6,6 +6,11 @@
 
 ## Unveroeffentlicht
 
+- Schnittstelle für den Übungsplaner: Admins erstellen unter
+  „Berechtigungen → Schnittstellen“ API-Schlüssel mit den Berechtigungen
+  `material:lesen` und `fahrzeuge:lesen`, die gesperrt, neu erzeugt und gelöscht
+  werden können. Über `/api/v1` werden Status, Standorte, Material, Fahrzeuge und
+  Fahrzeugverfügbarkeit der jeweiligen Ebene lesend bereitgestellt.
 - Kistenverwaltung: Einzelstücke als Kisten führen und mit Einzelstücken,
   Teilmengen, Kleidung und Unterkisten packen. Der Inhalt wird gesperrt und wandert
   bei Umbuchung, Ausgabe und Fahrzeugbeladung mit. Dazu kommen versionierte

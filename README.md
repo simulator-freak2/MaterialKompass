@@ -55,6 +55,9 @@ die wichtigsten Abläufe, Verantwortlichkeiten und den richtigen Einstiegspunkt 
 - Administrativ aktivierte Dienstgeräte mit gerätegebundenem Systemzugang,
   persönlicher Anmeldung, QR-/USB-NFC-Zugängen, optionalem TOTP/NFC-Faktor,
   IP-Netzregeln und sofortigem Widerruf
+- Lesende Partnerschnittstelle `/api/v1` mit administrativ verwalteten API-Schlüsseln,
+  über die der Übungsplaner Material und Fahrzeuge übernimmt
+  (siehe [Schnittstelle für den Übungsplaner](#schnittstelle-für-den-übungsplaner))
 - Verschlüsselter nativer Offlinebetrieb für Materiallager, Kleiderkammer,
   Mängel und Dashboard mit sicher wiederholbarer Synchronisation
 
@@ -347,6 +350,53 @@ anderen Typs ersetzt werden; solche Zeilen werden mit Begründung übersprungen.
 Nicht mehr vorhandene Lagerorte können vor dem Einfügen aktuellen Gebäuden und
 optional Lagerplätzen zugeordnet werden. Jede Zuordnung gilt für alle Zeilen mit
 demselben ursprünglichen Gebäude und Lagerplatz. Abbrechen verändert keine Daten.
+
+## Schnittstelle für den Übungsplaner
+
+Partneranwendungen wie der Übungsplaner lesen Material und Fahrzeuge einer Ebene
+über die versionierte REST-Schnittstelle `https://<server>/api/v1`. Grundlage ist
+die Anforderungsbeschreibung `docs/SCHNITTSTELLE_MATERIALKOMPASS.md` des
+Übungsplaners.
+
+**Einrichtung:** Ein Admin öffnet **Berechtigungen → Schnittstellen**, wählt
+**API-Schlüssel erstellen**, vergibt eine Bezeichnung und die Berechtigungen
+`material:lesen` und/oder `fahrzeuge:lesen`. Adresse und Schlüssel werden genau
+einmal angezeigt und im Übungsplaner unter **Einstellungen → Materialkompass**
+eingetragen. Gespeichert wird nur ein SHA-256-Prüfwert; Schlüssel lassen sich
+bearbeiten, sperren, neu erzeugen und löschen. Die Liste zeigt, wann ein Schlüssel
+zuletzt benutzt wurde (auf etwa fünf Minuten genau).
+
+**Regeln:**
+
+- Anmeldung mit `Authorization: Bearer mkapi_…`. Ein Schlüssel sieht ausschließlich
+  die Daten der Organisationsebene, in der er erstellt wurde; Schlüssel einer
+  deaktivierten Organisation oder Ebene werden abgewiesen.
+- Höchstens 60 Anfragen je Minute und Schlüssel (`429` mit `Retry-After`).
+- Fehler als `application/problem+json` (RFC 9457) mit deutscher Meldung.
+- Listen unterstützen `limit` (1–500), `cursor`/`naechster_cursor`,
+  `geaendert_seit` und liefern `server_zeit`. Archivierte oder gelöschte Datensätze
+  erscheinen 90 Tage lang mit `"geloescht": true`.
+- Es werden keine Personendaten übertragen.
+- API-Schlüssel sind nicht Teil der Datensicherung und müssen nach einer
+  Wiederherstellung neu erzeugt werden.
+
+| Endpunkt | Berechtigung | Inhalt |
+| --- | --- | --- |
+| `GET /api/v1/status` | – | Version, Organisation, Ebene, Berechtigungen des Schlüssels |
+| `GET /api/v1/standorte` | `material:lesen` | Lagerorte der Ebene |
+| `GET /api/v1/material` | `material:lesen` | Inventar mit Kategorie, Menge, Lagerort bzw. Fahrzeug, Status und Prüftermin; Filter `standort_id`, `fahrzeug_id`, `kategorie`, `suche` |
+| `GET /api/v1/fahrzeuge`, `GET /api/v1/fahrzeuge/{id}` | `fahrzeuge:lesen` | eigene und zur Ansicht oder Reservierung freigegebene Fahrzeuge |
+| `GET /api/v1/fahrzeuge/{id}/verfuegbarkeit?von=…&bis=…` | `fahrzeuge:lesen` | Belegung durch Reservierungen und Wartungen |
+
+Statuszuordnung Material: `Ausgesondert`/`Verloren`/archiviert → `ausgesondert`,
+`Defekt` → `defekt`, `In Reparatur` → `reparatur`, `In Prüfung`, überschrittener
+Prüftermin oder gesperrte sicherheitskritische Freigabe → `pruefung_faellig`,
+sonst `einsatzbereit`. Fahrzeuge: `In Wartung` → `werkstatt`, `Außer Dienst`,
+`Defekt` oder kritischer Mangel → `ausser_dienst`, sonstiger offener Mangel →
+`bedingt_einsatzbereit`, sonst `einsatzbereit`.
+
+Reservierungen über die Schnittstelle (`reservierungen:schreiben`) sind noch nicht
+umgesetzt; Fahrzeuge werden weiterhin in MaterialKompass reserviert.
 
 ## Reservierungs- und Wartungskalender
 
